@@ -15,7 +15,7 @@ Paper Master 把「研究手記」Discord 伺服器裡收集的論文，整理�
 | 來源 | 分支 |
 | --- | --- |
 | `ai-research-topic-papers.md`、`diffusion-channels-papers.md` | `raymin-notes` |
-| `waiting-to-read-papers.md` | `toonnyy8-notes` |
+| `waiting-to-read-papers.md`、`pdf-library-papers.md` | `toonnyy8-notes` |
 
 只收各檔「一、論文」的部分；「二、未收錄內容」裡的 Claude artifact 是教學素材來源。
 
@@ -31,7 +31,7 @@ Paper Master 把「研究手記」Discord 伺服器裡收集的論文，整理�
 
 ## 步驟 1–4：資料庫與關聯圖
 
-1. **讀取**上面三份清單，依 arXiv ID 或網址合併重複論文，保留所有來源。
+1. **讀取**上面的清單，依 arXiv ID 或網址合併重複論文，保留所有來源。Paper ID 一經發布就不變：新論文接在最大編號之後，不能因清單順序改變而重新編號，因為教學、筆記與外部連結都用 `#paper-<id>`。
 2. **資料庫欄位**：Paper ID、Title、Authors、Year、URL、Source File & Branch、Source Category、Cluster、Core Topic / Summary、Tags、Related Paper IDs。作者、年份、摘要從 arXiv 補；查不到就留空，不猜。
 3. **Tags 與群集**：Tags 要標準化（同義詞合併成一個，例如 Diffusion Model → Diffusion）；群集依 Tags 共現與原始分類歸納，每個群集要有核心主題名稱。
 4. **關聯圖**（參考 Connected Papers）：節點＝論文，大小＝關聯度，顏色＝群集；連線＝主題相似，越像距離越近。要有搜尋（高亮直接關聯的論文）、依 Tag／群集／來源分支篩選，以及點節點後顯示完整資訊與最相關論文的側邊欄。

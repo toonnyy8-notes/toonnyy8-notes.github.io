@@ -21,7 +21,7 @@ TAGS={
 'Optimization':r'gradient descent|optimizer|\badam|\bmuon|learning rate|zeroth|evolution strateg|loss landscape|sharpness',
 'VLM / Multimodal':r'vision[- ]language|\bvlms?\b|multimodal|multi-modal|visual|omni-modal|\bmllm',
 'Efficient Inference':r'kv cache|inference|quantiz|compression|speculative|efficient|sparsity|prefill',
-'Architecture':r'transformer|state space|mamba|\brnns?\b|recurrent|architecture|backbone|attention|mixture-of-experts|\bmoe\b',
+'Architecture':r'convnet|convolutional|length extrapolation|long-context|transformer|state space|mamba|\brnns?\b|recurrent|architecture|backbone|attention|mixture-of-experts|\bmoe\b',
 'Looped Models':r'loop|recurrent depth|recursive reasoning|weight sharing|universal transformer',
 'Data':r'data curation|synthetic data|data selection|dataset|data reduction|zero data|curat',
 'Safety & Alignment':r'alignment|safety|jailbreak|security|attack|reward hacking|monitor|uncertainty|underspecif|ambigu',
@@ -31,26 +31,40 @@ TAGS={
 'Energy-Based':r'energy[- ]based|energy matching|\bebms?\b|boltzmann',
 'Sampling / MCMC':r'sampling|langevin|monte carlo|mcmc|sampler|metropolis',
 'Benchmark':r'benchmark',
-'Audio / Music':r'audio|music|speech',
+'Audio / Music':r'audio|music|speech|voice|text-to-speech|\btts\b|vocoder|singing|phase reconstruction',
+'GAN':r'adversarial net|\bgans?\b|stargan|seqgan|cyclegan',
+'VAE':r'variational bayes|variational auto|\bvaes?\b',
+'Self-Supervised':r'self-supervised|semi-supervised|contrastive|bootstrap|noisy student|siamese|自監督|半監督',
+'Meta-Learning':r'meta-learn|few-shot|learning to learn|\bmaml\b|元學習',
 'Post-Training':r'post-train|fine-tun|finetun|\blora\b|sft\b',
 'Pretraining':r'pretrain|pre-train|scaling up|100b',
 }
 CL={
-'Diffusion & Generative Models':['diffusion-model','causal-diffusion','Diffusion、Flow Matching 與生成模型','Basic Diffusion','Energy based Models','3D generation','Music generation'],
-'Diffusion Language Models':['dLLM','dVLM','Diffusion Language Models（dLLM）'],
-'RL, Reasoning & Self-Distillation':['RL','自蒸餾、強化學習與推理','post training','Reward Hacking','Self improving','Evolution Strategies'],
+'Diffusion & Generative Models':['擴散模型：基礎與設計空間','擴散模型：引導','擴散模型：取樣器與 ODE 求解','擴散模型：蒸餾與少步生成','擴散模型：曝光偏差','擴散模型：潛空間、反演與編輯','擴散模型：最佳傳輸與耦合','擴散模型：逆問題與 Plug-and-Play','擴散模型 × 強化學習','擴散模型應用：影像、3D 與多模態','語音：合成、轉換與聲碼器','GAN','VAE','Normalizing Flows','能量模型','Neural ODE 與連續時間模型','diffusion-model','causal-diffusion','Diffusion、Flow Matching 與生成模型','Basic Diffusion','Energy based Models','3D generation','Music generation'],
+'Diffusion Language Models':['離散擴散與擴散語言模型','非自回歸文字生成','dLLM','dVLM','Diffusion Language Models（dLLM）'],
+'RL, Reasoning & Self-Distillation':['大型語言模型：推理與代理','大型語言模型：對齊、編輯與解碼時對齊','離線強化學習與決策模型','RL','自蒸餾、強化學習與推理','post training','Reward Hacking','Self improving','Evolution Strategies'],
 'Agents & Self-Improvement':['Text Gradient (Agent)','Agent、Context Engineering 與 LLM 應用','RAG','Research idea'],
-'Memory & Continual Learning':['記憶、Test-Time Training 與持續學習','Memory System','Local Support Learning / Catastrophic Forgetting'],
-'Architectures & Efficiency':['Loop LLM','new backbone','高效推論、架構與系統','Hidden state Compression'],
+'Memory & Continual Learning':['測試時訓練與長期記憶','記憶、Test-Time Training 與持續學習','Memory System','Local Support Learning / Catastrophic Forgetting'],
+'Architectures & Efficiency':['大型語言模型：高效訓練、推論與長度外推','Loop LLM','new backbone','高效推論、架構與系統','Hidden state Compression'],
 'Interpretability & Theory':['Interpretable AI','Interpretation: High Attention','可解釋性與學習理論','LLM streering','Learning Dynamic','Gradient decent','CV interpretation','Statistics','教材'],
 'Vision-Language & Embodied':['VLM 與多模態','VLM: Tool calling','VLM Test time compute','VLM 痛點','Benchmark','Alignment','Physical Robot Learning','Few-shot learning'],
-'Training, Data & Representation':['LLM 訓練專題','Data curation & Auto generation','資料篩選、合成資料與資料效率','JEPA 與表徵學習'],
+'Training, Data & Representation':['自監督學習','半監督學習','元學習','大型語言模型：微調','文字風格轉換','情感支持對話','其他','LLM 訓練專題','Data curation & Auto generation','資料篩選、合成資料與資料效率','JEPA 與表徵學習'],
 'Safety & Security':['Cybersecurity AI','AI security（各種use case）'],
 }
-BROAD={'Efficient Inference','Architecture','Reasoning','Interpretability','Representation Learning','VLM / Multimodal','Pretraining','Post-Training','Benchmark','Data','Memory','Agents','Sampling / MCMC','Learning Theory'}
+BROAD={'GAN','VAE','Self-Supervised','Meta-Learning','Efficient Inference','Architecture','Reasoning','Interpretability','Representation Learning','VLM / Multimodal','Pretraining','Post-Training','Benchmark','Data','Memory','Agents','Sampling / MCMC','Learning Theory'}
 cat2cl={c:k for k,v in CL.items() for c in v}
-for i,p in enumerate(P,1):
-  p['id']=i
+# Paper IDs are permanent (tutorials and notes link to #paper-<id>): keep the id from the previous papers.json, append new papers after the max.
+AXID=re.compile(r'(\d{4}\.\d{4,5})')
+pkey=lambda url:(AXID.search(url).group(1) if re.search(r'arxiv\.org|alphaxiv\.org|huggingface\.co/papers',url) and AXID.search(url) else url.split('#')[0].rstrip('/'))
+prev={pkey(q['url']):q['id'] for q in json.load(open('../papers.json'))} if os.path.exists('../papers.json') else {}
+nxt=max(prev.values(),default=0)
+for p in P:
+  k=p['arxiv'] or p['key']
+  if k in prev: p['id']=prev[k]
+  else: nxt+=1; p['id']=nxt
+assert len({p['id'] for p in P})==len(P), 'duplicate paper ids'
+P.sort(key=lambda p:p['id'])
+for p in P:
   short=' '.join([p['title'],' '.join(p['cats'])]); txt=short+' '+p['abstract'][:600]
   p['tags']=[t for t,r in TAGS.items() if re.search(r,short if t in BROAD else txt,re.I)] or ['Misc']
   p['cluster']=collections.Counter(cat2cl.get(c,'Training, Data & Representation') for c in p['cats']).most_common(1)[0][0]
