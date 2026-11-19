@@ -5,7 +5,7 @@
 - 資料來源：`raymin-notes` 分支的 `ai-research-topic-papers.md`、`diffusion-channels-papers.md`，以及 `toonnyy8-notes` 分支的 `waiting-to-read-papers.md`（只收各檔「一、論文」部分）
 - `papers.csv`：Excel 可直接開啟（UTF-8 BOM）。欄位：Paper ID、Title、Authors、Year、URL、Source File & Branch、Source Category、Cluster、Core Topic / Summary、Tags、Related Paper IDs
 - `papers.json`：同一份資料，給關聯圖使用
-- `tutorials/`：清單中已有的 Claude 互動教學，下載後加上回到關聯圖的導覽列
+- `tutorials/`：清單中已有的 Claude 互動教學（10 份，加上回到關聯圖的導覽列），以及 6 份研究筆記（原始 Markdown 在 `scripts/notes/`，轉成網頁並連到資料庫中的相關論文）
 
 ## 整理方式
 
@@ -25,4 +25,4 @@ python3 parse.py && python3 build.py && python3 tutorials.py && python3 render.p
 
 ## 尚未完成
 
-- 步驟 6 只處理了已存在的 Claude artifact（10 份）；6 個 `claude.ai/public/artifacts/...` 連結無法用工具下載，其餘論文的教學頁依需求再做
+- 其餘論文的互動教學頁依需求再做

@@ -1,0 +1,154 @@
+# Test-Time Training 作為序列建模架構:主系列演進入門指南
+
+## TL;DR
+- **TTT 主系列在 2024–2026 走了一條清晰的演進路線**:從 Sun et al. 的原版 TTT-Linear/TTT-MLP(arXiv:2407.04620,把 RNN 隱藏狀態變成一個「在測試時被訓練的小模型」)出發,經由影片生成(One-Minute Video,CVPR 2025)發現「小 chunk 更新」的硬體瓶頸,催生了 LaCT(arXiv:2505.23884,ICLR 2026,把 chunk 拉到 2K–1M token、GPU 利用率從 <5% 升到「up to 70% on NVIDIA A100s」),再分岔成兩條最新主線:把 TTT 直接縫進現成 LLM 的 In-Place TTT(arXiv:2604.06169,ICLR 2026 Oral),以及原班人馬把「測試時學的目標」改成 next-token prediction 的 TTT-E2E(arXiv:2512.23675)。
+- **核心矛盾始終是「表達力 vs 硬體效率」**:原版 TTT 表達力強(隱藏狀態是 MLP)但每 16/64 token 更新一次導致記憶體受限、FLOPs 利用率 <5%;LaCT 用大 chunk 把運算變成 compute-bound 換取硬體效率,但犧牲了 chunk 內的因果順序(需搭配 window attention 補救)。
+- **TEMPO 與 TTT 序列建模主線無關**:經查證,arXiv:2604.19295 的 TEMPO 是「用 EM 框架做大型推理模型的 test-time RL」,屬於另一個「test-time training = 推理時用自生獎勵更新權重」的語意分支,本指南會說明此命名混淆,但不將其歸入 RNN/序列建模主系列。
+
+## Key Findings
+
+1. **原版 TTT(Sun et al., 2024, arXiv:2407.04620)** 的關鍵想法:任何序列層都可寫成「隱藏狀態 + 更新規則」;TTT 讓隱藏狀態本身是一個模型 `f_W`,更新規則是對自監督重建損失走一步梯度下降。TTT-Linear 與 TTT-MLP 分別用線性模型與兩層 MLP 當隱藏狀態。已更新到 v4(2025-08-31)。
+
+2. **LaCT / Test-Time Training Done Right(Zhang et al., 2505.23884,ICLR 2026)** 指出:原版每 16/64 token 更新一次造成算術強度過低、FLOPs 利用率常 <5%。改用 2K–1M token 的超大 chunk 一次更新,GPU 利用率達「up to 70% on NVIDIA A100s」,且「facilitates scaling of nonlinear state size (up to 40% of model parameters)」,並能整合 Muon 優化器。驗證於 novel view synthesis(最長 1M token context)、語言建模、14B 自回歸影片 diffusion(最長 56K token)。
+
+3. **In-Place TTT(Feng et al., 2604.06169,ByteDance Seed + 北大,ICLR 2026 Oral)**:不新增專用層,而是把現成 Transformer 中每個 MLP block 的「最後投影矩陣」當作 fast weight 就地更新,並用一個對齊 Next-Token-Prediction 的目標取代通用重建損失。可作為現成 LLM 的「drop-in」增強——abstract 明言「as an in-place enhancement, it enables a 4B-parameter model to achieve superior performance on tasks with contexts up to 128k」(對 Qwen3-4B-Base 做持續訓練)。
+
+4. **TTT-E2E(Tandon, Dalal, ..., Sun, 2512.23675,2025-12-29)** 是原 TTT 團隊的直系後續:把長上下文建模重構成持續學習問題,只用「標準 Transformer + sliding-window attention」,但在測試時用 next-token prediction 持續更新權重,並在訓練時用 meta-learning 學初始化。3B 模型在 context 擴展上與 full attention 同步,且推理延遲恆定——abstract 稱「TTT-E2E has constant inference latency regardless of context length, making it 2.7× faster than full attention for 128K context」。
+
+5. **周邊與應用的擴散**:ViT³(2512.01643,CVPR 2026 Oral)系統化研究視覺 TTT 設計;Fast Spatial Memory / LaCET(2604.07350)用 elastic weight consolidation 穩定 LaCT 的 fast weight;tttLRM(2602.20160)、TTT3R(2509.26645)把 TTT 用於 3D/4D 重建;SR-TTT(2603.06642)用 surprisal 路由解決 TTT 的精確 recall 失敗;「TTT with KV Binding Is Secretly Linear Attention」(2602.21204,NVIDIA)從理論上把一大類 TTT 還原成 learned linear attention。
+
+## Details
+
+### 1. 起點:原版 TTT(arXiv:2407.04620)
+
+**直觀與數學原理。** 作者(Yu Sun, Xinhao Li, Karan Dalal 等 12 人,Stanford/UCSD/Berkeley)的統一觀點是:所有序列層都是「一個隨更新規則轉移的隱藏狀態」。Attention 的隱藏狀態是不斷成長的 KV cache(故 O(n²));RNN 的隱藏狀態是固定大小向量(故表達力受限)。TTT 的關鍵一步是讓隱藏狀態本身成為一個帶權重 `W` 的模型 `f`,而更新規則是對一個自監督損失做一步梯度下降:
+
+- 更新規則:`W_t = W_{t-1} − η ∇ℓ(W_{t-1}; x_t)`
+- 自監督損失(多視角重建):`ℓ(W; x_t) = ‖f(θ_K x_t; W) − θ_V x_t‖²`
+- 輸出規則:`z_t = f(θ_Q x_t; W_t)`
+
+其中 θ_K、θ_V、θ_Q 是可學的低秩投影(類比 attention 的 K/V/Q)。直覺:fast weight `W` 是一個「聯想記憶」,要從被破壞的輸入 `θ_K x_t` 重建出 `θ_V x_t`。兩個實例化:**TTT-Linear**(f 是線性模型)與 **TTT-MLP**(f 是兩層 MLP)。
+
+**與周邊家族的關係(重要)。** 從 test-time regression 框架看:若 f 是線性、損失為負點積,更新規則就退化成 **linear attention**;若 f 是線性、損失為 MSE,就得到 **DeltaNet** 的 delta rule(MSE 強迫重建值在方向與大小上都接近目標,因而產生「遺忘」機制)。**Titans**(2501.00663)在此之上加了 momentum 與 weight decay(遺忘);**Atlas / MesaNet / Miras** 則進一步改 optimizer 或改成對所有過去 token 全域最優。這說明 TTT 是這一整個「現代 RNN / 線性注意力」家族的母框架之一。
+
+**平行化技巧。** 因更新是序列性的,原版用 **mini-batch TTT**:把序列切成 chunk,chunk 內所有梯度都對 chunk 開頭的 `W` 計算,於是可平行;再用 dual form 加速。但其官方 PyTorch 實作在 GPU 上 FLOPs 利用率 <5%,這正是 LaCT 要解決的痛點。
+
+**自習資源。** 原論文 arXiv:2407.04620(JAX 與 PyTorch 兩版 code:github.com/test-time-training);Yingfa Chen 的部落格〈The Rise of Test-Time Training〉對 attention→linear attention→TTT→LaCT 的推導極清晰;Erik Steiger〈Non-Linear Attention and Test-Time-Training〉系列把 optimizer/objective 的設計空間講透。
+
+### 2. 影片轉折點:One-Minute Video Generation(arXiv:2504.05298,CVPR 2025)
+
+Karan Dalal、Yu Sun 等把 TTT 層加進預訓練的 Diffusion Transformer(5B),fine-tune 後能從文字 storyboard 生成一分鐘、多場景、時間一致的 Tom and Jerry 卡通。abstract 載明:「Compared to baselines such as Mamba~2, Gated DeltaNet, and sliding-window attention layers, TTT layers generate much more coherent videos...leading by 34 Elo points in a human evaluation of 100 videos per method」。這是 TTT 主系列首次大規模進入生成式長序列,也暴露了「小 chunk 更新在 N 維資料(影片)上既慢又不自然」的問題,直接動機了 LaCT。code:github.com/test-time-training/ttt-video-dit。
+
+### 3. 硬體覺醒:LaCT(arXiv:2505.23884,ICLR 2026)
+
+**設計理念。** Zhang et al.(MIT + Adobe Research)觀察到:原版 TTT 的算術強度(FLOPs/記憶體存取)被 chunk 大小 b 上限約束,小 b 使 TTT 層 memory-bound,FLOPs 利用率 <5%、難以超過 10%。LaCT 反其道而行,用 **2,048 到 1,000,000 token** 的超大 chunk 作為更新單位。
+
+**數學原理(與 mini-batch TTT 的差異)。** LaCT 的 chunk 更新對 chunk 內「所有」key-value pair 的損失和求梯度,再一次更新:
+
+- `g = ∇_W Σ_{i=1}^{b} η_i ℓ(f_W(k_i), v_i)`  (對整個 chunk 的加總損失)
+- `W ← weight-update(W, g)`,接著對所有 query 套用同一份更新後權重 `o_i = f_W(q_i)`
+
+關鍵差異:原版每 token(或每 16/64 token)更新一次、chunk 內維持細粒度因果;LaCT 一個大 chunk 才更新一次、chunk 內 token 被當成「無序集合」。為補回 chunk 內局部依賴,LaCT 在同一層搭配 **sliding-window attention**(SWA 與 TTT 共用 QKV)。compute-to-memory 比例 `r = 2h²b/(2h²+4hb) ≤ min(h/2, b)`,清楚顯示算術強度被 chunk 大小 b 限制。
+
+- 內層損失用負點積:`ℓ = − f_W(k_i)^⊤ v_i`
+- 非線性 fast weight 用無 bias 的 SwiGLU-MLP:`f_W(x) = W_2[SiLU(W_1 x) ∘ (W_3 x)]`,三個矩陣 W₁,W₂,W₃
+- 更新可選 vanilla GD + L2 weight normalization,或 **Muon**(對矩陣梯度做 Newton–Schulz 正交化:若 g=USVᵀ 則 Muon(g)≈UVᵀ),再 L2 normalize;不使用顯式 weight decay
+
+**實驗結果。** GPU 利用率達「up to 70% on NVIDIA A100s」,僅需數十行純 PyTorch、無需自訂 kernel;非線性 state size「up to 40% of model parameters」(前人僅 0.1%–5%)。Novel view synthesis:prefill 從 16.1s 降到 1.4s,最長 1M token context(128 張影像),在稀疏視角下勝過 3D Gaussian Splatting(GSO 256-res 上 full-attention baseline 達 37.9 dB @48 views,LaCT 自身約 37.6 dB)。語言建模:大 chunk 線性遞迴在語言上初期略遜 GLA/DeltaNet(語言無天然 chunk 結構),但搭配大非線性 state + Muon 後反超。影片:把 14B Wan 2.1 雙向影片 diffusion 改造成自回歸,每 8.8s 片段約 56,160 token。
+
+**優缺點。** 優勢:硬體效率、可放大 state 容量、可用先進 optimizer、跨模態(集合/N 維格點)、無需客製 kernel。缺陷:chunk 內失去因果順序(靠 SWA 補)、語言任務不一定贏純線性注意力、單一超大 chunk 在很長序列上易 catastrophic forgetting/overfitting(後續 FSM/LaCET 即針對此)。自習:arXiv:2505.23884、project page tianyuanzhang.com/projects/ttt-done-right、code github.com/a1600012888/LaCT。
+
+### 4. 分岔 A:In-Place TTT(arXiv:2604.06169,ICLR 2026 Oral)
+
+**作者與狀態。** Guhao Feng、Shengjie Luo、Kai Hua、Ge Zhang、Di He、Wenhao Huang、Tianle Cai(ByteDance Seed + 北京大學),2026-04-07,**已被 ICLR 2026 接收為 Oral**(官方 repo github.com/ByteDance-Seed/In-Place-TTT 公告),非僅未評審 preprint。
+
+**設計理念(解決三個障礙)。** (i)架構不相容:既有 TTT 多需專用層、得從頭預訓練 → In-Place 直接「就地」把每個 MLP block 的最後投影矩陣當 fast weight,不改架構、保留預訓練權重,可 drop-in;(ii)計算低效:用 chunk-wise 更新取代逐 token,且因 in-place 設計與 attention 互補,不需要獨立 TTT 層所需的小 chunk;(iii)目標錯配:用一個理論上對齊 Next-Token-Prediction 的目標取代通用重建損失。
+
+**數學直覺。** 沿用 TTT 的 update/apply 兩步:`W_i ← W_{i-1} − η∇_W ℓ(f_{W_{i-1}}(k_i), v_i)`、`o_i = f_{W_i}(q_i)`;創新在「ℓ 改成與 NTP 對齊的目標」與「fast weight 就是現成 MLP 的投影矩陣」。
+
+**實驗結果。** 作為 in-place 增強,abstract 稱「enables a 4B-parameter model to achieve superior performance on tasks with contexts up to 128k」(Qwen3-4B-Base,經約 20B-token 32k + 約 15B-token 128k 持續訓練);從頭預訓練(最長 32k 語料)時穩定勝過其他 TTT 類方法。消融顯示 state size、chunk size、fast-weight 目標各自關鍵。定位:邁向 LLM 持續學習的一步。
+
+### 5. 分岔 B:TTT-E2E(arXiv:2512.23675)— 原團隊的直系新作
+
+**作者與狀態。** Arnuv Tandon、Karan Dalal、Xinhao Li、Daniel Koceja、Marcel Rød、Sam Buchanan、Xiaolong Wang、Jure Leskovec、Sanmi Koyejo、Tatsunori Hashimoto、Carlos Guestrin、Jed McCaleb、Yejin Choi、Yu Sun(Astera Institute、NVIDIA、Stanford、UC Berkeley、UC San Diego),2025-12-29 preprint;Yu Sun 為 project lead。code:github.com/test-time-training/e2e。
+
+**設計理念與「End-to-End」的兩層含義。** 把長上下文建模從「架構設計」重構為「持續學習」。
+- **測試時 E2E**:內層直接優化網路尾端的 next-token prediction(交叉熵)損失 `ℓ_t(W)=CE(f(x_{t-1};W), x_t)`,而非層內重建代理損失。
+- **訓練時 E2E**:用 meta-learning 學 fast weight 的初始化 `W_0`——把每條訓練序列當測試序列,對它做 TTT,再對「TTT 之後的最終損失」用 gradients-of-gradients 優化 `W_0`。
+這與主流 dynamic evaluation 的 TTT-naive(`L=⅟T Σ ℓ_t(W_0)`)形成對比;TTT-naive 僅略勝無 attention baseline,TTT-E2E 幾乎追平 full attention。
+
+**架構與更新。** 標準 Transformer + sliding-window attention 當「工作記憶/短期記憶」,被更新的權重當「長期記憶」。三個實作要點:(1)只 TTT MLP 層(凍結 embedding/norm/attention,否則外層不穩);(2)只更新最後 1/4 的 block;(3)更新 block 內加一個靜態第二 MLP 當「安全」儲存以抗遺忘。mini-batch 更新:`W_i = W_{i-1} − η·(1/b)·Σ_t ∇ℓ_t(W_{i-1})`。主結果用 window k=8K、mini-batch b=1K(需 k≥b,使模型在 TTT 更新前仍能在 mini-batch 內記住 context)。
+
+**實驗結果。** 3B 模型、164B token:context 擴展行為與 full attention 一致,而 Mamba 2、Gated DeltaNet 不行;推理延遲恆定,abstract 載明「2.7× faster than full attention for 128K context」(H100)。hidden state「5x larger hidden state (88M vs. 18M for the 760M model)」。但在 Needle-in-Haystack(RULER 128K)上 full attention 大幅領先——因 TTT-E2E 的機制是壓縮而非無損 recall。訓練延遲是已知弱點:128K 時比 full attention 快 1.2×,但 8K 時慢 3.4×(雙重反傳未被 cuDNN 最佳化)。
+
+### 6. TEMPO 的命名澄清(arXiv:2604.19295)
+
+經查證,TEMPO(Qingyang Zhang 等 10 人,2026-04-21)全名為「TEMPO: Scaling Test-time Training for Large Reasoning Models」,屬於「test-time training = 推理時對未標註測試題用自生獎勵做 RL 更新」這個語意分支:它用 EM 框架交替 E-step(在標註資料上重校準 critic)與 M-step(在未標註題目上精煉 policy),解決自獎勵 TTT 的飽和與多樣性崩潰(例如把 OLMO3-7B 在 AIME 2024 從 33.0% 提到 51.1%)。它與 TTT-Linear/TTT-MLP 的「序列建模層」主線無直接技術繼承關係,使用者若在文獻中看到「TTT」需特別分辨這兩個分支。同類還有 TTRL、EMPO,以及把 TTT 用於 few-shot reasoning 的 Akyürek et al.(2411.07279)。
+
+### 7. 周邊與理論的擴散(2025–2026)
+
+- **理論:TTT 其實是 learned linear attention**(Junchen Liu 等,NVIDIA,2602.21204,2026-02-24):分析顯示一大類 TTT(含多層 MLP、momentum)可改寫成 learned linear attention operator,挑戰「test-time 記憶」詮釋;附帶可平行化、可簡化架構的實用好處,並把 LaCT、ViTTT 改寫成線性注意力形式。
+- **理論:可證明的 ICL 增益**:2503.11842(TTT provably improves Transformers as in-context learners)、2509.25741(TTT 增強非線性函數的 in-context learning,single-index model 風險上界)。
+- **視覺:ViT³**(Dongchen Han 等,清華 + 阿里,2512.01643,CVPR 2026 Oral):系統化六條視覺 TTT 設計準則,純 TTT 架構達線性複雜度,高解析度下對 softmax attention 有 4.6× 加速、90.3% 記憶體節省。
+- **3D/4D 重建:** TTT3R(2509.26645,training-free,用 alignment confidence 導出 closed-form learning rate,pose 估計 2× 改進、20 FPS/6GB);Fast Spatial Memory / LaCET(2604.07350,用 Fisher-weighted elastic prior + EMA anchor 穩定 LaCT,解決 catastrophic forgetting);tttLRM(2602.20160,用 LaCT block 做長上下文自回歸 3D 重建)。
+- **長上下文 LLM:** qTTT(2512.13898,Meta/Harvard/OpenAI,只對 query 投影做梯度更新以對抗 score dilution,15+ 長上下文 benchmark 上常勝過 thinking tokens);SR-TTT(2603.06642,用 surprisal 把高驚奇 token 路由到 exact-attention residual cache,解 TTT 的 needle 失敗)。
+- **效率/更新規則:** TNT(2511.07343,改進 Titans 的 chunkwise 訓練,最高 17× 加速)。
+
+## 技術發展脈絡圖式
+
+```
+                        Sun et al. 2020 (TTT for distribution shift, 影像)
+                                     │
+                 原版 TTT 2024 (2407.04620) TTT-Linear / TTT-MLP
+                 ── 母框架:隱藏狀態=模型, 更新=自監督梯度步 ──
+                                     │
+          ┌──────────────┬───────────┴───────────┬───────────────────┐
+   周邊家族(先前報告)     影片 TTT 2025        理論還原           應用擴散
+   linear attn/DeltaNet  (2504.05298,CVPR)   (2602.21204         3D: TTT3R 2509.26645
+   Titans/Atlas/MesaNet         │            TTT≈linear attn)    視覺: ViT³ 2512.01643
+   Lattice/Longhorn/RWKV-7      │ 暴露小chunk硬體瓶頸
+   Miras 統一框架                │
+                                ▼
+                    LaCT 2505.23884 (ICLR 2026)
+                    大 chunk(2K–1M)+ SWA + SwiGLU + Muon
+                    FLOPs 利用率 <5% → up to 70% (A100)
+                    │
+          ┌─────────┼──────────────────────┬────────────────┐
+   In-Place TTT      TTT-E2E              FSM/LaCET         tttLRM
+   2604.06169        2512.23675           2604.07350        2602.20160
+   (ICLR'26 Oral,    (原團隊,NTP目標+     (elastic 穩定      (長上下文
+   drop-in 改 MLP)   meta-learn 初始化)    LaCT fast weight)  自回歸3D)
+```
+
+## 比較表格
+
+| 方法 | arXiv / 狀態 | 隱藏狀態/fast weight | 更新粒度 | 內層目標 | 主要優勢 | 主要缺陷 |
+|---|---|---|---|---|---|---|
+| TTT-Linear/MLP (2024) | 2407.04620 / 已更新 v4 | 線性模型 / 2層 MLP | 每 token(mini-batch 平行) | 多視角重建 MSE | 表達力強、線性複雜度、母框架 | GPU FLOPs <5%、wall-clock 慢 |
+| One-Minute Video (2025) | 2504.05298 / CVPR 2025 | TTT-MLP 層加進 DiT | 小 chunk | 重建 | 一分鐘多場景一致影片、領先 baselines 34 Elo | 5B 基模限制、有 artifact |
+| LaCT (2025) | 2505.23884 / ICLR 2026 | SwiGLU-MLP(可達 40% 參數) | 大 chunk 2K–1M | 負點積 + Muon | 利用率 up to 70% (A100)、跨模態、1M context | chunk 內無因果、單大 chunk 易遺忘 |
+| In-Place TTT (2026) | 2604.06169 / ICLR 2026 Oral | 現成 MLP 最後投影矩陣 | chunk-wise | NTP 對齊目標 | drop-in、不需重訓、與 attention 互補、4B 模型 @128k | 主要驗證在 ≤128k |
+| TTT-E2E (2025) | 2512.23675 / preprint | MLP 層(最後 1/4 block) | mini-batch b=1K | next-token prediction(E2E) | context 擴展如 full attn、延遲恆定(2.7×@128K) | recall 弱於 full attn、訓練在短 context 慢 3.4× |
+
+## Recommendations
+
+**給研究生的入門順序(由淺入深):**
+1. **先建立母框架直覺**:讀原版 TTT(2407.04620)第 1–2 節 + Yingfa Chen 部落格,徹底理解「隱藏狀態=模型、更新=自監督梯度步」,以及 linear attention/DeltaNet 是其特例。能手推「線性 f + 負點積 → linear attention」「線性 f + MSE → delta rule」即達標。
+2. **理解硬體瓶頸與大 chunk 解法**:讀 LaCT(2505.23884)+ project page,搞懂算術強度為何被 chunk 大小約束、為何大 chunk 變 compute-bound、為何要配 SWA。跑 github.com/a1600012888/LaCT 的數十行 PyTorch 版本。
+3. **掌握兩條最新主線的「目標設計」**:讀 In-Place TTT(2604.06169)與 TTT-E2E(2512.23675),重點比較「重建損失 vs NTP 目標」「新增專用層 vs 就地改 MLP」「測試時 E2E + 訓練時 meta-learning」。
+4. **補理論視角**:讀 2602.21204(TTT≈learned linear attention)以免被「test-time 記憶」的敘事誤導;有餘力再讀 2503.11842 / 2509.25741 的 ICL 理論。
+5. **依興趣選應用分支**:影片/世界模型走 2504.05298 → 14B 影片 diffusion 部分;3D/4D 走 TTT3R(2509.26645)、FSM(2604.07350)、tttLRM(2602.20160);長上下文 LLM 走 qTTT(2512.13898)、SR-TTT(2603.06642)。
+
+**實作建議與會改變決策的門檻:**
+- 若你的資料是 1D 語言且追求 SOTA recall:優先考慮 full attention 或 hybrid;TTT 主線在 needle 任務仍輸 full attention(TTT-E2E 已坦承)。**門檻**:若 context >128K 且延遲/吞吐是瓶頸,TTT-E2E 的恆定延遲(2.7× @128K)開始划算。
+- 若你做影片/3D/集合等 N 維資料:直接從 LaCT 起步,大 chunk 對齊資料結構(一張影像/連續幀為一個 chunk)。**門檻**:若出現 catastrophic forgetting,改用 FSM/LaCET 的 elastic 機制。
+- 若你想在現成 LLM 上加 TTT 而不重訓:In-Place TTT 是目前最低成本路徑(且已是 ICLR 2026 Oral,可信度高)。**門檻**:需先驗證它在你的 base model(如 Qwen3)與目標 context 上的增益是否複現。
+- 工程上優先選「能用標準框架 shard、不需客製 kernel」的變體(TTT-E2E、In-Place TTT、LaCT 的純 PyTorch 路徑),避免落入原版 TTT 的 kernel 維護地獄。
+
+## Caveats
+
+- **命名極度混淆**:「Test-Time Training」至少有三個語意——(A)序列建模層/RNN(本指南主線,Sun et al. 2024 起);(B)分布偏移下的測試時自監督適應(Sun et al. 2020 原始定義,影像);(C)推理時用自生獎勵做 RL(TEMPO、TTRL 等)。TEMPO(2604.19295)屬 (C),非主線。引用前務必確認屬哪一支。
+- **新作的同行評審狀態不一**:LaCT(ICLR 2026)、In-Place TTT(ICLR 2026 Oral)、ViT³(CVPR 2026 Oral)、One-Minute Video(CVPR 2025)、TTT3R 已有會議身份;TTT-E2E(2512.23675)、FSM(2604.07350)、SR-TTT(2603.06642)、tttLRM(2602.20160)截至 2026-06 仍為 arXiv preprint,數據與結論可能隨版本更動。
+- **部分宣稱來自非原始來源**:如「TTT-E2E 在 2M context 快 35×」出現在第三方部落格,arXiv v2 正文只證實「128K 快 2.7×、延遲恆定」;此類超大倍率宣稱應視為未經原文證實。LaCT 的「>70% on H100」亦未在正文逐字證實,正文明載的是「up to 70% on NVIDIA A100s」。
+- **arXiv 編號的年月格式**:2604.xxxxx、2602.xxxxx、2603.xxxxx 對應 2026 年 4/2/3 月,2512.xxxxx 對應 2025 年 12 月——與本研究的 2026-06 當前日期一致,屬最新工作。
+- **SR-TTT 等小規模驗證**:SR-TTT 僅在 15.8M 參數、2048 context 驗證,能否放大到十億級未知;引用其結論時須註明規模限制。

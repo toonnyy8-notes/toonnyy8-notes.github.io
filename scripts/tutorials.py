@@ -25,6 +25,28 @@ for slug,title,ids in T:
   s=re.sub(r'</body>',BAR+'\n</body>',s,count=1,flags=re.I) if re.search(r'</body>',s,re.I) else s+BAR
   open(f'out/tutorials/{slug}.html','w').write(s)
   out.append({'file':f'{slug}.html','title':title,'papers':ids})
+ax={}
+for p in P:
+  m=re.search(r'(\d{4}\.\d{4,5})',p['url'])
+  if m: ax[m.group(1)]=p['id']
+NOTES=[
+ ('flow-matching-lm-2026','2026 連續 Flow / Flow Matching 語言模型研究近況',r'flow.*language|continuous.*(language|diffusion)|language.*flow'),
+ ('weight-sharing-lora','層間權重共享 × 層級 LoRA 鬆綁',r'loop|recursive transformer|weight shar|lora'),
+ ('latent-diffusion-rae','Latent Diffusion：Diffusability 指標與 RAE',r'latent|autoencoder|\brae\b|diffusab|tokeniz'),
+ ('blockwise-smc-separation','長序列一致性與 Zero-Shot Diffusion Source Separation + SMC',r'forcing|monte carlo|\bsmc\b|separation|autoregressive video|long video'),
+ ('causal-attention-diffusion','Causal Attention × Diffusion：連續序列生成',r'causal|forcing|autoregressive (video|diffusion)|streaming'),
+ ('ttt-sequence-modeling','Test-Time Training 作為序列建模架構',r'test[- ]time train|learn at test time|titans|\bttt\b|memoriz.*test'),
+]
+NT=open('note.template.html').read()
+for slug,title,rx in NOTES:
+  src=f'notes_raw/{slug}.md'
+  if not os.path.exists(src): continue
+  md=open(src).read()
+  ids=sorted({ax[i] for i in re.findall(r'(\d{4}\.\d{4,5})',md) if i in ax}|{p['id'] for p in P if re.search(rx,p['title'],re.I)})
+  rel=('<section class="related"><h2>資料庫中的相關論文</h2>'+''.join(f'<a href="../index.html#paper-{i}">{html.escape(byid[i]["title"])}</a>' for i in ids)+'</section>') if ids else ''
+  h1=re.search(r'^#\s+(.+)',md,re.M); pt=h1.group(1) if h1 else title
+  open(f'out/tutorials/{slug}.html','w').write(NT.replace('__TITLE__',html.escape(pt)).replace('__RELATED__',rel).replace('__MD__',md.replace('</script','<\\/script')))
+  out.append({'file':f'{slug}.html','title':title,'papers':ids,'kind':'note'})
 json.dump(out,open('tutorials.json','w'),ensure_ascii=False)
 cards=''.join(f'''<a class="card" href="{t['file']}"><h2>{html.escape(t['title'])}</h2><p>{'相關論文：'+'、'.join(html.escape(byid[i]['title']) for i in t['papers'][:3])+(f' 等 {len(t["papers"])} 篇' if len(t['papers'])>3 else '') if t['papers'] else '主題教學（未對應特定論文）'}</p><span>開啟 →</span></a>''' for t in out)
 open('out/tutorials/index.html','w').write(f'''<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>互動教學</title>
