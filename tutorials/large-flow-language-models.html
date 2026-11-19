@@ -1,0 +1,1351 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lafa：大型 flow 語言模型</title>
+<meta name="description" content="圖解 Large Flow Language Models（Lafa）：block 之間照 AR 順序、block 內 token 在詞嵌入空間沿 flow 一起生成；由預訓練 AR 模型調整，並以一步 flow 草稿加 AR 驗證的自我推測解碼達到 2.54 倍吞吐量。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+:is(details.check,details.more){max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+:is(details.check,details.more)>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+:is(details.check,details.more)>summary::-webkit-details-marker{display:none}
+:is(details.check,details.more)>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+:is(details.check,details.more)[open]>summary::before{transform:rotate(45deg)}
+:is(details.check,details.more) .qa{padding:0 20px 18px;font-size:15px}
+:is(details.check,details.more) .q{font-weight:600;margin:12px 0 4px}
+:is(details.check,details.more) .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+
+/* ---- Lafa page additions ---- */
+:root{--tau-lo:#8F8A7F;--tau-hi:#2B2925}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--tau-lo:#6E6A61;--tau-hi:#E3DED3}}
+:root[data-theme="dark"]{--tau-lo:#6E6A61;--tau-hi:#E3DED3}
+.plate{max-width:1080px}
+.eq-m .katex-display{overflow-x:auto}
+/* block strip */
+.bstrip{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px;margin:28px 0 8px;max-width:700px}
+.bs-cell{display:flex;flex-direction:column;align-items:center;gap:6px;min-width:56px}
+.bs-box{width:56px;height:40px;border-radius:8px;display:grid;place-items:center;font:500 14px/1 var(--f-mono)}
+.bs-c .bs-box{border:2px solid var(--ink);background:var(--surface);color:var(--ink)}
+.bs-x .bs-box{border:2px dashed var(--ink-3);background:color-mix(in oklab,var(--tau-hi) calc(var(--t)*100%),var(--tau-lo))}
+.bs-sep{align-self:stretch;width:0;border-left:1px solid var(--line);margin:0 6px}
+.bs-v{font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.bs-cap{font-size:13px;color:var(--ink-3);margin:0 0 8px;max-width:700px}
+/* toy figures */
+.c1g{display:grid;grid-template-columns:minmax(0,1fr);gap:20px}
+@media (min-width:900px){.c1g{grid-template-columns:minmax(0,1.25fr) minmax(0,1fr)}}
+.planes{display:grid;grid-template-columns:1fr 1fr;gap:12px;min-width:0}
+@media (max-width:599px){.planes{grid-template-columns:1fr}}
+.ctl-bar{display:flex;flex-wrap:wrap;gap:14px 24px;align-items:flex-end;margin:0 0 18px}
+.ctl-bar .rng{min-width:200px;flex:1}
+.ctl-grp{display:flex;flex-direction:column;gap:6px}
+.ctl-grp>.lbl{justify-content:flex-start}
+svg .frame{fill:none;stroke:var(--line);stroke-width:1}
+svg .faint-f{fill:var(--line)}
+svg .mut{fill:var(--ink-3)}
+svg .hollowb{fill:none;stroke:var(--ink-2);stroke-width:1.5}
+svg .solidb{fill:var(--ink-2)}
+svg .solida{fill:var(--accent)}
+svg .ln{fill:none;stroke-width:2.2;stroke-linecap:round}
+svg .thin{stroke:var(--ink-3);stroke-width:1.2;fill:none}
+svg .xm{stroke:var(--ink);stroke-width:2.2;stroke-linecap:round}
+.readout.tbl{padding:0;background:none}
+table.ro{font:400 13px/1.5 var(--f-mono)}
+table.ro th,table.ro td{padding:6px 10px}
+/* masks */
+table.mask{width:auto;border-collapse:separate;border-spacing:0;font:500 12px/1 var(--f-mono)}
+table.mask th,table.mask td{padding:0;border:0;text-align:center;vertical-align:middle}
+table.mask td{width:26px;min-width:26px;height:26px;color:var(--ink)}
+table.mask thead th{font-size:11px;color:var(--ink-3);padding:6px 0;font-weight:500;min-width:26px}
+table.mask thead th.corner{text-align:left;padding-right:8px;white-space:nowrap}
+table.mask tbody th{position:sticky;left:0;z-index:1;background:var(--surface);padding:0 6px 0 0}
+table.mask tbody th button{min-width:48px;min-height:26px;padding:0 6px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--ink-2);font:500 12px/1 var(--f-mono);cursor:pointer}
+table.mask tbody th button[aria-pressed=true]{border-color:var(--accent);background:var(--accent-soft);color:var(--ink)}
+table.mask tr.cached th button{background:var(--surface-2)}
+table.mask td.n{background:var(--surface-2)}
+table.mask .gl{border-left:2px solid var(--ink-3)}
+table.mask tr.gt>*{border-top:2px solid var(--ink-3)}
+table.mask td.sel{box-shadow:inset 0 0 0 2px var(--accent)}
+.mask-desc{font-size:14px;color:var(--ink-2);margin:10px 0 0;min-height:1.6em}
+/* C5 */
+.c5row{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:6px 0}
+.c5row .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);width:5.5em;flex:none}
+.c5c{min-width:30px;height:30px;padding:0 4px;border:1px dashed var(--ink-3);border-radius:6px;display:grid;place-items:center;font:500 13px/1 var(--f-mono);color:var(--ink-2)}
+.c5c.acc{border:2px solid var(--ink);color:var(--ink);background:var(--surface-2)}
+.c5c.fix{border:2px solid var(--accent);color:var(--accent)}
+.c5z{display:inline-flex;gap:2px;padding:3px;border:1px solid var(--line);border-radius:6px;align-items:center;font:500 11px/1 var(--f-mono);color:var(--ink-3)}
+.c5z i{display:block;width:6px;height:14px;background:var(--tau-lo);border-radius:2px}
+.c5z.pick{border:2px solid var(--accent);color:var(--ink)}
+.c5z.off{opacity:.35}
+.c5seq{display:flex;flex-wrap:wrap;gap:2px;margin:8px 0 0}
+.c5seq span{width:20px;height:22px;border-radius:3px;display:grid;place-items:center;font:500 9px/1 var(--f-mono);background:var(--surface-2);color:var(--ink-2)}
+.c5seq span.o{background:var(--line)}
+.c5seq span.s{box-shadow:inset 2px 0 0 var(--ink)}
+.c5g{display:grid;grid-template-columns:minmax(0,1fr);gap:20px}
+@media (min-width:900px){.c5g{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr)}}
+.sub{font:500 13px/1.4 var(--f-body);color:var(--ink-3);margin:0 0 6px}
+.f1g{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+@media (min-width:768px){.f1g{grid-template-columns:1fr 1fr}}
+.lg.ld::before{border-top:2px dashed var(--ink-2)}.lg.dt::before{border-top:3px dotted var(--ink-2)}
+details.more{margin-bottom:24px}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 9</span>
+  <span class="ttl">Lafa：block 內平行生成的連續 flow 語言模型</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 9</b> · 互動教學 · arXiv 2610.28559</div>
+  <h1><span class="lat">Lafa</span>：把預訓練語言模型改成 block 內平行生成的連續 <span class="lat">flow</span></h1>
+  <p class="dek">這篇論文讓 block 之間照 AR 順序、block 內的 token 從噪聲經連續的逐步變換（flow）一起生成，並用同一個模型的 AR 預測驗證一步草稿。</p>
+  <p class="byline">Arnav Chavan、Chanhyuk Lee、Udbhav Bamba、Jaehoon Yoo、Seunghoon Hong、Aditi Raghunathan、Jinwoo Kim（2026）〈Large Flow Language Models〉</p>
+  <div class="bstrip" id="bs-hero" data-prefix='["a","dog","waits"]' data-taus='[0.62,0.41,0.25]' data-label="prefix「a dog waits」三個乾淨 token，接著一個三格的 noisy block，三個位置的 tokenwise time 分別為 0.62、0.41、0.25"></div>
+  <p class="bs-cap">左：乾淨的 prefix（實線框，時間固定為 1）。右：一個 block 的三個位置（虛線框），灰階越深表示 τ 越接近 1，也就是越接近乾淨的詞嵌入；下方數字是各位置的 τ（示意值）。prefix 取自論文 Fig. 2。</p>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 生成方式</span><p>文字切成長度固定的 block：block 之間照 AR 順序生成，block 內的 token 從高斯噪聲出發，經過連續的逐步變換（解一個常微分方程）一起變成詞嵌入。</p></div>
+    <div class="fact"><span class="n">02 · 訓練方式</span><p>模型不從零訓練：把預訓練的 AR 模型（Qwen2.5 0.5B／7B、Qwen3 8B）改成同時做 AR 預測與 block 去噪，訓練資料少於 300 億 tokens。</p></div>
+    <div class="fact"><span class="n">03 · 最快的模式</span><p>最快的模式是 flow 一步寫草稿、同一個模型的 AR 預測逐字驗證。輸出與 greedy AR（每步取機率最大的 token）相同，7B 每秒產生的 token 數（吞吐量）是 AR 的 2.54 倍。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2610.28559">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-9">在關聯圖中查看</a>
+    <a class="btn" href="lafa-lineage-overview.html">研究筆記總覽</a>
+  </div>
+</section>
+
+<!-- S1 ============================================================ -->
+<section class="ch" id="blockar" data-toc="01" data-tt="Block-AR">
+  <div class="ch-num">01 · Block-AR 分解</div>
+  <h2>Block 之間自迴歸，block 內平行</h2>
+  <div class="prose">
+    <p>自迴歸（autoregressive，AR）語言模型給定前文，輸出下一個 token 的機率分布。greedy decoding 每一步取機率最大的 token，接到前文後再做下一次 forward，所以一次 forward 只產生一個 token。為了不重算前文，實作上把已處理位置的 key/value 存起來，稱為 KV cache；只要這些位置的表示不隨後續輸入改變，KV cache 就能一直重用。</p>
+    <p>Lafa 保留這個結構，只把平行放進固定長度的 block。記 prefix（已知文字）為 $c\in V^N$、續寫為 $y\in V^M$，block 大小為 $B$（假設 $B\mid M$）。論文把續寫的機率寫成 block 的連乘（Sec. 2.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$p(y\mid c)=\prod_{r=0}^{M/B-1}p\big(y_{rB+1:(r+1)B}\mid c,\,y_{\le rB}\big)$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="prose">
+    <p>這是機率的連鎖律，沒有任何近似。block 之間仍照 AR 順序：第 $r$ 個 block 以 prefix 與前面所有 block 為條件。平行只發生在 block 內，$B$ 個 token 一起生成。因為 block 之間維持 causal，前面的 token 與它們的表示不會因為後面的 block 改變，所以 prefix 的 KV cache 可以沿用。同樣的分解也用在 block-autoregressive 模型 [22] 與 block discrete diffusion [23]。</p>
+    <p>剩下的問題是 block 內的 $B$ 個 token 怎麼一起生成。Lafa 的做法是在詞嵌入空間中從高斯噪聲出發，解一個常微分方程（第 02 節）。</p>
+  </div>
+  <div class="bstrip" id="bs-s1" data-prefix='["c₁","c₂","c₃","y₁","y₂","y₃"]' data-taus='[0.5,0.5,0.5]' data-label="prefix 與已生成的第一個 block 共六個乾淨 token，接著第二個 block 的三個位置，三者共用時間 0.5"></div>
+  <p class="bs-cap">第一個 block（y₁–y₃）生成後併入 prefix，第二個 block 的三個位置再一起生成。這裡三個位置共用同一個時間 0.5（同步）。</p>
+  <details class="more">
+    <summary>符號表</summary>
+    <div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+      <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td>$V$、$\lvert V\rvert$</td><td>詞彙表與其大小</td></tr>
+      <tr><td>$c\in V^N$</td><td>prefix（已知文字，長度 $N$）</td></tr>
+      <tr><td>$y\in V^M$、$B$</td><td>續寫（長度 $M$）與 block 大小，假設 $B\mid M$</td></tr>
+      <tr><td>$\E\in\mathbb R^{\lvert V\rvert\times d}$、$\E_v$</td><td>詞嵌入矩陣與 token $v$ 的嵌入。論文把嵌入矩陣與期望值都寫成 $E$；本頁用粗體 $\E$ 表示嵌入、$\Ex[\cdot]$ 表示期望值</td></tr>
+      <tr><td>$x_1\in\mathbb R^{B\times d}$</td><td>一個 block 的乾淨嵌入 $(\E_{y_1},\dots,\E_{y_B})^\top$</td></tr>
+      <tr><td>$x_0\sim\mathcal N(0,\sigma^2I)$</td><td>噪聲；$\sigma>0$ 為 noise scale</td></tr>
+      <tr><td>$t\in[0,1]$</td><td>base time；$t=0$ 為噪聲，$t=1$ 為資料</td></tr>
+      <tr><td>$\tau^i(t)$</td><td>位置 $i$ 的 tokenwise time；上標 $i$ 是 block 內位置，不是次方</td></tr>
+      <tr><td>$I_t$、$b_t$</td><td>內插（interpolant）與速度場（velocity field）</td></tr>
+      <tr><td>$D_t(x;c)^i$、$\hat D_t$</td><td>理想 block denoiser（位置 $i$ 的後驗分布）與學到的 denoiser</td></tr>
+      <tr><td>$\Delta^{\lvert V\rvert-1}$</td><td>長度 $\lvert V\rvert$ 的機率向量集合</td></tr>
+      <tr><td>$f$、$f_t(x;c)$、$f(c)_i$</td><td>預訓練 AR transformer、加上時間條件的模型、prefix 位置 $i$ 的 AR 預測（預測 $c_{i+1}$；$i=N$ 時預測 $y_1$）</td></tr>
+      <tr><td>$\ell^i(\tau)$、$F_i$</td><td>位置 $i$ 在 tokenwise time $\tau$ 的期望 denoising CE、其正規化累積分布</td></tr>
+      <tr><td>$M_{\text{bin}}$、$\bar L_{i,m}$</td><td>Alg. 2 的時間格數（論文寫 $M=200$，與續寫長度同名，本頁改寫）；本輪四次無梯度 forward 中落在位置 $i$、第 $m$ 格的 denoising CE 平均（Eq. 23）</td></tr>
+      <tr><td>$\mathrm{sg}[\cdot]$</td><td>stop-gradient：前向照算、反向不傳梯度（Eq. 19、24）</td></tr>
+      <tr><td>$K$、$t_k=k/K$、$p_k$</td><td>Euler 步數、base time 網格、第 $k$ 步的 denoiser 輸出</td></tr>
+      <tr><td>$X_{s,t}$、$\delta_{s,t}$</td><td>flow map（由時間 $s$ 直接送到 $t$）與 two-time denoiser</td></tr>
+      <tr><td>$\gamma^i$、$w^i(r)$、$Z^i_{s,t}$</td><td>semigroup 權重、Eq. 17 的權重函數與其積分</td></tr>
+      <tr><td>$g$</td><td>prefix guidance scale</td></tr>
+      <tr><td>$a$、TPF、TPS</td><td>一次 fused forward 接受的 token 數、tokens per forward、tokens per second</td></tr>
+      </tbody></table></div></div>
+  </details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 1 怎麼分解 $p(y\mid c)$？平行發生在哪裡？為什麼 prefix 的 KV cache 可以沿用？</p>
+    <p class="a">$p(y\mid c)=\prod_r p(y_{rB+1:(r+1)B}\mid c,y_{\le rB})$，是連鎖律、沒有近似；平行只在 block 內；block 之間維持 causal，前面的表示不隨後面的 block 改變。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="lafa-parallel-decoding-background.html">AR 生成的延遲與平行解碼方法</a></p>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="flow" data-toc="02" data-tt="嵌入空間的 flow">
+  <div class="ch-num">02 · 嵌入空間的 flow</div>
+  <h2>每個 block 的嵌入從高斯噪聲經 ODE 積分到資料的嵌入</h2>
+  <div class="prose">
+    <p>Lafa 不直接在離散的 token 上生成，而是在詞嵌入空間生成。一個 block 的乾淨資料是 $B$ 個 token 的嵌入疊成的矩陣 $x_1:=(\E_{y_1},\dots,\E_{y_B})^\top\in\mathbb R^{B\times d}$。直接前作 Flow Map Language Models [13] 用長度 $\lvert V\rvert$ 的 one-hot 向量；改用維度 $d$ 的嵌入是設計選擇，論文寫這是為了讓訓練更可擴展（"making training more scalable"）。</p>
+    <p>Flow matching [24, 25] 的做法：從噪聲 $x_0\sim\mathcal N(0,\sigma^2I)$ 到資料 $x_1$ 定義一條內插 $I_t$。標準形式是 $I_t=(1-t)x_0+tx_1$，$t=0$ 為噪聲、$t=1$ 為資料，所有 token 共用同一個 $t$。速度場定義為內插速度的條件期望 $b_t(x)=\Ex[\dot I_t\mid I_t=x]$。從 $x_0$ 沿下面的常微分方程（ODE）積分到 $t=1$，終點的分布就是資料分布：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\dot x_t=b_t(x_t;c),\quad x_0\sim p_0,\quad x_t\sim p_t(\cdot\mid c)$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="prose">
+    <p>Lafa 讓 block 內每個位置有自己的時間。逐位置時間（tokenwise time）是函數 $\tau:[0,1]\to[0,1]^B$，位置 $i$ 在 base time $t$ 的進度是 $\tau^i(t)$。內插改寫成：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$I_t^i:=(1-\tau^i(t))\,x_0^i+\tau^i(t)\,x_1^i,\quad i\in[B]$$</div><span class="eq-n">Eq. 2</span></div>
+  <div class="prose">
+    <p>$\tau$ 要滿足的條件：每個分量 $\tau^i$ 可微且遞增，$\tau(0)=0$、$\tau(1)=1$（Sec. 2.1）。App. A.2 的證明另要求 $\tau^i\in C^1$，且 $t&lt;1$ 時 $\dot\tau^i>0$，也就是嚴格遞增。若 $i&lt;j$ 時 $\tau^i(t)>\tau^j(t)$，較前的位置比較接近資料，會先被還原。速度場 $b_t(\cdot;c)$ 的存在引用 [27]，論文不另外證明。</p>
+    <p>論文的動機（Sec. 2.1）：「To introduce a left-to-right bias within each block to match the inherent directionality of text [19], we use tokenwise time [26–30], allowing earlier positions to progress faster.」先例 [26–30] 包含 Learning When to Denoise、Token Time Continuous Diffusion、AR-Diffusion；相近的想法還有 <a href="diffusion-forcing.html">Diffusion Forcing</a>。要注意：動機是由左到右，但 $\tau$ 的實際形狀是訓練中由 loss 學出來的（第 05 節），論文沒有把 $\tau^i>\tau^j$ 設成約束。</p>
+  </div>
+  <div class="plate" id="s2fig">
+    <div class="plate-h"><span class="id">圖</span><h3>同步時間與 tokenwise time</h3></div>
+    <div class="fig" style="max-width:520px"><svg id="s2-svg" role="img" aria-label="橫軸 base time t，縱軸 τ。虛線為同步 τ = t；位置 1 的曲線在最上方，位置 2 在中間，兩者都從 (0,0) 到 (1,1)"></svg></div>
+    <p class="plate-f">示意值：τ¹(t) = 1 − (1 − t)^2.2、τ²(t) = 1 − (1 − t)^1.4，不是論文學到的 τ。兩條曲線都滿足 τ(0) = 0、τ(1) = 1、嚴格遞增。</p>
+  </div>
+  <div class="bstrip" id="bs-s2" data-prefix='["c₁","c₂","c₃"]' data-taus='[0.7,0.45,0.25]' data-label="prefix 三個乾淨 token，接著三個位置的 tokenwise time 分別為 0.70、0.45、0.25，較前的位置較接近資料"></div>
+  <p class="bs-cap">非同步：同一個 base time 下，較前的位置 τ 較大（灰階較深），比較接近乾淨的嵌入。</p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 2 的 $I_t^i$ 是什麼？$\tau$ 要滿足哪些條件？$\tau^i(t)>\tau^j(t)$（$i&lt;j$）代表什麼？</p>
+    <p class="a">$I_t^i=(1-\tau^i(t))x_0^i+\tau^i(t)x_1^i$；每個分量可微、遞增（App. A.2 另要求 $C^1$、$t&lt;1$ 時 $\dot\tau^i>0$），$\tau(0)=0$、$\tau(1)=1$；較前的位置先被還原；論文的動機是由左到右，但 $\tau$ 是學出來的。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="lafa-embedding-flow-denoiser.html">以詞嵌入為空間的 flow 與 clean-token 去噪器</a>、<a href="flow-matching-velocity-target.html">Flow matching 的速度目標</a>、<a href="lafa-asynchronous-tokenwise-time.html">block 內各位置的非同步時間</a></p>
+</section>
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="denoiser" data-toc="03" data-tt="Denoiser 與速度">
+  <div class="ch-num">03 · Denoiser 與速度</div>
+  <h2>預測 token 機率就能得到速度</h2>
+  <div class="prose">
+    <p>$\hat D$ 是 transformer 的輸出，第 04 節說明怎麼由 AR 模型改成；本節先把它當成給定的函式。C1 用玩具的精確 $D$（由高斯似然算出的後驗），不是神經網路。</p>
+    <p>理想的 block denoiser 是：給定 prefix 與整個 block 的目前狀態 $x$，位置 $i$ 的 token 的後驗分布，是長度 $\lvert V\rvert$ 的機率向量：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$D_t(x;c)^i:=p(y_i=\cdot\mid c,\,I_t=x)\in\Delta^{\lvert V\rvert-1}$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="prose">
+    <p>論文證明速度可以完全由它換算（Prop. A.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$b_t(x;c)^i=\frac{\dot\tau^i(t)}{1-\tau^i(t)}\big(D_t(x;c)^i\E-x^i\big),\quad t\in[0,1)$$</div><span class="eq-n">Eq. 5</span></div>
+  <div class="prose">
+    <p>推導的關鍵有兩步。第一，由 Eq. 2 解出噪聲 $x_0^i=(I_t^i-\tau^ix_1^i)/(1-\tau^i)$，得到 $x_1^i-x_0^i=(x_1^i-I_t^i)/(1-\tau^i)$，所以內插的速度 $\dot I_t^i=\dot\tau^i(x_1^i-x_0^i)$ 只依賴乾淨嵌入與目前狀態。第二，$x_1^i=\E_{y_i}$，所以取條件期望時 $\Ex[x_1^i\mid c,I_t=x]=\sum_v p(y_i=v\mid c,I_t=x)\E_v=D_t(x;c)^i\E$。機率向量乘上嵌入矩陣就是期望嵌入：例如 $D^i$ 在兩個 token 上各有 0.5 時，$D^i\E=\tfrac12(\E_{v_1}+\E_{v_2})$。分母 $1-\tau^i$ 在 $t\to1$ 時趨近 0，所以命題限定 $t\in[0,1)$。</p>
+  </div>
+  <details class="more"><summary>完整推導（Prop. A.1）</summary><div class="qa">
+    <ol>
+      <li>對 Eq. 2 微分：$\dot I_t^i=\dot\tau^i(t)(x_1^i-x_0^i)$（Eq. 11）。</li>
+      <li>由 Eq. 2 解出 $x_0^i=(I_t^i-\tau^ix_1^i)/(1-\tau^i)$，所以 $x_1^i-x_0^i=(x_1^i-I_t^i)/(1-\tau^i)$。</li>
+      <li>取條件期望 $b_t(x;c)=\Ex[\dot I_t\mid c,I_t=x]$：$b^i=\frac{\dot\tau^i}{1-\tau^i}\big(\Ex[x_1^i\mid c,I_t=x]-x^i\big)$。</li>
+      <li>$x_1^i=\E_{y_i}$，所以 $\Ex[x_1^i\mid c,I_t=x]=\sum_v p(y_i=v\mid c,I_t=x)\E_v=D_t(x;c)^i\E$（Eq. 12），代回即 Eq. 5。</li>
+    </ol>
+  </div></details>
+  <div class="prose">
+    <p>這個式子有三個重點。條件是整個 block 的 $x$，所以位置 $i$ 的速度透過 $D$ 依賴其他位置；但只需要每個位置的邊際後驗，不需要聯合分布；係數只用該位置自己的 $\tau^i$。</p>
+    <p>生成時在 base time 網格 $t_k=k/K$ 上走 $K$ 步，$p_k:=\hat D_{t_k}(\hat x_{t_k};c)$ 是第 $k$ 步的 denoiser 輸出：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{gathered}\hat x^i_{t_{k+1}}=\hat x^i_{t_k}+\frac{\tau^i(t_{k+1})-\tau^i(t_k)}{1-\tau^i(t_k)}\big(p^i_k\E-\hat x^i_{t_k}\big)\\ \hat y_i=\arg\max(p^i_{K-1})\end{gathered}$$</div><span class="eq-n">Eq. 8</span></div>
+  <div class="prose">
+    <p>生成的 token 是最後一次 denoiser 預測的 argmax，不是把 $\hat x_1$ 找最近的嵌入。〔本頁推導〕Eq. 8 是 tokenwise time 上的精確步：假設 denoiser 輸出在這一步內不變，ODE 的解正好是 Eq. 8。它不是 base time 的 Euler 步 $x+\Delta t\,b_t$。最後一步 $\tau=1$，$\hat x=p\E$，不會碰到 $1/(1-\tau)$ 的發散。</p>
+  </div>
+  <details class="more"><summary>推導：Eq. 8 是常數 denoiser 下的精確解〔本頁推導〕</summary><div class="qa">
+    <p>把 Eq. 8 改寫為 $\hat x_{k+1}=\frac{1-\tau_{k+1}}{1-\tau_k}\hat x_k+\frac{\tau_{k+1}-\tau_k}{1-\tau_k}p_k\E$。若在 $[t_k,t_{k+1}]$ 內 $D\equiv p_k$，Eq. 5 的 ODE 對 $\tau$ 寫成 $\frac{dx}{d\tau}=\frac{p_k\E-x}{1-\tau}$，解為 $x(\tau)=p_k\E+(x_k-p_k\E)\frac{1-\tau}{1-\tau_k}$，代入 $\tau_{k+1}$ 即上式。它與 Eq. 7 同形；論文在 Eq. 9 前也說 flow map 是把 $\hat D_{t_k}$ 換成 $\hat\delta_{t_k,t_{k+1}}$。</p>
+  </div></details>
+  <div class="prose">
+    <p>$K=1$ 時，因為 $\tau^i(0)=0$、$\tau^i(1)=1$，Eq. 8 退化成一次 denoiser 計算（Eq. 10）：$p^i=\hat D_0(\hat x_0;c)^i$，$\hat x_1^i=p^i\E$，$\hat y_i=\arg\max p^i$。</p>
+    <p>〔本頁推導〕$t=0$ 時 $I_0=x_0$ 是純噪聲，與 $y$ 獨立，所以理想的 $D_0(x_0;c)^i=p(y_i\mid c)$：各位置獨立的邊際，噪聲不帶任何資訊。各位置分別取 argmax，可能組出聯合機率為 0 的序列。論文的說法是「One-step drafts can be inconsistent across positions」（Sec. 2.3）。下面的玩具中，prefix 固定時 $p(\text{hot dog})=0.4$、$p(\text{ice cream})=0.3$、$p(\text{sour cream})=0.3$。位置 1 的邊際 argmax 是 hot（0.4），位置 2 的邊際 argmax 是 cream（0.3 + 0.3 = 0.6），所以一步得到機率為 0 的「hot cream」。步數增加後，後面的步驟看得到已部分成形的另一個位置，樣本落在有支撐的組合，頻率也接近先驗。</p>
+  </div>
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>非同步 flow 玩具：一步的邊際與多步的聯合</h3></div>
+    <p class="plate-lead">兩個位置、五個 token、二維嵌入。500 個粒子從噪聲出發，各跑一次 Eq. 8。改變步數 K，看生成的組合是否落在先驗有機率的三個組合上。</p>
+    <div class="ctl-bar">
+      <div class="ctl-grp"><span class="lbl">步數 K</span><div class="seg" id="c1-K" role="group" aria-label="步數 K"></div></div>
+      <div class="rng"><label class="lbl" for="c1-lam">位置 1 加速 λ<output id="c1-lamo">0.50</output></label><input id="c1-lam" type="range" min="0" max="1" step="0.25" value="0.5"></div>
+      <div class="ctl-grp"><span class="lbl">噪聲尺度 σ</span><div class="seg" id="c1-sig" role="group" aria-label="噪聲尺度 σ"></div></div>
+      <button class="small-btn" type="button" id="c1-re">重新抽樣</button>
+    </div>
+    <div class="c1g">
+      <div class="planes">
+        <div class="fig"><svg id="c1-p1" role="img" aria-label=""></svg></div>
+        <div class="fig"><svg id="c1-p2" role="img" aria-label=""></svg></div>
+      </div>
+      <div class="ctl">
+        <div class="fig"><svg id="c1-bar" role="img" aria-label="六個組合的生成頻率與先驗"></svg></div>
+        <div class="sr"><table id="c1-sr"></table></div>
+        <p class="readout" id="c1-ro"></p>
+      </div>
+    </div>
+    <div class="legend"><span class="lg par">位置 1 的軌跡（前 12 個粒子）</span><span class="lg perp">位置 2 的軌跡</span><span>● 有支撐的組合　✕ 無支撐的組合</span><span>長條：實心＝生成頻率，空心框＝先驗</span></div>
+    <p class="plate-f">設定（示意值，不是論文數字）：詞彙 hot、ice、sour、dog、cream 等距放在單位圓上（norm 皆 1）；τ¹(t) = 1 − (1 − t)^(1+2λ)、τ²(t) = t；denoiser 為由 Eq. 2、4 與高斯似然算出的精確後驗〔本頁推導〕；粒子由 seed 固定的 mulberry32 產生。500 個粒子的抽樣誤差使 TV 有約 0.025 量級的隨機起伏〔本頁推導：三類多項分布期望絕對偏差之和的一半〕，所以 K ≥ 16 之後 TV 的差異不代表方法差異。這是 2 個位置、5 個 token 的玩具，不代表 Lafa 的實際步數需求：論文的 B = 4 flow decoding 在 32–64 步時，0.5B 接近、7B 超過 AR SFT（Table 5）。σ 只是玩具尺度，與論文的 σ 不可直接比較。</p>
+    <p class="sr" aria-live="polite" id="c1-live"></p>
+  </div>
+  <div class="callout">
+    <p class="ct">C1 的 λ 不是 Lafa 學到的 τ</p>
+    <p>玩具的 λ 族是手選的，不是 Lafa 由 loss 學出的 τ；它在 2 位置、少步時的分布誤差，既不支持也不反駁 Table 3 的同步 36.2 vs 非同步 38.0（不同的量、不同的規模）。在玩具中，少步時 λ 越大，有支撐比例越高，但與先驗的總變差距離也越大（K = 2：TV 0.102 / 0.340 / 0.636，λ = 0 / 0.5 / 1）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 5 的速度怎麼由 denoiser 得到？推導的關鍵兩步是什麼？</p>
+    <p class="a">$b^i=\frac{\dot\tau^i}{1-\tau^i}(D^i\E-x^i)$，$t&lt;1$；由 Eq. 2 得 $x_1^i-x_0^i=(x_1^i-I_t^i)/(1-\tau^i)$；$x_1^i=\E_{y_i}$ 使 $\Ex[x_1^i\mid c,I_t=x]=D_t(x;c)^i\E$（Prop. A.1）。</p>
+    <p class="q">Eq. 8 在 $K=1$ 時變成什麼？理想的 $D_0$ 等於什麼？C1 玩具一步得到什麼？</p>
+    <p class="a">$p^i=\hat D_0(\hat x_0;c)^i$，$\hat y_i=\arg\max p^i$（Eq. 10）；$I_0=x_0$ 與 $y$ 獨立，$D_0^i=p(y_i\mid c)$，各位置獨立的邊際；玩具得到機率為 0 的「hot cream」（hot 0.4、cream 0.6）；步數增加後落在有支撐的組合。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="cdlm-representation-space.html">連續擴散語言模型的表示空間與 rounding／decoder 問題</a></p>
+</section>
+
+<!-- S4 ============================================================ -->
+<section class="ch" id="adapt" data-toc="04" data-tt="AR 改成 denoiser">
+  <div class="ch-num">04 · 從 AR 模型調整</div>
+  <h2>預訓練 AR 模型改成 block denoiser</h2>
+  <div class="prose">
+    <p>作者不從零訓練，而是把預訓練 AR transformer $f$（Qwen2.5 0.5B／7B Instruct、Qwen3 8B Base）改成 block denoiser。輸入是嵌入後的 prefix $c$ 接上 noisy block $x$。Sec. 2.2 有四個改動：</p>
+    <ol>
+      <li><b>Tokenwise time conditioning。</b>每個位置以 adaLN [31]（依時間縮放與平移每層的特徵）接收自己的時間：prefix 恆為時間 1（無噪聲），block 位置 $i$ 為 $\tau^i(t)$。adaLN 初始化為恆等，所以剛加入時間條件時，模型的計算與預訓練模型相同。加上時間條件的模型記為 $f_t(x;c)$。</li>
+      <li><b>Block-bidirectional attention（Fig. 3）。</b>block 內雙向；block 位置可看整個 prefix；prefix 維持 causal，且看不到 noisy block [32, 33]。雙向優於 causal（Table 3：38.0 vs 32.7）。</li>
+      <li><b>共享且受約束的嵌入。</b>見下一段。</li>
+      <li><b>平行訓練（Fig. 4、Alg. 1）。</b>見 C2 之後的段落。</li>
+    </ol>
+    <p>前兩點合起來：prefix 以 adaLN 固定在時間 1、attention causal 且不看 noisy block，所以 prefix 的 K/V（key 與 value）與 block 狀態 $(x,t)$ 無關，可以跨 denoising 步與後續 block 重用。prefix 的輸出也保留 AR 角色：$f_t(x;c)_i$ 預測 $c_{i+1}$（$i&lt;N$），$i=N$ 時預測 $y_1$，記為 $f(c)_i$，也就是 AR 預測 $f(c)$。</p>
+    <p>嵌入 $\E$ 由預訓練模型初始化，prefix 與 flow 共用，可與 denoiser 一起訓練，但每個 $\E_v$ 的 L2 norm 固定為預訓練值，只學方向。理由：不受約束時嵌入 norm 會相對固定的 $\sigma$ 膨脹，降低有效 corruption，使 denoising 變得太容易 [12, 13]。Table 3：norm 固定 38.0、不受約束 36.9、完全凍結 34.4。Alg. 1 在每次更新後把每個 $\E_v$ 投影回預訓練的 norm。</p>
+  </div>
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>注意力遮罩：誰看得到誰</h3></div>
+    <p class="plate-lead">列是 query、欄是 key；● 表示允許，灰底表示阻擋。點選或用方向鍵選一列，看那個位置能看到哪些 token。</p>
+    <div class="ctl-bar">
+      <div class="ctl-grp"><span class="lbl">模式</span><div class="seg" id="c2-mode" role="group" aria-label="模式"><button type="button" data-v="infer" aria-pressed="true">推論（Fig. 3）</button><button type="button" data-v="train" aria-pressed="false">平行訓練（Fig. 4b）</button></div></div>
+      <div class="ctl-grp"><span class="lbl" id="c2-Nl">prefix 長度 N</span><div class="seg" id="c2-N" role="group" aria-labelledby="c2-Nl"></div></div>
+      <div class="ctl-grp"><span class="lbl">block 大小 B</span><div class="seg" id="c2-B" role="group" aria-label="block 大小 B"></div></div>
+    </div>
+    <p class="note" id="c2-Nnote"></p>
+    <div class="tscroll" id="c2-box"></div>
+    <p class="mask-desc" id="c2-desc"></p>
+    <p class="readout" id="c2-ro"></p>
+    <p class="plate-f">規則取自 Fig. 3（推論：prefix + 一個 noisy block）與 Fig. 4b（平行訓練：乾淨序列 + 切成 block 的 noisy 複本，R = 2 個 block；Fig. 4 中序列沒有 prompt）。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <div class="prose">
+    <p>平行訓練（Fig. 4、Alg. 1、App. B.1）讓一次 forward 同時產生乾淨序列的 AR 預測與每個 block 的 denoising 預測。每條乾淨序列配一份切成 noisy block 的複本：乾淨位置 causal；第 $r$ 個 noisy block 只看它之前的乾淨 token 與自己（block 內雙向），看不到後面的乾淨 token 或其他 noisy block。每個 block 各自抽 $t_r\sim U[0,1]$。</p>
+    <h3>訓練目標有三項</h3>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}\mathcal L(\hat D):=\Ex_{c,y,t,x_0}\Big[&amp;\textstyle\sum_{i=1}^{N}-\log f(c)^i_{c_{i+1}}\qquad\text{(AR CE)}\\&amp;+\textstyle\sum_{i=1}^{B}-\log\hat D_t(I_t;c)^i_{y_i}\qquad\text{(denoising CE)}\\&amp;+\textstyle\sum_{i=1}^{B}\big\lVert\hat D_t(I_t;c)^i\E-\E_{y_i}\big\rVert^2\Big]\qquad\text{(嵌入平方誤差)}\end{aligned}$$</div><span class="eq-n">Eq. 6</span></div>
+  <div class="prose">
+    <p>其中 $\hat D_t(x;c)^i:=f_t(x;c)_{N+i}$、$c_{N+1}:=y_1$、$t\sim U[0,1]$，$I_t$ 依 Eq. 2。三項權重都是 1，共用 transformer 參數。AR CE 監督 prefix 的下一 token 預測；denoising CE 監督 Eq. 4 的機率；嵌入平方誤差監督決定速度的期望嵌入（Eq. 5）。這是經驗設計：Table 3（0.5B、$B=4$、32 步、IFEval／GSM8K／HumanEval 三項平均）中只用 CE 33.6、只用 MSE 29.7、CE &amp; MSE 35.8，再加 AR 38.0。作者寫 AR 監督「unexpectedly」進一步改善 flow。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">prefix 的時間與 attention 怎麼設定？為什麼？嵌入怎麼訓練？為什麼？</p>
+    <p class="a">prefix 以 adaLN 固定為時間 1、attention causal 且不看 noisy block，所以 prefix 的 K/V 與 $(x,t)$ 無關，可跨步驟與 block 重用，prefix 輸出仍是 AR 預測 $f(c)$；adaLN 恆等初始化；嵌入與 prefix 共用、可訓練但固定每個 $\E_v$ 的 L2 norm、只學方向，避免 norm 膨脹降低固定 $\sigma$ 的有效 corruption（Table 3：38.0 vs 36.9、34.4）。</p>
+    <p class="q">Eq. 6 的三項各監督什麼？消融結果？</p>
+    <p class="a">AR CE 監督 prefix 的下一 token；denoising CE 監督 Eq. 4 的機率；嵌入平方誤差監督決定速度的期望嵌入（Eq. 5）。Table 3：CE 33.6、MSE 29.7、CE &amp; MSE 35.8、+AR 38.0。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="lafa-ar-to-block-adaptation.html">從預訓練 AR 模型調整為 block 模型</a></p>
+</section>
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="time" data-toc="05" data-tt="學出 tokenwise time">
+  <div class="ch-num">05 · 學出 tokenwise time</div>
+  <h2>Tokenwise time 是 loss 的反累積分布</h2>
+  <div class="prose">
+    <p>tokenwise time 的形狀由 loss 決定（Sec. 2.2、App. B.1），靈感來自 CDCD [12] 的 loss-aware time warping，差別是每個位置分開做。記 $\ell^i(\tau)>0$ 為位置 $i$ 在 tokenwise time $\tau$ 的期望 denoising CE：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\tau^i(t):=F_i^{-1}(t),\qquad F_i(\tau):=\frac{\int_0^\tau\ell^i(r)\,dr}{\int_0^1\ell^i(r)\,dr}$$</div><span class="eq-n">Eq. 22</span></div>
+  <div class="prose">
+    <p>$\tau^i=F_i^{-1}$，$F_i$ 是 $\ell^i$ 的正規化累積分布。論文寫「$\dot\tau^i\propto1/\ell^i(\tau^i)$ is small where the loss is high」：loss 高處 $\tau$ 的增加率小，所以訓練時均勻取樣的 $t$ 與推論時均勻的 $t$ 網格，都集中在最難的噪聲程度。〔本頁推導〕對 $F_i(\tau^i(t))=t$ 微分得 $\dot\tau^i(t)=\big(\int_0^1\ell^i\big)/\ell^i(\tau^i(t))$；等價地說，$t\sim U[0,1]$ 時 $\tau^i(t)$ 的密度正比於 $\ell^i$。$\ell^i>0$ 保證 $F_i$ 嚴格遞增、$\tau^i(0)=0$、$\tau^i(1)=1$。</p>
+    <p>$\ell^i$ 的估計方式（Alg. 2）：矩陣 $L\in\mathbb R^{B\times M_{\text{bin}}}$，$M_{\text{bin}}=200$ 個等寬格，均勻初始化；每 $S=100$ 個訓練步做四次無梯度 forward，每個 noisy block 各自獨立抽均勻時間，再以 EMA 更新：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$L_{i,m}\leftarrow\beta L_{i,m}+(1-\beta)\bar L_{i,m},\qquad\beta=0.99$$</div><span class="eq-n">Eq. 23</span></div>
+  <div class="prose">
+    <p>$\bar L_{i,m}$ 是這一輪落在位置 $i$、第 $m$ 格的 denoising CE 平均；沒被訪問的格保留原值。$F_i$ 取正規化列 $L_{i,:}$ 的分段線性 CDF。論文說明各 block 獨立抽時間的理由：「This independent uniform estimation prevents the learned sampling distribution from starving low-probability regions」（App. B.1）。另外，Alg. 2 的虛擬碼用同步內插 $(1-t)x_0+tx_1$ 估計 $\ell^i$，論文沒有說明為何不用訓練時的非同步內插。</p>
+    <p>結果：學到的時間「generally satisfy $\tau^i(t)>\tau^j(t)$ for $i&lt;j$」（Fig. 5，Lafa 7B，16 個位置）。由左到右的順序是學出來的，不是人工設定；論文沒有給出機制解釋，也沒有 Fig. 5 的數值。消融中同步時間 36.2、非同步 38.0（Table 3）。</p>
+  </div>
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>Tokenwise time = loss 的反累積分布</h3></div>
+    <p class="plate-lead">每個位置給一條玩具 loss 曲線，用 Alg. 2 的 200 格分段線性 CDF 算出 τ。q 越大，loss 越集中在噪聲多（τ 小）的一側。</p>
+    <div class="ctl-bar">
+      <div class="rng"><label class="lbl" for="c3-q1">位置 1 的 q₁<output id="c3-q1o">0.5</output></label><input id="c3-q1" type="range" min="0.2" max="4" step="0.1" value="0.5"></div>
+      <div class="rng"><label class="lbl" for="c3-dq">逐位置增量 Δq<output id="c3-dqo">0.5</output></label><input id="c3-dq" type="range" min="-1" max="1" step="0.1" value="0.5"></div>
+      <div class="ctl-grp"><span class="lbl">網格步數 K</span><div class="seg" id="c3-K" role="group" aria-label="網格步數 K"></div></div>
+    </div>
+    <div class="pg two">
+      <div class="fig"><svg id="c3-ell" role="img" aria-label="四個位置的 loss 密度曲線"></svg></div>
+      <div class="fig"><svg id="c3-tau" role="img" aria-label="四個位置的 τ(t) 曲線與同步參考線"></svg></div>
+    </div>
+    <div class="fig" style="margin-top:12px"><svg id="c3-grid" role="img" aria-label="均勻 t 網格映到各位置 τ 軸上的刻度"></svg></div>
+    <div class="tscroll" style="margin-top:16px"><table class="ro" id="c3-tab"></table></div>
+    <p class="readout" id="c3-ro"></p>
+    <p class="plate-f">玩具 loss 族（示意值）：ℓⁱ(τ) = 0.05 + (1 − τ)^qᵢ，qᵢ = q₁ + (i − 1)Δq，夾在 [0.1, 7]。真實的 ℓⁱ 由模型估計，論文沒有給數值；這個族只用來示範 Eq. 22 的機制。左圖每條曲線除以自己的積分（密度）。dτ/dt 由〔本頁推導〕(∫ℓ)/ℓ(τ(t)) 計算。論文中由左到右的順序是訓練中學到的，不是人工設定（Fig. 5），論文沒有給出原因。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 22 怎麼定義 $\tau^i$？$\dot\tau^i$ 與 loss 的關係？如何估計 $\ell^i$？</p>
+    <p class="a">$\tau^i=F_i^{-1}$，$F_i$ 為 $\ell^i$ 的正規化累積；$\dot\tau^i\propto1/\ell^i(\tau^i)$，loss 高處 $\tau$ 的增加率小，均勻的 $t$ 集中在難的噪聲程度；$M_{\text{bin}}=200$ 格、EMA $\beta=0.99$、每 $S=100$ 步四次無梯度 forward、分段線性 CDF（Eq. 23、Alg. 2）；由左到右是學出來的；同步 36.2 vs 非同步 38.0。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="cdlm-noise-schedule.html">連續擴散語言模型的噪聲／時間排程</a></p>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="assist" data-toc="06" data-tt="推論輔助">
+  <div class="ch-num">06 · 推論輔助</div>
+  <h2>Self-conditioning 與 prefix guidance</h2>
+  <div class="prose">
+    <p><b>Self-conditioning</b> [37]：訓練時以機率 $p_{sc}=0.5$ 先做一次無梯度預測，再把期望嵌入回饋到第二次 forward，loss 算在第二次（Eq. 24，依 [15]）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\tilde I_t=I_t+I_tW_1^\top+\bar x_1W_2^\top,\qquad \bar x_1=\mathrm{sg}\big(D_t(I_t;c)\E\big)$$</div><span class="eq-n">Eq. 24</span></div>
+  <div class="prose">
+    <p>$W_1,W_2\in\mathbb R^{d\times d}$ 初始化為 0，$\mathrm{sg}$ 是 stop-gradient。推論時每個 Euler 步沿用前一步的預測：$\tilde x_{t_k}=\hat x_{t_k}+\hat x_{t_k}W_1^\top+(q_{k-1}\E)W_2^\top$，$q_k=D_{t_k}(\tilde x_{t_k};c)$，$q_0=D_0(\hat x_0;c)$（Eq. 25）。所以推論時 self-conditioning 沿用前一步預測，不增加 forward。Table 3：無 self-conditioning 32.3、有 38.1。</p>
+    <p><b>Prefix guidance</b> 類比 classifier-free guidance [40] 與 history guidance [39]，把有 prefix 與沒有 prefix 的預測外插：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$D^g_t(x;c):=D_t(x;\varnothing)+g\big(D_t(x;c)-D_t(x;\varnothing)\big),\qquad g\ge1$$</div><span class="eq-n">Eq. 27</span></div>
+  <div class="prose">
+    <p>論文用 $g=8.0$（Table 4）。成本是每步多一次不含 prefix 的 forward，只處理 $B$ 個 block token。Table 3：無 prefix guidance 34.3、有 38.1。Alg. 3 在嵌入空間計算 $\tilde x=s'\E+g(s\E-s'\E)$，最後的 token 取未 guided 的條件預測 $s$ 的 argmax；這一點只出現在 Alg. 3，正文的 Eq. 8 與 Sec. 2.3 沒有寫。〔本頁推導〕$g>1$ 時 $D^g$ 可能有負值，不是機率向量；這不影響 Alg. 3，因為只用到它的嵌入。</p>
+    <p>論文引用 [36]（Self-conditioned Flow Map Language Models via Fixed-point Flows）作為 self-conditioning 的理論依據，站內筆記見下方連結。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">self-conditioning 與 prefix guidance 在推論時各增加多少計算？各改善多少？</p>
+    <p class="a">self-conditioning 沿用前一步預測，不增加 forward，32.3 → 38.1；prefix guidance 每步多一次不含 prefix 的 forward（只處理 $B$ 個 block token），$g=8$，34.3 → 38.1（Table 3、Eq. 25、27）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="self-conditioning-flow-lm.html">self-conditioning 在連續 flow 語言模型中的作用與理論解釋</a></p>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="flowmap" data-toc="07" data-tt="Flow map">
+  <div class="ch-num">07 · Flow map</div>
+  <h2>Flow map 把多步積分換成一次跳躍</h2>
+  <div class="prose">
+    <p>Flow decoding 每個 block 要做多次 denoiser 計算；第 03 節的玩具顯示，一步 denoiser 只能給出各位置的邊際。Flow map $X_{s,t}$ 直接把時間 $s$ 的狀態送到時間 $t$ [38]。作者把 Flow Map Language Models [13] 的 simplex 值 two-time denoiser 推廣到詞嵌入上的非同步 flow：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$X_{s,t}(x;c)^i:=\frac{1-\tau^i(t)}{1-\tau^i(s)}x^i+\frac{\tau^i(t)-\tau^i(s)}{1-\tau^i(s)}\,\delta_{s,t}(x;c)^i\E,\qquad 0\le s&lt;t\le1$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="prose">
+    <p>$\delta_{s,t}(x;c)^i$ 是 two-time denoiser：輸出一個機率向量，經 $\E$ 後與 $x$ 內插。它與 Eq. 8 同形，只是把一步內不變的 $p_k$ 換成 $\delta$。用字面說：$\delta$ 是沿路 denoiser 預測的加權平均，越接近終點權重越大。</p>
+    <p>設定與假設（App. A.2）：$c$、$\E$、$\tau$ 固定；$\tau^i\in C^1$，$t&lt;1$ 時 $\dot\tau^i>0$；ODE 解唯一；denoiser 對時間連續可微；在 $0\le s\le t&lt;1$ 上討論，$t=1$ 以極限理解。在這些假設下，Prop. A.2 說：學到的 $\delta$ 經 Eq. 7 等於真正的 flow map，若且唯若它滿足兩個條件：</p>
+    <ul>
+      <li><b>diagonal</b>：$\delta_{s,s}=\hat D_s$，時間不動時，two-time denoiser 就是一般的 denoiser。</li>
+      <li><b>semigroup</b>：對 $s&lt;u&lt;t$，從 $s$ 跳到 $t$ 等於先跳到 $u$ 再跳到 $t$ 的組合：</li>
+    </ul>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}\delta_{s,t}^i&amp;=\gamma^i\delta^i_{s,u}+(1-\gamma^i)\,\delta_{u,t}(X_{s,u})^i\\ \gamma^i&amp;=\frac{(1-\tau^i_t)(\tau^i_u-\tau^i_s)}{(1-\tau^i_u)(\tau^i_t-\tau^i_s)}\end{aligned}$$</div><span class="eq-n">Eq. 16</span></div>
+  <div class="prose">
+    <p>這裡 $\tau^i_t$ 是 $\tau^i(t)$ 的簡寫。$0\le\gamma^i\le1$，所以組合仍是機率向量。反方向也成立：任何滿足 diagonal 與 semigroup 的 $\delta$，經 Eq. 7 得到的就是真正的 flow map（$X_{s,s}=\mathrm{Id}$、切線條件、semigroup [38]）。</p>
+    <p>〔本頁推導〕為什麼一步 flow map 能保留位置間關聯：$t\to1$ 時 $Z_{s,t}\to\infty$、$\gamma^i\to0$，權重集中在軌跡終點，所以 $\delta_{0,1}(x_0)$ 是沿整條軌跡的加權平均、權重集中在終點，等於 ODE 終點 token 的 one-hot；$X_{0,1}(x_0)$ 一步就得到與多步積分相同的聯合結果。對照第 03 節，$\hat D_0$ 只是各位置的邊際，所以一步 denoiser 不能保留位置間關聯。以上是對理想的 teacher $\delta$；學到的 $\hat\delta$ 仍有差距（Table 5：7B 一步 flow map 49.0，多步 flow 75.9）。</p>
+  </div>
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>Two-time denoiser 與 flow map</h3></div>
+    <p class="plate-lead">沿用 C1 的玩具（σ、λ、seed 與 C1 同步）。選一個粒子與時間 s、t：δ 一次跳躍就到達軌跡在 t 的位置，用 D̂ₛ 跳（一步 Euler）則偏離。預設 s = 0，先只動 t。</p>
+    <div class="ctl-bar">
+      <div class="rng"><label class="lbl" for="c4-n">粒子編號 n<output id="c4-no">0</output></label><input id="c4-n" type="range" min="0" max="11" step="1" value="0"></div>
+      <div class="rng"><label class="lbl" for="c4-s">起點 s<output id="c4-so">0.00</output></label><input id="c4-s" type="range" min="0" max="0.9" step="0.01" value="0"></div>
+      <div class="rng"><label class="lbl" for="c4-t">終點 t<output id="c4-to">0.50</output></label><input id="c4-t" type="range" min="0.01" max="0.99" step="0.01" value="0.5"></div>
+    </div>
+    <div class="c1g">
+      <div class="planes">
+        <div class="fig"><svg id="c4-p1" role="img" aria-label=""></svg></div>
+        <div class="fig"><svg id="c4-p2" role="img" aria-label=""></svg></div>
+      </div>
+      <div class="ctl">
+        <div class="fig"><svg id="c4-bar" role="img" aria-label=""></svg></div>
+        <p class="readout" id="c4-ro"></p>
+      </div>
+    </div>
+    <div class="legend"><span>○ 起點 xₛ</span><span class="lg ref">參考軌跡 s → t</span><span>● Eq. 7 以 δ 跳躍</span><span>✕ Eq. 7 以 D̂ₛ 跳躍（一步 Euler）</span><span>長條：空心＝D̂ₛ，實心＝δ(s,t)</span></div>
+    <p class="plate-f">Eq. 7 與 Eq. 16 的殘差只有浮點誤差，這是代數恆等：參考軌跡就是 Eq. 8 在細網格（2000 步）上的離散軌跡，每一步是一段常數 denoiser 的精確解〔本頁推導〕。它不是 Prop. A.2 的數值驗證；細網格越密，這條離散軌跡越接近 ODE 的解。γ 取 u 為 s、t 的中點。示意值，不是論文數字。</p>
+    <p class="sr" aria-live="polite" id="c4-live"></p>
+  </div>
+  <details class="more"><summary>Prop. A.2 的構造</summary><div class="qa">
+    <ol>
+      <li>$\frac{d}{dr}\frac{X_{s,r}^i}{1-\tau^i_r}=w^i(r)\hat D_r(X_{s,r})^i\E$，$w^i(r):=\dot\tau^i(r)/(1-\tau^i_r)^2$（Eq. 17）。</li>
+      <li>$Z^i_{s,t}:=\int_s^tw^i=\frac{\tau^i_t-\tau^i_s}{(1-\tau^i_t)(1-\tau^i_s)}$，$\delta^i_{s,t}:=\frac1{Z^i_{s,t}}\int_s^tw^i(r)\hat D_r(X_{s,r})^idr$（Eq. 18）：機率向量的加權平均，仍是機率向量。</li>
+      <li>對 Eq. 17 在 $[s,t]$ 積分再乘 $1-\tau^i_t$，得到 Eq. 7。（原文寫「which is (15)」，兩者等價；App. A.2 後段把 Prop. A.2 稱為「Theorem A.2」，是同一命題。）</li>
+      <li>Diagonal：$t\to s$ 時 $w/Z$ 集中在 $r=s$，$\delta_{s,t}\to\hat D_s$。</li>
+      <li>Semigroup：在 $u$ 切開積分，$r\ge u$ 時 $X_{s,r}=X_{u,r}(X_{s,u})$，得到 Eq. 16，$\gamma^i=Z^i_{s,u}/Z^i_{s,t}$。</li>
+    </ol>
+    <p>〔本頁推導〕離散版：把 Eq. 8 兩邊除以 $1-\tau_{k+1}$，得 $\zeta_{k+1}\hat x_{k+1}=\zeta_k\hat x_k+(\zeta_{k+1}-\zeta_k)p_k\E$，$\zeta:=1/(1-\tau)$。所以在 Eq. 8 的離散軌跡上，Eq. 7、18、16 在代數上恆等成立（$\delta$ 是以 $\Delta\zeta$ 加權的 $p_k$ 平均）。C4 用這個形式計算，避免數值微分 $\dot\tau$。</p>
+  </div></details>
+  <div class="prose">
+    <p>推論時（Eq. 9）以學到的 student 取代 denoiser：$\hat x_{t_{k+1}}=\hat X_{t_k,t_{k+1}}(\hat x_{t_k};c)$，$\hat y_i=\arg\max\hat\delta_{t_{K-1},1}(\hat x_{t_{K-1}};c)^i$；$K=1$ 時就是 $\hat X_{0,1}$ 一步生成。student 保留 prefix cache 與 AR 預測 $f^{\hat\delta}$。</p>
+  </div>
+  <details class="more"><summary>蒸餾目標（Eq. 14–15、19–21，Prop. A.3）</summary><div class="qa">
+    <p>平均速度 $v_{s,t}:=(X_{s,t}-x)/(t-s)$（Eq. 14）；$\delta$ 由其期望嵌入定義：$\delta_{s,t}\E=x+\frac{(1-\tau_s)(t-s)}{\tau_t-\tau_s}v_{s,t}$（Eq. 15）。因 $\lvert V\rvert\gg d$，Eq. 15 只固定期望嵌入，不固定 $\delta$ 本身。</p>
+    <p>student $\hat\delta_{s,t}$ 由凍結的 teacher $\hat D_s$ 初始化，加一個恆等初始化的 adaLN 接收目的時間 $t$。off-diagonal 目標組合兩段較短的 student 轉移：$\bar\delta_{s,t}(x_s)^i:=\mathrm{sg}[\gamma^i\hat\delta_{s,u}(x_s)^i+(1-\gamma^i)\hat\delta_{u,t}(x_u)^i]$，$x_u:=\hat X_{s,u}(x_s)$（Eq. 19）。</p>
+    <div class="eq"><div class="eq-m">$$\begin{aligned}\mathcal L_{\text{distill}}:=\;&amp;\Ex_c\,\mathrm{KL}\big(f(c)\Vert f^{\hat\delta}(c)\big)\\&amp;+\Ex_{t,c,I_t}\mathrm{KL}\big(\hat D_t(I_t;c)\Vert\hat\delta_{t,t}(I_t;c)\big)\\&amp;+\Ex_{s,u,t,c,I_s}\mathrm{KL}\big(\bar\delta_{s,t}(I_s;c)\Vert\hat\delta_{s,t}(I_s;c)\big)\end{aligned}$$</div><span class="eq-n">Eq. 20</span></div>
+    <p>三項依序為 AR 蒸餾、diagonal 蒸餾、off-diagonal 蒸餾。Prop. A.3：在 $(s,u,t)$ 與狀態取樣 full support 下，後兩項（Eq. 21）的母體最小值為 0，且每個最小解經 Eq. 7 都還原 teacher 的 flow map；AR 項只依賴 prefix 讀出，不改變最小解。論文未說明 $(s,u,t)$ 的取樣分布、蒸餾步數與 token 數、學習率；只蒸餾 $B=4$。把 self-conditioning 與 prefix guidance 納入 flow map 留待未來（Sec. 3.1、Sec. 5）。</p>
+  </div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 7 的 $X_{s,t}$ 怎麼寫？學到的 $\delta$ 要滿足哪兩個條件才等於真正的 flow map？為什麼一步 flow map 能保留位置間關聯？</p>
+    <p class="a">在 $\tau^i\in C^1$、$t&lt;1$ 時 $\dot\tau^i>0$、ODE 解唯一的假設下（$t=1$ 取極限）：$X^i_{s,t}=\frac{1-\tau^i_t}{1-\tau^i_s}x^i+\frac{\tau^i_t-\tau^i_s}{1-\tau^i_s}\delta^i_{s,t}\E$；diagonal $\delta_{s,s}=\hat D_s$ 與 semigroup $\delta_{s,t}=\gamma\delta_{s,u}+(1-\gamma)\delta_{u,t}(X_{s,u})$，$\gamma^i=\frac{(1-\tau_t)(\tau_u-\tau_s)}{(1-\tau_u)(\tau_t-\tau_s)}$（Prop. A.2）；$\delta_{0,1}$ 是沿整條軌跡的加權平均、權重集中在終點，等於 ODE 終點的 token，而 $\hat D_0$ 只是邊際〔本頁推導；對理想的 δ，學到的 δ̂ 仍有差距〕。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="flow-map-few-step-distillation.html">連續 flow 語言模型的少步生成</a>、<a href="lafa-self-conditioning-and-flow-map.html">self-conditioning 與 flow map 蒸餾在 Lafa 的使用</a></p>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="spec" data-toc="08" data-tt="自我推測解碼">
+  <div class="ch-num">08 · 自我推測解碼</div>
+  <h2>自我推測解碼用 AR 驗證一步草稿</h2>
+  <div class="prose">
+    <p>自我推測解碼（self-speculative decoding）用同一個模型做兩件事。<b>草稿</b>：一步 Euler（Eq. 10）產生 $B$ 個 token $\hat y_{1:B}$，不用 prefix guidance。<b>驗證</b>：commit 與 greedy AR 預測一致的最長草稿前綴；第一個 token 不一致時改 commit $\arg\max f(c)_N$。第一個 token 可以免費驗證（與已有的 AR 預測比）。其餘位置的接受長度是：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$a=\max\{\,j\in[B]:\ \hat y_{i+1}=\arg\max f(c\oplus\hat y)_{N+i}\ \ \forall\,1\le i&lt;j\,\}$$</div><span class="eq-n">Eq. 28</span></div>
+  <div class="prose">
+    <p>$j=1$ 的條件是空的，所以 $a\ge1$：每次至少 commit 一個 token。</p>
+    <p>為什麼輸出等於 greedy AR〔本頁推導：補上歸納步驟，論文只陳述結論〕：被接受的 $\hat y_{i+1}$ 等於以 $c\oplus\hat y_{1:i}$ 為 prefix 的 greedy AR 預測；prefix 為 causal，$f(c\oplus\hat y)_{N+i}$ 只依賴 $c\oplus\hat y_{1:i}$；而 $\hat y_{1:i}$ 已歸納地等於 greedy AR 輸出。所以被接受的 token 都等於以已接受前綴為條件的 greedy AR 預測，2.54× 的品質就是該 checkpoint 的 greedy AR 品質，flow 只當草稿器。這是邏輯上的等價；數值上取決於實作，例如 bfloat16 下 fused forward 與逐字 forward 的 batch 形狀不同，logits 可能有微小差異並影響同值處理。論文原話為「matches greedy AR decoding」。</p>
+    <p><b>Fused forward</b>（Alg. 4、Fig. 9）讓驗證與下一份草稿在同一次 forward 完成。輸入是乾淨 prefix $c\oplus\hat y$（時間 1）加上 $B$ 個噪聲 block $z^{(1)},\dots,z^{(B)}\in\mathbb R^{B\times d}$（時間 0，各自 $\sim\mathcal N(0,\sigma^2I)$）。$c\oplus\hat y$ 內 causal；$z^{(j)}$ 看 $c\oplus\hat y_{1:j}$、block 內雙向、block 之間互不可見。驗證得到 $a$ 後，取 $z^{(a)}$ 的輸出當下一份草稿（計算上等同 $D_0(z^{(a)};c\oplus\hat y_{1:a})$），並沿用 $f(c\oplus\hat y)_{1:N+a}$ 與 KV cache。第一個 token 被修正時只需一個噪聲 block。</p>
+    <p>〔本頁推導〕每次 fused forward commit $1\le a\le B$ 個 token；新處理的位置數為 $B+B^2$（修正時 $1+B$），$B=16$ 時 272。本頁推測這是 TPF 4.9 只換到 2.54× TPS 的原因之一；論文沒有這個計數，只寫「forward-pass costs differ」。</p>
+    <p>速度以 TPF 衡量（Eq. 29）：$\text{TPF}=\sum_jT_j/\sum_jF_j$，$T_j$ 為 commit 的 token 數，$F_j$ 為 fused forward 次數加 1 次初始草稿（不含 prompt prefill）。AR 的 TPF 定義為 1。</p>
+    <p>背景（Sec. 4）：「Many parallel decoders predict tokens independently within an update, which can degrade」品質，部分方法以 AR 驗證草稿緩解。Lafa 也用 AR 驗證，差別在草稿來自同一模型的 flow。替代方案（App. C.3）是 confidence thresholding：接受信心 $\ge\lambda$ 的最長前綴，同樣 $a\ge1$；論文以 self-speculation 為預設，理由是它不需調門檻、低門檻時不退化。</p>
+  </div>
+  <div class="bstrip" id="bs-s8" data-prefix='["c","ŷ₁","ŷ₂","ŷ₃"]' data-taus='[0,0,0]' data-label="fused forward：乾淨的 c 接上草稿 ŷ，時間皆為 1；接著噪聲 block z，三個位置時間皆為 0"></div>
+  <p class="bs-cap">Fused forward 的輸入：c ⊕ ŷ 的時間為 1（實線框），每個噪聲 block z⁽ʲ⁾ 的時間為 0（最淺）。圖中只畫一個 z。</p>
+  <div class="plate" id="c5">
+    <div class="plate-h"><span class="id">C5</span><h3>自我推測解碼模擬</h3></div>
+    <p class="plate-lead">不模擬語言：把 greedy AR 的輸出當成固定的參考序列（T = 1024 個 token），草稿在 block 位置 i 正確的機率為 rᵢ = r₁ρ^(i−1)，各位置獨立。逐步執行，看每次 fused forward commit 幾個 token。</p>
+    <div class="ctl-bar">
+      <div class="ctl-grp"><span class="lbl">block 大小 B</span><div class="seg" id="c5-B" role="group" aria-label="block 大小 B"></div></div>
+      <div class="rng"><label class="lbl" for="c5-r1">第一個位置正確率 r₁<output id="c5-r1o">0.95</output></label><input id="c5-r1" type="range" min="0.5" max="1" step="0.05" value="0.95"></div>
+      <div class="rng"><label class="lbl" for="c5-rho">逐位置衰減 ρ<output id="c5-rhoo">0.90</output></label><input id="c5-rho" type="range" min="0.5" max="1" step="0.05" value="0.9"></div>
+    </div>
+    <div class="ctl-row" style="margin-bottom:16px"><button class="small-btn pri" type="button" id="c5-step">下一步</button><button class="small-btn" type="button" id="c5-auto">自動執行</button><button class="small-btn" type="button" id="c5-all">跑完</button><button class="small-btn" type="button" id="c5-reset">重設</button><button class="small-btn" type="button" id="c5-re">重新抽樣</button></div>
+    <div class="c5g">
+      <div>
+        <p class="sub">本次 fused forward</p>
+        <div id="c5-now"></div>
+        <p class="sub" style="margin-top:14px">已 commit 的序列（最近 64 個 token，數字為 commit 它們的 forward 編號）</p>
+        <div class="c5seq" id="c5-seq" aria-hidden="true"></div>
+        <p class="cap">每個被接受的 token 都等於 greedy AR 的預測，所以輸出與 greedy AR 相同；flow 只決定一次 forward 能 commit 幾個。</p>
+      </div>
+      <div>
+        <p class="sub" id="c5-mcap">fused 遮罩</p>
+        <div class="tscroll" id="c5-mask"></div>
+      </div>
+    </div>
+    <p class="readout" id="c5-ro"></p>
+    <p class="plate-f">示意值，不是論文數字。真實的一步草稿錯誤來自 C1 的邊際問題，各位置不是獨立的；這裡只用來看接受規則與 TPF。模擬有抽樣誤差，T = 1024 時可達約 3%。論文 Table 2（7B，六項平均）：B = 4 / 8 / 16 的 TPF 為 2.6 / 4.3 / 4.9，準確率 60.9 / 59.3 / 58.0。</p>
+    <p class="sr" aria-live="polite" id="c5-live"></p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">草稿與驗證怎麼做？為什麼輸出等於 greedy AR？TPF 怎麼算？</p>
+    <p class="a">一步 flow 草稿（Eq. 10，無 guidance）；commit 與 greedy AR 一致的最長前綴（Eq. 28），第一個 token 不符則改 commit $\arg\max f(c)_N$，所以 $a\ge1$；被接受的 token 都等於以已接受前綴為條件的 greedy AR 預測；fused forward 用 $B$ 個噪聲 block 同時產生下一份草稿；TPF $=\sum T_j/\sum F_j$，$F_j$ 含 1 次初始草稿（Eq. 29）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="lafa-self-speculative-decoding.html">自我推測解碼：flow 草稿與 AR 驗證</a></p>
+</section>
+
+<!-- S9 ============================================================ -->
+<section class="ch" id="results" data-toc="09" data-tt="實驗結果">
+  <div class="ch-num">09 · 實驗結果</div>
+  <h2>多步 flow 追上 AR，速度來自自我推測</h2>
+  <div class="prose">
+    <p>模型與資料：0.5B、7B 由 Qwen2.5 Instruct 調整；8B 用 Qwen3 8B Base（論文寫其 Instruct 版再訓練會退步）。訓練資料為 Dolci-Instruct-SFT。Sec. 3 寫訓練 5–15 epochs（9–27B tokens）；Table 4 對三個尺度都寫 5 epochs、約 9B tokens。論文沒有說明兩者的關係。合起來訓練用 9–27B tokens（&lt;30B），論文寫這比 Dream、LLaDA、Efficient-DLM 的報告預算（reported budgets）少至少 18 倍（"at least 18× fewer"）。0.5B 做消融、7B 是主結果、8B 用來對比更多基準。</p>
+    <p>評估用六項 benchmark：IFEval、BBH（3-shot）、MMLU-Pro、GPQA、GSM8K、HumanEval，除 BBH 外皆 0-shot。single-token 準確率、自我推測的準確率與 TPF 用六項平均；flow／flow map、吞吐量與消融只用 IFEval、GSM8K、HumanEval 三項平均。標 † 的基準與 Lafa 同初始化、資料、預算；AR SFT 是同資料微調的 AR，作為品質與速度的參考。</p>
+    <h3>Flow 與 flow map decoding</h3>
+    <p>純 flow decoding 在 $B=4$、32–64 步時，0.5B 接近 AR SFT（38.1、38.5 vs 38.6），7B 超過 AR SFT（75.2、75.9 vs 73.9）（Table 5；Sec. 3.1 用「approaches」與「surpasses」）。同步數下 block 越大越差。flow map 改善 1–2 步：7B 兩步 student（63.3）接近四步 teacher（64.3），四步 student 勝過 teacher（69.4 vs 64.3），八步相近（71.0 vs 71.2），但與多步 flow 仍有差距。步數與準確率不完全單調（0.5B：1 步 20.8 → 2 步 19.7；64 步 38.5 → 128 步 37.1）。</p>
+  </div>
+  <div class="plate" id="f1">
+    <div class="plate-h"><span class="id">F1</span><h3>Euler 步數與三項平均準確率（Table 5 重繪）</h3></div>
+    <p class="plate-lead">讀法：B = 4 的 flow 在 32–64 步附近追上（0.5B）或超過（7B）AR SFT 水平線；同步數下 B = 16 低於 B = 4；flow map 在 1–2 步高於 flow，8 步兩者相近。</p>
+    <div class="f1g"><div class="fig"><svg id="f1-a" role="img" aria-label="0.5B：Euler 步數與準確率"></svg></div><div class="fig"><svg id="f1-b" role="img" aria-label="7B：Euler 步數與準確率"></svg></div></div>
+    <div class="legend"><span class="lg tot">flow B = 4（實線）</span><span class="lg ld">flow B = 8（長虛線）</span><span class="lg dt">flow B = 16（點線）</span><span class="lg acc">flow map B = 4（◆）</span><span>水平細線：AR SFT</span></div>
+    <div class="sr"><table id="f1-sr"></table></div>
+    <p class="plate-f">數字取自論文 Table 5（IFEval、GSM8K、HumanEval 三項平均）。</p>
+  </div>
+  <div class="prose">
+    <h3>AR 能力：六項平均提升，部分項目下降</h3>
+    <p>Table 1（single-token decoding，六項平均）：AR SFT† 與 Lafa† 在 0.5B 為 28.7 → 31.6、7B 為 58.4 → 60.9、8B 為 56.8 → 63.1。這是平均值，部分項目下降：7B HumanEval 78.7 → 76.8；8B BBH 71.6 → 70.7、HumanEval 82.3 → 79.9。8B 的提升主要來自 IFEval（38.1 → 62.3）與 GSM8K（62.9 → 77.8）（Table 6），而且 8B 由 Base 起訓。作者認為這是聯合訓練帶來的 multi-token prediction effect（"consistent with the benefits of multi-token prediction [6, 8, 34]"），這是作者的解釋。</p>
+  </div>
+  <div class="tscroll"><table>
+    <caption>Table 1 摘錄：single-token decoding，六項平均（%）</caption>
+    <thead><tr><th>方法</th><th class="num">0.5B</th><th class="num">7B</th><th class="num">8B</th></tr></thead><tbody>
+    <tr><td>AR SFT†</td><td class="num">28.7</td><td class="num">58.4</td><td class="num">56.8</td></tr>
+    <tr><td>DeepSeek-MTP†</td><td class="num">30.2</td><td class="num">60.0</td><td class="num">–</td></tr>
+    <tr><td>MARS†</td><td class="num">30.4</td><td class="num">59.7</td><td class="num">–</td></tr>
+    <tr><td>Efficient-DLM</td><td class="num">–</td><td class="num">–</td><td class="num">63.5</td></tr>
+    <tr class="hl"><td>Lafa†</td><td class="num">31.6</td><td class="num">60.9</td><td class="num">63.1</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <h3>自我推測解碼與吞吐量</h3>
+    <p>Table 2（六項平均）：7B $B=4/8/16$ 的準確率 60.9 / 59.3 / 58.0，TPF 2.6 / 4.3 / 4.9；論文概括為「approximately 2.5–5 TPF」。吞吐量（Table 8，單張 H100、batch size 1、bfloat16）：2.54× 來自 7B、$B=16$ 的自我推測解碼，IFEval／GSM8K／HumanEval 三項平均 74.5 vs 73.9，100.2 vs 39.5 TPS；$B=4$ 為 2.02×（79.9 TPS），準確率 76.5。</p>
+  </div>
+  <div class="tscroll"><table>
+    <caption>Table 2 摘錄：7B 自我推測解碼，六項平均</caption>
+    <thead><tr><th>B</th><th class="num">準確率</th><th class="num">TPF</th></tr></thead><tbody>
+    <tr><td>AR SFT</td><td class="num">58.4</td><td class="num">1.0</td></tr>
+    <tr><td>4</td><td class="num">60.9</td><td class="num">2.6</td></tr>
+    <tr><td>8</td><td class="num">59.3</td><td class="num">4.3</td></tr>
+    <tr><td>16</td><td class="num">58.0</td><td class="num">4.9</td></tr>
+    </tbody></table></div>
+  <div class="tscroll"><table>
+    <caption>Table 8 摘錄：7B 三項平均準確率與吞吐量（H100、batch size 1）</caption>
+    <thead><tr><th>方法</th><th>設定</th><th class="num">準確率</th><th class="num">TPS</th></tr></thead><tbody>
+    <tr><td>AR SFT</td><td>–</td><td class="num">73.9</td><td class="num">39.5</td></tr>
+    <tr><td>DeepSeek-MTP</td><td>B = 2</td><td class="num">76.3</td><td class="num">53.6</td></tr>
+    <tr><td>MARS</td><td>B = 16，門檻 0.95</td><td class="num">74.3</td><td class="num">49.0</td></tr>
+    <tr><td>Dream</td><td>k = 4</td><td class="num">37.7</td><td class="num">113.7</td></tr>
+    <tr><td>Lafa</td><td>B = 4</td><td class="num">76.5</td><td class="num">79.9</td></tr>
+    <tr><td>Lafa</td><td>B = 8</td><td class="num">76.3</td><td class="num">93.8</td></tr>
+    <tr class="hl"><td>Lafa</td><td>B = 16</td><td class="num">74.5</td><td class="num">100.2</td></tr>
+    </tbody></table></div>
+  <div class="callout">
+    <p class="ct">解讀注意</p>
+    <p>2.54× 是 7B、$B=16$、三項平均下的吞吐量；在六項平均下，$B=16$ 的準確率 58.0 低於 AR SFT 的 58.4（Table 2）。2.54× 來自自我推測解碼，輸出等於 greedy AR，不是純 flow 生成的速度。吞吐量只在 batch size 1 量測；Dream $k=4$ 的 TPS 更高，但準確率只有 37.7。Table 8 的基準用各自的 native decoder（多為 confidence threshold），只有 Lafa 與 DeepSeek-MTP 以 greedy 驗證。AR 能力的提升是六項平均，沒有 seed 或信賴區間；非 † 的 diffusion 基準不是 matched 比較。Table 8 的 74.5 是分項平均 74.57 的截斷。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">2.54× 從哪個設定、哪個平均來？純 flow decoding 要多少步才達到 AR？</p>
+    <p class="a">7B、$B=16$ 自我推測解碼，IFEval/GSM8K/HumanEval 三項平均 74.5 vs 73.9，100.2 vs 39.5 TPS（Table 8）；$B=4$ 為 2.02×、76.5；六項平均下 $B=16$ 為 58.0 &lt; 58.4；純 flow decoding 在 $B=4$、32–64 步時 0.5B 接近、7B 超過 AR SFT（7B 75.2、75.9 vs 73.9；0.5B 38.1、38.5 vs 38.6，Table 5）。</p>
+    <p class="q">flow 訓練對 AR 準確率的影響是多少？要注意什麼？訓練用多少 tokens？</p>
+    <p class="a">Table 1：0.5B 28.7 → 31.6、7B 58.4 → 60.9、8B 56.8 → 63.1；是六項平均，部分項目下降（7B HumanEval 78.7 → 76.8），8B 的提升主要來自 IFEval 與 GSM8K，8B 由 Base 起訓；作者把提升解釋為 multi-token prediction effect（作者的解釋）；訓練 9–27B tokens（&lt;30B），比 Dream、LLaDA、Efficient-DLM 的報告預算少至少 18 倍。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="lafa-scale-and-evaluation.html">規模、資料量與評估</a></p>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="impl" data-toc="10" data-tt="實作">
+  <div class="ch-num">10 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="tscroll"><table class="stack">
+    <caption>Table 4：主要超參數</caption>
+    <thead><tr><th>項目</th><th>0.5B</th><th>7B</th><th>8B</th></tr></thead><tbody>
+    <tr><td>初始化</td><td data-h="0.5B">Qwen2.5 0.5B Instruct</td><td data-h="7B">Qwen2.5 7B Instruct</td><td data-h="8B">Qwen3 8B Base</td></tr>
+    <tr><td>資料／epochs／tokens</td><td data-h="0.5B">Dolci-Instruct-SFT／5／約 9B</td><td data-h="7B">同左</td><td data-h="8B">同左</td></tr>
+    <tr><td>Block 大小</td><td data-h="0.5B">4, 8, 16</td><td data-h="7B">4, 8, 16</td><td data-h="8B">4</td></tr>
+    <tr><td>最大序列長度</td><td data-h="0.5B">512–1024</td><td data-h="7B">512–1024</td><td data-h="8B">512</td></tr>
+    <tr><td>adaLN</td><td data-h="0.5B">每層</td><td data-h="7B">跨層共用</td><td data-h="8B">跨層共用</td></tr>
+    <tr><td>學習率</td><td data-h="0.5B">1×10⁻⁴</td><td data-h="7B">1×10⁻⁵</td><td data-h="8B">1×10⁻⁵</td></tr>
+    <tr><td>分散式</td><td data-h="0.5B">DDP</td><td data-h="7B">ZeRO-3</td><td data-h="8B">ZeRO-3</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>三者共同：AdamW，(β₁, β₂) = (0.9, 0.999)，constant schedule、前 1% 步 warm-up；weight decay 0、gradient clipping 1.0、batch 384 sequences（$B=4$；較大 block 用 memory-matched microbatch，適用時由較小 block 的 checkpoint 接續訓練）；bfloat16；訓練 $\sigma=4.0$；$p_{sc}=0.5$；adaLN 學習率倍數 5.0；參數 EMA 0.999（step 500 起）；$M_{\text{bin}}=200$、$\beta=0.99$、$S=100$；flow decoding 推論 $\sigma=0.1$、$g=8.0$。</p>
+    <h3>常見錯誤</h3>
+    <ol>
+      <li>把 2.54× 當成 flow 生成的速度：它來自自我推測解碼，輸出等於 greedy AR。純 flow decoding 在 $B=4$、32–64 步時，0.5B 接近（38.1、38.5 vs 38.6）、7B 超過（75.2、75.9 vs 73.9）AR SFT（Table 5）。</li>
+      <li>用「最近的嵌入」把 $\hat x_1$ 轉回 token：Eq. 8 取最後一次 denoiser 預測的 argmax。</li>
+      <li>讓 prefix 看到 noisy block，或給 prefix 1 以外的時間：prefix 的 KV 會隨 $(x,t)$ 改變，cache 失效，AR 預測也不再是 $f(c)$。</li>
+      <li>不固定嵌入 norm：norm 相對固定的 $\sigma$ 膨脹，有效 corruption 下降（Table 3）。</li>
+      <li>把 Eq. 8 寫成 base time 的 Euler $x+\Delta t\,b_t$：Eq. 8 用 $\tau$ 的增量，最後一步落在 $p\E$，不會碰到 $1/(1-\tau)$ 的發散。</li>
+      <li>推論沿用訓練的 $\sigma$：Table 4 訓練 4.0、flow decoding 推論 0.1，論文未解釋差異；自我推測草稿的 $\sigma$ 未寫明（Alg. 4 只寫「scale $\sigma$」）。</li>
+      <li>在自我推測草稿加 prefix guidance：論文的草稿不用 guidance；flow decoding 才用 $g=8$。</li>
+      <li>以為 tokenwise time 用訓練時的非同步內插估計：Alg. 2 的虛擬碼用同步內插估 $\ell^i$（論文未說明理由）。</li>
+    </ol>
+    <p>論文未說明的細節：flow map 蒸餾的 $(s,u,t)$ 分布與訓練量；不含 prefix 的 $D_t(x;\varnothing)$ 如何訓練；輸出 head 是否與 $\E$ 綁定（tied）。</p>
+  </div>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="history" data-toc="11" data-tt="研究脈絡">
+  <div class="ch-num">11 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>Lafa 接在幾條線的交會點上：AR 的平行解碼（blockwise parallel decoding、Medusa、multi-token prediction）先提出「一次預測多個 token 再驗證」；flow matching 與 CDCD 把連續擴散帶到類別資料，CDCD 也提出 loss-aware time warping；block diffusion 把 block 內去噪與 block 間因果結合；AR 轉擴散的工作（Dream、Efficient-DLM，筆記另列 From Next-Token to Next-Block 與 WeDLM）從預訓練 AR 模型出發；flow map 與 two-time denoiser 讓少步生成成為可能；同期的 ELF 也在詞嵌入空間做 flow。Lafa 把這些放進同一個從 AR 調整而來的模型。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="next" data-toc="12" data-tt="限制與延伸">
+  <div class="ch-num">12 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>論文自述的限制：flow decoding 要多步才達到 AR 品質；flow map 與多步 flow 仍有差距；如何把 self-conditioning 與 prefix guidance 納入 flow map 留待未來（Sec. 3、Sec. 5）。</p>
+    <p>實驗範圍：吞吐量只在 7B（與 Efficient-DLM 8B）、batch size 1 量測；8B 只有 $B=4$ 的 single-token 與自我推測結果；消融全為 0.5B、$B=4$、32 步；沒有 seed 或信賴區間；非 † 的 diffusion 基準不是 matched 比較；Table 8 的基準用各自的 native decoder，只有 Lafa 與 DeepSeek-MTP 以 greedy 驗證（AR SFT 為逐字 greedy；Efficient-DLM 門檻 0.7、MARS 門檻 0.95，App. C.2）。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="lafa-lineage-overview.html">Lafa（Large Flow Language Models）的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="lafa-parallel-decoding-background.html">AR 生成的延遲與平行解碼方法（Blockwise decoding、MTP、Medusa）</a><span>平行解碼的背景</span></div></li>
+    <li><div><a href="lafa-ar-to-block-adaptation.html">從預訓練 AR 模型調整為 block 模型（Block Diffusion 與 AR 轉 diffusion）</a><span>第 04 節</span></div></li>
+    <li><div><a href="lafa-embedding-flow-denoiser.html">以詞嵌入為空間的 flow 與 clean-token 去噪器（CDCD 到 Lafa）</a><span>第 02–03 節</span></div></li>
+    <li><div><a href="lafa-asynchronous-tokenwise-time.html">block 內各位置的非同步時間（tokenwise time）</a><span>第 02、05 節</span></div></li>
+    <li><div><a href="lafa-self-conditioning-and-flow-map.html">self-conditioning 與 flow map 蒸餾在 Lafa 的使用</a><span>第 06–07 節</span></div></li>
+    <li><div><a href="lafa-self-speculative-decoding.html">自我推測解碼：flow 草稿與 AR 驗證</a><span>第 08 節</span></div></li>
+    <li><div><a href="lafa-scale-and-evaluation.html">規模、資料量與評估（Lafa 與其他大型擴散模型的比較）</a><span>第 09 節</span></div></li>
+    <li><div><a href="continuous-flow-lm-overview.html">2026 年連續 flow / flow matching 語言模型總覽</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="flow-matching-velocity-target.html">Flow matching 的速度目標與 rectified flow 的大規模使用</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="self-conditioning-flow-lm.html">self-conditioning 在連續 flow 語言模型中的作用與理論解釋</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="flow-map-few-step-distillation.html">連續 flow 語言模型的少步生成：flow map / consistency / 分佈匹配蒸餾</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="cdlm-noise-schedule.html">連續擴散語言模型的噪聲／時間排程</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="cdlm-representation-space.html">連續擴散語言模型的表示空間與 rounding / decoder 問題</a><span>站內既有筆記</span></div></li>
+  </ol>
+  <div class="links" style="margin-top:28px"><a class="btn fill" href="https://arxiv.org/abs/2610.28559">arXiv 2610.28559 ↗</a><a class="btn" href="../index.html#paper-9">在關聯圖中查看</a></div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Arnav Chavan, Chanhyuk Lee, Udbhav Bamba, Jaehoon Yoo, Seunghoon Hong, Aditi Raghunathan, Jinwoo Kim. Large Flow Language Models. 2026. <a href="https://arxiv.org/abs/2610.28559">arXiv:2610.28559</a>.</p>
+  <p>本頁的方程式與數字取自論文 v1；標示「本頁推導」的內容為本頁自行推導，並非論文結論；標示「示意值」的數值為玩具示範用，不是論文數字。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2018, "title": "Blockwise Parallel Decoding for Deep Autoregressive Models", "authors_short": "Stern et al.", "arxiv": "1811.03115", "role": "AR 模型以 proposal 一次預測多個位置再驗證的早期工作", "source": "arXiv abstract"}, {"year": 2022, "title": "Flow Matching for Generative Modeling", "authors_short": "Lipman et al.", "arxiv": "2210.02747", "role": "flow 的訓練目標：回歸條件向量場", "source": "arXiv abstract"}, {"year": 2022, "title": "Continuous diffusion for categorical data", "authors_short": "Dieleman et al.", "arxiv": "2211.15089", "role": "CDCD：類別資料的連續擴散與 time warping", "source": "arXiv abstract; paper ref [12]"}, {"year": 2022, "title": "Analog Bits: Generating Discrete Data using Diffusion Models with Self-Conditioning", "authors_short": "Chen et al.", "arxiv": "2208.04202", "role": "self-conditioning 的出處", "source": "arXiv abstract; paper ref [37]"}, {"year": 2024, "title": "Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads", "authors_short": "Cai et al.", "arxiv": "2401.10774", "role": "以多個解碼 head 加速 AR 解碼", "source": "arXiv abstract"}, {"year": 2024, "title": "Better & Faster Large Language Models via Multi-token Prediction", "authors_short": "Gloeckle et al.", "arxiv": "2404.19737", "role": "multi-token prediction 訓練目標", "source": "arXiv abstract"}, {"year": 2025, "title": "Block Diffusion: Interpolating Between Autoregressive and Diffusion Language Models", "authors_short": "Arriola et al.", "arxiv": "2503.09573", "role": "block 內去噪、block 間因果的分解", "source": "arXiv abstract; paper ref [23]"}, {"year": 2025, "title": "How to build a consistency model: Learning flow maps via self-distillation", "authors_short": "Boffi et al.", "arxiv": "2505.18825", "role": "flow map 的自蒸餾學習", "source": "arXiv abstract; paper ref [38]"}, {"year": 2025, "title": "Efficient-DLM: From Autoregressive to Diffusion Language Models, and Beyond in Speed", "authors_short": "Fu et al.", "arxiv": "2512.14067", "role": "AR 轉擴散模型的調整與速度，Lafa 的比較對象", "source": "arXiv abstract"}, {"year": 2026, "title": "Flow Map Language Models: One-step Language Modeling via Continuous Denoising", "authors_short": "Lee et al.", "arxiv": "2602.16813", "role": "one-hot 連續 flow 與兩時間去噪器，Lafa 的直接前作", "source": "arXiv abstract; paper ref [13]"}, {"year": 2026, "title": "ELF: Embedded Language Flows", "authors_short": "Hu et al.", "arxiv": "2605.10938", "role": "同期以詞嵌入為空間的連續 flow 語言模型", "source": "arXiv abstract; paper ref [14]"}, {"year": 2026, "title": "MARS: Enabling Autoregressive Models Multi-Token Generation", "authors_short": "Jin et al.", "arxiv": "2604.07023", "role": "將 AR 模型微調為多 token 預測，Lafa 的比較對象", "source": "arXiv abstract; paper ref [33]"}, {"year": 2026, "title": "Self-conditioned Flow Map Language Models via Fixed-point Flows", "authors_short": "Yoo et al.", "arxiv": "2607.00714", "role": "self-conditioning 與 flow map 的理論連結", "source": "arXiv abstract; paper ref [36]"}, {"year": 2026, "title": "Large Flow Language Models", "authors_short": "Chavan et al.", "arxiv": "2610.28559", "role": "本論文：8B blockwise 非同步 flow 與自我推測解碼", "source": "paper.txt"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+const lgs=(d0,d1,r0,r1)=>{const a=Math.log(d0),b=Math.log(d1);return v=>r0+(Math.log(v)-a)/(b-a)*(r1-r0)};
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function frame(svg,o){
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m=o.m,x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=m.t;
+  const X=(o.xlog?lgs:lin)(o.x[0],o.x[1],x0,x1),Y=lin(o.y[0],o.y[1],y0,y1);
+  const g=el('g',null,svg);
+  (o.yt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.yf?o.yf(v):String(v)),yy=Y(val);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},g);tx(g,x0-8,yy+4,lab,{class:'tk','text-anchor':'end'})});
+  (o.xt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.xf?o.xf(v):String(v)),xx=X(val);el('line',{x1:xx,x2:xx,y1:y0,y2:y0+4,class:'axl'},g);tx(g,xx,y0+18,lab,{class:'tk','text-anchor':'middle'})});
+  el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  if(o.xl)tx(g,(x0+x1)/2,o.H-4,o.xl,{class:'al','text-anchor':'middle'});
+  if(o.yl)tx(g,4,12,o.yl,{class:'al'});
+  return {X,Y,g,x0,x1,y0,y1};
+}
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+const rafify=fn=>{let q=0;return()=>{if(!q)q=requestAnimationFrame(()=>{q=0;fn()})}};
+const SUB='₀₁₂₃₄₅₆₇₈₉',SUP='⁰¹²³⁴⁵⁶⁷⁸⁹';const sub=n=>String(n).replace(/\d/g,d=>SUB[d]),sup=n=>String(n).replace(/\d/g,d=>SUP[d]);
+/* spread label y positions so they keep a minimum gap */
+function spread(items,gap){items.sort((a,b)=>a.y-b.y);for(let i=1;i<items.length;i++)if(items[i].y-items[i-1].y<gap)items[i].y=items[i-1].y+gap;return items}
+function segBtns(box,vals,cur,fmt,on){box.innerHTML='';vals.forEach(v=>{const b=document.createElement('button');b.type='button';b.textContent=fmt?fmt(v):String(v);b.setAttribute('aria-pressed',String(v===cur));b.addEventListener('click',()=>{$$('button',box).forEach(x=>x.setAttribute('aria-pressed',String(x===b)));on(v)});box.appendChild(b)})}
+function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function gauss(r){const u1=r(),u2=r();return Math.sqrt(-2*Math.log(1-u1))*Math.cos(2*Math.PI*u2)}
+
+/* ---------- block strip ---------- */
+function blockStrip(node){const pre=JSON.parse(node.dataset.prefix),taus=JSON.parse(node.dataset.taus);
+  node.setAttribute('role','img');node.setAttribute('aria-label',node.dataset.label||'');
+  node.innerHTML=pre.map(w=>`<span class="bs-cell bs-c" aria-hidden="true"><span class="bs-box">${w}</span><span class="bs-v">τ = 1</span></span>`).join('')+'<span class="bs-sep" aria-hidden="true"></span>'+
+    taus.map((t,i)=>`<span class="bs-cell bs-x" style="--t:${t}" aria-hidden="true"><span class="bs-box"></span><span class="bs-v">τ${sup(i+1)} ${t.toFixed(2)}</span></span>`).join('')}
+
+/* ---------- S2 static figure ---------- */
+function renderS2(){const svg=$('#s2-svg'),W=widthOf(svg.parentNode,280,520),H=Math.round(W*.62);
+  const f=frame(svg,{W,H,m:{l:40,r:70,t:16,b:36},x:[0,1],y:[0,1],xt:[0,.25,.5,.75,1],yt:[0,.5,1],xl:'base time t',yl:'τ'});
+  const curve=p=>{const a=[];for(let i=0;i<=60;i++){const t=i/60;a.push([f.X(t),f.Y(1-(1-t)**p)])}return a};
+  el('path',{d:lp([[f.X(0),f.Y(0)],[f.X(1),f.Y(1)]]),class:'ref'},f.g);
+  el('path',{d:lp(curve(2.2)),class:'par'},f.g);el('path',{d:lp(curve(1.4)),class:'perp dash'},f.g);
+  const labs=spread([{y:f.Y(1-(.5)**2.2),s:'τ¹（位置 1）',c:'par-f'},{y:f.Y(1-(.5)**1.4),s:'τ²（位置 2）',c:'perp-f'},{y:f.Y(.5),s:'同步 τ = t',c:'mut'}],15);
+  labs.forEach(l=>tx(f.g,f.X(.5)+8,l.y+4,l.s,{class:'al '+l.c}));}
+
+/* ---------- shared toy (C1, C4) ---------- */
+const VOCAB=['hot','ice','sour','dog','cream'];
+const EMB=VOCAB.map((_,v)=>{const a=Math.PI/2-2*Math.PI*v/5;return[Math.cos(a),Math.sin(a)]});
+const PAIRS=[[0,3,.4],[1,4,.3],[2,4,.3]];
+const PRIOR={3:.4,9:.3,14:.3};   // key = y1*5 + y2
+const tauToy=(i,t,lam)=>i===0?1-(1-t)**(1+2*lam):t;
+function denoiser(x,ta,sigma){
+  const lw=PAIRS.map(([a,b,p])=>{let s=Math.log(p);const c=[a,b];for(let i=0;i<2;i++){const v=Math.max((1-ta[i])**2*sigma**2,1e-24),e=EMB[c[i]],dx=x[i][0]-ta[i]*e[0],dy=x[i][1]-ta[i]*e[1];s-=(dx*dx+dy*dy)/(2*v)}return s});
+  const m=Math.max(...lw),w=lw.map(l=>Math.exp(l-m)),z=w[0]+w[1]+w[2];
+  const D=[[0,0,0,0,0],[0,0,0,0,0]];PAIRS.forEach(([a,b],k)=>{D[0][a]+=w[k]/z;D[1][b]+=w[k]/z});return D}
+function meanEmb(p){let a=0,b=0;for(let v=0;v<5;v++){a+=p[v]*EMB[v][0];b+=p[v]*EMB[v][1]}return[a,b]}
+function argmax(p){let b=0;for(let v=1;v<p.length;v++)if(p[v]>p[b])b=v;return b}
+const partCache=new Map();
+function particles(seed){if(!partCache.has(seed)){const r=mulberry32(seed),a=[];for(let i=0;i<500;i++)a.push([[gauss(r),gauss(r)],[gauss(r),gauss(r)]]);partCache.set(seed,a)}return partCache.get(seed)}
+function eulerStep(x,ta,tb,p){const o=[];for(let i=0;i<2;i++){const a=(tb[i]-ta[i])/(1-ta[i]),m=meanEmb(p[i]);o.push([x[i][0]+a*(m[0]-x[i][0]),x[i][1]+a*(m[1]-x[i][1])])}return o}
+function flowDecode(g,sigma,lam,K,keep){let x=[[sigma*g[0][0],sigma*g[0][1]],[sigma*g[1][0],sigma*g[1][1]]],p;const tr=keep?[x]:null;
+  for(let k=0;k<K;k++){const ta=[tauToy(0,k/K,lam),tauToy(1,k/K,lam)],tb=[tauToy(0,(k+1)/K,lam),tauToy(1,(k+1)/K,lam)];p=denoiser(x,ta,sigma);x=eulerStep(x,ta,tb,p);if(tr)tr.push(x)}
+  return{y:[argmax(p[0]),argmax(p[1])],x,tr}}
+const toy={seed:7,sigma:1,lam:.5};
+const c1Cache=new Map();
+function c1Compute(seed,sigma,lam,K){const key=`${seed}|${sigma}|${lam}|${K}`;if(c1Cache.has(key))return c1Cache.get(key);
+  const ps=particles(seed),cnt={},ends=[],trs=[];
+  ps.forEach((g,n)=>{const r=flowDecode(g,sigma,lam,K,n<12),k=r.y[0]*5+r.y[1];cnt[k]=(cnt[k]||0)+1;ends.push({x:r.x,k});if(n<12)trs.push(r.tr)});
+  const N=ps.length,valid=((cnt[3]||0)+(cnt[9]||0)+(cnt[14]||0))/N;
+  let tv=0;new Set([...Object.keys(cnt).map(Number),3,9,14]).forEach(k=>{tv+=Math.abs((cnt[k]||0)/N-(PRIOR[k]||0))});tv/=2;
+  const res={cnt,valid,tv,ends,trs,N,freq:k=>(cnt[k]||0)/N};c1Cache.set(key,res);return res}
+const pairName=k=>VOCAB[Math.floor(k/5)]+' '+VOCAB[k%5];
+function toyPlane(svg,W,pos,title){svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${W}`);svg.setAttribute('width',W);svg.setAttribute('height',W);
+  const pad=24,X=lin(-2.2,2.2,pad,W-pad),Y=lin(-2.2,2.2,W-pad,pad);
+  el('rect',{x:pad,y:pad,width:W-2*pad,height:W-2*pad,class:'frame'},svg);
+  el('line',{x1:X(-2.2),x2:X(2.2),y1:Y(0),y2:Y(0),class:'faint'},svg);el('line',{x1:X(0),x2:X(0),y1:Y(-2.2),y2:Y(2.2),class:'faint'},svg);
+  el('circle',{cx:X(0),cy:Y(0),r:X(1)-X(0),class:'faint',fill:'none'},svg);
+  const mine=pos===0?[0,1,2]:[3,4];
+  VOCAB.forEach((w,v)=>{const[ex,ey]=EMB[v],on=mine.includes(v);el('circle',{cx:X(ex),cy:Y(ey),r:on?4.5:3,class:on?'ink-f':'faint-f'},svg);tx(svg,X(ex*1.3),Y(ey*1.3)+4,w,{class:on?'lab':'tk','text-anchor':'middle'})});
+  tx(svg,pad+6,pad+16,title,{class:'al'});
+  return{X,Y}}
+function xMark(g,x,y,r,cls){el('path',{d:`M${x-r} ${y-r}L${x+r} ${y+r}M${x-r} ${y+r}L${x+r} ${y-r}`,class:cls||'xm'},g)}
+
+/* ---------- C1 ---------- */
+const c1={K:1},KS=[1,2,4,8,16,32,64],SIGS=[.25,.5,1,2,4];
+function renderC1(){const r=c1Compute(toy.seed,toy.sigma,toy.lam,c1.K),pW=widthOf($('#c1-p1').parentNode,200,320);
+  [0,1].forEach(pos=>{const svg=$(pos?'#c1-p2':'#c1-p1'),P=toyPlane(svg,pW,pos,`位置 ${pos+1}`);
+    r.ends.forEach((e,n)=>{if(n>=12)el('circle',{cx:P.X(e.x[pos][0]),cy:P.Y(e.x[pos][1]),r:1.6,class:'pt'},svg)});
+    r.trs.forEach((tr,n)=>{el('path',{d:lp(tr.map(x=>[P.X(x[pos][0]),P.Y(x[pos][1])])),class:(pos?'perp dash':'par'),style:'stroke-width:1.4;opacity:.8'},svg);
+      const e=r.ends[n],ex=P.X(e.x[pos][0]),ey=P.Y(e.x[pos][1]);if(PRIOR[e.k])el('circle',{cx:ex,cy:ey,r:4.5,class:'ink-f'},svg);else xMark(svg,ex,ey,4.5)});
+    svg.setAttribute('aria-label',`位置 ${pos+1} 的平面圖：K = ${c1.K}，有支撐比例 ${(r.valid*100).toFixed(1)}%`+(r.valid===0?'，全部為 hot cream':''))});
+  // bars
+  const svg=$('#c1-bar'),W=widthOf(svg.parentNode,260,460),rows=[3,9,14,4,13,8],rh=40,H=rows.length*rh+10;
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const x0=92,X=lin(0,1,x0,W-64);
+  rows.forEach((k,i)=>{const y=6+i*rh,f=r.freq(k),p=PRIOR[k]||0;
+    tx(svg,0,y+17,pairName(k),{class:PRIOR[k]?'lab':'al'});
+    el('rect',{x:x0,y:y+4,width:Math.max(0,X(f)-x0),height:12,class:'solidb'},svg);
+    if(p)el('rect',{x:x0,y:y+19,width:X(p)-x0,height:12,class:'hollowb'},svg);else el('line',{x1:x0,x2:x0,y1:y+19,y2:y+31,class:'thin'},svg);
+    tx(svg,Math.max(X(f),x0)+6,y+14,(f*100).toFixed(1)+'%',{class:'tk'});tx(svg,(p?X(p):x0)+6,y+29,'先驗 '+(p*100).toFixed(0)+'%',{class:'tk'})});
+  $('#c1-sr').innerHTML='<caption>六個組合的生成頻率與先驗</caption><tr><th>組合</th><th>生成</th><th>先驗</th></tr>'+rows.map(k=>`<tr><td>${pairName(k)}</td><td>${(r.freq(k)*100).toFixed(1)}%</td><td>${((PRIOR[k]||0)*100).toFixed(0)}%</td></tr>`).join('');
+  const K=c1.K,ks=K<=8?[...Array(K+1).keys()]:[0,1,2,null,K-1,K];
+  const grid=ks.map(k=>k===null?'…':`${tauToy(0,k/K,toy.lam).toFixed(3)}/${tauToy(1,k/K,toy.lam).toFixed(3)}`).join('  ');
+  $('#c1-ro').innerHTML=`有支撐比例 <b>${r.valid.toFixed(3)}</b><br>與先驗的總變差距離 TV = ½Σ|p̂ − p| = <b>${r.tv.toFixed(3)}</b><br>τ¹/τ² 網格（k = 0…K）：<br>${grid}`;
+  announce('c1',`K = ${K}，λ = ${toy.lam}，σ = ${toy.sigma}：有支撐比例 ${r.valid.toFixed(3)}，TV ${r.tv.toFixed(3)}`)}
+function initC1(){const go=rafify(()=>{renderC1();renderC4()});
+  segBtns($('#c1-K'),KS,c1.K,null,v=>{c1.K=v;go()});
+  segBtns($('#c1-sig'),SIGS,toy.sigma,null,v=>{toy.sigma=v;go()});
+  $('#c1-lam').addEventListener('input',e=>{toy.lam=+e.target.value;$('#c1-lamo').textContent=toy.lam.toFixed(2);go()});
+  $('#c1-re').addEventListener('click',()=>{toy.seed++;go()});renderC1()}
+
+/* ---------- C2 masks (also used by C5) ---------- */
+function maskRows(mode,N,B){const R=[];
+  if(mode==='infer'){for(let i=0;i<N;i++)R.push({t:'c',i,g:'c',lab:'c'+sub(i+1)});for(let i=0;i<B;i++)R.push({t:'x',i,g:'x',lab:'x'+sub(i+1)})}
+  else if(mode==='train'){for(let i=0;i<2*B;i++)R.push({t:'c',i,g:'c'+Math.floor(i/B),lab:'c'+sub(i+1)});for(let i=0;i<2*B;i++)R.push({t:'x',i,g:'x'+Math.floor(i/B),lab:'x'+sub(i+1)})}
+  else{for(let i=0;i<N;i++)R.push({t:'c',i,g:'c',lab:'c'+sub(i+1)});for(let i=0;i<B;i++)R.push({t:'y',i,g:'y',lab:'ŷ'+sub(i+1)});
+    for(let j=0;j<B;j++)for(let i=0;i<B;i++)R.push({t:'z',i:j*B+i,g:'z'+j,lab:'z'+sup(j+1)+sub(i+1)})}
+  return R}
+function maskAllowed(mode,N,B,q,k){
+  if(mode==='infer'){if(q.t==='c')return k.t==='c'&&k.i<=q.i;return true}
+  if(mode==='train'){if(q.t==='c')return k.t==='c'&&k.i<=q.i;const r=Math.floor(q.i/B);if(k.t==='c')return k.i<r*B;return Math.floor(k.i/B)===r}
+  const pos=u=>u.t==='c'?u.i:N+u.i;
+  if(q.t!=='z')return k.t!=='z'&&pos(k)<=pos(q);
+  const j=Math.floor(q.i/B);if(k.t==='c')return true;if(k.t==='y')return k.i<=j;return Math.floor(k.i/B)===j}
+function maskCount(mode,N,B){const R=maskRows(mode,N,B);let n=0,leak=0;R.forEach(q=>R.forEach(k=>{if(maskAllowed(mode,N,B,q,k)){n++;if((q.t==='c'||q.t==='y')&&(k.t==='x'||k.t==='z'))leak++}}));return{n,total:R.length**2,leak,R}}
+function describe(mode,N,B,R,q){const runs=[];let cur=null;
+  R.forEach(k=>{const ok=maskAllowed(mode,N,B,q,k);if(ok&&cur&&cur.g===k.g&&cur.last+1===R.indexOf(k)){cur.b=k.lab;cur.last++}else if(ok){cur={g:k.g,a:k.lab,b:null,last:R.indexOf(k)};runs.push(cur)}else cur=null});
+  const parts=runs.map(r=>r.b?`${r.a}–${r.b}`:r.a);
+  return `${q.lab} 看 `+(parts.length>1?parts.slice(0,-1).join('、')+' 與 '+parts[parts.length-1]:parts[0])}
+function renderMask(box,mode,N,B,opt={}){const{n,total,leak,R}=maskCount(mode,N,B);let sel=Math.min(opt.sel??N,R.length-1);
+  const head=R.map((k,j)=>`<th scope="col"${j&&R[j-1].g!==k.g?' class="gl"':''}>${k.lab}</th>`).join('');
+  const body=R.map((q,r)=>`<tr class="${r&&R[r-1].g!==q.g?'gt':''}${opt.cached&&q.t==='c'?' cached':''}"><th scope="row"><button type="button" tabindex="-1" aria-pressed="false" data-r="${r}">${q.lab}</button></th>`+
+    R.map((k,j)=>{const ok=maskAllowed(mode,N,B,q,k);return `<td class="${ok?'y':'n'}${j&&R[j-1].g!==k.g?' gl':''}" aria-label="${q.lab} 對 ${k.lab}：${ok?'允許':'阻擋'}">${ok?'●':''}</td>`}).join('')+'</tr>').join('');
+  box.innerHTML=`<table class="mask"><caption class="sr">注意力遮罩，列為 query、欄為 key</caption><thead><tr><th scope="col" class="corner">query＼key</th>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  const btns=$$('tbody th button',box),rowsEl=$$('tbody tr',box);
+  function select(r,focus){sel=r;btns.forEach((b,i)=>{b.setAttribute('aria-pressed',String(i===r));b.tabIndex=i===r?0:-1});
+    rowsEl.forEach((tr,i)=>$$('td',tr).forEach(td=>td.classList.toggle('sel',i===r&&td.classList.contains('y'))));
+    if(focus)btns[r].focus();if(opt.onDesc)opt.onDesc(describe(mode,N,B,R,R[r]))}
+  btns.forEach((b,i)=>{b.addEventListener('click',()=>select(i));b.addEventListener('keydown',e=>{let t=null;if(e.key==='ArrowDown')t=Math.min(i+1,btns.length-1);else if(e.key==='ArrowUp')t=Math.max(i-1,0);else if(e.key==='Home')t=0;else if(e.key==='End')t=btns.length-1;if(t!==null){e.preventDefault();select(t,true)}})});
+  select(sel);return{n,total,leak}}
+const c2={mode:'infer',N:3,B:3,sel:3};
+function renderC2(){const{mode,N,B}=c2,box=$('#c2-box');
+  const r=renderMask(box,mode,N,B,{sel:mode==='infer'?N+1:3*B,onDesc:s=>{$('#c2-desc').textContent=s;announce('c2',s)}});
+  $('#c2-ro').innerHTML=`允許 <b>${r.n}</b> / ${r.total} 格`+(mode==='infer'?`<br>prefix 列落在 block 欄的允許格數：<b class="acc">${r.leak}</b>（prefix 的表示與 x、t 無關，KV cache 可重用）`:'');
+  const dis=mode==='train';$$('#c2-N button').forEach(b=>{b.disabled=dis});$('#c2-Nnote').textContent=dis?'訓練模式不用 N：序列沒有 prompt，固定 R = 2 個 block。':''}
+function initC2(){const go=rafify(renderC2);
+  $$('#c2-mode button').forEach(b=>b.addEventListener('click',()=>{c2.mode=b.dataset.v;$$('#c2-mode button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));go()}));
+  segBtns($('#c2-N'),[2,3,4,5,6],c2.N,null,v=>{c2.N=v;go()});segBtns($('#c2-B'),[2,3,4],c2.B,null,v=>{c2.B=v;go()});renderC2()}
+
+/* ---------- C3 ---------- */
+const EPS=.05,MB=200,cdfCache=new Map();
+const ellToy=(q,t)=>EPS+(1-t)**q;
+function cdf(q){if(!cdfCache.has(q)){const L=new Float64Array(MB);let S=0;for(let m=0;m<MB;m++){L[m]=ellToy(q,(m+.5)/MB);S+=L[m]}const F=new Float64Array(MB+1);for(let m=0;m<MB;m++)F[m+1]=F[m]+L[m]/S;cdfCache.set(q,F)}return cdfCache.get(q)}
+function tauBinned(q,t){if(t>=1)return 1;const F=cdf(q);let lo=0,hi=MB;while(hi-lo>1){const mid=(lo+hi)>>1;if(F[mid]<=t)lo=mid;else hi=mid}return(lo+(t-F[lo])/(F[lo+1]-F[lo]))/MB}
+const ellInt=q=>EPS+1/(q+1);
+const tauDot=(q,t)=>ellInt(q)/ellToy(q,tauBinned(q,t));
+const c3={q1:.5,dq:.5,K:8},DASH=['','8 5','3 3','1 4'],INK=['var(--ink)','var(--ink-2)','var(--ink)','var(--ink-2)'];
+function c3qs(){return[0,1,2,3].map(i=>{const raw=+(c3.q1+i*c3.dq).toFixed(4);return{q:Math.min(7,Math.max(.1,raw)),clamp:raw<.1?'0.1':raw>7?'7':''}})}
+function renderC3(){const qs=c3qs(),W=widthOf($('#c3-ell').parentNode,260,480),H=Math.round(W*.7);
+  const ymax=Math.ceil(Math.max(...qs.map(o=>(EPS+1)/ellInt(o.q)))),st=o=>({style:`stroke:${INK[o]};${DASH[o]?'stroke-dasharray:'+DASH[o]:''}`});
+  let f=frame($('#c3-ell'),{W,H,m:{l:36,r:52,t:22,b:36},x:[0,1],y:[0,ymax],xt:[0,.5,1],yt:[0,ymax/2,ymax].map(v=>[v,+v.toFixed(1)+'']),xl:'tokenwise time τ',yl:'ℓⁱ(τ) / ∫ℓⁱ'});
+  let labs=[];qs.forEach((o,i)=>{const a=[];for(let j=0;j<=100;j++){const t=j/100;a.push([f.X(t),f.Y(ellToy(o.q,t)/ellInt(o.q))])}el('path',Object.assign({d:lp(a),class:'ln'},st(i)),f.g);labs.push({y:f.Y(ellToy(o.q,.08)/ellInt(o.q)),s:'i = '+(i+1)})});
+  spread(labs,14).forEach(l=>tx(f.g,f.X(.08)+6,l.y-4,l.s,{class:'al'}));
+  f=frame($('#c3-tau'),{W,H,m:{l:36,r:52,t:22,b:36},x:[0,1],y:[0,1],xt:[0,.5,1],yt:[0,.5,1],xl:'base time t',yl:'τⁱ(t)'});
+  el('path',{d:lp([[f.X(0),f.Y(0)],[f.X(1),f.Y(1)]]),class:'ref'},f.g);tx(f.g,f.X(.8)+4,f.Y(.8)+16,'同步',{class:'tk'});
+  labs=[];qs.forEach((o,i)=>{const a=[];for(let j=0;j<=100;j++){const t=j/100;a.push([f.X(t),f.Y(tauBinned(o.q,t))])}el('path',Object.assign({d:lp(a),class:'ln'},st(i)),f.g);labs.push({y:f.Y(tauBinned(o.q,.45)),s:'i = '+(i+1)})});
+  spread(labs,14).forEach(l=>tx(f.g,f.X(.45)-6,l.y-4,l.s,{class:'al','text-anchor':'end'}));
+  // grid strips
+  const gs=$('#c3-grid'),GW=widthOf(gs.parentNode,280,960),GH=4*30+30;gs.textContent='';gs.setAttribute('viewBox',`0 0 ${GW} ${GH}`);gs.setAttribute('width',GW);gs.setAttribute('height',GH);
+  const GX=lin(0,1,56,GW-16);
+  qs.forEach((o,i)=>{const y=14+i*30;tx(gs,0,y+4,'τ'+sup(i+1),{class:'labm'});el('line',{x1:GX(0),x2:GX(1),y1:y,y2:y,class:'axl'},gs);
+    for(let k=0;k<=c3.K;k++){const xx=GX(tauBinned(o.q,k/c3.K));el('line',{x1:xx,x2:xx,y1:y-7,y2:y+7,class:'ink',style:'stroke-width:1.6'},gs)}});
+  [0,.5,1].forEach(v=>tx(gs,GX(v),GH-6,'τ = '+v,{class:'tk','text-anchor':'middle'}));
+  const t5=qs.map(o=>tauBinned(o.q,.5));
+  $('#c3-tab').innerHTML='<caption>各位置的 q、τ(0.5) 與 dτ/dt(0.5)</caption><thead><tr><th>位置</th><th class="num">qᵢ</th><th class="num">τⁱ(0.5)</th><th class="num">dτⁱ/dt(0.5)</th></tr></thead><tbody>'+
+    qs.map((o,i)=>`<tr><td>${i+1}${o.clamp?`（q 已夾在 ${o.clamp}）`:''}</td><td class="num">${o.q.toFixed(1)}</td><td class="num">${t5[i].toFixed(4)}</td><td class="num">${tauDot(o.q,.5).toFixed(4)}</td></tr>`).join('')+'</tbody>';
+  const ord=[0,1,2,3].sort((a,b)=>t5[b]-t5[a]);let s='τ'+sup(ord[0]+1);for(let i=1;i<4;i++)s+=(Math.abs(t5[ord[i]]-t5[ord[i-1]])<1e-12?' = ':' > ')+'τ'+sup(ord[i]+1);
+  const allEq=Math.max(...t5)-Math.min(...t5)<1e-12;
+  $('#c3-ro').innerHTML=`順序（t = 0.5）：<b>${allEq?'四個位置相同':s}</b><br>網格：t = k/${c3.K} 映到 τ 軸，刻度在 loss 高的一側（τ 小處）較密。`;
+  announce('c3',`q₁ = ${c3.q1.toFixed(1)}，Δq = ${c3.dq.toFixed(1)}：順序 ${allEq?'四個位置相同':s}`)}
+function initC3(){const go=rafify(renderC3);
+  $('#c3-q1').addEventListener('input',e=>{c3.q1=+e.target.value;$('#c3-q1o').textContent=c3.q1.toFixed(1);go()});
+  $('#c3-dq').addEventListener('input',e=>{c3.dq=+e.target.value;$('#c3-dqo').textContent=c3.dq.toFixed(1);go()});
+  segBtns($('#c3-K'),[4,8,16,32],c3.K,null,v=>{c3.K=v;go()});renderC3()}
+
+/* ---------- C4 ---------- */
+const NF=2000,c4Cache=new Map();
+function c4Compute(g,sigma,lam,s,t){
+  const js=Math.round(s*NF),jt=Math.round(t*NF),ju=Math.floor((js+jt)/2);
+  const T=j=>[tauToy(0,j/NF,lam),tauToy(1,j/NF,lam)];
+  function advance(x,j0,j1,acc,path){for(let j=j0;j<j1;j++){const ta=T(j),tb=T(j+1),p=denoiser(x,ta,sigma);
+      if(acc)for(let i=0;i<2;i++){const dz=1/(1-tb[i])-1/(1-ta[i]);for(let v=0;v<5;v++)acc[i][v]+=dz*p[i][v]}
+      x=eulerStep(x,ta,tb,p);if(path&&(j+1-j0)%10===0)path.push(x)}return x}
+  const zero=()=>[[0,0,0,0,0],[0,0,0,0,0]];
+  const x0=[[sigma*g[0][0],sigma*g[0][1]],[sigma*g[1][0],sigma*g[1][1]]],xs=advance(x0,0,js);
+  const acc=zero(),path=[xs],xt=advance(xs,js,jt,acc,path);path.push(xt);
+  const ts=T(js),tt=T(jt),tu=T(ju),Z=[0,1].map(i=>1/(1-tt[i])-1/(1-ts[i]));
+  const delta=[0,1].map(i=>acc[i].map(v=>v/Z[i])),Ds=denoiser(xs,ts,sigma);
+  const X7=[],XE=[],res7=[],errE=[];
+  for(let i=0;i<2;i++){const a=(1-tt[i])/(1-ts[i]),b=(tt[i]-ts[i])/(1-ts[i]),m=meanEmb(delta[i]),mE=meanEmb(Ds[i]);
+    X7.push([a*xs[i][0]+b*m[0],a*xs[i][1]+b*m[1]]);XE.push([a*xs[i][0]+b*mE[0],a*xs[i][1]+b*mE[1]]);
+    res7.push(Math.hypot(X7[i][0]-xt[i][0],X7[i][1]-xt[i][1]));errE.push(Math.hypot(XE[i][0]-xt[i][0],XE[i][1]-xt[i][1]))}
+  const gamma=[0,1].map(i=>(1-tt[i])*(tu[i]-ts[i])/((1-tu[i])*(tt[i]-ts[i])));
+  const acc1=zero(),xu=advance(xs,js,ju,acc1),acc2=zero();advance(xu,ju,jt,acc2);
+  let semi=0;for(let i=0;i<2;i++){const Zsu=1/(1-tu[i])-1/(1-ts[i]),Zut=1/(1-tt[i])-1/(1-tu[i]);for(let v=0;v<5;v++)semi=Math.max(semi,Math.abs(delta[i][v]-(gamma[i]*acc1[i][v]/Zsu+(1-gamma[i])*acc2[i][v]/Zut)))}
+  return{Ds,delta,X7,XE,xs,xt,path,gamma,semi,res7,errE,ts,tt}}
+const c4={n:0,s:0,t:.5};
+function c4Get(){const key=`${c4.n}|${c4.s}|${c4.t}|${toy.sigma}|${toy.lam}|${toy.seed}`;if(!c4Cache.has(key))c4Cache.set(key,c4Compute(particles(toy.seed)[c4.n],toy.sigma,toy.lam,c4.s,c4.t));return c4Cache.get(key)}
+function renderC4(){const r=c4Get(),pW=widthOf($('#c4-p1').parentNode,200,320);
+  [0,1].forEach(pos=>{const svg=$(pos?'#c4-p2':'#c4-p1'),P=toyPlane(svg,pW,pos,`位置 ${pos+1}`),pt=x=>[P.X(x[pos][0]),P.Y(x[pos][1])];
+    el('path',{d:lp(r.path.map(pt)),class:'ref'},svg);
+    const[sx,sy]=pt(r.xs),[ex,ey]=pt(r.XE),[qx,qy]=pt(r.X7);
+    el('line',{x1:sx,y1:sy,x2:ex,y2:ey,class:'proj'},svg);xMark(svg,ex,ey,5);
+    el('circle',{cx:sx,cy:sy,r:5.5,class:'hollow'},svg);el('circle',{cx:qx,cy:qy,r:5,class:'acc-f'},svg);
+    svg.setAttribute('aria-label',`位置 ${pos+1}：起點 xₛ、參考軌跡、Eq. 7 以 δ 跳躍的點與一步 Euler 的點`)});
+  const svg=$('#c4-bar'),W=widthOf(svg.parentNode,260,460),groups=[[0,[0,1,2]],[1,[3,4]]],rh=30,H=5*rh+2*26+8;
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const x0=58,X=lin(0,1,x0,W-110);let y=0;
+  groups.forEach(([pos,vs])=>{tx(svg,0,y+16,`位置 ${pos+1}`,{class:'al'});y+=24;
+    vs.forEach(v=>{const d=r.Ds[pos][v],q=r.delta[pos][v];tx(svg,0,y+16,VOCAB[v],{class:'lab'});
+      el('rect',{x:x0,y:y+2,width:Math.max(.5,X(d)-x0),height:10,class:'hollowb'},svg);el('rect',{x:x0,y:y+14,width:Math.max(0,X(q)-x0),height:10,class:'solida'},svg);
+      tx(svg,X(1)+8,y+20,`${d.toFixed(3)} → ${q.toFixed(3)}`,{class:'tk'});y+=rh});y+=2});
+  svg.setAttribute('aria-label','D̂ₛ 與 δ(s,t) 的機率：'+groups.map(([p,vs])=>vs.map(v=>`${VOCAB[v]} ${r.Ds[p][v].toFixed(3)} 到 ${r.delta[p][v].toFixed(3)}`).join('，')).join('；'));
+  const am=p=>VOCAB[argmax(p)];
+  $('#c4-ro').innerHTML=`τₛ = ${r.ts[0].toFixed(3)} / ${r.ts[1].toFixed(3)}　τₜ = ${r.tt[0].toFixed(3)} / ${r.tt[1].toFixed(3)}（位置 1 / 2）<br>γ（u 取中點）= <b>${r.gamma[0].toFixed(4)}</b> / <b>${r.gamma[1].toFixed(4)}</b><br>Eq. 7 與軌跡終點的差：${r.res7.map(v=>v.toExponential(1)).join(' / ')}<br>一步 Euler 的誤差：<b>${r.errE.map(v=>v.toFixed(3)).join(' / ')}</b><br>semigroup 殘差：${r.semi.toExponential(1)}<br>argmax：D̂ₛ → ${am(r.Ds[0])} ${am(r.Ds[1])}；δ → <b class="acc">${am(r.delta[0])} ${am(r.delta[1])}</b>`;
+  announce('c4',`s = ${c4.s.toFixed(2)}，t = ${c4.t.toFixed(2)}：一步 Euler 誤差 ${r.errE.map(v=>v.toFixed(3)).join('、')}，δ 的 argmax 為 ${am(r.delta[0])} ${am(r.delta[1])}`)}
+function initC4(){const go=rafify(renderC4),ts=$('#c4-t');
+  $('#c4-n').addEventListener('input',e=>{c4.n=+e.target.value;$('#c4-no').textContent=c4.n;go()});
+  $('#c4-s').addEventListener('input',e=>{c4.s=+(+e.target.value).toFixed(2);$('#c4-so').textContent=c4.s.toFixed(2);ts.min=(c4.s+.01).toFixed(2);if(c4.t<=c4.s){c4.t=+(c4.s+.01).toFixed(2);ts.value=c4.t}$('#c4-to').textContent=c4.t.toFixed(2);go()});
+  ts.addEventListener('input',e=>{c4.t=Math.max(+(+e.target.value).toFixed(2),+(c4.s+.01).toFixed(2));$('#c4-to').textContent=c4.t.toFixed(2);go()});renderC4()}
+
+/* ---------- C5 ---------- */
+function c5Expected(B,r1,rho){let ea=1,prod=r1;for(let j=1;j<B;j++){prod*=r1*rho**j;ea+=prod}return ea}
+function c5Sim(B,r1,rho,T=1024,seed=1){const rng=mulberry32(seed),r=[];for(let i=0;i<B;i++)r.push(r1*rho**i);let done=0,pos=0;const hist=[];
+  while(done<T){const ok=r.map(ri=>rng()<ri),corr=!ok[0];let a=1;if(!corr)while(a<B&&ok[a])a++;const full=a;a=Math.min(a,T-done);done+=a;pos+=corr?1+B:B+B*B;hist.push({ok,a,corr,trunc:a<full,done,pos})}
+  return{T:done,F:hist.length+1,TPF:done/(hist.length+1),hist,posPer:pos/hist.length}}
+const c5={B:8,r1:.95,rho:.9,seed:1,idx:0,timer:0,sim:null};
+function c5Sync(){c5.sim=c5Sim(c5.B,c5.r1,c5.rho,1024,c5.seed);c5.idx=0;c5Stop()}
+function c5Stop(){clearInterval(c5.timer);c5.timer=0;$('#c5-auto').textContent='自動執行'}
+function renderC5(){const{B,sim,idx}=c5,h=idx?sim.hist[idx-1]:null;
+  let now='';
+  if(!h)now='<p class="note">尚未執行：已有 1 次初始草稿的 forward。按「下一步」執行第一次 fused forward。</p>';
+  else{const cells=h.ok.map((ok,i)=>{const acc=i<h.a&&!h.corr,fix=h.corr&&i===0;return `<span class="c5c${acc?' acc':''}${fix?' fix':''}">${fix?'修正':ok?'✓':'✗'}</span>`}).join('');
+    const zs=[...Array(B)].map((_,j)=>`<span class="c5z${j+1===h.a?' pick':''}${h.corr&&j>0?' off':''}">z⁽${sup(j+1)}⁾${'<i></i>'.repeat(Math.min(B,4))}</span>`).join('');
+    now=`<div class="c5row"><span class="k">草稿 ŷ</span>${cells}</div><p class="cap" style="margin:4px 0 8px">第 ${idx} 次 fused forward：${h.corr?'第一個 token 與 AR 預測不符，改 commit argmax f(c)_N，a = 1':`接受長度 a = <b>${h.a}</b>（粗框）`}${h.trunc?'（序列結尾截斷）':''}</p><div class="c5row"><span class="k">候選 block</span>${zs}</div><p class="cap" style="margin:4px 0 0">外框標示的 z⁽${sup(h.a)}⁾ 輸出成為下一份草稿${h.corr?'；修正時只需 z⁽¹⁾':''}。</p>`}
+  $('#c5-now').innerHTML=now;
+  const seg=[];for(let f=0;f<idx;f++){const a=sim.hist[f].a;for(let k=0;k<a;k++)seg.push([f+1,k===0])}
+  $('#c5-seq').innerHTML=seg.slice(-64).map(([f,s])=>`<span class="${f%2?'':'o'}${s?' s':''}">${s?f:''}</span>`).join('');
+  const done=h?h.done:0,F=idx+1,pos=h?h.pos:0;
+  $('#c5-ro').innerHTML=`已 commit <b>${done}</b> / 1024 token${h&&h.trunc?'（最後一次 a 被序列結尾截斷）':''}　forward 數 F = <b>${F}</b>（含初始草稿）　目前 TPF = T/F = <b class="acc">${(done/F).toFixed(4)}</b><br>閉式 𝔼[a] = 1 + Σⱼ Πᵢ rᵢ = <b>${c5Expected(B,c5.r1,c5.rho).toFixed(4)}</b>　平均每次 forward 新處理的位置數 = ${idx?(pos/idx).toFixed(1):'–'}（全部接受時 B + B² = ${B+B*B}）<br>論文 Table 2（7B）：B = 4 / 8 / 16 的 TPF 2.6 / 4.3 / 4.9，準確率 60.9 / 59.3 / 58.0`;
+  $('#c5-mcap').textContent=`fused 遮罩（N = 3，B = ${Math.min(B,4)}${B>4?'；遮罩以 B ≤ 4 顯示':''}；灰底的 c 列為 KV cache，不重算）`}
+function c5Announce(){const h=c5.idx?c5.sim.hist[c5.idx-1]:null;if(h)announce('c5',`第 ${c5.idx} 次 forward，接受 ${h.a} 個，TPF ${(h.done/(c5.idx+1)).toFixed(3)}`)}
+function c5Mask(){renderMask($('#c5-mask'),'fused',3,Math.min(c5.B,4),{cached:true,sel:3})}
+function initC5(){const go=rafify(()=>{c5Sync();renderC5()});
+  segBtns($('#c5-B'),[4,8,16],c5.B,null,v=>{c5.B=v;c5Mask();go()});
+  $('#c5-r1').addEventListener('input',e=>{c5.r1=+e.target.value;$('#c5-r1o').textContent=c5.r1.toFixed(2);go()});
+  $('#c5-rho').addEventListener('input',e=>{c5.rho=+e.target.value;$('#c5-rhoo').textContent=c5.rho.toFixed(2);go()});
+  const step=()=>{if(c5.idx<c5.sim.hist.length){c5.idx++;renderC5()}if(c5.idx>=c5.sim.hist.length){c5Stop();c5Announce()}};
+  $('#c5-step').addEventListener('click',()=>{c5Stop();step();c5Announce()});
+  $('#c5-all').addEventListener('click',()=>{c5Stop();c5.idx=c5.sim.hist.length;renderC5();c5Announce()});
+  $('#c5-auto').addEventListener('click',()=>{if(c5.timer){c5Stop();c5Announce();return}if(RM){$('#c5-all').click();return}$('#c5-auto').textContent='暫停';c5.timer=setInterval(step,400)});
+  $('#c5-reset').addEventListener('click',()=>{c5Stop();c5.idx=0;renderC5()});
+  $('#c5-re').addEventListener('click',()=>{c5.seed++;c5Sync();renderC5()});
+  c5Mask();c5Sync();renderC5()}
+
+/* ---------- F1 (Table 5) ---------- */
+const STEPS=[1,2,4,8,16,32,64,128];
+const TABLE5={'0.5B':{ar:38.6,f4:[20.8,19.7,30.0,31.8,35.4,38.1,38.5,37.1],f8:[10.6,15.0,21.8,29.6,34.3,34.2,34.5,35.5],f16:[8.1,10.4,17.0,21.1,26.3,29.1,30.6,31.0],fm:[23.3,25.2,28.5,31.8,32.6]},
+  '7B':{ar:73.9,f4:[43.7,46.2,64.3,71.2,72.1,75.2,75.9,75.7],f8:[25.6,43.7,59.2,64.5,68.9,71.7,71.0,70.9],f16:[14.2,25.4,44.1,57.3,65.2,66.5,66.8,67.2],fm:[49.0,63.3,69.4,71.0]}};
+function renderF1(){[['#f1-a','0.5B',45],['#f1-b','7B',80]].forEach(([id,k,ym])=>{const d=TABLE5[k],svg=$(id),W=widthOf(svg.parentNode,280,500),H=Math.round(W*.72);
+  const f=frame(svg,{W,H,m:{l:38,r:78,t:24,b:38},x:[1,128],xlog:true,y:[0,ym],xt:STEPS,yt:k==='7B'?[0,20,40,60,80]:[0,15,30,45],xl:'每個 block 的 Euler 步數',yl:k+'　準確率（%）'});
+  el('line',{x1:f.x0,x2:f.x1,y1:f.Y(d.ar),y2:f.Y(d.ar),class:'thin'},f.g);
+  const ser=[['f4',{class:'ln',style:'stroke:var(--ink);stroke-width:2.6'},'B=4'],['f8',{class:'ln',style:'stroke:var(--ink-2);stroke-dasharray:8 5'},'B=8'],['f16',{class:'ln',style:'stroke:var(--ink-2);stroke-dasharray:1 5;stroke-width:3'},'B=16'],['fm',{class:'acc',style:'stroke-width:2.4'},'flow map']];
+  const labs=[{y:f.Y(d.ar),s:'AR SFT '+d.ar,c:'tk'}];
+  ser.forEach(([key,st,name])=>{const v=d[key],pts=v.map((y,i)=>[f.X(STEPS[i]),f.Y(y)]);el('path',Object.assign({d:lp(pts)},st),f.g);
+    if(key==='fm')pts.forEach(([x,y])=>el('path',{d:`M${x} ${y-6}L${x+6} ${y}L${x} ${y+6}L${x-6} ${y}Z`,class:'acc-f'},f.g));
+    const last=pts[pts.length-1];labs.push({y:last[1],s:name,c:key==='fm'?'al acc-f':'al',x:last[0]})});
+  spread(labs,14).forEach(l=>tx(f.g,(l.x??f.x1)+8,l.y+4,l.s,{class:l.c}))});
+  const rows=[];['0.5B','7B'].forEach(k=>{const d=TABLE5[k];[['flow B=4','f4'],['flow B=8','f8'],['flow B=16','f16'],['flow map B=4','fm']].forEach(([n,key])=>rows.push(`<tr><td>${k}</td><td>${n}</td>${STEPS.map((s,i)=>`<td>${d[key][i]??'–'}</td>`).join('')}</tr>`));rows.push(`<tr><td>${k}</td><td>AR SFT</td><td colspan="8">${d.ar}</td></tr>`)});
+  $('#f1-sr').innerHTML=`<caption>Table 5：三項平均準確率</caption><tr><th>規模</th><th>方法</th>${STEPS.map(s=>`<th>${s} 步</th>`).join('')}</tr>`+rows.join('')}
+
+/* ---------- timeline ---------- */
+const TL_GROUP={'1811.03115':['par','lafa-parallel-decoding-background'],'2401.10774':['par','lafa-parallel-decoding-background'],'2404.19737':['par','lafa-parallel-decoding-background'],'2604.07023':['par','lafa-parallel-decoding-background'],
+ '2210.02747':['flow','lafa-embedding-flow-denoiser'],'2211.15089':['flow','lafa-embedding-flow-denoiser'],'2605.10938':['flow','lafa-embedding-flow-denoiser'],
+ '2503.09573':['block','lafa-ar-to-block-adaptation'],'2512.14067':['block','lafa-ar-to-block-adaptation'],
+ '2208.04202':['sc','lafa-self-conditioning-and-flow-map'],'2505.18825':['sc','lafa-self-conditioning-and-flow-map'],'2602.16813':['sc','lafa-self-conditioning-and-flow-map'],'2607.00714':['sc','lafa-self-conditioning-and-flow-map'],
+ '2610.28559':['me','lafa-lineage-overview']};
+const TL_NAME={par:'平行解碼',flow:'連續 flow',block:'Block 擴散與 AR 調整',sc:'Self-conditioning 與 flow map',me:'本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  data=data.map((e,i)=>({e,i})).sort((a,b)=>(+a.e.year||0)-(+b.e.year||0)||a.i-b.i).map(o=>o.e);
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${g[1]?`<a href="${g[1]}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+
+/* ---------- toc, theme, appbar ---------- */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));
+  addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+/* ---------- self test ---------- */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t)=>Math.abs(a-b)<=t+1e-9;
+  // 5.1 C1
+  [[1,.5,1,0,1,[0,0,0]],[1,.5,2,.984,.340,[.242,.624,.118]],[1,.5,4,1,.132,[.344,.432,.224]],[1,.5,64,1,.008,[.396,.296,.308]],[1,0,2,.898,.102,[.342,.294,.262]],[.25,.5,2,1,.696,[.004,.996,0]]].forEach(([sg,lam,K,v,tv,fr])=>{
+    const r=c1Compute(7,sg,lam,K);ok(near(r.valid,v,.004)&&near(r.tv,tv,.006)&&[3,9,14].every((k,i)=>near(r.freq(k),fr[i],.004)),`C1 σ=${sg} λ=${lam} K=${K}: valid=${r.valid} tv=${r.tv.toFixed(3)}`)});
+  ok(c1Compute(7,1,.5,1).cnt[4]===500,'C1 K=1 all hot cream');
+  const g0=particles(7)[0];ok([.14197,-.86425,-1.00637,.07088].every((v,i)=>near(g0[i>>1][i&1],v,1e-5)),'particle 0 g');
+  [[1,'hot cream'],[2,'ice cream'],[8,'sour cream'],[64,'sour cream']].forEach(([K,s])=>{const y=flowDecode(g0,1,.5,K).y;ok(VOCAB[y[0]]+' '+VOCAB[y[1]]===s,`p0 K=${K} → ${s}`)});
+  const D0=denoiser([[.3,-.2],[1,2]],[0,0],1);ok([.4,.3,.3,0,0].every((v,i)=>near(D0[0][i],v,1e-12))&&[0,0,0,.4,.6].every((v,i)=>near(D0[1][i],v,1e-12)),'D_0 marginals');
+  // 5.2 C2
+  [['infer',3,3,24,36],['infer',4,4,42,64],['train',0,3,48,144],['fused',3,3,93,225],['fused',2,4,157,484]].forEach(([m,N,B,n,t])=>{const r=maskCount(m,N,B);ok(r.n===n&&r.total===t,`C2 ${m} N=${N} B=${B}: ${r.n}/${r.total}`)});
+  ok(maskCount('infer',6,4).leak===0&&maskCount('fused',3,4).leak===0,'C2 prefix rows never see block keys');
+  // 5.3 C3
+  [[.5,.3778,.8544],[1,.3067,.7399],[1.5,.2606,.6562],[2,.2285,.5941]].forEach(([q,t5,d5])=>ok(near(tauBinned(q,.5),t5,.0005)&&near(tauDot(q,.5),d5,.0005),`C3 q=${q}: τ=${tauBinned(q,.5).toFixed(4)} τ̇=${tauDot(q,.5).toFixed(4)}`));
+  [0,.0872,.1785,.2749,.3778,.4894,.6140,.7615,1].forEach((v,k)=>ok(near(tauBinned(.5,k/8),v,.0005),`C3 grid q=0.5 k=${k}`));
+  // 5.4 C4
+  const c4t=[[0,.5,[.086,.181,.733],[.109,.891],[.536,.171],[.2593,.3333],null],[.3,.6,[.005,.054,.941],[.006,.994],[.263,.035],[.3005,.3636],[[.075,.288,.637],[.075,.925]]]];
+  c4t.forEach(([s,t,d1,d2,e,gm,Ds])=>{const r=c4Compute(g0,1,.5,s,t);
+    ok(d1.every((v,i)=>near(r.delta[0][i],v,.002))&&d2.every((v,i)=>near(r.delta[1][3+i],v,.002)),`C4 δ s=${s} t=${t}`);
+    if(Ds)ok(Ds[0].every((v,i)=>near(r.Ds[0][i],v,.002))&&Ds[1].every((v,i)=>near(r.Ds[1][3+i],v,.002)),`C4 D_s s=${s}`);
+    ok(near(r.errE[0],e[0],.002)&&near(r.errE[1],e[1],.002),`C4 Euler err s=${s} t=${t}: ${r.errE.map(v=>v.toFixed(3))}`);
+    ok(near(r.gamma[0],gm[0],.0002)&&near(r.gamma[1],gm[1],.0002),`C4 γ s=${s} t=${t}`);
+    ok(Math.max(...r.res7)<1e-9&&r.semi<1e-9,`C4 res7/semi s=${s} t=${t}`)});
+  [[.98,.99],[0,.99]].forEach(([s,t])=>{const r=c4Compute(g0,1,1,s,t);ok(Math.max(...r.res7)<1e-9&&r.semi<1e-9,`C4 stress λ=1 s=${s} t=${t}: ${Math.max(...r.res7).toExponential(1)} ${r.semi.toExponential(1)}`)});
+  // 5.5 C5
+  [[4,.95,.9,2.8701,351,2.9174],[8,.95,.9,3.4024,300,3.4133],[16,.95,.9,3.4243,302,3.3907],[4,1,1,4,257,3.9844],[8,1,1,8,129,7.9380],[16,1,1,16,65,15.7538],[8,.9,.8,2.2806,452,2.2655],[8,.5,.9,1.3645,760,1.3474]].forEach(([B,r1,rho,ea,F,tpf])=>{
+    const s=c5Sim(B,r1,rho);ok(s.F===F&&near(s.TPF,tpf,5e-5)&&near(s.TPF,1024/F,1e-9)&&near(c5Expected(B,r1,rho),ea,5e-5),`C5 B=${B} ${r1},${rho}: F=${s.F} TPF=${s.TPF.toFixed(4)}`)});
+  ok(c5Sim(8,.95,.9).hist.slice(0,12).map(h=>h.a).join()==='3,1,3,4,2,3,1,1,2,2,4,1','C5 first 12 a');
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ---------- boot ---------- */
+initTheme();initToc();$$('.bstrip').forEach(blockStrip);renderS2();initC1();initC2();initC3();initC4();initC5();renderF1();renderTimeline();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{renderS2();renderC1();renderC3();renderC4();renderF1()})});
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],macros:{'\\E':'\\mathbf E','\\Ex':'\\mathbb E'},throwOnError:false})}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath()});
+if(/[?&]test\b/.test(location.search)){if(document.readyState==='complete')selfTest();else addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath();selfTest()})}
+})();
+</script>
+</body>
+</html>

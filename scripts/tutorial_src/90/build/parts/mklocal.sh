@@ -1,0 +1,3 @@
+#!/bin/sh
+# offline copy for headless checks (chrome here cannot reach the CDN): caps/local.html
+sed -e 's#https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9#file:///tmp/claude-1000/-media-datatank-toonnyy8-toonnyy8-notes-github-io/5b278533-609c-4705-9f64-8b225c95d4e4/scratchpad/katex#g' -e '/fonts.googleapis.com\/css2/d' /tmp/claude-1000/-media-datatank-toonnyy8-toonnyy8-notes-github-io/5b278533-609c-4705-9f64-8b225c95d4e4/scratchpad/wt-paper-master/scripts/tutorial_src/90/build/index.html > /tmp/claude-1000/-media-datatank-toonnyy8-toonnyy8-notes-github-io/5b278533-609c-4705-9f64-8b225c95d4e4/scratchpad/wt-paper-master/scripts/tutorial_src/90/build/caps/local.html

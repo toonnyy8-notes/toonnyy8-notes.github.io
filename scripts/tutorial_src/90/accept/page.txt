@@ -1,0 +1,799 @@
+條件記憶 Engram
+
+跳到內容
+
+ No. 90
+ 條件記憶：用查表補上 MoE 之外的另一條稀疏軸
+
+00 摘要01 計算與查表02 參數預算03 tokenizer 壓縮04 多頭雜湊05 閘門06 短卷積07 多分支08 稀疏度分配09 27B 結果10 有效深度11 消融12 預取13 實作14 研究脈絡15 保留與延伸
+
+00摘要
+01計算與查表
+02參數預算
+03tokenizer 壓縮
+04多頭雜湊
+05閘門
+06短卷積
+07多分支
+08稀疏度分配
+0927B 結果
+10有效深度
+11消融
+12預取
+13實作
+14研究脈絡
+15保留與延伸
+
+ No. 90 · 互動教學 · arXiv 2601.07372
+
+ 條件記憶：用查表補上 MoE 之外的另一條稀疏軸
+
+ 這篇論文在 Transformer 中加入以 N-gram 雜湊查表的記憶模組 Engram，並研究總參數固定時，記憶與專家該如何分配。
+
+ MoE 與「稀疏」的定義見 01、02 節。
+
+ Xin Cheng、Rui Tian 等（北京大學、DeepSeek-AI）〈Conditional Memory via Scalable Lookup: A New Axis of Sparsity for Large Language Models〉
+
+ Only Alexander the Great could tame the horse Bucephalus.
+
+ 01 · 查表Engram 把目前 token 與前一、兩個 token 組成的片段當作鍵，直接在大型嵌入表中查出一個向量。不論表多大，每個 token 只查固定幾格。
+
+ 02 · 分配總參數與每個 token 的計算量都固定時，把約 20%–25% 的閒置參數從專家移到記憶，驗證集上的損失（越低越好）最小。
+
+ 03 · 規模27B 模型加入記憶後各類測驗都進步，一般推理題進步最多。100B 參數的表放在 CPU 記憶體，推論速度只下降不到 3%。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · 計算與查表
+
+ 語言模型同時需要計算與查表
+
+ 作者把語言建模分成兩種性質不同的子任務（Sec. 1）。第一種是組合推理：依上下文把多個資訊組合起來，需要深層、動態的計算。第二種是知識檢索：文本中有相當比例是局部、靜態、刻板的片段，例如具名實體（“Alexander the Great”）與固定片語（“By the way”）。這類片段只依賴前面少數幾個 token，經典的 N-gram 模型就能以查表的方式低成本捕捉。
+
+ 問題在於標準 Transformer 沒有查表的基本運算。局部靜態模式原本可以查表解決，Transformer 卻只能用前幾層的多層注意力與 FFN 逐步「算出」它們，等於用序列深度重建一張靜態查找表。作者引用的例子是 Table 3。這張表是外部例子，轉載自 Ghandeharioun et al. (2024) 以 PatchScope 對另一個模型的分析，不是本文對 Engram 或 MoE-27B 的量測：模型讀到 “Wales” 時，第 1–2 層只把它解讀為英國的一個國家，到第 6 層才解析成完整的實體 “Diana, Princess of Wales”。Diana 這個實體要到第 6 層才解析完成，作者把它當作證據：前 5 層都花在逐步拼出一個固定的實體上，也就是把層數用來重建一張靜態查找表。作者的措辭是，這個過程「理論上可以用一次知識查找完成」（原文 “could theoretically be identified via a knowledge lookup operation”；Sec. 6.1）。
+
+ 外部例子Table 3：轉載自 Ghandeharioun et al. 2024（PatchScope），最後一個 token “Wales” 在各層的解讀
+ 層PatchScope 產生的解讀原作者的說明
+
+ 1–2Country in the United KingdomWales
+
+ 3Country in EuropeWales
+
+ 4Title held by female sovereigns in their own right or by queens consortPrincess of Wales（未特指）
+
+ 5Title given to the wife of the Prince of Wales (and later King)Princess of Wales（未特指）
+
+ 6Diana, Princess of Wales (1961-1997), the first wife of Prince Charles, Prince of Wales, …Diana, Princess of Wales
+
+ 據此，作者提出與「條件計算」互補的另一條稀疏軸：條件記憶（conditional memory）。條件記憶指依輸入內容直接查出一段儲存的參數，而不是經由多層計算重建它。本文以 Engram 模組實作條件記憶：用目前位置結尾的 2-gram、3-gram 當作鍵，在大型嵌入表中以 O(1) 查出向量，再依目前的隱藏狀態調節後加回模型（Sec. 2）。下一節先說明條件計算（MoE）如何讓參數變多而計算量不變，條件記憶沿用同一個預算框架。
+
+ 延伸閱讀：FFN 作為 key-value 記憶體與深度使用效率、Engram 條件式記憶的研究脈絡總覽
+
+ 02 · 參數預算
+
+ MoE 用路由增加參數而不增加每個 token 的計算量
+
+ MoE（Mixture-of-Experts）把 Transformer 每層的 FFN 換成多個並列的「專家」FFN。每層有一個路由器（router），依目前 token 的隱藏狀態為它打分，只選分數最高的 top-kact $k_{\text{act}}$ ​ 個專家計算，其餘專家對這個 token 不做任何運算。DeepSeekMoE 另有共享專家，每個 token 都會經過。本文的 MoE-27B 有 2 個共享專家與 72 個路由專家，每個 token 選 top-6。這種依輸入選擇部分參數的做法稱為條件計算（Shazeer et al. 2017 提出稀疏閘控 MoE，見研究筆記）。
+
+ 為了比較不同架構，作者定義三種參數量（Sec. 3.1）：
+
+ Ptot $P_{\text{tot}}$ ​：總可訓練參數，不含詞嵌入與 LM head。
+
+ Pact $P_{\text{act}}$ ​：每個 token 實際啟用的參數，決定每個 token 的計算量（FLOPs）。
+
+ Psparse=Ptot−Pact $P_{\text{sparse}}=P_{\text{tot}}-P_{\text{act}}$ ​=Ptot​−Pact​：未啟用的參數。它增加模型容量，但不增加每個 token 的 FLOPs。
+
+ 以 Table 1 為例，MoE-27B 的總參數為 26.7B，每個 token 啟用 3.8B，大部分參數屬於 Psparse $P_{\text{sparse}}$ ​。MoE 增加 Ptot $P_{\text{tot}}$ ​ 而不增加 FLOPs 的方式是：未被路由器選中的專家參數不參與該 token 的計算。Engram 的方式是：嵌入表可以非常大，但每個 token 只取固定數量的槽（每個階數、每個雜湊頭各一列），所以增加槽數只增加 Ptot $P_{\text{tot}}$ ​，不增加 Pact $P_{\text{act}}$ ​。兩者都把參數放進 Psparse $P_{\text{sparse}}$ ​，差別在選擇的依據。
+
+ 條件計算與條件記憶的對照
+ 條件計算（MoE）條件記憶（Engram）
+
+ 依據什麼選隱藏狀態，經路由器打分輸入 token 組成的後綴 N-gram，經雜湊
+
+ 選到什麼top-kact $k_{\text{act}}$ ​ 個專家 FFN每個雜湊頭的嵌入表中的一列
+
+ 增加什麼專家數嵌入表的列數（槽數）
+
+ 每 token 計算量固定（只算被選中的專家）固定（只取固定數量的槽）
+
+ 本節符號
+
+ 符號意義
+
+ kact $k_{\text{act}}$ ​MoE 每個 token 選用的路由專家數（本文為 6）
+
+ Ptot $P_{\text{tot}}$ ​總可訓練參數（不含詞嵌入與 LM head）
+
+ Pact $P_{\text{act}}$ ​每個 token 啟用的參數
+
+ Psparse $P_{\text{sparse}}$ ​未啟用參數 Ptot−Pact $P_{\text{tot}}-P_{\text{act}}$ ​−Pact​
+
+ 延伸閱讀：MoE 與條件式計算的發展
+
+ 03 · tokenizer 壓縮
+
+ 先把語意相同的 token 合併
+
+ N-gram 是連續 n $n$ 個 token 組成的片段；N-gram 嵌入是為每個 N-gram 配置一個可學向量，使用時依片段直接取出，屬於 O(1) 的查表，不需要經過任何矩陣乘法。Engram 在查表之前先處理 tokenizer 的一個特性：子詞 tokenizer 為了能把 ID 無損地還原成原文，常給語意相同的字串不同 ID，例如 Apple 與 ␣apple（␣ 表示前導空白）。若直接用原始 ID 組成 N-gram，同一個片語會被拆成多個互不相干的鍵。
+
+ 作者因此預先計算一個滿射 P:V→V′ $\mathcal P:V\to V'$ （Sec. 2.2）：依正規化後的文字（NFKC、轉小寫等）把語意相同的原始 ID 合併成同一個標準 ID，xt′=P(xt) $x'_t=\mathcal P(x_t)$ ′​=P(xt​)。對 128k 的 tokenizer，有效詞表縮小 23%（App. C 的 Table 6 寫 23.43%）。官方示範程式的正規化順序是 NFKC → NFD → 去除重音 → 小寫 → 連續空白改為單一空格 → 去頭尾空白；去頭尾空白使 ␣apple 與 apple 合併。
+
+ Table 6：合併最多的前五個標準 token
+ 排名合併數標準 token合併的原始 token（節錄）
+
+ 1163␣所有空白類 token：\t、\n、␣␣ 等
+
+ 254aA、a、␣a、á、ä 等
+
+ 340oO、o、␣o、ó 等
+
+ 435eE、e、␣e、é 等
+
+ 530iI、i、␣i、í 等
+
+ 壓縮後，位置 t $t$ 結尾的後綴 n $n$ -gram 寫成 gt,n=(xt−n+1′,…,xt′) $g_{t,n}=(x'_{t-n+1},\dots,x'_t)$ ​=(xt−n+1′​,…,xt′​)。Engram-27B 的最大階數 N=3 $N=3$ ，所以每個位置使用 gt,2 $g_{t,2}$ ​ 與 gt,3 $g_{t,3}$ ​ 兩個鍵。序列開頭不足 n $n$ 個 token 時，示範程式以 pad ID 補齊。不同的 n $n$ -gram 有 ∣V′∣n $|V'|^n$ ∣n 種可能，無法逐一配置參數，所以下一步用雜湊把它們映到大小固定的表中。
+
+ 本節符號
+
+ 符號意義
+
+ xt $x_t$ ​、xt′ $x'_t$ ′​位置 t $t$ 的原始 token ID、壓縮後的標準 ID
+
+ V $V$ 、V′ $V'$ 原始詞表、壓縮後詞表
+
+ P $\mathcal P$ tokenizer 壓縮的滿射 V→V′ $V\to V'$ （論文寫作 P）
+
+ gt,n $g_{t,n}$ ​位置 t $t$ 結尾的後綴 n $n$ -gram
+
+ N $N$ 最大 N-gram 階數（Engram-27B 為 3）
+
+ 04 · 多頭雜湊
+
+ 多個雜湊頭把 N-gram 映到嵌入表
+
+ Engram 沿用 Tito Svenstrup et al. (2017) 的雜湊嵌入（Hash Embeddings，見研究筆記）。對每個階數 n $n$ ，模型準備 K $K$ 個雜湊頭；第 k $k$ 個頭有自己的雜湊函數 φn,k $\varphi_{n,k}$ ​ 與嵌入表 En,k $\mathbf E_{n,k}$ ​，表的列數 Mn,k $M_{n,k}$ ​ 取質數（Sec. 2.2）：
+
+ zt,n,k≜φn,k(gt,n),et,n,k=En,k[zt,n,k] $z_{t,n,k}\triangleq\varphi_{n,k}(g_{t,n}),\qquad \mathbf e_{t,n,k}=\mathbf E_{n,k}[z_{t,n,k}]$ ​≜φn,k​(gt,n​),et,n,k​=En,k​[zt,n,k​]
+Eq. 1
+
+ et≜∥n=2N∥k=1K et,n,k $\mathbf e_t\triangleq\big\Vert_{n=2}^{N}\big\Vert_{k=1}^{K}\,\mathbf e_{t,n,k}$ ​≜​n=2N​​k=1K​et,n,k​
+Eq. 2
+
+ zt,n,k $z_{t,n,k}$ ​ 是雜湊得到的列索引，et,n,k $\mathbf e_{t,n,k}$ ​ 是查出的向量，∥ $\Vert$ 表示串接。所有頭的向量串接成記憶向量 et∈Rdmem $\mathbf e_t\in\mathbb R^{d_{\text{mem}}}$ ​∈Rdmem​，Engram-27B 的 dmem=1280 $d_{\text{mem}}=1280$ ​=1280、K=8 $K=8$ 。n∈{2,3} $n\in\{2,3\}$ 共 16 個頭，所以每列是 1280/16=80 $1280/16=80$ 維推定。論文只寫 φn,k $\varphi_{n,k}$ ​ 是輕量的乘法–XOR 雜湊。官方示範程式的寫法是：每層抽 N $N$ 個奇數乘數 m0,…,mN−1 $m_0,\dots,m_{N-1}$ ​,…,mN−1​，計算 mix=(xt′m0)⊕(xt−1′m1)⊕⋯ $\text{mix}=(x'_t m_0)\oplus(x'_{t-1}m_1)\oplus\cdots$ ′​m0​)⊕(xt−1′​m1​)⊕⋯（⊕ $\oplus$ 為逐位元 XOR，共 n $n$ 項），第 k $k$ 頭的索引為 mix mod Mn,k $\text{mix}\bmod M_{n,k}$ Mn,k​；Mn,k $M_{n,k}$ ​ 是從設定的表大小往上找、彼此不重複的質數示範程式。
+
+ 表的單位推定：Table 5 的 Engram Vocab Size 2,262,400（27B）解讀為每頭列數，等於 129,280 × 17.5。Engram 參數 =2 層×2 階×8 頭×2,262,400×80=5.79 $=2\text{ 層}\times2\text{ 階}\times8\text{ 頭}\times2{,}262{,}400\times80=5.79$ B，與論文的 5.7B 一致；40B 的 7,239,680 列給 18.53B，論文寫 18.5B。
+
+ 碰撞：多頭降低「無法區分」的機率
+
+ 雜湊會讓不同的 n $n$ -gram 落在同一格（碰撞）。以下是本頁的近似分析本頁推導。設表中共有 U $U$ 個不同的 n $n$ -gram，單一頭有 Mn,k $M_{n,k}$ ​ 格（下文簡寫為 M $M$ ）；U $U$ 是讀者假設的值，論文沒有給出。某個 n $n$ -gram 在一個頭上與至少一個其他 n $n$ -gram 同格的機率為
+
+ p1=1−(1−1M)U−1 $p_1=1-\left(1-\tfrac1M\right)^{U-1}$ ​=1−(1−M1​)U−1
+本頁推導
+
+ 若各頭近似獨立，K $K$ 個頭都與別人同格（沒有任何一個無碰撞的頭）的機率為 p1K $p_1^K$ K​。例：U=106 $U=10^6$ 個不同 2-gram、每頭 M=2,262,400 $M=2{,}262{,}400$ 格時，p1≈0.357 $p_1\approx0.357$ ​≈0.357，單頭約三分之一的 2-gram 會與別人共用一格；8 個頭都與別人同格的機率 p18≈2.65×10−4 $p_1^8\approx2.65\times10^{-4}$ 8​≈2.65×10−4，約 2.7×10−4 $2.7\times10^{-4}$ 。只要還有一個無碰撞的頭，串接後的 et $\mathbf e_t$ ​ 就與其他 n $n$ -gram 不同。
+
+ 「與某一個 n $n$ -gram 在 K $K$ 頭全部同格」比上述機率更罕見，但示範程式的 K $K$ 個頭共用同一個 mix，只是模數不同。由中國餘數定理，兩個 n $n$ -gram 在 K $K$ 頭全部同格，若且唯若兩者的 mix 對 ∏kMn,k $\prod_k M_{n,k}$ ​Mn,k​ 同餘；K=8 $K=8$ 時這個乘積約 1051 $10^{51}$ ，遠大於 mix 的範圍 R≈248 $R\approx2^{48}$ 推定，所以全部同格只在 mix 完全相同時發生。全部同格的期望個數因此寫成 Efull≈(U−1)/min⁡(MK,R) $E_{\text{full}}\approx(U-1)/\min(M^K,R)$ ​≈(U−1)/min(MK,R)：U=106 $U=10^6$ 時獨立模型給 10−44.8 $10^{-44.8}$ ，mix 下限給 10−8.45 $10^{-8.45}$ ；U=109 $U=10^9$ 時下限約 3.6×10−6 $3.6\times10^{-6}$ ，比獨立模型高約 36 個數量級。這個值仍然很小，但不能說「8 個頭的組合必然唯一」。正式模型的雜湊細節論文沒有寫，R $R$ 只依示範程式推定。
+
+ C1從 token 到嵌入表索引
+
+ 選一個句子與位置 t：第一列是原始 token 與原始 ID，第二列是正規化後的字串與標準 ID；下方是 2-gram、3-gram 在 K 個頭上的索引。
+
+ A · 管線示範程式
+
+ Fig. 1 例句壓縮示例
+
+ 輸入文字（最多 200 字元、40 個 token）
+
+ 超過 40 個 token，只使用前 40 個。
+
+ pad0
+pad0
+OnlyID 1only標準 1
+␣AlexanderID 2alexander標準 2
+␣theID 3the標準 3
+␣GreatID 4great標準 4
+␣couldID 5could標準 5
+␣tameID 6tame標準 6
+␣theID 3the標準 3
+␣horseID 7horse標準 7
+␣BucephalusID 8bucephalus標準 8
+.ID 9.標準 9
+
+ 2-gram 視窗3-gram 視窗底色＝與其他原始 token 合併
+
+ 位置 t（0 到 T−1）3
+
+ 每個階數的頭數 K1248
+
+ |V| = 9 → |V′| = 9，縮小 0.0%；t = 3（␣Great，標準 ID 4）
+
+ 2-gram（實線視窗）· mix = 2286486165
+M2,1 = 100076749
+M2,2 = 10009178
+M2,3 = 100377380
+M2,4 = 100393525
+M2,5 = 100613183
+M2,6 = 100678723
+M2,7 = 100697576
+M2,8 = 100794541
+
+3-gram（虛線視窗）· mix = 2975947167
+M3,1 = 10091266
+M3,2 = 100935931
+M3,3 = 100994144
+M3,4 = 101037487
+M3,5 = 101116870
+M3,6 = 101336663
+M3,7 = 101398721
+M3,8 = 101419871
+
+ 串接 → et（2K 段）
+
+ B · 碰撞本頁推導
+
+ 不同 n-gram 數 U1,000,000
+
+ U = 2×10⁴U = 10⁶U = 10⁹
+
+ 每頭表大小 Mn,k2,262,400
+
+ 10,000Engram-27B 的表大小（推定）
+
+ 頭數 K8
+
+ p₁ = 0.357256
+K 頭都同格 p₁ᴷ = 2.65×10⁻⁴
+Efull（獨立模型）= 10−44.84
+此時 MK 超過 mix 範圍，獨立模型不適用
+Efull（示範雜湊，mix < 2⁴⁸，推定）= 10−8.45
+整張表沒有任何全部同格組合的條件：U² ≪ 2⁴⁸（U ≪ 1.7×10⁷）：滿足
+
+ 用示範雜湊實測實測僅在 U ≤ 20,000 且 M ≤ 100,000 時啟用。
+
+ 按下按鈕後，列舉 U 個 2-gram 並以面板 A 的乘數與質數表大小計算三個比例。
+
+ 玩具分詞器：以正規表示式切出「前導空白＋字母數字」或單一符號，不是 DeepSeek-V3 tokenizer。乘數由 mulberry32(0) 產生（572152369、708123、479473029）；面板 A 的表大小固定從 10,000 往上取質數。實測列舉 (x′ₜ₋₁, x′ₜ) = (⌊i/1000⌋+1, (i mod 1000)+1)，分母為 U；解析值以第一個質數 P₀ 計算。讀數由本頁依 Eq. 1–2 與上述推導即時計算。
+
+ p₁ = 0.357256，K 頭都同格 = 2.65×10⁻⁴，示範雜湊 E_full = 10^−8.45
+
+ 本節符號
+
+ 符號意義
+
+ K $K$ 、k $k$ 每個階數的雜湊頭數（Engram-27B 為 8）、頭的編號
+
+ φn,k $\varphi_{n,k}$ ​、Mn,k $M_{n,k}$ ​、En,k $\mathbf E_{n,k}$ ​第 (n,k) $(n,k)$ 頭的雜湊函數、表的列數（質數）、嵌入表
+
+ zt,n,k $z_{t,n,k}$ ​、et,n,k $\mathbf e_{t,n,k}$ ​列索引、查出的向量
+
+ et $\mathbf e_t$ ​、dmem $d_{\text{mem}}$ ​串接後的記憶向量、其維度（1280）
+
+ U $U$ 、p1 $p_1$ ​表中不同 n $n$ -gram 數（假設值）、單頭同格機率
+
+ 延伸閱讀：N-gram 與 hash 嵌入的發展
+
+ 05 · 閘門
+
+ 閘門 α 依隱藏狀態縮放記憶向量
+
+ 雜湊查出的 et $\mathbf e_t$ ​ 只由輸入 token 決定，不看更遠的上下文，也會受碰撞與多義影響。Engram 因此以注意力為藍本，用目前的隱藏狀態 ht $\mathbf h_t$ ​ 當 Query，記憶 et $\mathbf e_t$ ​ 同時產生 Key 與 Value（Sec. 2.3）。ht $\mathbf h_t$ ​ 已經過前面的注意力層，彙整了整個前綴的上下文。
+
+ 式中的 RMSNorm 把向量除以其元素的均方根，再乘以可學的增益：RMSNorm(y)=y/1d∑iyi2 $\mathrm{RMSNorm}(\mathbf y)=\mathbf y/\sqrt{\tfrac1d\sum_i y_i^2}$ 1​∑i​yi2​​（再逐元素乘以增益）。作者對 Query、Key 都做 RMSNorm，目的是讓梯度穩定。
+
+ kt=WKet,vt=WVet $\mathbf k_t=\mathbf W_K\mathbf e_t,\qquad \mathbf v_t=\mathbf W_V\mathbf e_t$ ​=WK​et​,vt​=WV​et​
+Eq. 3
+
+ st=RMSNorm(ht)⊤RMSNorm(kt)d $s_t=\frac{\mathrm{RMSNorm}(\mathbf h_t)^\top\mathrm{RMSNorm}(\mathbf k_t)}{\sqrt d}$ ​=d​RMSNorm(ht​)⊤RMSNorm(kt​)​
+Eq. 4
+
+ αt=σ(st),v~t=αt⋅vt $\alpha_t=\sigma(s_t),\qquad \tilde{\mathbf v}_t=\alpha_t\cdot\mathbf v_t$ ​=σ(st​),v~t​=αt​⋅vt​
+Eq. 4
+
+ 合起來寫，閘門為 αt=σ(RMSNorm(ht)⊤RMSNorm(kt)/d) $\alpha_t=\sigma\big(\mathrm{RMSNorm}(\mathbf h_t)^\top\mathrm{RMSNorm}(\mathbf k_t)/\sqrt d\big)$ ​=σ(RMSNorm(ht​)⊤RMSNorm(kt​)/d​)，σ $\sigma$ 是 sigmoid，αt∈(0,1) $\alpha_t\in(0,1)$ ​∈(0,1) 是一個純量，乘在整個 Value 向量上。作者的解釋：若查出的記憶與目前上下文矛盾，αt $\alpha_t$ ​ 趨近 0，該位置的記憶向量幾乎不加入殘差流。
+
+ 引數的範圍本頁推導：假設 RMSNorm 增益為 1 並忽略 eps，正規化後的向量長度恰為 d $\sqrt d$ ​，所以 sigmoid 的引數等於 dcos⁡θ $\sqrt d\cos\theta$ ​cosθ，θ $\theta$ 是 ht $\mathbf h_t$ ​ 與 kt $\mathbf k_t$ ​ 的夾角。在這個假設下，d=2560 $d=2560$ 時引數的範圍是 ±50.6 $\pm50.6$ ，只有 ∣cos⁡θ∣<5/2560=0.099 $|\cos\theta|<5/\sqrt{2560}=0.099$ ​=0.099 時 ∣s∣<5 $|s|<5$ ，閘門幾乎只取 0 或 1。論文的 RMSNorm 增益是可學的，實際範圍隨增益改變，±50.6 $\pm50.6$ 只是增益為 1 時的值。下圖以 s=γdcos⁡θ $s=\gamma\sqrt d\cos\theta$ ​cosθ 表示，γ $\gamma$ 代表學到的增益對引數的整體縮放（本頁簡化）。示範程式在 sigmoid 前多做一步帶號平方根 s↦sign(s)∣s∣ $s\mapsto\mathrm{sign}(s)\sqrt{|s|}$ ​，論文 Eq. 4 沒有這一步；下圖提供切換，不宣稱哪一個是正式模型的實作。
+
+ C2閘門 α 與夾角、維度的關係
+
+ 調整 cos θ 與 d：曲線圖是 α 對 cos θ（或 s）的關係，小圓圖是 h 與 k 的夾角。d 越大，曲線越接近階梯。
+
+ Eq. 4示範程式（帶號平方根）目前的點
+
+ 隱藏維度 d1664256102425604096
+
+ cos θ0.300
+
+ 直接輸入 cos θ
+
+ 增益縮放 γ（本頁簡化）1.00
+
+ 示範程式：sigmoid 前取帶號平方根
+ 右圖橫軸cos θs
+
+ s = 15.1789
+α = 0.99999974
+1 − α = 2.558×10⁻⁷
+
+ ṽt = α · vt 的長度比例
+
+ s = γ√d·cos θ（假設 RMSNorm 增益為 1、忽略 eps，再以 γ 整體縮放；本頁推導）。α 以數值穩定的 sigmoid 計算，1 − α 另以 σ(−s) 計算。帶號平方根取自示範程式，論文 Eq. 4 沒有這一步。讀數由本頁依 Eq. 4 即時計算。
+
+ s = 15.18，α = 0.99999974
+
+ 本節符號
+
+ 符號意義
+
+ ht $\mathbf h_t$ ​、d $d$ 位置 t $t$ 的隱藏向量、隱藏維度（主幹 2560）
+
+ WK,WV $\mathbf W_K,\mathbf W_V$ ​,WV​Key、Value 投影矩陣
+
+ αt $\alpha_t$ ​、σ $\sigma$ 純量閘門、sigmoid
+
+ v~t $\tilde{\mathbf v}_t$ t​閘門縮放後的 Value
+
+ θ $\theta$ 、γ $\gamma$ ht $\mathbf h_t$ ​ 與 kt $\mathbf k_t$ ​ 的夾角、增益縮放（本頁簡化）
+
+ 06 · 短卷積
+
+ 短卷積擴大讀取範圍，殘差連接保留未經卷積的輸入
+
+ 閘門只看單一位置。作者在閘門之後加一層短卷積，擴大感受野並增加非線性（Sec. 2.3）。把所有位置的 v~t $\tilde{\mathbf v}_t$ t​ 排成矩陣 V~ $\tilde{\mathbf V}$ ：
+
+ Y=SiLU(Conv1D(RMSNorm(V~)))+V~ $\mathbf Y=\mathrm{SiLU}\big(\mathrm{Conv1D}(\mathrm{RMSNorm}(\tilde{\mathbf V}))\big)+\tilde{\mathbf V}$ )))+V~
+Eq. 5
+
+ Conv1D 是深度（depthwise）因果卷積：每個維度各自卷積、只讀目前與之前的位置；核大小 w=4 $w=4$ ，擴張率（dilation） δ $\delta$ 等於最大 N-gram 階數 N=3 $N=3$ ，激活函數為 SiLU，最後加上殘差 V~ $\tilde{\mathbf V}$ 。結果以殘差方式融合進主幹：H(ℓ)←H(ℓ)+Y $\mathbf H^{(\ell)}\leftarrow\mathbf H^{(\ell)}+\mathbf Y$ ←H(ℓ)+Y，之後接標準的 Attention 與 MoE。Engram 只插在部分層，Engram-27B 是第 2 與第 15 層。
+
+ 卷積參數初始化為 0。訓練開始時 Conv1D(⋅)=0 $\mathrm{Conv1D}(\cdot)=0$ ，而 SiLU(0)=0 $\mathrm{SiLU}(0)=0$ ，所以 Y=V~ $\mathbf Y=\tilde{\mathbf V}$ ：零初始化使模組一開始只是把閘門後的記憶加回殘差流，作者稱之為「strictly preserve the identity mapping」（Sec. 4.1）。
+
+ 讀取範圍本頁推導：卷積在位置 t $t$ 讀取 t, t−δ, t−2δ, t−3δ $t,\ t-\delta,\ t-2\delta,\ t-3\delta$ 四個位置的 v~ $\tilde{\mathbf v}$ 。依 Eq. 2，每個位置的查表內容同時包含結尾於該處的 2-gram 與 3-gram，3-gram 的視窗涵蓋了 2-gram 的視窗。δ=N=3 $\delta=N=3$ 時，四個 3-gram 視窗剛好首尾相接、不重疊，查表內容涵蓋連續 wN=12 $wN=12$ 個位置；δ=1 $\delta=1$ 時視窗重疊，只涵蓋 N+w−1=6 $N+w-1=6$ 個。位置靠近句首時，部分位置落在句首以前，由 pad 補齊：下圖預設的 t=9 $t=9$ 涵蓋 10 個句內 token 加 2 個 pad。這裡只計算查表內容的來源；閘門 αt′ $\alpha_{t'}$ ​ 依賴 ht′ $\mathbf h_{t'}$ ​，而 ht′ $\mathbf h_{t'}$ ​ 經注意力看過整個前綴。
+
+ C3卷積讀到哪些 token
+
+ 點選位置 t：每一列括號是一個卷積 tap 讀到的 N-gram 視窗，底色格是所有視窗的聯集。
+
+ pad−2pad−1Only0␣Alexander1␣the2␣Great3␣could4␣tame5␣the6␣horse7␣Bucephalus8.9t
+t − 3
+t − 6
+t − 9
+
+ 閘門 α 依賴 h，h 經注意力看過整個前綴；這張圖只標記查表內容的來源。
+
+ 最大階數 N234
+
+ 核大小 w4
+
+ 擴張率 δ3
+
+ δ = N（論文設定）
+ 訓練開始時（卷積權重 = 0）
+
+ 涵蓋位置數（含 pad）= 12
+句內 token 數 = 10
+跨度 = 12
+pad 格數 = 2
+連續：是
+位置：−2, −1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
+
+ tap j = 0…w−1 的中心為 t − jδ，視窗為中心往前 N 個位置；零初始化時只剩 j = 0。位置 < 0 為 pad；pad 超過 3 格時，最左側收合成一格。讀數由本頁依 Eq. 5 的卷積設定即時計算（本頁推導）。
+
+ t = 9，涵蓋 12 個位置，句內 10 個，pad 2 個，連續；位置 −2、−1、0、1、2、3、4、5、6、7、8、9
+
+ 本節符號
+
+ 符號意義
+
+ V~ $\tilde{\mathbf V}$ 、Y $\mathbf Y$ 所有位置的閘門後 Value、Engram 模組的輸出
+
+ w $w$ 、δ $\delta$ 卷積核大小（4）、擴張率（= N $N$ ）
+
+ H(ℓ) $\mathbf H^{(\ell)}$ 第 ℓ $\ell$ 層的隱藏狀態（T×d $T\times d$ ）
+
+ 07 · 多分支
+
+ 多分支主幹共用記憶、各自計算閘門
+
+ 本文的主幹採 mHC（Manifold-Constrained Hyper-Connections）：殘差流不是一條向量，而是擴成 M=4 $M=4$ 條平行分支，各層以可學的連接權重混合這些分支（Sec. 2.4）。Engram 要為每條分支產生輸入，作者的做法是：
+
+ st(m)=RMSNorm(ht(m))⊤RMSNorm(WK(m)et)d $s_t^{(m)}=\frac{\mathrm{RMSNorm}(\mathbf h_t^{(m)})^\top\mathrm{RMSNorm}(\mathbf W_K^{(m)}\mathbf e_t)}{\sqrt d}$ (m)​=d​RMSNorm(ht(m)​)⊤RMSNorm(WK(m)​et​)​
+Eq. 6
+
+ αt(m)=σ(st(m)),ut(m)=αt(m)⋅(WVet) $\alpha_t^{(m)}=\sigma\big(s_t^{(m)}\big),\qquad \mathbf u_t^{(m)}=\alpha_t^{(m)}\cdot(\mathbf W_V\mathbf e_t)$ (m)​=σ(st(m)​),ut(m)​=αt(m)​⋅(WV​et​)
+Eq. 6
+
+ 參數共享方式：一張嵌入表與一個 WV $\mathbf W_V$ ​ 由 M $M$ 條分支共享，每條分支只有自己的 WK(m) $\mathbf W_K^{(m)}$ (m)​。這樣閘門可以依分支的隱藏狀態 ht(m) $\mathbf h_t^{(m)}$ (m)​ 而不同，同時一個 WV $\mathbf W_V$ ​ 與 M $M$ 個 WK(m) $\mathbf W_K^{(m)}$ (m)​ 可以融合成一次稠密的 FP8 矩陣乘法，保留分支專屬閘門而不增加多次小矩陣乘法的開銷。Engram-27B 有 2 個 Engram 層 × 4 條分支，所以每個 token 共有 8 個閘門純量（Sec. 6.5 註腳 2）。消融中的「w/o multi branch」保留 mHC 主幹，但改為在 pre-mapping 後的 Hpre $\mathbf H_{pre}$ ​ 上做單一融合（Sec. 6.2）。
+
+ 本節符號
+
+ 符號意義
+
+ M $M$ mHC 的分支數（4）；與表大小 Mn,k $M_{n,k}$ ​ 不同
+
+ ht(m) $\mathbf h_t^{(m)}$ (m)​、WK(m) $\mathbf W_K^{(m)}$ (m)​第 m $m$ 條分支的隱藏向量、Key 投影
+
+ αt(m) $\alpha_t^{(m)}$ (m)​、ut(m) $\mathbf u_t^{(m)}$ (m)​第 m $m$ 條分支的閘門與輸出
+
+ 延伸閱讀：Engram 模組的設計
+
+ 08 · 稀疏度分配
+
+ 固定預算下記憶與專家的分配呈 U 形
+
+ 有了兩種稀疏模組，作者提出稀疏度分配（Sparsity Allocation）問題：固定 Ptot $P_{\text{tot}}$ ​ 與 Pact $P_{\text{act}}$ ​（等參數、等 FLOPs），未啟用的參數該如何分給 MoE 專家與 Engram？以 ρ $\rho$ 表示未啟用參數分給 MoE 專家的比例（Sec. 3.1）：
+
+ PMoE(sparse)=ρ Psparse,PEngram=(1−ρ) Psparse $P^{(\text{sparse})}_{\text{MoE}}=\rho\,P_{\text{sparse}},\qquad P_{\text{Engram}}=(1-\rho)\,P_{\text{sparse}}$ (sparse)​=ρPsparse​,PEngram​=(1−ρ)Psparse​
+Eq. 7
+
+ ρ=1 $\rho=1$ 是純 MoE。實驗只調整路由專家數與 Engram 槽數，其餘不變。作者用兩個計算預算（稀疏比 Ptot/Pact≈10 $P_{\text{tot}}/P_{\text{act}}\approx10$ ​/Pact​≈10）：C=2×1020 $C=2\times10^{20}$ FLOPs，Ptot≈5.7 $P_{\text{tot}}\approx5.7$ ​≈5.7B、Pact=568 $P_{\text{act}}=568$ ​=568M、基準 106 個專家；C=6×1020 $C=6\times10^{20}$ FLOPs，Ptot≈9.9 $P_{\text{tot}}\approx9.9$ ​≈9.9B、Pact=993 $P_{\text{act}}=993$ ​=993M、基準 99 個專家。
+
+ 結果：兩個預算下，驗證損失對 ρ $\rho$ 都呈 U 形。ρ≈40% $\rho\approx40\%$ （5.7B 模型 46 個專家、9.9B 模型 43 個）時已與純 MoE 相當；最佳 ρ≈75% $\rho\approx75\%$ –80% $80\%$ ，也就是把約 20%–25% 的稀疏預算給 Engram。10B 預算下驗證損失由 1.7248（ρ=100% $\rho=100\%$ ）降到 1.7109（ρ≈80% $\rho\approx80\%$ ），差 0.0139。作者的解釋：ρ→100% $\rho\to100\%$ 時缺少靜態模式的專用記憶，模型只能用深度與計算重建這些模式；ρ→0% $\rho\to0\%$ 時失去條件計算，記憶無法取代需要動態計算的部分。
+
+ 專家數換算本頁推導：若 ρ=1 $\rho=1$ 時所有未啟用參數都是未被選中的路由專家（每個專家大小相同、top-6），則專家數 E(ρ)=6+ρ(E0−6) $E(\rho)=6+\rho(E_0-6)$ ​−6)。E(0.4)=46.0 $E(0.4)=46.0$ （E0=106 $E_0=106$ ​=106）與 43.2（E0=99 $E_0=99$ ​=99），與論文的 46、43 一致。Engram-27B 由 72 減到 55 個專家，ρ=(55−6)/(72−6)=74.2% $\rho=(55-6)/(72-6)=74.2\%$ ，論文寫 74.3%。這個值略低於小規模實驗找到的 75%–80% 區間；論文沒有說明為什麼選這個值，所以本頁只把它寫成「依小規模結果選擇的接近值」。
+
+ 27B 的參數核對推定：Table 1 的 26.7B 是否含詞嵌入無法確定。讀法 A：26.7B 含詞嵌入與 LM head（2×129,280×2560=0.662 $2\times129{,}280\times2560=0.662$ B），Ptot=26.04 $P_{\text{tot}}=26.04$ ​=26.04B、Psparse=22.24 $P_{\text{sparse}}=22.24$ ​=22.24B，(1−49/66)×22.24=5.73 $(1-49/66)\times22.24=5.73$ B，與論文的 5.7B 一致。讀法 B：26.7B 已不含這兩者，Psparse=22.9 $P_{\text{sparse}}=22.9$ ​=22.9B，Engram 為 5.90B。讀法 A 較接近 5.7B，下圖的 27B 組採用讀法 A。
+
+ 作者另外固定 3B MoE 主幹，把 Engram 的槽數 Mslot $M_{\text{slot}}$ ​ 由 2.58×105 $2.58\times10^5$ 掃到 107 $10^7$ （最多增加約 13B 參數），驗證損失對槽數呈冪律，在對數座標下為直線（Sec. 3.2）。這裡的「槽」與 Table 5 的每頭列數單位不同，本頁不在兩者之間換算。
+
+ C4稀疏度分配計算器
+
+ 選一個預算、拖動 ρ：長條是 Ptot 的組成，下方軸標出論文文字給的點與區間。
+
+ 2e20 FLOPs（5.7B、0.568B、E₀ = 106）6e20 FLOPs（9.9B、0.993B、99）27B（26.04B 推定讀法 A、3.8B、72）
+
+ ρ（未啟用參數分給 MoE 的比例）80.0%
+
+ P_act（每個 token 啟用）0.993B10.0%
+MoE 未啟用（ρ·P_sparse）7.126B72.0%
+Engram（(1 − ρ)·P_sparse）1.781B18.0%
+
+ Psparse = 9.900 − 0.993 = 8.907B
+PEngram = 1.781B
+路由專家數 E = 80.4（約 80 個），每個 token 選 top-6
+
+ Engram-27B 實際配置（本頁推導）：72 → 55 個專家，ρ = 49/66 = 74.24%，PEngram = 5.728B（讀法 A）；論文寫 74.3%。
+
+ 驗證損失對 ρ 呈 U 形：兩端較高，75%–80% 最低（Fig. 3 左，論文沒有給出完整數值）。
+
+ 空心點 40%：與純 MoE 相當（兩個預算的文字結果）
+底色區間 75%–80%：兩個預算的最佳位置
+空心點 100%：純 MoE（ρ = 1）
+實心點：6e20 預算的驗證損失 1.7248（ρ = 100%）與 1.7109（ρ ≈ 80%），只有這組有損失數字
+
+ Psparse = Ptot − Pact；PEngram = (1 − ρ)Psparse（Eq. 7）；E(ρ) = 6 + ρ(E₀ − 6)（本頁推導）。top-kact = 6 固定。沒有擬合曲線：論文只給出這些點。不顯示槽數，因為 Table 5 與 Sec. 3.2 的單位不同。
+
+ ρ = 80.0%，P_Engram = 1.781B，專家數 80.4
+
+ 本節符號
+
+ 符號意義
+
+ ρ $\rho$ 未啟用參數分給 MoE 專家的比例（Eq. 7）
+
+ E(ρ) $E(\rho)$ 、E0 $E_0$ ​專家數、ρ=1 $\rho=1$ 時的專家數（本頁推導）
+
+ C $C$ 訓練的計算預算（FLOPs）
+
+ Mslot $M_{\text{slot}}$ ​Sec. 3.2 的嵌入槽數（論文寫作 M $M$ ）
+
+ 延伸閱讀：稀疏度配置與 U 形縮放律
+
+ 09 · 27B 結果
+
+ 27B 規模下各類任務都進步，一般推理與長文脈檢索的提升最明顯
+
+ 作者依上一節的規律訓練四個模型（Sec. 4）：Dense-4B、MoE-27B、Engram-27B 與 Engram-40B。共同設定為 262B token、DeepSeek-V3 tokenizer、30 個 block、隱藏維度 2560、mHC 擴展率 4、Muon 最佳化器，啟用參數都是 3.8B。Engram-27B 由 MoE-27B 嚴格導出：總參數同為 26.7B、啟用參數同為 3.8B、同樣訓練 262B token，只把路由專家由 72 減到 55，空出的參數給 5.7B 的 Engram（ρ=74.3% $\rho=74.3\%$ ，第 2、15 層，最大 N-gram 3，8 頭，維度 1280）。所以這是等參數、等 FLOPs 的比較。
+
+ Table 1 顯示各類任務都進步。一般推理的增益最大：BBH +5.0、ARC-Challenge +3.7、DROP +3.3。知識類 MMLU +3.0、CMMLU +4.0、MMLU-Pro +1.8；程式與數學 HumanEval +3.0、MBPP +1.6、GSM8K +2.2、MATH +2.4，與知識類相當，並沒有更大。作者認為這支持「專用的查找運算提升表示效率」的假設（Sec. 4.2）。摘要與 Sec. 1 寫 MMLU +3.4，但 Table 1 為 57.4 → 60.4（+3.0），+3.4 是 MMLU-Redux 的差距；本頁一律用 Table 1 的值。Engram-40B（39.5B，18.5B Engram）進一步降低損失（Pile 1.942），但並非每項都超過 Engram-27B，例如 HumanEval 38.4、C3 61.8；作者歸因於訓練不足：40B 與基準的訓練損失差距在訓練末期仍在擴大。
+
+ Table 1 摘錄（損失越低越好，其餘越高越好）
+ 項目MoE-27BEngram-27B差值Engram-40B
+
+ Pile（loss）1.9601.950−0.0101.942
+
+ Validation（loss）1.6341.622−0.0121.610
+
+ MMLU57.460.4+3.060.6
+
+ MMLU-Pro28.330.1+1.831.3
+
+ CMMLU57.961.9+4.063.4
+
+ BBH50.955.9+5.057.5
+
+ ARC-Challenge70.173.8+3.776.4
+
+ DROP55.759.0+3.360.7
+
+ C360.163.6+3.561.8
+
+ HumanEval37.840.8+3.038.4
+
+ GSM8K58.460.6+2.262.6
+
+ MATH28.330.7+2.430.6
+
+ Engram-40B 欄（窄螢幕）
+Pile 1.942、Validation 1.610、MMLU 60.6、MMLU-Pro 31.3、CMMLU 63.4、BBH 57.5、ARC-Challenge 76.4、DROP 60.7、C3 61.8、HumanEval 38.4、GSM8K 62.6、MATH 30.6。
+
+ 長文脈延伸
+
+ 預訓練後，作者以 YaRN 在 32768 token 上訓練 5,000 步（30B token），比較長文脈能力（Sec. 5）。先定義幾個詞：
+
+ YaRN調整 RoPE 位置編碼頻率、讓模型延伸到更長文脈的方法；本文參數 s=10,α=1,β=32 $s=10,\alpha=1,\beta=32$ （這裡的 α $\alpha$ 與閘門無關）。
+ NIAH（Needle in a Haystack）在長文中藏入少量資訊、要求模型找回的檢索測驗；MQ 為一次要找回多個鍵（Multi-Query）。
+ RULER長文脈測驗集，包含多種 NIAH 變體與 VT（變數追蹤）、CWE、FWE（常見詞與高頻詞抽取）等任務。
+ LongPPL長文脈困惑度，越低越好；Book 為書籍子集。
+ iso-loss比較時讓兩個模型的預訓練損失相同，而不是讓訓練步數相同。
+
+ 為什麼要用 iso-loss？Engram 在 41k、46k、50k 步的長文脈表現隨預訓練進度單調上升，表示長文脈能力與基礎模型的整體能力耦合：長文脈能力隨基礎模型損失降低而提升。若只對齊步數，Engram 的基礎模型本來就較好，無法分辨增益來自架構還是來自較低的損失，所以比較架構時要對齊預訓練損失（Sec. 5.2）。Iso-loss 設定下，Engram 46k（預訓練損失 1.63）對 MoE-27B 50k（損失同為 1.63）：Multi-Query NIAH 97.0 vs 84.2，VT 87.2 vs 77.0。Iso-FLOPs 設定（Engram 50k）的差距更大，例如 VT 89.0、LongPPL Book 4.14 vs 4.38。只用依步數換算約 82% 的預訓練計算量（41k/50k）時，Engram 41k 的 LongPPL 與基準相當（Book 4.37 vs 4.38），多數 RULER 子項較高（MQ 89.5 vs 84.2、FWE 99.6 vs 73.0），S（99.6 vs 100.0）與 CWE（3.8 vs 4.5）略低。論文圖說寫 46k、50k「across all metrics」都勝過基準，但表中 46k 的 S（97.6）與 CWE（4.3）、50k 的 S（99.3）低於基準，所以本頁寫「幾乎所有指標」。作者的解釋：局部依賴交給查表後，注意力的容量可用於全域上下文。
+
+ Table 2 摘錄（括號為預訓練步數與損失；Book 越低越好，其餘越高越好）
+ 模型BookSMQVTCWEFWE
+
+ MoE-27B（50k，1.63）4.38100.084.277.04.573.0
+
+ Engram-27B（41k，1.66）4.3799.689.583.23.899.6
+
+ Engram-27B（46k，1.63）iso-loss4.1997.697.087.24.398.6
+
+ Engram-27B（50k，1.62）iso-FLOPs4.1499.397.089.05.999.3
+
+ 10 · 有效深度
+
+ Engram 讓淺層提早完成特徵組合
+
+ 作者的假設是：模型有了明確的查表能力後，前幾層不必再組合局部特徵，效果相當於增加深度（Sec. 6.1）。兩個工具用來檢驗這個假設。
+
+ LogitLens 把每一層的隱藏狀態直接接到最終的 LM head，得到一個「提前輸出」的分布，再計算它與最終輸出分布的 KL 散度（衡量兩個機率分布差異的量，越小越接近）。結果：兩個 Engram 模型各層的 KL 都系統性地較小，差距在淺層最明顯（Fig. 4a），表示淺層較早完成特徵組合，較早接近最終預測。
+
+ CKA（Centered Kernel Alignment）衡量兩組表示的相似度，值在 0 到 1 之間。作者對 Few-NERD 具名實體的最後一個 token，計算 Engram 模型第 j $j$ 層與 MoE 模型各層的 CKA，再以軟對齊指標 aj $a_j$ ​ 找出「Engram 第 j $j$ 層最像 MoE 的第幾層」。觀察到 aj>j $a_j>j$ ​>j：Engram-27B 第 5 層約對應 MoE 第 12 層（Fig. 4b–c）。也就是 Engram 的淺層表示相當於 MoE 較深層的表示。作者的結論：Engram 在功能上相當於增加有效深度。
+
+ 補充：HSIC 與 Eq. 8–9
+
+ CKA 以 HSIC（Hilbert-Schmidt 獨立性準則）定義，使用線性核 K=XX⊤ $K=XX^\top$ 、L=YY⊤ $L=YY^\top$ ，並以 minibatch 無偏估計計算：
+
+ CKA(K,L)=HSIC(K,L)HSIC(K,K) HSIC(L,L) $\mathrm{CKA}(K,L)=\frac{\mathrm{HSIC}(K,L)}{\sqrt{\mathrm{HSIC}(K,K)\,\mathrm{HSIC}(L,L)}}$ ​HSIC(K,L)​
+Eq. 8
+
+ 軟對齊指標取與 Engram 第 j $j$ 層最相似的 top-5 個 MoE 層 Ij $I_j$ ​，以相似度 Si,j $S_{i,j}$ ​ 加權平均層號：
+
+ aj=∑i∈IjSi,j i∑i∈IjSi,j $a_j=\frac{\sum_{i\in I_j}S_{i,j}\,i}{\sum_{i\in I_j}S_{i,j}}$ ​=∑i∈Ij​​Si,j​∑i∈Ij​​Si,j​i​
+Eq. 9
+
+ 閘門在哪裡打開
+
+ Fig. 7 把 Engram-27B 的閘門 αt $\alpha_t$ ​ 畫成熱度圖（Sec. 6.5）。閘門在完成局部靜態模式的 token 上啟動：英文例如 “Alexander the Great”、“the Milky Way” 等多 token 具名實體，以及 “By the way”、“Princess of Wales” 等固定片語；中文例如「四大发明」「张仲景」。因為查的是後綴 N-gram（N=3 $N=3$ ），高啟動落在片語的最後一個 token。下方以 token 帶重繪 Fig. 7 的兩個英文句，只標出論文文字點名的片語與其最後一個 token，不標閘門數值。Fig. 7 只顯示 8 個閘門中與語意模式最相關的那一個。
+
+ <bos>OnlyAlexandertheGreatcouldtamethehorseBucephalus.
+
+ <bos>Bytheway,IamafanoftheMilkyWay.
+
+ 外框＝論文點名的片語實心＝片語的最後一個 token
+
+ 延伸閱讀：推論的階段與權重共享
+
+ 11 · 消融
+
+ 移除元件與關閉記憶時的變化
+
+ 元件消融（Sec. 6.2，Fig. 5）在較小的設定上進行：12 層 3B MoE（0.56B 啟用）、訓練 100B token，基準驗證損失 1.808。參考配置是 1.6B Engram、{2,3}-gram、插在第 2 與第 6 層，損失 1.768（降低 0.04）。從參考配置逐一移除元件，影響最大的三項是分支專屬融合、情境感知閘門與 tokenizer 壓縮；Fig. 5 沒有給出數值，本頁不排三者的先後。移除短卷積只稍微變差。在固定 1.6B 下加入 4-gram 稍差，作者推測它稀釋了較常見的 2/3-gram 的容量，不排除記憶更大時有益。
+
+ 敏感度分析（Sec. 6.3，Fig. 6）在推論時把 Engram 的輸出完全關掉、主幹不變，觀察各類任務還保留多少表現。事實知識類受影響最大，只保留 29%–44%（TriviaQA 29%）；閱讀理解類保留 81%–93%（C3 93%）。這表示事實知識大量依賴 Engram 查出的記憶，而閱讀理解主要依賴主幹對上下文的計算。作者提醒，這種事後消融造成訓練與推論不一致，所以只分析兩端的任務。
+
+ 12 · 預取
+
+ 確定性位址讓查表可以預取
+
+ MoE 的路由依賴執行時的隱藏狀態，模型要算到該層才知道選哪些專家。Engram 的索引只由輸入 token ID 決定，在執行該層之前就已知道要讀哪些列（Sec. 2.5）。這種確定性位址帶來兩個系統面的好處：
+
+ 訓練：嵌入表以模型平行切分到各 GPU，前向用 All-to-All 收集被用到的列，反向把梯度分派回去；總記憶容量隨 GPU 數線性增加。
+
+ 推論：嵌入表放在主機記憶體，經 PCIe 非同步預取，與前面層的計算重疊（Fig. 2b）。插得越深，可以遮住傳輸延遲的計算時間越長。
+
+ 研究筆記整理的 PKM 等記憶層以學到的 key 比對隱藏狀態來選列，位址同樣要到執行時才知道；Engram 的位址由雜湊直接決定，所以可以預取。這是筆記的整理，論文沒有逐項比較。N-gram 的存取服從 Zipf 分布，少數模式佔大多數存取，所以常用的列可放在 HBM 或 DRAM，長尾放在 NVMe SSD（多層快取）。
+
+ 插入層的取捨：建模偏好早插入。12 層 3B MoE 上把單一模組由第 1 層掃到第 12 層，第 2 層最佳（Val Loss 1.770），越深越差；同樣 1.6B 拆成兩個模組放在第 2、6 層更好（1.768）（Sec. 6.2）。插得越早，查表結果越早進入殘差流，主幹花在重建局部模式上的層數越少；但越早的 ht $\mathbf h_t$ ​ 上下文越少、各分支差異越小，閘門越不精確。系統面則偏好晚插入，留給預取更多計算時間。Engram-27B 用第 2、15 層同時滿足兩者。
+
+ Table 4 量測了代價（Sec. 6.4）：nano-vLLM、H800、512 條序列，把 100B 參數的 Engram 放在第二個 block、整張表放在主機 DRAM，與第一個 block 的計算重疊。4B-Dense 的吞吐量由 9,031.62 降到 8,858.28 tok/s（−1.92%，本頁推導），8B-Dense 由 6,315.52 降到 6,140.02 tok/s（−2.78%，論文寫 2.8%）。100B 表放主機記憶體，吞吐量最多只降 2.8%。每步的通訊量隨啟用的槽數增加，與表的總大小無關。這組實驗強制所有查表都走 PCIe、沒有使用快取，作者稱之為保守基準。
+
+ C5預取與計算重疊
+示範值
+
+ 停頓 0 只表示本模型的估計，不保證實際沒有停頓；論文唯一的量測是 Table 4。
+
+ 模式Engram：索引事先可知對照：索引到該層才可知
+
+ 插入層 ℓ2
+
+ 每步 token 數（示範值）512
+
+ 每個參數位元組（示範值）1（FP8）2（BF16）
+
+ PCIe 有效頻寬 GB/s（示範值）25
+
+ 每層計算時間 ms（示範值）0.50
+
+ 表總大小（不影響傳輸量）100B
+
+ GPU 層Engram 層／PCIe 傳輸停頓（斜線）
+
+ 傳輸量 = 1.3107 MB
+傳輸時間 Tₓ = 0.05243 ms
+可重疊時間 W = 0.500 ms
+停頓 = 0 ms
+表大小 100B（不影響傳輸量）
+
+ Table 4 原始數字：4B-Dense −1.92%、8B-Dense −2.78%。這是論文的量測，非本模型輸出。
+
+ 每步傳輸量 = tokens × dmem × bytes（dmem = 1280，推定沿用 Engram-27B）；傳輸時間 = 量 ÷ 頻寬；可重疊時間 W = (ℓ − 1) × 每層時間（對照模式 W = 0）；停頓 = max(0, 傳輸時間 − W)。模型沒有考慮逐列 gather、隨機存取、延遲、PCIe 實際效率與主機端查表開銷，參數皆為示範值，不重現 Table 4。
+
+ 傳輸量 1.3107 MB，傳輸 0.05243 ms，可重疊 0.500 ms，停頓 0 ms
+
+ 延伸閱讀：稀疏記憶層：PKM、PEER 與 UltraMem、檢索增強與外部記憶
+
+ 13 · 實作
+
+ 實作設定與常見錯誤
+
+ Table 5 與 Sec. 4.1 的設定
+ 項目值
+
+ 主幹30 層、維度 2560、第一層為稠密層、MLA（32 頭）、RoPE θ 10000、mHC 擴展率 4
+
+ MoE2 共享 + 72（MoE-27B）或 55（Engram）路由專家、top-6、Loss-Free 負載平衡
+
+ 訓練序列長 4096、詞表 129,280、batch 1280、50,000 步、262B token
+
+ 最佳化主幹 Muon；嵌入 Adam；基礎學習率 4e-4、Step Decay、weight decay 0.1
+
+ Engramdmem $d_{\text{mem}}$ ​ 1280；Vocab Size 2,262,400（27B）／7,239,680（40B）；8 頭；第 [2,15] 層；N-gram [2,3]；combine mHC；tokenizer 壓縮；卷積零初始化；學習率 ×5；weight decay 0
+
+ 常見錯誤
+
+ 把 Engram 當成取代輸入詞嵌入。Engram 插在中間層，輸入嵌入與輸出 un-embedding 保持不變（Fig. 1 說明）。
+
+ 用原始 token ID 直接雜湊。要先經 P $\mathcal P$ 壓縮；消融顯示 tokenizer 壓縮是影響最大的三項之一。
+
+ 只用一個雜湊頭。每個階數用 K $K$ 個頭與質數表大小；單頭時一旦碰撞就無法區分（C1）。
+
+ 卷積沒有零初始化。零初始化保證訓練開始時 Y=V~ $\mathbf Y=\tilde{\mathbf V}$ 。
+
+ 嵌入表沿用主幹的最佳化設定。論文對嵌入用 Adam、學習率 ×5、weight decay 0，主幹用 Muon、weight decay 0.1。
+
+ 只看建模而把 Engram 插得很深，或只看系統而插得很淺。插入層要同時滿足建模（早）與預取延遲（晚）。
+
+ 比較長文脈能力時只對齊步數。應對齊預訓練損失（Sec. 5.2）。
+
+ 層編號。論文寫第 2 與 15 層，示範程式的 layer_ids 為 [1, 15]（0 起算的 block 索引），兩者的起算方式論文沒有說明。
+
+ 完整符號表
+
+ 符號意義
+
+ X=(x1,…,xT) $X=(x_1,\dots,x_T)$ ​,…,xT​)輸入 token 序列，長度 T $T$ ；xt $x_t$ ​ 為原始 token ID
+
+ V $V$ 、V′ $V'$ 、P $\mathcal P$ 原始詞表、壓縮後詞表、壓縮滿射；xt′=P(xt) $x'_t=\mathcal P(x_t)$ ′​=P(xt​)
+
+ gt,n $g_{t,n}$ ​、N $N$ 位置 t $t$ 結尾的後綴 n $n$ -gram、最大階數（3）
+
+ K $K$ 、k $k$ 每個階數的雜湊頭數（8）、頭的編號
+
+ φn,k $\varphi_{n,k}$ ​、Mn,k $M_{n,k}$ ​、En,k $\mathbf E_{n,k}$ ​雜湊函數、表的列數（質數）、嵌入表；每列 80 維（推定）
+
+ zt,n,k $z_{t,n,k}$ ​、et,n,k $\mathbf e_{t,n,k}$ ​、et $\mathbf e_t$ ​列索引、查出的向量、串接後的記憶向量（dmem=1280 $d_{\text{mem}}=1280$ ​=1280）
+
+ H(ℓ) $\mathbf H^{(\ell)}$ 、ht $\mathbf h_t$ ​、d $d$ 第 ℓ $\ell$ 層隱藏狀態、位置 t $t$ 的隱藏向量、隱藏維度（2560）
+
+ WK,WV $\mathbf W_K,\mathbf W_V$ ​,WV​、αt $\alpha_t$ ​Key、Value 投影；純量閘門
+
+ w $w$ 、δ $\delta$ 卷積核大小（4）、擴張率（= N $N$ ）
+
+ M $M$ mHC 的分支數（4）
+
+ Ptot,Pact,Psparse $P_{\text{tot}},P_{\text{act}},P_{\text{sparse}}$ ​,Pact​,Psparse​總可訓練參數（不含詞嵌入與 LM head）、每 token 啟用參數、未啟用參數
+
+ ρ $\rho$ 未啟用參數分給 MoE 專家的比例
+
+ Mslot $M_{\text{slot}}$ ​Sec. 3.2 的嵌入槽數
+
+ kact $k_{\text{act}}$ ​MoE 每個 token 選用的路由專家數（6）
+
+ 14 · 研究脈絡
+
+ 研究脈絡
+
+ 論文 §7 把源頭追溯到 Shannon 的 N-gram 語言模型。之後 FastText 以子詞 N-gram 嵌入表示詞，Hash Embeddings 用多個雜湊函數降低嵌入表的大小與碰撞，這是 Eq. 1 所沿用的做法。另一條線是 MoE：稀疏閘控 MoE、Switch Transformer 與 DeepSeekMoE 讓條件計算成為大型模型的標準做法。參數式記憶（PKM、PEER）在層內放大型 key-value 儲存，以學到的 key 選列；FFN 被解讀為鍵值記憶，說明模型會用計算重建靜態知識；REALM 等檢索增強方法則使用非參數的外部記憶。N-Grammer、OverEncoding 與 SCONE 把 N-gram 嵌入擴大到語言模型，但放在輸入層，也沒有在嚴格等參數、等 FLOPs 下驗證。本文把 N-gram 查表移到中間層，並以稀疏度分配把它與 MoE 放在同一個預算下比較。每張卡片連到對應的研究筆記。
+
+ N-gram 與雜湊嵌入MoE參數式記憶FFN 作為鍵值記憶檢索增強條件記憶
+
+ 2016N-gram 與雜湊嵌入Enriching Word Vectors with Subword Information (FastText)
+Bojanowski et al.
+N-gram 嵌入的典型例子
+arXiv ↗筆記
+2017MoEOutrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer
+Shazeer et al.
+提出 MoE 條件式計算
+arXiv ↗筆記
+2017N-gram 與雜湊嵌入Hash Embeddings for Efficient Word Representations
+Svenstrup et al.
+Engram 多頭雜湊所依據
+arXiv ↗筆記
+2019參數式記憶Large Memory Layers with Product Keys
+Lample et al.
+參數式稀疏記憶層
+arXiv ↗筆記
+2020FFN 作為鍵值記憶Transformer Feed-Forward Layers Are Key-Value Memories
+Geva et al.
+FFN 作為 key-value 記憶體
+arXiv ↗筆記
+2020檢索增強REALM: Retrieval-Augmented Language Model Pre-Training
+Guu et al.
+非參數外部記憶
+arXiv ↗筆記
+2021MoESwitch Transformers
+Fedus et al.
+MoE 擴充至超線性參數
+arXiv ↗筆記
+2022N-gram 與雜湊嵌入N-Grammer: Augmenting Transformers with latent n-grams
+Roy et al.
+以離散潛在 N-gram 擴充 Transformer
+arXiv ↗筆記
+2024MoEDeepSeekMoE
+Dai et al.
+細粒度專家與共享專家
+arXiv ↗筆記
+2024參數式記憶Mixture of A Million Experts
+He
+參數式記憶（PEER）
+arXiv ↗筆記
+2025N-gram 與雜湊嵌入Over-Tokenized Transformer (OverEncoding)
+Huang et al.
+hash N-gram 嵌入，放於輸入層
+arXiv ↗筆記
+2025N-gram 與雜湊嵌入Scaling Embedding Layers in Language Models (SCONE)
+Yu et al.
+輔助編碼模型處理高頻 N-gram
+arXiv ↗筆記
+2026條件記憶 · 本文Conditional Memory via Scalable Lookup (Engram)
+Cheng, Tian et al.
+提出條件式記憶與 Engram
+arXiv ↗筆記
+
+ 15 · 保留與延伸
+
+ 保留與延伸閱讀
+
+ 論文沒有獨立的限制章節，以下整理文中自述的保留：稀疏度分配的最佳點只在檢驗過的規模與固定稀疏比下穩定（Sec. 3.1）；Engram-40B 可能訓練不足（Sec. 4.2）；推論時關閉 Engram 造成訓練與推論不一致（Sec. 6.3）；更高階的 N-gram 在更大的記憶下可能有益（Sec. 6.2）；Table 4 沒有使用快取（Sec. 6.4）。作者把 N-gram 嵌入稱為條件記憶的「初步探索」（Sec. 1）。
+
+ 研究筆記（依閱讀順序）
+
+ Engram 條件式記憶的研究脈絡總覽總覽
+
+ MoE 與條件式計算的發展第一條稀疏軸與 MoE 基線
+
+ FFN 作為 key-value 記憶體與深度使用效率模型用計算重建靜態知識
+
+ N-gram 與 hash 嵌入的發展Engram 查表機制繼承的技術
+
+ 稀疏記憶層：PKM、PEER 與 UltraMem層內大型 key-value 儲存
+
+ 檢索增強與外部記憶非參數記憶
+
+ Engram 模組的設計本論文的模組
+
+ 稀疏度配置與 U 形縮放律本論文的分配實驗
+
+ 四階段推論假說與權重共享站內既有筆記
+
+ arXiv 2601.07372 ↗
+ 官方程式庫 ↗
+
+ Xin Cheng, Rui Tian, et al. Conditional Memory via Scalable Lookup: A New Axis of Sparsity for Large Language Models. arXiv:2601.07372.
+
+ 本頁的方程式與數字取自論文 v2；標示「本頁推導」的內容為本頁自行推導，「推定」為依論文數字推估的值，「示範值」只用於互動示範。示範程式指官方程式庫的 engram_demo_v1.py（作者註明為 demo 版本）。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記

@@ -1,0 +1,128 @@
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="hash" data-toc="04" data-tt="多頭雜湊">
+  <div class="ch-num">04 · 多頭雜湊</div>
+  <h2>多個雜湊頭把 N-gram 映到嵌入表</h2>
+  <div class="prose">
+    <p>Engram 沿用 Tito Svenstrup et al. (2017) 的雜湊嵌入（Hash Embeddings，見研究筆記）。對每個階數 $n$，模型準備 $K$ 個雜湊頭；第 $k$ 個頭有自己的雜湊函數 $\varphi_{n,k}$ 與嵌入表 $\mathbf E_{n,k}$，表的列數 $M_{n,k}$ 取質數（Sec. 2.2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$z_{t,n,k}\triangleq\varphi_{n,k}(g_{t,n}),\qquad \mathbf e_{t,n,k}=\mathbf E_{n,k}[z_{t,n,k}]$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="eq"><div class="eq-m">$$\mathbf e_t\triangleq\big\Vert_{n=2}^{N}\big\Vert_{k=1}^{K}\,\mathbf e_{t,n,k}$$</div><span class="eq-n">Eq. 2</span></div>
+  <div class="prose">
+    <p>$z_{t,n,k}$ 是雜湊得到的列索引，$\mathbf e_{t,n,k}$ 是查出的向量，$\Vert$ 表示串接。所有頭的向量串接成記憶向量 $\mathbf e_t\in\mathbb R^{d_{\text{mem}}}$，Engram-27B 的 $d_{\text{mem}}=1280$、$K=8$。$n\in\{2,3\}$ 共 16 個頭，所以每列是 $1280/16=80$ 維<span class="tag est">推定</span>。論文只寫 $\varphi_{n,k}$ 是輕量的乘法–XOR 雜湊。官方示範程式的寫法是：每層抽 $N$ 個奇數乘數 $m_0,\dots,m_{N-1}$，計算 $\text{mix}=(x'_t m_0)\oplus(x'_{t-1}m_1)\oplus\cdots$（$\oplus$ 為逐位元 XOR，共 $n$ 項），第 $k$ 頭的索引為 $\text{mix}\bmod M_{n,k}$；$M_{n,k}$ 是從設定的表大小往上找、彼此不重複的質數<span class="tag demo">示範程式</span>。</p>
+    <p>表的單位<span class="tag est">推定</span>：Table 5 的 Engram Vocab Size 2,262,400（27B）解讀為每頭列數，等於 129,280 × 17.5。Engram 參數 $=2\text{ 層}\times2\text{ 階}\times8\text{ 頭}\times2{,}262{,}400\times80=5.79$B，與論文的 5.7B 一致；40B 的 7,239,680 列給 18.53B，論文寫 18.5B。</p>
+    <h3>碰撞：多頭降低「無法區分」的機率</h3>
+    <p>雜湊會讓不同的 $n$-gram 落在同一格（碰撞）。以下是本頁的近似分析<span class="tag">本頁推導</span>。設表中共有 $U$ 個不同的 $n$-gram，單一頭有 $M_{n,k}$ 格（下文簡寫為 $M$）；$U$ 是讀者假設的值，論文沒有給出。某個 $n$-gram 在一個頭上與至少一個其他 $n$-gram 同格的機率為</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$p_1=1-\left(1-\tfrac1M\right)^{U-1}$$</div><span class="eq-n">本頁推導</span></div>
+  <div class="prose">
+    <p>若各頭近似獨立，$K$ 個頭都與別人同格（沒有任何一個無碰撞的頭）的機率為 $p_1^K$。例：$U=10^6$ 個不同 2-gram、每頭 $M=2{,}262{,}400$ 格時，$p_1\approx0.357$，單頭約三分之一的 2-gram 會與別人共用一格；8 個頭都與別人同格的機率 $p_1^8\approx2.65\times10^{-4}$，約 $2.7\times10^{-4}$。只要還有一個無碰撞的頭，串接後的 $\mathbf e_t$ 就與其他 $n$-gram 不同。</p>
+    <p>「與某一個 $n$-gram 在 $K$ 頭全部同格」比上述機率更罕見，但示範程式的 $K$ 個頭共用同一個 mix，只是模數不同。由中國餘數定理，兩個 $n$-gram 在 $K$ 頭全部同格，若且唯若兩者的 mix 對 $\prod_k M_{n,k}$ 同餘；$K=8$ 時這個乘積約 $10^{51}$，遠大於 mix 的範圍 $R\approx2^{48}$<span class="tag est">推定</span>，所以全部同格只在 mix 完全相同時發生。全部同格的期望個數因此寫成 $E_{\text{full}}\approx(U-1)/\min(M^K,R)$：$U=10^6$ 時獨立模型給 $10^{-44.8}$，mix 下限給 $10^{-8.45}$；$U=10^9$ 時下限約 $3.6\times10^{-6}$，比獨立模型高約 36 個數量級。這個值仍然很小，但不能說「8 個頭的組合必然唯一」。正式模型的雜湊細節論文沒有寫，$R$ 只依示範程式推定。</p>
+  </div>
+
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>從 token 到嵌入表索引</h3></div>
+    <p class="plate-lead">選一個句子與位置 t：第一列是原始 token 與原始 ID，第二列是正規化後的字串與標準 ID；下方是 2-gram、3-gram 在 K 個頭上的索引。</p>
+    <p class="panel-t">A · 管線<span class="tag demo">示範程式</span></p>
+    <div class="ctl">
+      <div class="ctl-row" role="group" aria-label="預設句"><button class="chip" type="button" data-s="0" aria-pressed="true">Fig. 1 例句</button><button class="chip" type="button" data-s="1" aria-pressed="false">壓縮示例</button></div>
+      <label class="lbl" for="c1-text">輸入文字（最多 200 字元、40 個 token）</label>
+      <textarea id="c1-text" maxlength="200" spellcheck="false"></textarea>
+      <p class="warn hide" id="c1-trunc">超過 40 個 token，只使用前 40 個。</p>
+      <div class="tokscroll" id="c1-bandwrap"><div class="band" id="c1-band" role="toolbar" aria-label="token 帶：左右方向鍵選擇位置 t"></div></div>
+      <div class="legend"><span class="lg par">2-gram 視窗</span><span class="lg npar">3-gram 視窗</span><span class="lg">底色＝與其他原始 token 合併</span></div>
+      <div class="pg two">
+        <div class="rng"><label class="lbl" for="c1-t">位置 t（0 到 T−1）<output id="c1-to">3</output></label><input id="c1-t" type="range" min="0" max="9" step="1" value="3"></div>
+        <div><span class="lbl">每個階數的頭數 K</span><div class="seg" id="c1-K" role="group" aria-label="頭數 K"><button type="button" data-v="1" aria-pressed="false">1</button><button type="button" data-v="2" aria-pressed="false">2</button><button type="button" data-v="4" aria-pressed="false">4</button><button type="button" data-v="8" aria-pressed="true">8</button></div></div>
+      </div>
+      <p class="readout" id="c1-ro"></p>
+      <div id="c1-idx"></div>
+      <p class="idxlab">串接 → e<sub>t</sub>（2K 段）</p>
+      <div class="concat" id="c1-cat" aria-hidden="true"></div>
+    </div>
+    <p class="panel-t">B · 碰撞<span class="tag">本頁推導</span></p>
+    <div class="pg two">
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1-U">不同 n-gram 數 U<output id="c1-Uo"></output></label><input id="c1-U" type="range" min="3" max="10" step="0.001" value="6"></div>
+        <div class="ctl-row" role="group" aria-label="U 預設值"><button class="chip" type="button" data-u="20000" aria-pressed="false">U = 2×10⁴</button><button class="chip" type="button" data-u="1000000" aria-pressed="true">U = 10⁶</button><button class="chip" type="button" data-u="1000000000" aria-pressed="false">U = 10⁹</button></div>
+        <div class="rng"><label class="lbl" for="c1-M"><span>每頭表大小 M<sub>n,k</sub></span><output id="c1-Mo"></output></label><input id="c1-M" type="range" min="3" max="8" step="0.001" value="6.3546"></div>
+        <div class="ctl-row" role="group" aria-label="M 預設值"><button class="chip" type="button" data-m="10000" aria-pressed="false">10,000</button><button class="chip" type="button" data-m="2262400" aria-pressed="true">Engram-27B 的表大小（推定）</button></div>
+        <div class="rng"><label class="lbl" for="c1-KB">頭數 K<output id="c1-KBo">8</output></label><input id="c1-KB" type="range" min="1" max="16" step="1" value="8"></div>
+        <p class="readout" id="c1-ro2"></p>
+      </div>
+      <div class="fig" id="c1-fig"><svg role="img" aria-label="K 個頭都同格的機率對 K 的長條圖"></svg></div>
+    </div>
+    <div class="ctl" style="margin-top:16px">
+      <div class="ctl-row"><button class="small-btn pri" type="button" id="c1-run">用示範雜湊實測</button><span class="note" id="c1-runmsg"></span></div>
+      <p class="readout" id="c1-emp">按下按鈕後，列舉 U 個 2-gram 並以面板 A 的乘數與質數表大小計算三個比例。</p>
+    </div>
+    <p class="plate-f">玩具分詞器：以正規表示式切出「前導空白＋字母數字」或單一符號，不是 DeepSeek-V3 tokenizer。乘數由 mulberry32(0) 產生（572152369、708123、479473029）；面板 A 的表大小固定從 10,000 往上取質數。實測列舉 (x′ₜ₋₁, x′ₜ) = (⌊i/1000⌋+1, (i mod 1000)+1)，分母為 U；解析值以第一個質數 P₀ 計算。讀數由本頁依 Eq. 1–2 與上述推導即時計算。</p>
+    <p class="sr" aria-live="polite" id="c1-live"></p>
+  </div>
+  <details class="sym"><summary>本節符號</summary><div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$K$、$k$</td><td>每個階數的雜湊頭數（Engram-27B 為 8）、頭的編號</td></tr>
+    <tr><td>$\varphi_{n,k}$、$M_{n,k}$、$\mathbf E_{n,k}$</td><td>第 $(n,k)$ 頭的雜湊函數、表的列數（質數）、嵌入表</td></tr>
+    <tr><td>$z_{t,n,k}$、$\mathbf e_{t,n,k}$</td><td>列索引、查出的向量</td></tr>
+    <tr><td>$\mathbf e_t$、$d_{\text{mem}}$</td><td>串接後的記憶向量、其維度（1280）</td></tr>
+    <tr><td>$U$、$p_1$</td><td>表中不同 $n$-gram 數（假設值）、單頭同格機率</td></tr>
+    </tbody></table></div></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">表中有 $U=10^6$ 個不同 2-gram、每頭 $M=2{,}262{,}400$ 格時，單頭碰撞機率與 8 頭全部碰撞機率約多少？</p>
+    <p class="a">$p_1=1-(1-1/M)^{U-1}\approx0.357$；8 頭都與別人同格 $p_1^8\approx2.7\times10^{-4}$〔本頁推導，假設各頭近似獨立〕（Eq. 1–2）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="ngram-hash-embedding-lineage.html">N-gram 與 hash 嵌入的發展</a></p>
+</section>
+
+<!-- S4 ============================================================ -->
+<section class="ch" id="gate" data-toc="05" data-tt="閘門">
+  <div class="ch-num">05 · 閘門</div>
+  <h2>閘門 α 依隱藏狀態縮放記憶向量</h2>
+  <div class="prose">
+    <p>雜湊查出的 $\mathbf e_t$ 只由輸入 token 決定，不看更遠的上下文，也會受碰撞與多義影響。Engram 因此以注意力為藍本，用目前的隱藏狀態 $\mathbf h_t$ 當 Query，記憶 $\mathbf e_t$ 同時產生 Key 與 Value（Sec. 2.3）。$\mathbf h_t$ 已經過前面的注意力層，彙整了整個前綴的上下文。</p>
+    <p>式中的 <b>RMSNorm</b> 把向量除以其元素的均方根，再乘以可學的增益：$\mathrm{RMSNorm}(\mathbf y)=\mathbf y/\sqrt{\tfrac1d\sum_i y_i^2}$（再逐元素乘以增益）。作者對 Query、Key 都做 RMSNorm，目的是讓梯度穩定。</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbf k_t=\mathbf W_K\mathbf e_t,\qquad \mathbf v_t=\mathbf W_V\mathbf e_t$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="eq"><div class="eq-m">$$s_t=\frac{\mathrm{RMSNorm}(\mathbf h_t)^\top\mathrm{RMSNorm}(\mathbf k_t)}{\sqrt d}$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="eq"><div class="eq-m">$$\alpha_t=\sigma(s_t),\qquad \tilde{\mathbf v}_t=\alpha_t\cdot\mathbf v_t$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="prose">
+    <p>合起來寫，閘門為 $\alpha_t=\sigma\big(\mathrm{RMSNorm}(\mathbf h_t)^\top\mathrm{RMSNorm}(\mathbf k_t)/\sqrt d\big)$，$\sigma$ 是 sigmoid，$\alpha_t\in(0,1)$ 是一個純量，乘在整個 Value 向量上。作者的解釋：若查出的記憶與目前上下文矛盾，$\alpha_t$ 趨近 0，該位置的記憶向量幾乎不加入殘差流。</p>
+    <p>引數的範圍<span class="tag">本頁推導</span>：假設 RMSNorm 增益為 1 並忽略 eps，正規化後的向量長度恰為 $\sqrt d$，所以 sigmoid 的引數等於 $\sqrt d\cos\theta$，$\theta$ 是 $\mathbf h_t$ 與 $\mathbf k_t$ 的夾角。在這個假設下，$d=2560$ 時引數的範圍是 $\pm50.6$，只有 $|\cos\theta|<5/\sqrt{2560}=0.099$ 時 $|s|<5$，閘門幾乎只取 0 或 1。論文的 RMSNorm 增益是可學的，實際範圍隨增益改變，$\pm50.6$ 只是增益為 1 時的值。下圖以 $s=\gamma\sqrt d\cos\theta$ 表示，$\gamma$ 代表學到的增益對引數的整體縮放（本頁簡化）。示範程式在 sigmoid 前多做一步帶號平方根 $s\mapsto\mathrm{sign}(s)\sqrt{|s|}$，論文 Eq. 4 沒有這一步；下圖提供切換，不宣稱哪一個是正式模型的實作。</p>
+  </div>
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>閘門 α 與夾角、維度的關係</h3></div>
+    <p class="plate-lead">調整 cos θ 與 d：曲線圖是 α 對 cos θ（或 s）的關係，小圓圖是 h 與 k 的夾角。d 越大，曲線越接近階梯。</p>
+    <div class="pg two">
+      <div>
+        <div class="fig" id="c2-fig"><svg role="img" aria-label="α 曲線"></svg></div>
+        <div class="legend"><span class="lg acc">Eq. 4</span><span class="lg ref">示範程式（帶號平方根）</span><span class="lg pt">目前的點</span></div>
+      </div>
+      <div class="ctl">
+        <div class="fig" id="c2-circ" style="max-width:220px"><svg role="img" aria-label="h 與 k 的夾角"></svg></div>
+        <div><span class="lbl">隱藏維度 d</span><div class="seg" id="c2-d" role="group" aria-label="隱藏維度 d"><button type="button" data-v="16" aria-pressed="false">16</button><button type="button" data-v="64" aria-pressed="false">64</button><button type="button" data-v="256" aria-pressed="false">256</button><button type="button" data-v="1024" aria-pressed="false">1024</button><button type="button" data-v="2560" aria-pressed="true">2560</button><button type="button" data-v="4096" aria-pressed="false">4096</button></div></div>
+        <div class="rng"><label class="lbl" for="c2-c">cos θ<output id="c2-co">0.300</output></label><input id="c2-c" type="range" min="-1" max="1" step="0.001" value="0.3"></div>
+        <div class="ctl-row"><label class="lbl" for="c2-cn">直接輸入 cos θ</label><input id="c2-cn" type="number" min="-1" max="1" step="0.001" value="0.3"></div>
+        <div class="rng"><label class="lbl" for="c2-g">增益縮放 γ（本頁簡化）<output id="c2-go">1.00</output></label><input id="c2-g" type="range" min="-1.30103" max="0.30103" step="0.001" value="0"></div>
+        <label class="chk"><input type="checkbox" id="c2-sq">示範程式：sigmoid 前取帶號平方根</label>
+        <div><span class="lbl">右圖橫軸</span><div class="seg" id="c2-view" role="group" aria-label="右圖橫軸"><button type="button" data-v="c" aria-pressed="true">cos θ</button><button type="button" data-v="s" aria-pressed="false">s</button></div></div>
+        <p class="readout" id="c2-ro"></p>
+      </div>
+    </div>
+    <p class="idxlab">ṽ<sub>t</sub> = α · v<sub>t</sub> 的長度比例</p>
+    <div class="stackbar" aria-hidden="true" style="height:16px"><div class="sw-eng" id="c2-bar" style="width:50%"></div></div>
+    <p class="plate-f">s = γ√d·cos θ（假設 RMSNorm 增益為 1、忽略 eps，再以 γ 整體縮放；本頁推導）。α 以數值穩定的 sigmoid 計算，1 − α 另以 σ(−s) 計算。帶號平方根取自示範程式，論文 Eq. 4 沒有這一步。讀數由本頁依 Eq. 4 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <details class="sym"><summary>本節符號</summary><div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$\mathbf h_t$、$d$</td><td>位置 $t$ 的隱藏向量、隱藏維度（主幹 2560）</td></tr>
+    <tr><td>$\mathbf W_K,\mathbf W_V$</td><td>Key、Value 投影矩陣</td></tr>
+    <tr><td>$\alpha_t$、$\sigma$</td><td>純量閘門、sigmoid</td></tr>
+    <tr><td>$\tilde{\mathbf v}_t$</td><td>閘門縮放後的 Value</td></tr>
+    <tr><td>$\theta$、$\gamma$</td><td>$\mathbf h_t$ 與 $\mathbf k_t$ 的夾角、增益縮放（本頁簡化）</td></tr>
+    </tbody></table></div></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">寫出 Eq. 4。假設 RMSNorm 增益為 1、忽略 eps、$d=2560$，sigmoid 的引數範圍是多少？</p>
+    <p class="a">$\alpha_t=\sigma(\mathrm{RMSNorm}(\mathbf h_t)^\top\mathrm{RMSNorm}(\mathbf k_t)/\sqrt d)$，記憶與上下文矛盾時趨近 0；在此假設下引數為 $\sqrt d\cos\theta$，範圍 $\pm50.6$；實際增益可學，範圍隨之改變〔本頁推導〕。</p>
+  </div></details>
+</section>

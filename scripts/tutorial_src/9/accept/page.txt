@@ -1,0 +1,742 @@
+Lafa：大型 flow 語言模型
+
+跳到內容
+
+ No. 9
+ Lafa：block 內平行生成的連續 flow 語言模型
+
+00 摘要01 Block-AR02 嵌入空間的 flow03 Denoiser 與速度04 AR 改成 denoiser05 學出 tokenwise time06 推論輔助07 Flow map08 自我推測解碼09 實驗結果10 實作11 研究脈絡12 限制與延伸
+
+00摘要
+01Block-AR
+02嵌入空間的 flow
+03Denoiser 與速度
+04AR 改成 denoiser
+05學出 tokenwise time
+06推論輔助
+07Flow map
+08自我推測解碼
+09實驗結果
+10實作
+11研究脈絡
+12限制與延伸
+
+ No. 9 · 互動教學 · arXiv 2610.28559
+
+ Lafa：把預訓練語言模型改成 block 內平行生成的連續 flow
+
+ 這篇論文讓 block 之間照 AR 順序、block 內的 token 從噪聲經連續的逐步變換（flow）一起生成，並用同一個模型的 AR 預測驗證一步草稿。
+
+ Arnav Chavan、Chanhyuk Lee、Udbhav Bamba、Jaehoon Yoo、Seunghoon Hong、Aditi Raghunathan、Jinwoo Kim（2026）〈Large Flow Language Models〉
+
+ aτ = 1dogτ = 1waitsτ = 1τ¹ 0.62τ² 0.41τ³ 0.25
+
+ 左：乾淨的 prefix（實線框，時間固定為 1）。右：一個 block 的三個位置（虛線框），灰階越深表示 τ 越接近 1，也就是越接近乾淨的詞嵌入；下方數字是各位置的 τ（示意值）。prefix 取自論文 Fig. 2。
+
+ 01 · 生成方式文字切成長度固定的 block：block 之間照 AR 順序生成，block 內的 token 從高斯噪聲出發，經過連續的逐步變換（解一個常微分方程）一起變成詞嵌入。
+
+ 02 · 訓練方式模型不從零訓練：把預訓練的 AR 模型（Qwen2.5 0.5B／7B、Qwen3 8B）改成同時做 AR 預測與 block 去噪，訓練資料少於 300 億 tokens。
+
+ 03 · 最快的模式最快的模式是 flow 一步寫草稿、同一個模型的 AR 預測逐字驗證。輸出與 greedy AR（每步取機率最大的 token）相同，7B 每秒產生的 token 數（吞吐量）是 AR 的 2.54 倍。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · Block-AR 分解
+
+ Block 之間自迴歸，block 內平行
+
+ 自迴歸（autoregressive，AR）語言模型給定前文，輸出下一個 token 的機率分布。greedy decoding 每一步取機率最大的 token，接到前文後再做下一次 forward，所以一次 forward 只產生一個 token。為了不重算前文，實作上把已處理位置的 key/value 存起來，稱為 KV cache；只要這些位置的表示不隨後續輸入改變，KV cache 就能一直重用。
+
+ Lafa 保留這個結構，只把平行放進固定長度的 block。記 prefix（已知文字）為 c∈VN $c\in V^N$ 、續寫為 y∈VM $y\in V^M$ ，block 大小為 B $B$ （假設 B∣M $B\mid M$ ）。論文把續寫的機率寫成 block 的連乘（Sec. 2.1）：
+
+ p(y∣c)=∏r=0M/B−1p(yrB+1:(r+1)B∣c, y≤rB) $p(y\mid c)=\prod_{r=0}^{M/B-1}p\big(y_{rB+1:(r+1)B}\mid c,\,y_{\le rB}\big)$ ∏M/B−1​p(yrB+1:(r+1)B​∣c,y≤rB​)
+Eq. 1
+
+ 這是機率的連鎖律，沒有任何近似。block 之間仍照 AR 順序：第 r $r$ 個 block 以 prefix 與前面所有 block 為條件。平行只發生在 block 內，B $B$ 個 token 一起生成。因為 block 之間維持 causal，前面的 token 與它們的表示不會因為後面的 block 改變，所以 prefix 的 KV cache 可以沿用。同樣的分解也用在 block-autoregressive 模型 [22] 與 block discrete diffusion [23]。
+
+ 剩下的問題是 block 內的 B $B$ 個 token 怎麼一起生成。Lafa 的做法是在詞嵌入空間中從高斯噪聲出發，解一個常微分方程（第 02 節）。
+
+ c₁τ = 1c₂τ = 1c₃τ = 1y₁τ = 1y₂τ = 1y₃τ = 1τ¹ 0.50τ² 0.50τ³ 0.50
+
+ 第一個 block（y₁–y₃）生成後併入 prefix，第二個 block 的三個位置再一起生成。這裡三個位置共用同一個時間 0.5（同步）。
+
+ 符號表
+
+ 符號意義
+
+ V $V$ 、∣V∣ $\lvert V\rvert$ 詞彙表與其大小
+
+ c∈VN $c\in V^N$ prefix（已知文字，長度 N $N$ ）
+
+ y∈VM $y\in V^M$ 、B $B$ 續寫（長度 M $M$ ）與 block 大小，假設 B∣M $B\mid M$ 
+
+ E∈R∣V∣×d $\E\in\mathbb R^{\lvert V\rvert\times d}$ 、Ev $\E_v$ ​詞嵌入矩陣與 token v $v$ 的嵌入。論文把嵌入矩陣與期望值都寫成 E $E$ ；本頁用粗體 E $\E$ 表示嵌入、E[⋅] $\Ex[\cdot]$ 表示期望值
+
+ x1∈RB×d $x_1\in\mathbb R^{B\times d}$ ​∈RB×d一個 block 的乾淨嵌入 (Ey1,…,EyB)⊤ $(\E_{y_1},\dots,\E_{y_B})^\top$ ​​,…,EyB​​)⊤
+
+ x0∼N(0,σ2I) $x_0\sim\mathcal N(0,\sigma^2I)$ ​∼N(0,σ2I)噪聲；σ>0 $\sigma>0$ 為 noise scale
+
+ t∈[0,1] $t\in[0,1]$ base time；t=0 $t=0$ 為噪聲，t=1 $t=1$ 為資料
+
+ τi(t) $\tau^i(t)$ (t)位置 i $i$ 的 tokenwise time；上標 i $i$ 是 block 內位置，不是次方
+
+ It $I_t$ ​、bt $b_t$ ​內插（interpolant）與速度場（velocity field）
+
+ Dt(x;c)i $D_t(x;c)^i$ ​(x;c)i、D^t $\hat D_t$ t​理想 block denoiser（位置 i $i$ 的後驗分布）與學到的 denoiser
+
+ Δ∣V∣−1 $\Delta^{\lvert V\rvert-1}$ 長度 ∣V∣ $\lvert V\rvert$ 的機率向量集合
+
+ f $f$ 、ft(x;c) $f_t(x;c)$ ​(x;c)、f(c)i $f(c)_i$ ​預訓練 AR transformer、加上時間條件的模型、prefix 位置 i $i$ 的 AR 預測（預測 ci+1 $c_{i+1}$ ​；i=N $i=N$ 時預測 y1 $y_1$ ​）
+
+ ℓi(τ) $\ell^i(\tau)$ (τ)、Fi $F_i$ ​位置 i $i$ 在 tokenwise time τ $\tau$ 的期望 denoising CE、其正規化累積分布
+
+ Mbin $M_{\text{bin}}$ ​、Lˉi,m $\bar L_{i,m}$ i,m​Alg. 2 的時間格數（論文寫 M=200 $M=200$ ，與續寫長度同名，本頁改寫）；本輪四次無梯度 forward 中落在位置 i $i$ 、第 m $m$ 格的 denoising CE 平均（Eq. 23）
+
+ sg[⋅] $\mathrm{sg}[\cdot]$ stop-gradient：前向照算、反向不傳梯度（Eq. 19、24）
+
+ K $K$ 、tk=k/K $t_k=k/K$ ​=k/K、pk $p_k$ ​Euler 步數、base time 網格、第 k $k$ 步的 denoiser 輸出
+
+ Xs,t $X_{s,t}$ ​、δs,t $\delta_{s,t}$ ​flow map（由時間 s $s$ 直接送到 t $t$ ）與 two-time denoiser
+
+ γi $\gamma^i$ 、wi(r) $w^i(r)$ (r)、Zs,ti $Z^i_{s,t}$ i​semigroup 權重、Eq. 17 的權重函數與其積分
+
+ g $g$ prefix guidance scale
+
+ a $a$ 、TPF、TPS一次 fused forward 接受的 token 數、tokens per forward、tokens per second
+
+ 延伸閱讀：AR 生成的延遲與平行解碼方法
+
+ 02 · 嵌入空間的 flow
+
+ 每個 block 的嵌入從高斯噪聲經 ODE 積分到資料的嵌入
+
+ Lafa 不直接在離散的 token 上生成，而是在詞嵌入空間生成。一個 block 的乾淨資料是 B $B$ 個 token 的嵌入疊成的矩陣 x1:=(Ey1,…,EyB)⊤∈RB×d $x_1:=(\E_{y_1},\dots,\E_{y_B})^\top\in\mathbb R^{B\times d}$ ​:=(Ey1​​,…,EyB​​)⊤∈RB×d。直接前作 Flow Map Language Models [13] 用長度 ∣V∣ $\lvert V\rvert$ 的 one-hot 向量；改用維度 d $d$ 的嵌入是設計選擇，論文寫這是為了讓訓練更可擴展（"making training more scalable"）。
+
+ Flow matching [24, 25] 的做法：從噪聲 x0∼N(0,σ2I) $x_0\sim\mathcal N(0,\sigma^2I)$ ​∼N(0,σ2I) 到資料 x1 $x_1$ ​ 定義一條內插 It $I_t$ ​。標準形式是 It=(1−t)x0+tx1 $I_t=(1-t)x_0+tx_1$ ​=(1−t)x0​+tx1​，t=0 $t=0$ 為噪聲、t=1 $t=1$ 為資料，所有 token 共用同一個 t $t$ 。速度場定義為內插速度的條件期望 bt(x)=E[I˙t∣It=x] $b_t(x)=\Ex[\dot I_t\mid I_t=x]$ ​(x)=E[I˙t​∣It​=x]。從 x0 $x_0$ ​ 沿下面的常微分方程（ODE）積分到 t=1 $t=1$ ，終點的分布就是資料分布：
+
+ x˙t=bt(xt;c),x0∼p0,xt∼pt(⋅∣c) $\dot x_t=b_t(x_t;c),\quad x_0\sim p_0,\quad x_t\sim p_t(\cdot\mid c)$ t​=bt​(xt​;c),x0​∼p0​,xt​∼pt​(⋅∣c)
+Eq. 3
+
+ Lafa 讓 block 內每個位置有自己的時間。逐位置時間（tokenwise time）是函數 τ:[0,1]→[0,1]B $\tau:[0,1]\to[0,1]^B$ ，位置 i $i$ 在 base time t $t$ 的進度是 τi(t) $\tau^i(t)$ (t)。內插改寫成：
+
+ Iti:=(1−τi(t)) x0i+τi(t) x1i,i∈[B] $I_t^i:=(1-\tau^i(t))\,x_0^i+\tau^i(t)\,x_1^i,\quad i\in[B]$ i​:=(1−τi(t))x0i​+τi(t)x1i​,i∈[B]
+Eq. 2
+
+ τ $\tau$ 要滿足的條件：每個分量 τi $\tau^i$ 可微且遞增，τ(0)=0 $\tau(0)=0$ 、τ(1)=1 $\tau(1)=1$ （Sec. 2.1）。App. A.2 的證明另要求 τi∈C1 $\tau^i\in C^1$ ∈C1，且 t<1 $t<1$ 時 τ˙i>0 $\dot\tau^i>0$ i>0，也就是嚴格遞增。若 i<j $i<j$ 時 τi(t)>τj(t) $\tau^i(t)>\tau^j(t)$ (t)>τj(t)，較前的位置比較接近資料，會先被還原。速度場 bt(⋅;c) $b_t(\cdot;c)$ ​(⋅;c) 的存在引用 [27]，論文不另外證明。
+
+ 論文的動機（Sec. 2.1）：「To introduce a left-to-right bias within each block to match the inherent directionality of text [19], we use tokenwise time [26–30], allowing earlier positions to progress faster.」先例 [26–30] 包含 Learning When to Denoise、Token Time Continuous Diffusion、AR-Diffusion；相近的想法還有 Diffusion Forcing。要注意：動機是由左到右，但 τ $\tau$ 的實際形狀是訓練中由 loss 學出來的（第 05 節），論文沒有把 τi>τj $\tau^i>\tau^j$ >τj 設成約束。
+
+ 圖同步時間與 tokenwise time
+
+ 示意值：τ¹(t) = 1 − (1 − t)^2.2、τ²(t) = 1 − (1 − t)^1.4，不是論文學到的 τ。兩條曲線都滿足 τ(0) = 0、τ(1) = 1、嚴格遞增。
+
+ c₁τ = 1c₂τ = 1c₃τ = 1τ¹ 0.70τ² 0.45τ³ 0.25
+
+ 非同步：同一個 base time 下，較前的位置 τ 較大（灰階較深），比較接近乾淨的嵌入。
+
+ 延伸閱讀：以詞嵌入為空間的 flow 與 clean-token 去噪器、Flow matching 的速度目標、block 內各位置的非同步時間
+
+ 03 · Denoiser 與速度
+
+ 預測 token 機率就能得到速度
+
+ D^ $\hat D$ 是 transformer 的輸出，第 04 節說明怎麼由 AR 模型改成；本節先把它當成給定的函式。C1 用玩具的精確 D $D$ （由高斯似然算出的後驗），不是神經網路。
+
+ 理想的 block denoiser 是：給定 prefix 與整個 block 的目前狀態 x $x$ ，位置 i $i$ 的 token 的後驗分布，是長度 ∣V∣ $\lvert V\rvert$ 的機率向量：
+
+ Dt(x;c)i:=p(yi=⋅∣c, It=x)∈Δ∣V∣−1 $D_t(x;c)^i:=p(y_i=\cdot\mid c,\,I_t=x)\in\Delta^{\lvert V\rvert-1}$ ​(x;c)i:=p(yi​=⋅∣c,It​=x)∈Δ∣V∣−1
+Eq. 4
+
+ 論文證明速度可以完全由它換算（Prop. A.1）：
+
+ bt(x;c)i=τ˙i(t)1−τi(t)(Dt(x;c)iE−xi),t∈[0,1) $b_t(x;c)^i=\frac{\dot\tau^i(t)}{1-\tau^i(t)}\big(D_t(x;c)^i\E-x^i\big),\quad t\in[0,1)$ ​(x;c)i=1−τi(t)τ˙i(t)​(Dt​(x;c)iE−xi),t∈[0,1)
+Eq. 5
+
+ 推導的關鍵有兩步。第一，由 Eq. 2 解出噪聲 x0i=(Iti−τix1i)/(1−τi) $x_0^i=(I_t^i-\tau^ix_1^i)/(1-\tau^i)$ i​=(Iti​−τix1i​)/(1−τi)，得到 x1i−x0i=(x1i−Iti)/(1−τi) $x_1^i-x_0^i=(x_1^i-I_t^i)/(1-\tau^i)$ i​−x0i​=(x1i​−Iti​)/(1−τi)，所以內插的速度 I˙ti=τ˙i(x1i−x0i) $\dot I_t^i=\dot\tau^i(x_1^i-x_0^i)$ ti​=τ˙i(x1i​−x0i​) 只依賴乾淨嵌入與目前狀態。第二，x1i=Eyi $x_1^i=\E_{y_i}$ i​=Eyi​​，所以取條件期望時 E[x1i∣c,It=x]=∑vp(yi=v∣c,It=x)Ev=Dt(x;c)iE $\Ex[x_1^i\mid c,I_t=x]=\sum_v p(y_i=v\mid c,I_t=x)\E_v=D_t(x;c)^i\E$ i​∣c,It​=x]=∑v​p(yi​=v∣c,It​=x)Ev​=Dt​(x;c)iE。機率向量乘上嵌入矩陣就是期望嵌入：例如 Di $D^i$ 在兩個 token 上各有 0.5 時，DiE=12(Ev1+Ev2) $D^i\E=\tfrac12(\E_{v_1}+\E_{v_2})$ E=21​(Ev1​​+Ev2​​)。分母 1−τi $1-\tau^i$ 在 t→1 $t\to1$ 時趨近 0，所以命題限定 t∈[0,1) $t\in[0,1)$ 。
+
+ 完整推導（Prop. A.1）
+
+ 對 Eq. 2 微分：I˙ti=τ˙i(t)(x1i−x0i) $\dot I_t^i=\dot\tau^i(t)(x_1^i-x_0^i)$ ti​=τ˙i(t)(x1i​−x0i​)（Eq. 11）。
+
+ 由 Eq. 2 解出 x0i=(Iti−τix1i)/(1−τi) $x_0^i=(I_t^i-\tau^ix_1^i)/(1-\tau^i)$ i​=(Iti​−τix1i​)/(1−τi)，所以 x1i−x0i=(x1i−Iti)/(1−τi) $x_1^i-x_0^i=(x_1^i-I_t^i)/(1-\tau^i)$ i​−x0i​=(x1i​−Iti​)/(1−τi)。
+
+ 取條件期望 bt(x;c)=E[I˙t∣c,It=x] $b_t(x;c)=\Ex[\dot I_t\mid c,I_t=x]$ ​(x;c)=E[I˙t​∣c,It​=x]：bi=τ˙i1−τi(E[x1i∣c,It=x]−xi) $b^i=\frac{\dot\tau^i}{1-\tau^i}\big(\Ex[x_1^i\mid c,I_t=x]-x^i\big)$ =1−τiτ˙i​(E[x1i​∣c,It​=x]−xi)。
+
+ x1i=Eyi $x_1^i=\E_{y_i}$ i​=Eyi​​，所以 E[x1i∣c,It=x]=∑vp(yi=v∣c,It=x)Ev=Dt(x;c)iE $\Ex[x_1^i\mid c,I_t=x]=\sum_v p(y_i=v\mid c,I_t=x)\E_v=D_t(x;c)^i\E$ i​∣c,It​=x]=∑v​p(yi​=v∣c,It​=x)Ev​=Dt​(x;c)iE（Eq. 12），代回即 Eq. 5。
+
+ 這個式子有三個重點。條件是整個 block 的 x $x$ ，所以位置 i $i$ 的速度透過 D $D$ 依賴其他位置；但只需要每個位置的邊際後驗，不需要聯合分布；係數只用該位置自己的 τi $\tau^i$ 。
+
+ 生成時在 base time 網格 tk=k/K $t_k=k/K$ ​=k/K 上走 K $K$ 步，pk:=D^tk(x^tk;c) $p_k:=\hat D_{t_k}(\hat x_{t_k};c)$ ​:=D^tk​​(x^tk​​;c) 是第 k $k$ 步的 denoiser 輸出：
+
+ x^tk+1i=x^tki+τi(tk+1)−τi(tk)1−τi(tk)(pkiE−x^tki)y^i=arg⁡max⁡(pK−1i) $\begin{gathered}\hat x^i_{t_{k+1}}=\hat x^i_{t_k}+\frac{\tau^i(t_{k+1})-\tau^i(t_k)}{1-\tau^i(t_k)}\big(p^i_k\E-\hat x^i_{t_k}\big)\\ \hat y_i=\arg\max(p^i_{K-1})\end{gathered}$ tk+1​i​=x^tk​i​+1−τi(tk​)τi(tk+1​)−τi(tk​)​(pki​E−x^tk​i​)y^​i​=argmax(pK−1i​)​
+Eq. 8
+
+ 生成的 token 是最後一次 denoiser 預測的 argmax，不是把 x^1 $\hat x_1$ 1​ 找最近的嵌入。〔本頁推導〕Eq. 8 是 tokenwise time 上的精確步：假設 denoiser 輸出在這一步內不變，ODE 的解正好是 Eq. 8。它不是 base time 的 Euler 步 x+Δt bt $x+\Delta t\,b_t$ ​。最後一步 τ=1 $\tau=1$ ，x^=pE $\hat x=p\E$ =pE，不會碰到 1/(1−τ) $1/(1-\tau)$ 的發散。
+
+ 推導：Eq. 8 是常數 denoiser 下的精確解〔本頁推導〕
+
+ 把 Eq. 8 改寫為 x^k+1=1−τk+11−τkx^k+τk+1−τk1−τkpkE $\hat x_{k+1}=\frac{1-\tau_{k+1}}{1-\tau_k}\hat x_k+\frac{\tau_{k+1}-\tau_k}{1-\tau_k}p_k\E$ k+1​=1−τk​1−τk+1​​x^k​+1−τk​τk+1​−τk​​pk​E。若在 [tk,tk+1] $[t_k,t_{k+1}]$ ​,tk+1​] 內 D≡pk $D\equiv p_k$ ​，Eq. 5 的 ODE 對 τ $\tau$ 寫成 dxdτ=pkE−x1−τ $\frac{dx}{d\tau}=\frac{p_k\E-x}{1-\tau}$ dx​=1−τpk​E−x​，解為 x(τ)=pkE+(xk−pkE)1−τ1−τk $x(\tau)=p_k\E+(x_k-p_k\E)\frac{1-\tau}{1-\tau_k}$ ​E+(xk​−pk​E)1−τk​1−τ​，代入 τk+1 $\tau_{k+1}$ ​ 即上式。它與 Eq. 7 同形；論文在 Eq. 9 前也說 flow map 是把 D^tk $\hat D_{t_k}$ tk​​ 換成 δ^tk,tk+1 $\hat\delta_{t_k,t_{k+1}}$ tk​,tk+1​​。
+
+ K=1 $K=1$ 時，因為 τi(0)=0 $\tau^i(0)=0$ (0)=0、τi(1)=1 $\tau^i(1)=1$ (1)=1，Eq. 8 退化成一次 denoiser 計算（Eq. 10）：pi=D^0(x^0;c)i $p^i=\hat D_0(\hat x_0;c)^i$ =D^0​(x^0​;c)i，x^1i=piE $\hat x_1^i=p^i\E$ 1i​=piE，y^i=arg⁡max⁡pi $\hat y_i=\arg\max p^i$ ​i​=argmaxpi。
+
+ 〔本頁推導〕t=0 $t=0$ 時 I0=x0 $I_0=x_0$ ​=x0​ 是純噪聲，與 y $y$ 獨立，所以理想的 D0(x0;c)i=p(yi∣c) $D_0(x_0;c)^i=p(y_i\mid c)$ ​(x0​;c)i=p(yi​∣c)：各位置獨立的邊際，噪聲不帶任何資訊。各位置分別取 argmax，可能組出聯合機率為 0 的序列。論文的說法是「One-step drafts can be inconsistent across positions」（Sec. 2.3）。下面的玩具中，prefix 固定時 p(hot dog)=0.4 $p(\text{hot dog})=0.4$ 、p(ice cream)=0.3 $p(\text{ice cream})=0.3$ 、p(sour cream)=0.3 $p(\text{sour cream})=0.3$ 。位置 1 的邊際 argmax 是 hot（0.4），位置 2 的邊際 argmax 是 cream（0.3 + 0.3 = 0.6），所以一步得到機率為 0 的「hot cream」。步數增加後，後面的步驟看得到已部分成形的另一個位置，樣本落在有支撐的組合，頻率也接近先驗。
+
+ C1非同步 flow 玩具：一步的邊際與多步的聯合
+
+ 兩個位置、五個 token、二維嵌入。500 個粒子從噪聲出發，各跑一次 Eq. 8。改變步數 K，看生成的組合是否落在先驗有機率的三個組合上。
+
+ 步數 K1248163264
+
+ 位置 1 加速 λ0.50
+
+ 噪聲尺度 σ0.250.5124
+
+ 重新抽樣
+
+ 六個組合的生成頻率與先驗組合生成先驗
+hot dog0.0%40%
+ice cream0.0%30%
+sour cream0.0%30%
+hot cream100.0%0%
+sour dog0.0%0%
+ice dog0.0%0%
+
+ 有支撐比例 0.000
+與先驗的總變差距離 TV = ½Σ|p̂ − p| = 1.000
+τ¹/τ² 網格（k = 0…K）：
+0.000/0.000 1.000/1.000
+
+ 位置 1 的軌跡（前 12 個粒子）位置 2 的軌跡● 有支撐的組合　✕ 無支撐的組合長條：實心＝生成頻率，空心框＝先驗
+
+ 設定（示意值，不是論文數字）：詞彙 hot、ice、sour、dog、cream 等距放在單位圓上（norm 皆 1）；τ¹(t) = 1 − (1 − t)^(1+2λ)、τ²(t) = t；denoiser 為由 Eq. 2、4 與高斯似然算出的精確後驗〔本頁推導〕；粒子由 seed 固定的 mulberry32 產生。500 個粒子的抽樣誤差使 TV 有約 0.025 量級的隨機起伏〔本頁推導：三類多項分布期望絕對偏差之和的一半〕，所以 K ≥ 16 之後 TV 的差異不代表方法差異。這是 2 個位置、5 個 token 的玩具，不代表 Lafa 的實際步數需求：論文的 B = 4 flow decoding 在 32–64 步時，0.5B 接近、7B 超過 AR SFT（Table 5）。σ 只是玩具尺度，與論文的 σ 不可直接比較。
+
+ K = 1，λ = 0.5，σ = 1：有支撐比例 0.000，TV 1.000
+
+ C1 的 λ 不是 Lafa 學到的 τ
+
+ 玩具的 λ 族是手選的，不是 Lafa 由 loss 學出的 τ；它在 2 位置、少步時的分布誤差，既不支持也不反駁 Table 3 的同步 36.2 vs 非同步 38.0（不同的量、不同的規模）。在玩具中，少步時 λ 越大，有支撐比例越高，但與先驗的總變差距離也越大（K = 2：TV 0.102 / 0.340 / 0.636，λ = 0 / 0.5 / 1）。
+
+ 延伸閱讀：連續擴散語言模型的表示空間與 rounding／decoder 問題
+
+ 04 · 從 AR 模型調整
+
+ 預訓練 AR 模型改成 block denoiser
+
+ 作者不從零訓練，而是把預訓練 AR transformer f $f$ （Qwen2.5 0.5B／7B Instruct、Qwen3 8B Base）改成 block denoiser。輸入是嵌入後的 prefix c $c$ 接上 noisy block x $x$ 。Sec. 2.2 有四個改動：
+
+ Tokenwise time conditioning。每個位置以 adaLN [31]（依時間縮放與平移每層的特徵）接收自己的時間：prefix 恆為時間 1（無噪聲），block 位置 i $i$ 為 τi(t) $\tau^i(t)$ (t)。adaLN 初始化為恆等，所以剛加入時間條件時，模型的計算與預訓練模型相同。加上時間條件的模型記為 ft(x;c) $f_t(x;c)$ ​(x;c)。
+
+ Block-bidirectional attention（Fig. 3）。block 內雙向；block 位置可看整個 prefix；prefix 維持 causal，且看不到 noisy block [32, 33]。雙向優於 causal（Table 3：38.0 vs 32.7）。
+
+ 共享且受約束的嵌入。見下一段。
+
+ 平行訓練（Fig. 4、Alg. 1）。見 C2 之後的段落。
+
+ 前兩點合起來：prefix 以 adaLN 固定在時間 1、attention causal 且不看 noisy block，所以 prefix 的 K/V（key 與 value）與 block 狀態 (x,t) $(x,t)$ 無關，可以跨 denoising 步與後續 block 重用。prefix 的輸出也保留 AR 角色：ft(x;c)i $f_t(x;c)_i$ ​(x;c)i​ 預測 ci+1 $c_{i+1}$ ​（i<N $i<N$ ），i=N $i=N$ 時預測 y1 $y_1$ ​，記為 f(c)i $f(c)_i$ ​，也就是 AR 預測 f(c) $f(c)$ 。
+
+ 嵌入 E $\E$ 由預訓練模型初始化，prefix 與 flow 共用，可與 denoiser 一起訓練，但每個 Ev $\E_v$ ​ 的 L2 norm 固定為預訓練值，只學方向。理由：不受約束時嵌入 norm 會相對固定的 σ $\sigma$ 膨脹，降低有效 corruption，使 denoising 變得太容易 [12, 13]。Table 3：norm 固定 38.0、不受約束 36.9、完全凍結 34.4。Alg. 1 在每次更新後把每個 Ev $\E_v$ ​ 投影回預訓練的 norm。
+
+ C2注意力遮罩：誰看得到誰
+
+ 列是 query、欄是 key；● 表示允許，灰底表示阻擋。點選或用方向鍵選一列，看那個位置能看到哪些 token。
+
+ 模式推論（Fig. 3）平行訓練（Fig. 4b）
+
+ prefix 長度 N23456
+
+ block 大小 B234
+
+ 注意力遮罩，列為 query、欄為 keyquery＼keyc₁c₂c₃x₁x₂x₃
+c₁●
+c₂●●
+c₃●●●
+x₁●●●●●●
+x₂●●●●●●
+x₃●●●●●●
+
+ x₂ 看 c₁–c₃ 與 x₁–x₃
+
+ 允許 24 / 36 格
+prefix 列落在 block 欄的允許格數：0（prefix 的表示與 x、t 無關，KV cache 可重用）
+
+ 規則取自 Fig. 3（推論：prefix + 一個 noisy block）與 Fig. 4b（平行訓練：乾淨序列 + 切成 block 的 noisy 複本，R = 2 個 block；Fig. 4 中序列沒有 prompt）。
+
+ x₂ 看 c₁–c₃ 與 x₁–x₃
+
+ 平行訓練（Fig. 4、Alg. 1、App. B.1）讓一次 forward 同時產生乾淨序列的 AR 預測與每個 block 的 denoising 預測。每條乾淨序列配一份切成 noisy block 的複本：乾淨位置 causal；第 r $r$ 個 noisy block 只看它之前的乾淨 token 與自己（block 內雙向），看不到後面的乾淨 token 或其他 noisy block。每個 block 各自抽 tr∼U[0,1] $t_r\sim U[0,1]$ ​∼U[0,1]。
+
+ 訓練目標有三項
+
+ L(D^):=Ec,y,t,x0[∑i=1N−log⁡f(c)ci+1i(AR CE)+∑i=1B−log⁡D^t(It;c)yii(denoising CE)+∑i=1B∥D^t(It;c)iE−Eyi∥2](嵌入平方誤差) $\begin{aligned}\mathcal L(\hat D):=\Ex_{c,y,t,x_0}\Big[&\textstyle\sum_{i=1}^{N}-\log f(c)^i_{c_{i+1}}\qquad\text{(AR CE)}\\&+\textstyle\sum_{i=1}^{B}-\log\hat D_t(I_t;c)^i_{y_i}\qquad\text{(denoising CE)}\\&+\textstyle\sum_{i=1}^{B}\big\lVert\hat D_t(I_t;c)^i\E-\E_{y_i}\big\rVert^2\Big]\qquad\text{(嵌入平方誤差)}\end{aligned}$ ):=Ec,y,t,x0​​[​∑i=1N​−logf(c)ci+1​i​(AR CE)+∑i=1B​−logD^t​(It​;c)yi​i​(denoising CE)+∑i=1B​​D^t​(It​;c)iE−Eyi​​​2](嵌入平方誤差)​
+Eq. 6
+
+ 其中 D^t(x;c)i:=ft(x;c)N+i $\hat D_t(x;c)^i:=f_t(x;c)_{N+i}$ t​(x;c)i:=ft​(x;c)N+i​、cN+1:=y1 $c_{N+1}:=y_1$ ​:=y1​、t∼U[0,1] $t\sim U[0,1]$ ，It $I_t$ ​ 依 Eq. 2。三項權重都是 1，共用 transformer 參數。AR CE 監督 prefix 的下一 token 預測；denoising CE 監督 Eq. 4 的機率；嵌入平方誤差監督決定速度的期望嵌入（Eq. 5）。這是經驗設計：Table 3（0.5B、B=4 $B=4$ 、32 步、IFEval／GSM8K／HumanEval 三項平均）中只用 CE 33.6、只用 MSE 29.7、CE & MSE 35.8，再加 AR 38.0。作者寫 AR 監督「unexpectedly」進一步改善 flow。
+
+ 延伸閱讀：從預訓練 AR 模型調整為 block 模型
+
+ 05 · 學出 tokenwise time
+
+ Tokenwise time 是 loss 的反累積分布
+
+ tokenwise time 的形狀由 loss 決定（Sec. 2.2、App. B.1），靈感來自 CDCD [12] 的 loss-aware time warping，差別是每個位置分開做。記 ℓi(τ)>0 $\ell^i(\tau)>0$ (τ)>0 為位置 i $i$ 在 tokenwise time τ $\tau$ 的期望 denoising CE：
+
+ τi(t):=Fi−1(t),Fi(τ):=∫0τℓi(r) dr∫01ℓi(r) dr $\tau^i(t):=F_i^{-1}(t),\qquad F_i(\tau):=\frac{\int_0^\tau\ell^i(r)\,dr}{\int_0^1\ell^i(r)\,dr}$ (t):=Fi−1​(t),Fi​(τ):=∫01​ℓi(r)dr∫0τ​ℓi(r)dr​
+Eq. 22
+
+ τi=Fi−1 $\tau^i=F_i^{-1}$ =Fi−1​，Fi $F_i$ ​ 是 ℓi $\ell^i$ 的正規化累積分布。論文寫「τ˙i∝1/ℓi(τi) $\dot\tau^i\propto1/\ell^i(\tau^i)$ i∝1/ℓi(τi) is small where the loss is high」：loss 高處 τ $\tau$ 的增加率小，所以訓練時均勻取樣的 t $t$ 與推論時均勻的 t $t$ 網格，都集中在最難的噪聲程度。〔本頁推導〕對 Fi(τi(t))=t $F_i(\tau^i(t))=t$ ​(τi(t))=t 微分得 τ˙i(t)=(∫01ℓi)/ℓi(τi(t)) $\dot\tau^i(t)=\big(\int_0^1\ell^i\big)/\ell^i(\tau^i(t))$ i(t)=(∫01​ℓi)/ℓi(τi(t))；等價地說，t∼U[0,1] $t\sim U[0,1]$ 時 τi(t) $\tau^i(t)$ (t) 的密度正比於 ℓi $\ell^i$ 。ℓi>0 $\ell^i>0$ >0 保證 Fi $F_i$ ​ 嚴格遞增、τi(0)=0 $\tau^i(0)=0$ (0)=0、τi(1)=1 $\tau^i(1)=1$ (1)=1。
+
+ ℓi $\ell^i$ 的估計方式（Alg. 2）：矩陣 L∈RB×Mbin $L\in\mathbb R^{B\times M_{\text{bin}}}$ ​，Mbin=200 $M_{\text{bin}}=200$ ​=200 個等寬格，均勻初始化；每 S=100 $S=100$ 個訓練步做四次無梯度 forward，每個 noisy block 各自獨立抽均勻時間，再以 EMA 更新：
+
+ Li,m←βLi,m+(1−β)Lˉi,m,β=0.99 $L_{i,m}\leftarrow\beta L_{i,m}+(1-\beta)\bar L_{i,m},\qquad\beta=0.99$ ​←βLi,m​+(1−β)Lˉi,m​,β=0.99
+Eq. 23
+
+ Lˉi,m $\bar L_{i,m}$ i,m​ 是這一輪落在位置 i $i$ 、第 m $m$ 格的 denoising CE 平均；沒被訪問的格保留原值。Fi $F_i$ ​ 取正規化列 Li,: $L_{i,:}$ ​ 的分段線性 CDF。論文說明各 block 獨立抽時間的理由：「This independent uniform estimation prevents the learned sampling distribution from starving low-probability regions」（App. B.1）。另外，Alg. 2 的虛擬碼用同步內插 (1−t)x0+tx1 $(1-t)x_0+tx_1$ ​+tx1​ 估計 ℓi $\ell^i$ ，論文沒有說明為何不用訓練時的非同步內插。
+
+ 結果：學到的時間「generally satisfy τi(t)>τj(t) $\tau^i(t)>\tau^j(t)$ (t)>τj(t) for i<j $i<j$ 」（Fig. 5，Lafa 7B，16 個位置）。由左到右的順序是學出來的，不是人工設定；論文沒有給出機制解釋，也沒有 Fig. 5 的數值。消融中同步時間 36.2、非同步 38.0（Table 3）。
+
+ C3Tokenwise time = loss 的反累積分布
+
+ 每個位置給一條玩具 loss 曲線，用 Alg. 2 的 200 格分段線性 CDF 算出 τ。q 越大，loss 越集中在噪聲多（τ 小）的一側。
+
+ 位置 1 的 q₁0.5
+
+ 逐位置增量 Δq0.5
+
+ 網格步數 K481632
+
+ 各位置的 q、τ(0.5) 與 dτ/dt(0.5)位置qᵢτⁱ(0.5)dτⁱ/dt(0.5)
+10.50.37780.8544
+21.00.30670.7399
+31.50.26060.6562
+42.00.22850.5941
+
+ 順序（t = 0.5）：τ¹ > τ² > τ³ > τ⁴
+網格：t = k/8 映到 τ 軸，刻度在 loss 高的一側（τ 小處）較密。
+
+ 玩具 loss 族（示意值）：ℓⁱ(τ) = 0.05 + (1 − τ)^qᵢ，qᵢ = q₁ + (i − 1)Δq，夾在 [0.1, 7]。真實的 ℓⁱ 由模型估計，論文沒有給數值；這個族只用來示範 Eq. 22 的機制。左圖每條曲線除以自己的積分（密度）。dτ/dt 由〔本頁推導〕(∫ℓ)/ℓ(τ(t)) 計算。論文中由左到右的順序是訓練中學到的，不是人工設定（Fig. 5），論文沒有給出原因。
+
+ q₁ = 0.5，Δq = 0.5：順序 τ¹ > τ² > τ³ > τ⁴
+
+ 延伸閱讀：連續擴散語言模型的噪聲／時間排程
+
+ 06 · 推論輔助
+
+ Self-conditioning 與 prefix guidance
+
+ Self-conditioning [37]：訓練時以機率 psc=0.5 $p_{sc}=0.5$ ​=0.5 先做一次無梯度預測，再把期望嵌入回饋到第二次 forward，loss 算在第二次（Eq. 24，依 [15]）：
+
+ I~t=It+ItW1⊤+xˉ1W2⊤,xˉ1=sg(Dt(It;c)E) $\tilde I_t=I_t+I_tW_1^\top+\bar x_1W_2^\top,\qquad \bar x_1=\mathrm{sg}\big(D_t(I_t;c)\E\big)$ t​=It​+It​W1⊤​+xˉ1​W2⊤​,xˉ1​=sg(Dt​(It​;c)E)
+Eq. 24
+
+ W1,W2∈Rd×d $W_1,W_2\in\mathbb R^{d\times d}$ ​,W2​∈Rd×d 初始化為 0，sg $\mathrm{sg}$ 是 stop-gradient。推論時每個 Euler 步沿用前一步的預測：x~tk=x^tk+x^tkW1⊤+(qk−1E)W2⊤ $\tilde x_{t_k}=\hat x_{t_k}+\hat x_{t_k}W_1^\top+(q_{k-1}\E)W_2^\top$ tk​​=x^tk​​+x^tk​​W1⊤​+(qk−1​E)W2⊤​，qk=Dtk(x~tk;c) $q_k=D_{t_k}(\tilde x_{t_k};c)$ ​=Dtk​​(x~tk​​;c)，q0=D0(x^0;c) $q_0=D_0(\hat x_0;c)$ ​=D0​(x^0​;c)（Eq. 25）。所以推論時 self-conditioning 沿用前一步預測，不增加 forward。Table 3：無 self-conditioning 32.3、有 38.1。
+
+ Prefix guidance 類比 classifier-free guidance [40] 與 history guidance [39]，把有 prefix 與沒有 prefix 的預測外插：
+
+ Dtg(x;c):=Dt(x;∅)+g(Dt(x;c)−Dt(x;∅)),g≥1 $D^g_t(x;c):=D_t(x;\varnothing)+g\big(D_t(x;c)-D_t(x;\varnothing)\big),\qquad g\ge1$ g​(x;c):=Dt​(x;∅)+g(Dt​(x;c)−Dt​(x;∅)),g≥1
+Eq. 27
+
+ 論文用 g=8.0 $g=8.0$ （Table 4）。成本是每步多一次不含 prefix 的 forward，只處理 B $B$ 個 block token。Table 3：無 prefix guidance 34.3、有 38.1。Alg. 3 在嵌入空間計算 x~=s′E+g(sE−s′E) $\tilde x=s'\E+g(s\E-s'\E)$ =s′E+g(sE−s′E)，最後的 token 取未 guided 的條件預測 s $s$ 的 argmax；這一點只出現在 Alg. 3，正文的 Eq. 8 與 Sec. 2.3 沒有寫。〔本頁推導〕g>1 $g>1$ 時 Dg $D^g$ 可能有負值，不是機率向量；這不影響 Alg. 3，因為只用到它的嵌入。
+
+ 論文引用 [36]（Self-conditioned Flow Map Language Models via Fixed-point Flows）作為 self-conditioning 的理論依據，站內筆記見下方連結。
+
+ 延伸閱讀：self-conditioning 在連續 flow 語言模型中的作用與理論解釋
+
+ 07 · Flow map
+
+ Flow map 把多步積分換成一次跳躍
+
+ Flow decoding 每個 block 要做多次 denoiser 計算；第 03 節的玩具顯示，一步 denoiser 只能給出各位置的邊際。Flow map Xs,t $X_{s,t}$ ​ 直接把時間 s $s$ 的狀態送到時間 t $t$ [38]。作者把 Flow Map Language Models [13] 的 simplex 值 two-time denoiser 推廣到詞嵌入上的非同步 flow：
+
+ Xs,t(x;c)i:=1−τi(t)1−τi(s)xi+τi(t)−τi(s)1−τi(s) δs,t(x;c)iE,0≤s<t≤1 $X_{s,t}(x;c)^i:=\frac{1-\tau^i(t)}{1-\tau^i(s)}x^i+\frac{\tau^i(t)-\tau^i(s)}{1-\tau^i(s)}\,\delta_{s,t}(x;c)^i\E,\qquad 0\le s<t\le1$ ​(x;c)i:=1−τi(s)1−τi(t)​xi+1−τi(s)τi(t)−τi(s)​δs,t​(x;c)iE,0≤s<t≤1
+Eq. 7
+
+ δs,t(x;c)i $\delta_{s,t}(x;c)^i$ ​(x;c)i 是 two-time denoiser：輸出一個機率向量，經 E $\E$ 後與 x $x$ 內插。它與 Eq. 8 同形，只是把一步內不變的 pk $p_k$ ​ 換成 δ $\delta$ 。用字面說：δ $\delta$ 是沿路 denoiser 預測的加權平均，越接近終點權重越大。
+
+ 設定與假設（App. A.2）：c $c$ 、E $\E$ 、τ $\tau$ 固定；τi∈C1 $\tau^i\in C^1$ ∈C1，t<1 $t<1$ 時 τ˙i>0 $\dot\tau^i>0$ i>0；ODE 解唯一；denoiser 對時間連續可微；在 0≤s≤t<1 $0\le s\le t<1$ 上討論，t=1 $t=1$ 以極限理解。在這些假設下，Prop. A.2 說：學到的 δ $\delta$ 經 Eq. 7 等於真正的 flow map，若且唯若它滿足兩個條件：
+
+ diagonal：δs,s=D^s $\delta_{s,s}=\hat D_s$ ​=D^s​，時間不動時，two-time denoiser 就是一般的 denoiser。
+
+ semigroup：對 s<u<t $s<u<t$ ，從 s $s$ 跳到 t $t$ 等於先跳到 u $u$ 再跳到 t $t$ 的組合：
+
+ δs,ti=γiδs,ui+(1−γi) δu,t(Xs,u)iγi=(1−τti)(τui−τsi)(1−τui)(τti−τsi) $\begin{aligned}\delta_{s,t}^i&=\gamma^i\delta^i_{s,u}+(1-\gamma^i)\,\delta_{u,t}(X_{s,u})^i\\ \gamma^i&=\frac{(1-\tau^i_t)(\tau^i_u-\tau^i_s)}{(1-\tau^i_u)(\tau^i_t-\tau^i_s)}\end{aligned}$ i​γi​=γiδs,ui​+(1−γi)δu,t​(Xs,u​)i=(1−τui​)(τti​−τsi​)(1−τti​)(τui​−τsi​)​​
+Eq. 16
+
+ 這裡 τti $\tau^i_t$ i​ 是 τi(t) $\tau^i(t)$ (t) 的簡寫。0≤γi≤1 $0\le\gamma^i\le1$ ≤1，所以組合仍是機率向量。反方向也成立：任何滿足 diagonal 與 semigroup 的 δ $\delta$ ，經 Eq. 7 得到的就是真正的 flow map（Xs,s=Id $X_{s,s}=\mathrm{Id}$ ​=Id、切線條件、semigroup [38]）。
+
+ 〔本頁推導〕為什麼一步 flow map 能保留位置間關聯：t→1 $t\to1$ 時 Zs,t→∞ $Z_{s,t}\to\infty$ ​→∞、γi→0 $\gamma^i\to0$ →0，權重集中在軌跡終點，所以 δ0,1(x0) $\delta_{0,1}(x_0)$ ​(x0​) 是沿整條軌跡的加權平均、權重集中在終點，等於 ODE 終點 token 的 one-hot；X0,1(x0) $X_{0,1}(x_0)$ ​(x0​) 一步就得到與多步積分相同的聯合結果。對照第 03 節，D^0 $\hat D_0$ 0​ 只是各位置的邊際，所以一步 denoiser 不能保留位置間關聯。以上是對理想的 teacher δ $\delta$ ；學到的 δ^ $\hat\delta$ 仍有差距（Table 5：7B 一步 flow map 49.0，多步 flow 75.9）。
+
+ C4Two-time denoiser 與 flow map
+
+ 沿用 C1 的玩具（σ、λ、seed 與 C1 同步）。選一個粒子與時間 s、t：δ 一次跳躍就到達軌跡在 t 的位置，用 D̂ₛ 跳（一步 Euler）則偏離。預設 s = 0，先只動 t。
+
+ 粒子編號 n0
+
+ 起點 s0.00
+
+ 終點 t0.50
+
+ τₛ = 0.000 / 0.000　τₜ = 0.750 / 0.500（位置 1 / 2）
+γ（u 取中點）= 0.2593 / 0.3333
+Eq. 7 與軌跡終點的差：1.0e-15 / 2.4e-16
+一步 Euler 的誤差：0.536 / 0.171
+semigroup 殘差：2.8e-16
+argmax：D̂ₛ → hot cream；δ → sour cream
+
+ ○ 起點 xₛ參考軌跡 s → t● Eq. 7 以 δ 跳躍✕ Eq. 7 以 D̂ₛ 跳躍（一步 Euler）長條：空心＝D̂ₛ，實心＝δ(s,t)
+
+ Eq. 7 與 Eq. 16 的殘差只有浮點誤差，這是代數恆等：參考軌跡就是 Eq. 8 在細網格（2000 步）上的離散軌跡，每一步是一段常數 denoiser 的精確解〔本頁推導〕。它不是 Prop. A.2 的數值驗證；細網格越密，這條離散軌跡越接近 ODE 的解。γ 取 u 為 s、t 的中點。示意值，不是論文數字。
+
+ s = 0.00，t = 0.50：一步 Euler 誤差 0.536、0.171，δ 的 argmax 為 sour cream
+
+ Prop. A.2 的構造
+
+ ddrXs,ri1−τri=wi(r)D^r(Xs,r)iE $\frac{d}{dr}\frac{X_{s,r}^i}{1-\tau^i_r}=w^i(r)\hat D_r(X_{s,r})^i\E$ d​1−τri​Xs,ri​​=wi(r)D^r​(Xs,r​)iE，wi(r):=τ˙i(r)/(1−τri)2 $w^i(r):=\dot\tau^i(r)/(1-\tau^i_r)^2$ (r):=τ˙i(r)/(1−τri​)2（Eq. 17）。
+
+ Zs,ti:=∫stwi=τti−τsi(1−τti)(1−τsi) $Z^i_{s,t}:=\int_s^tw^i=\frac{\tau^i_t-\tau^i_s}{(1-\tau^i_t)(1-\tau^i_s)}$ i​:=∫st​wi=(1−τti​)(1−τsi​)τti​−τsi​​，δs,ti:=1Zs,ti∫stwi(r)D^r(Xs,r)idr $\delta^i_{s,t}:=\frac1{Z^i_{s,t}}\int_s^tw^i(r)\hat D_r(X_{s,r})^idr$ i​:=Zs,ti​1​∫st​wi(r)D^r​(Xs,r​)idr（Eq. 18）：機率向量的加權平均，仍是機率向量。
+
+ 對 Eq. 17 在 [s,t] $[s,t]$ 積分再乘 1−τti $1-\tau^i_t$ i​，得到 Eq. 7。（原文寫「which is (15)」，兩者等價；App. A.2 後段把 Prop. A.2 稱為「Theorem A.2」，是同一命題。）
+
+ Diagonal：t→s $t\to s$ 時 w/Z $w/Z$ 集中在 r=s $r=s$ ，δs,t→D^s $\delta_{s,t}\to\hat D_s$ ​→D^s​。
+
+ Semigroup：在 u $u$ 切開積分，r≥u $r\ge u$ 時 Xs,r=Xu,r(Xs,u) $X_{s,r}=X_{u,r}(X_{s,u})$ ​=Xu,r​(Xs,u​)，得到 Eq. 16，γi=Zs,ui/Zs,ti $\gamma^i=Z^i_{s,u}/Z^i_{s,t}$ =Zs,ui​/Zs,ti​。
+
+ 〔本頁推導〕離散版：把 Eq. 8 兩邊除以 1−τk+1 $1-\tau_{k+1}$ ​，得 ζk+1x^k+1=ζkx^k+(ζk+1−ζk)pkE $\zeta_{k+1}\hat x_{k+1}=\zeta_k\hat x_k+(\zeta_{k+1}-\zeta_k)p_k\E$ ​x^k+1​=ζk​x^k​+(ζk+1​−ζk​)pk​E，ζ:=1/(1−τ) $\zeta:=1/(1-\tau)$ 。所以在 Eq. 8 的離散軌跡上，Eq. 7、18、16 在代數上恆等成立（δ $\delta$ 是以 Δζ $\Delta\zeta$ 加權的 pk $p_k$ ​ 平均）。C4 用這個形式計算，避免數值微分 τ˙ $\dot\tau$ 。
+
+ 推論時（Eq. 9）以學到的 student 取代 denoiser：x^tk+1=X^tk,tk+1(x^tk;c) $\hat x_{t_{k+1}}=\hat X_{t_k,t_{k+1}}(\hat x_{t_k};c)$ tk+1​​=X^tk​,tk+1​​(x^tk​​;c)，y^i=arg⁡max⁡δ^tK−1,1(x^tK−1;c)i $\hat y_i=\arg\max\hat\delta_{t_{K-1},1}(\hat x_{t_{K-1}};c)^i$ ​i​=argmaxδ^tK−1​,1​(x^tK−1​​;c)i；K=1 $K=1$ 時就是 X^0,1 $\hat X_{0,1}$ 0,1​ 一步生成。student 保留 prefix cache 與 AR 預測 fδ^ $f^{\hat\delta}$ 。
+
+ 蒸餾目標（Eq. 14–15、19–21，Prop. A.3）
+
+ 平均速度 vs,t:=(Xs,t−x)/(t−s) $v_{s,t}:=(X_{s,t}-x)/(t-s)$ ​:=(Xs,t​−x)/(t−s)（Eq. 14）；δ $\delta$ 由其期望嵌入定義：δs,tE=x+(1−τs)(t−s)τt−τsvs,t $\delta_{s,t}\E=x+\frac{(1-\tau_s)(t-s)}{\tau_t-\tau_s}v_{s,t}$ ​E=x+τt​−τs​(1−τs​)(t−s)​vs,t​（Eq. 15）。因 ∣V∣≫d $\lvert V\rvert\gg d$ ，Eq. 15 只固定期望嵌入，不固定 δ $\delta$ 本身。
+
+ student δ^s,t $\hat\delta_{s,t}$ s,t​ 由凍結的 teacher D^s $\hat D_s$ s​ 初始化，加一個恆等初始化的 adaLN 接收目的時間 t $t$ 。off-diagonal 目標組合兩段較短的 student 轉移：δˉs,t(xs)i:=sg[γiδ^s,u(xs)i+(1−γi)δ^u,t(xu)i] $\bar\delta_{s,t}(x_s)^i:=\mathrm{sg}[\gamma^i\hat\delta_{s,u}(x_s)^i+(1-\gamma^i)\hat\delta_{u,t}(x_u)^i]$ s,t​(xs​)i:=sg[γiδ^s,u​(xs​)i+(1−γi)δ^u,t​(xu​)i]，xu:=X^s,u(xs) $x_u:=\hat X_{s,u}(x_s)$ ​:=X^s,u​(xs​)（Eq. 19）。
+
+ Ldistill:=  Ec KL(f(c)∥fδ^(c))+Et,c,ItKL(D^t(It;c)∥δ^t,t(It;c))+Es,u,t,c,IsKL(δˉs,t(Is;c)∥δ^s,t(Is;c)) $\begin{aligned}\mathcal L_{\text{distill}}:=\;&\Ex_c\,\mathrm{KL}\big(f(c)\Vert f^{\hat\delta}(c)\big)\\&+\Ex_{t,c,I_t}\mathrm{KL}\big(\hat D_t(I_t;c)\Vert\hat\delta_{t,t}(I_t;c)\big)\\&+\Ex_{s,u,t,c,I_s}\mathrm{KL}\big(\bar\delta_{s,t}(I_s;c)\Vert\hat\delta_{s,t}(I_s;c)\big)\end{aligned}$ ​:=​Ec​KL(f(c)∥fδ^(c))+Et,c,It​​KL(D^t​(It​;c)∥δ^t,t​(It​;c))+Es,u,t,c,Is​​KL(δˉs,t​(Is​;c)∥δ^s,t​(Is​;c))​
+Eq. 20
+
+ 三項依序為 AR 蒸餾、diagonal 蒸餾、off-diagonal 蒸餾。Prop. A.3：在 (s,u,t) $(s,u,t)$ 與狀態取樣 full support 下，後兩項（Eq. 21）的母體最小值為 0，且每個最小解經 Eq. 7 都還原 teacher 的 flow map；AR 項只依賴 prefix 讀出，不改變最小解。論文未說明 (s,u,t) $(s,u,t)$ 的取樣分布、蒸餾步數與 token 數、學習率；只蒸餾 B=4 $B=4$ 。把 self-conditioning 與 prefix guidance 納入 flow map 留待未來（Sec. 3.1、Sec. 5）。
+
+ 延伸閱讀：連續 flow 語言模型的少步生成、self-conditioning 與 flow map 蒸餾在 Lafa 的使用
+
+ 08 · 自我推測解碼
+
+ 自我推測解碼用 AR 驗證一步草稿
+
+ 自我推測解碼（self-speculative decoding）用同一個模型做兩件事。草稿：一步 Euler（Eq. 10）產生 B $B$ 個 token y^1:B $\hat y_{1:B}$ ​1:B​，不用 prefix guidance。驗證：commit 與 greedy AR 預測一致的最長草稿前綴；第一個 token 不一致時改 commit arg⁡max⁡f(c)N $\arg\max f(c)_N$ ​。第一個 token 可以免費驗證（與已有的 AR 預測比）。其餘位置的接受長度是：
+
+ a=max⁡{ j∈[B]: y^i+1=arg⁡max⁡f(c⊕y^)N+i  ∀ 1≤i<j } $a=\max\{\,j\in[B]:\ \hat y_{i+1}=\arg\max f(c\oplus\hat y)_{N+i}\ \ \forall\,1\le i<j\,\}$ ​i+1​=argmaxf(c⊕y^​)N+i​  ∀1≤i<j}
+Eq. 28
+
+ j=1 $j=1$ 的條件是空的，所以 a≥1 $a\ge1$ ：每次至少 commit 一個 token。
+
+ 為什麼輸出等於 greedy AR〔本頁推導：補上歸納步驟，論文只陳述結論〕：被接受的 y^i+1 $\hat y_{i+1}$ ​i+1​ 等於以 c⊕y^1:i $c\oplus\hat y_{1:i}$ ​1:i​ 為 prefix 的 greedy AR 預測；prefix 為 causal，f(c⊕y^)N+i $f(c\oplus\hat y)_{N+i}$ ​)N+i​ 只依賴 c⊕y^1:i $c\oplus\hat y_{1:i}$ ​1:i​；而 y^1:i $\hat y_{1:i}$ ​1:i​ 已歸納地等於 greedy AR 輸出。所以被接受的 token 都等於以已接受前綴為條件的 greedy AR 預測，2.54× 的品質就是該 checkpoint 的 greedy AR 品質，flow 只當草稿器。這是邏輯上的等價；數值上取決於實作，例如 bfloat16 下 fused forward 與逐字 forward 的 batch 形狀不同，logits 可能有微小差異並影響同值處理。論文原話為「matches greedy AR decoding」。
+
+ Fused forward（Alg. 4、Fig. 9）讓驗證與下一份草稿在同一次 forward 完成。輸入是乾淨 prefix c⊕y^ $c\oplus\hat y$ ​（時間 1）加上 B $B$ 個噪聲 block z(1),…,z(B)∈RB×d $z^{(1)},\dots,z^{(B)}\in\mathbb R^{B\times d}$ ,…,z(B)∈RB×d（時間 0，各自 ∼N(0,σ2I) $\sim\mathcal N(0,\sigma^2I)$ I)）。c⊕y^ $c\oplus\hat y$ ​ 內 causal；z(j) $z^{(j)}$ 看 c⊕y^1:j $c\oplus\hat y_{1:j}$ ​1:j​、block 內雙向、block 之間互不可見。驗證得到 a $a$ 後，取 z(a) $z^{(a)}$ 的輸出當下一份草稿（計算上等同 D0(z(a);c⊕y^1:a) $D_0(z^{(a)};c\oplus\hat y_{1:a})$ ​(z(a);c⊕y^​1:a​)），並沿用 f(c⊕y^)1:N+a $f(c\oplus\hat y)_{1:N+a}$ ​)1:N+a​ 與 KV cache。第一個 token 被修正時只需一個噪聲 block。
+
+ 〔本頁推導〕每次 fused forward commit 1≤a≤B $1\le a\le B$ 個 token；新處理的位置數為 B+B2 $B+B^2$ （修正時 1+B $1+B$ ），B=16 $B=16$ 時 272。本頁推測這是 TPF 4.9 只換到 2.54× TPS 的原因之一；論文沒有這個計數，只寫「forward-pass costs differ」。
+
+ 速度以 TPF 衡量（Eq. 29）：TPF=∑jTj/∑jFj $\text{TPF}=\sum_jT_j/\sum_jF_j$ ​Tj​/∑j​Fj​，Tj $T_j$ ​ 為 commit 的 token 數，Fj $F_j$ ​ 為 fused forward 次數加 1 次初始草稿（不含 prompt prefill）。AR 的 TPF 定義為 1。
+
+ 背景（Sec. 4）：「Many parallel decoders predict tokens independently within an update, which can degrade」品質，部分方法以 AR 驗證草稿緩解。Lafa 也用 AR 驗證，差別在草稿來自同一模型的 flow。替代方案（App. C.3）是 confidence thresholding：接受信心 ≥λ $\ge\lambda$ 的最長前綴，同樣 a≥1 $a\ge1$ ；論文以 self-speculation 為預設，理由是它不需調門檻、低門檻時不退化。
+
+ cτ = 1ŷ₁τ = 1ŷ₂τ = 1ŷ₃τ = 1τ¹ 0.00τ² 0.00τ³ 0.00
+
+ Fused forward 的輸入：c ⊕ ŷ 的時間為 1（實線框），每個噪聲 block z⁽ʲ⁾ 的時間為 0（最淺）。圖中只畫一個 z。
+
+ C5自我推測解碼模擬
+
+ 不模擬語言：把 greedy AR 的輸出當成固定的參考序列（T = 1024 個 token），草稿在 block 位置 i 正確的機率為 rᵢ = r₁ρ^(i−1)，各位置獨立。逐步執行，看每次 fused forward commit 幾個 token。
+
+ block 大小 B4816
+
+ 第一個位置正確率 r₁0.95
+
+ 逐位置衰減 ρ0.90
+
+ 下一步自動執行跑完重設重新抽樣
+
+ 本次 fused forward
+
+ 尚未執行：已有 1 次初始草稿的 forward。按「下一步」執行第一次 fused forward。
+
+ 已 commit 的序列（最近 64 個 token，數字為 commit 它們的 forward 編號）
+
+ 每個被接受的 token 都等於 greedy AR 的預測，所以輸出與 greedy AR 相同；flow 只決定一次 forward 能 commit 幾個。
+
+ fused 遮罩（N = 3，B = 4；遮罩以 B ≤ 4 顯示；灰底的 c 列為 KV cache，不重算）
+
+ 注意力遮罩，列為 query、欄為 keyquery＼keyc₁c₂c₃ŷ₁ŷ₂ŷ₃ŷ₄z¹₁z¹₂z¹₃z¹₄z²₁z²₂z²₃z²₄z³₁z³₂z³₃z³₄z⁴₁z⁴₂z⁴₃z⁴₄
+c₁●
+c₂●●
+c₃●●●
+ŷ₁●●●●
+ŷ₂●●●●●
+ŷ₃●●●●●●
+ŷ₄●●●●●●●
+z¹₁●●●●●●●●
+z¹₂●●●●●●●●
+z¹₃●●●●●●●●
+z¹₄●●●●●●●●
+z²₁●●●●●●●●●
+z²₂●●●●●●●●●
+z²₃●●●●●●●●●
+z²₄●●●●●●●●●
+z³₁●●●●●●●●●●
+z³₂●●●●●●●●●●
+z³₃●●●●●●●●●●
+z³₄●●●●●●●●●●
+z⁴₁●●●●●●●●●●●
+z⁴₂●●●●●●●●●●●
+z⁴₃●●●●●●●●●●●
+z⁴₄●●●●●●●●●●●
+
+ 已 commit 0 / 1024 token　forward 數 F = 1（含初始草稿）　目前 TPF = T/F = 0.0000
+閉式 𝔼[a] = 1 + Σⱼ Πᵢ rᵢ = 3.4024　平均每次 forward 新處理的位置數 = –（全部接受時 B + B² = 72）
+論文 Table 2（7B）：B = 4 / 8 / 16 的 TPF 2.6 / 4.3 / 4.9，準確率 60.9 / 59.3 / 58.0
+
+ 示意值，不是論文數字。真實的一步草稿錯誤來自 C1 的邊際問題，各位置不是獨立的；這裡只用來看接受規則與 TPF。模擬有抽樣誤差，T = 1024 時可達約 3%。論文 Table 2（7B，六項平均）：B = 4 / 8 / 16 的 TPF 為 2.6 / 4.3 / 4.9，準確率 60.9 / 59.3 / 58.0。
+
+ 延伸閱讀：自我推測解碼：flow 草稿與 AR 驗證
+
+ 09 · 實驗結果
+
+ 多步 flow 追上 AR，速度來自自我推測
+
+ 模型與資料：0.5B、7B 由 Qwen2.5 Instruct 調整；8B 用 Qwen3 8B Base（論文寫其 Instruct 版再訓練會退步）。訓練資料為 Dolci-Instruct-SFT。Sec. 3 寫訓練 5–15 epochs（9–27B tokens）；Table 4 對三個尺度都寫 5 epochs、約 9B tokens。論文沒有說明兩者的關係。合起來訓練用 9–27B tokens（<30B），論文寫這比 Dream、LLaDA、Efficient-DLM 的報告預算（reported budgets）少至少 18 倍（"at least 18× fewer"）。0.5B 做消融、7B 是主結果、8B 用來對比更多基準。
+
+ 評估用六項 benchmark：IFEval、BBH（3-shot）、MMLU-Pro、GPQA、GSM8K、HumanEval，除 BBH 外皆 0-shot。single-token 準確率、自我推測的準確率與 TPF 用六項平均；flow／flow map、吞吐量與消融只用 IFEval、GSM8K、HumanEval 三項平均。標 † 的基準與 Lafa 同初始化、資料、預算；AR SFT 是同資料微調的 AR，作為品質與速度的參考。
+
+ Flow 與 flow map decoding
+
+ 純 flow decoding 在 B=4 $B=4$ 、32–64 步時，0.5B 接近 AR SFT（38.1、38.5 vs 38.6），7B 超過 AR SFT（75.2、75.9 vs 73.9）（Table 5；Sec. 3.1 用「approaches」與「surpasses」）。同步數下 block 越大越差。flow map 改善 1–2 步：7B 兩步 student（63.3）接近四步 teacher（64.3），四步 student 勝過 teacher（69.4 vs 64.3），八步相近（71.0 vs 71.2），但與多步 flow 仍有差距。步數與準確率不完全單調（0.5B：1 步 20.8 → 2 步 19.7；64 步 38.5 → 128 步 37.1）。
+
+ F1Euler 步數與三項平均準確率（Table 5 重繪）
+
+ 讀法：B = 4 的 flow 在 32–64 步附近追上（0.5B）或超過（7B）AR SFT 水平線；同步數下 B = 16 低於 B = 4；flow map 在 1–2 步高於 flow，8 步兩者相近。
+
+ flow B = 4（實線）flow B = 8（長虛線）flow B = 16（點線）flow map B = 4（◆）水平細線：AR SFT
+
+ Table 5：三項平均準確率規模方法1 步2 步4 步8 步16 步32 步64 步128 步
+0.5Bflow B=420.819.73031.835.438.138.537.1
+0.5Bflow B=810.61521.829.634.334.234.535.5
+0.5Bflow B=168.110.41721.126.329.130.631
+0.5Bflow map B=423.325.228.531.832.6–––
+0.5BAR SFT38.6
+7Bflow B=443.746.264.371.272.175.275.975.7
+7Bflow B=825.643.759.264.568.971.77170.9
+7Bflow B=1614.225.444.157.365.266.566.867.2
+7Bflow map B=44963.369.471––––
+7BAR SFT73.9
+
+ 數字取自論文 Table 5（IFEval、GSM8K、HumanEval 三項平均）。
+
+ AR 能力：六項平均提升，部分項目下降
+
+ Table 1（single-token decoding，六項平均）：AR SFT† 與 Lafa† 在 0.5B 為 28.7 → 31.6、7B 為 58.4 → 60.9、8B 為 56.8 → 63.1。這是平均值，部分項目下降：7B HumanEval 78.7 → 76.8；8B BBH 71.6 → 70.7、HumanEval 82.3 → 79.9。8B 的提升主要來自 IFEval（38.1 → 62.3）與 GSM8K（62.9 → 77.8）（Table 6），而且 8B 由 Base 起訓。作者認為這是聯合訓練帶來的 multi-token prediction effect（"consistent with the benefits of multi-token prediction [6, 8, 34]"），這是作者的解釋。
+
+ Table 1 摘錄：single-token decoding，六項平均（%）
+ 方法0.5B7B8B
+
+ AR SFT†28.758.456.8
+
+ DeepSeek-MTP†30.260.0–
+
+ MARS†30.459.7–
+
+ Efficient-DLM––63.5
+
+ Lafa†31.660.963.1
+
+ 自我推測解碼與吞吐量
+
+ Table 2（六項平均）：7B B=4/8/16 $B=4/8/16$ 的準確率 60.9 / 59.3 / 58.0，TPF 2.6 / 4.3 / 4.9；論文概括為「approximately 2.5–5 TPF」。吞吐量（Table 8，單張 H100、batch size 1、bfloat16）：2.54× 來自 7B、B=16 $B=16$ 的自我推測解碼，IFEval／GSM8K／HumanEval 三項平均 74.5 vs 73.9，100.2 vs 39.5 TPS；B=4 $B=4$ 為 2.02×（79.9 TPS），準確率 76.5。
+
+ Table 2 摘錄：7B 自我推測解碼，六項平均
+ B準確率TPF
+
+ AR SFT58.41.0
+
+ 460.92.6
+
+ 859.34.3
+
+ 1658.04.9
+
+ Table 8 摘錄：7B 三項平均準確率與吞吐量（H100、batch size 1）
+ 方法設定準確率TPS
+
+ AR SFT–73.939.5
+
+ DeepSeek-MTPB = 276.353.6
+
+ MARSB = 16，門檻 0.9574.349.0
+
+ Dreamk = 437.7113.7
+
+ LafaB = 476.579.9
+
+ LafaB = 876.393.8
+
+ LafaB = 1674.5100.2
+
+ 解讀注意
+
+ 2.54× 是 7B、B=16 $B=16$ 、三項平均下的吞吐量；在六項平均下，B=16 $B=16$ 的準確率 58.0 低於 AR SFT 的 58.4（Table 2）。2.54× 來自自我推測解碼，輸出等於 greedy AR，不是純 flow 生成的速度。吞吐量只在 batch size 1 量測；Dream k=4 $k=4$ 的 TPS 更高，但準確率只有 37.7。Table 8 的基準用各自的 native decoder（多為 confidence threshold），只有 Lafa 與 DeepSeek-MTP 以 greedy 驗證。AR 能力的提升是六項平均，沒有 seed 或信賴區間；非 † 的 diffusion 基準不是 matched 比較。Table 8 的 74.5 是分項平均 74.57 的截斷。
+
+ 延伸閱讀：規模、資料量與評估
+
+ 10 · 實作
+
+ 實作設定與常見錯誤
+
+ Table 4：主要超參數
+ 項目0.5B7B8B
+
+ 初始化Qwen2.5 0.5B InstructQwen2.5 7B InstructQwen3 8B Base
+
+ 資料／epochs／tokensDolci-Instruct-SFT／5／約 9B同左同左
+
+ Block 大小4, 8, 164, 8, 164
+
+ 最大序列長度512–1024512–1024512
+
+ adaLN每層跨層共用跨層共用
+
+ 學習率1×10⁻⁴1×10⁻⁵1×10⁻⁵
+
+ 分散式DDPZeRO-3ZeRO-3
+
+ 三者共同：AdamW，(β₁, β₂) = (0.9, 0.999)，constant schedule、前 1% 步 warm-up；weight decay 0、gradient clipping 1.0、batch 384 sequences（B=4 $B=4$ ；較大 block 用 memory-matched microbatch，適用時由較小 block 的 checkpoint 接續訓練）；bfloat16；訓練 σ=4.0 $\sigma=4.0$ ；psc=0.5 $p_{sc}=0.5$ ​=0.5；adaLN 學習率倍數 5.0；參數 EMA 0.999（step 500 起）；Mbin=200 $M_{\text{bin}}=200$ ​=200、β=0.99 $\beta=0.99$ 、S=100 $S=100$ ；flow decoding 推論 σ=0.1 $\sigma=0.1$ 、g=8.0 $g=8.0$ 。
+
+ 常見錯誤
+
+ 把 2.54× 當成 flow 生成的速度：它來自自我推測解碼，輸出等於 greedy AR。純 flow decoding 在 B=4 $B=4$ 、32–64 步時，0.5B 接近（38.1、38.5 vs 38.6）、7B 超過（75.2、75.9 vs 73.9）AR SFT（Table 5）。
+
+ 用「最近的嵌入」把 x^1 $\hat x_1$ 1​ 轉回 token：Eq. 8 取最後一次 denoiser 預測的 argmax。
+
+ 讓 prefix 看到 noisy block，或給 prefix 1 以外的時間：prefix 的 KV 會隨 (x,t) $(x,t)$ 改變，cache 失效，AR 預測也不再是 f(c) $f(c)$ 。
+
+ 不固定嵌入 norm：norm 相對固定的 σ $\sigma$ 膨脹，有效 corruption 下降（Table 3）。
+
+ 把 Eq. 8 寫成 base time 的 Euler x+Δt bt $x+\Delta t\,b_t$ ​：Eq. 8 用 τ $\tau$ 的增量，最後一步落在 pE $p\E$ ，不會碰到 1/(1−τ) $1/(1-\tau)$ 的發散。
+
+ 推論沿用訓練的 σ $\sigma$ ：Table 4 訓練 4.0、flow decoding 推論 0.1，論文未解釋差異；自我推測草稿的 σ $\sigma$ 未寫明（Alg. 4 只寫「scale σ $\sigma$ 」）。
+
+ 在自我推測草稿加 prefix guidance：論文的草稿不用 guidance；flow decoding 才用 g=8 $g=8$ 。
+
+ 以為 tokenwise time 用訓練時的非同步內插估計：Alg. 2 的虛擬碼用同步內插估 ℓi $\ell^i$ （論文未說明理由）。
+
+ 論文未說明的細節：flow map 蒸餾的 (s,u,t) $(s,u,t)$ 分布與訓練量；不含 prefix 的 Dt(x;∅) $D_t(x;\varnothing)$ ​(x;∅) 如何訓練；輸出 head 是否與 E $\E$ 綁定（tied）。
+
+ 11 · 研究脈絡
+
+ 研究脈絡
+
+ Lafa 接在幾條線的交會點上：AR 的平行解碼（blockwise parallel decoding、Medusa、multi-token prediction）先提出「一次預測多個 token 再驗證」；flow matching 與 CDCD 把連續擴散帶到類別資料，CDCD 也提出 loss-aware time warping；block diffusion 把 block 內去噪與 block 間因果結合；AR 轉擴散的工作（Dream、Efficient-DLM，筆記另列 From Next-Token to Next-Block 與 WeDLM）從預訓練 AR 模型出發；flow map 與 two-time denoiser 讓少步生成成為可能；同期的 ELF 也在詞嵌入空間做 flow。Lafa 把這些放進同一個從 AR 調整而來的模型。每張卡片連到對應的研究筆記。
+
+ 平行解碼連續 flowBlock 擴散與 AR 調整Self-conditioning 與 flow map本文
+
+ 2018平行解碼Blockwise Parallel Decoding for Deep Autoregressive Models
+Stern et al.
+AR 模型以 proposal 一次預測多個位置再驗證的早期工作
+arXiv ↗筆記
+2022連續 flowFlow Matching for Generative Modeling
+Lipman et al.
+flow 的訓練目標：回歸條件向量場
+arXiv ↗筆記
+2022連續 flowContinuous diffusion for categorical data
+Dieleman et al.
+CDCD：類別資料的連續擴散與 time warping
+arXiv ↗筆記
+2022Self-conditioning 與 flow mapAnalog Bits: Generating Discrete Data using Diffusion Models with Self-Conditioning
+Chen et al.
+self-conditioning 的出處
+arXiv ↗筆記
+2024平行解碼Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads
+Cai et al.
+以多個解碼 head 加速 AR 解碼
+arXiv ↗筆記
+2024平行解碼Better & Faster Large Language Models via Multi-token Prediction
+Gloeckle et al.
+multi-token prediction 訓練目標
+arXiv ↗筆記
+2025Block 擴散與 AR 調整Block Diffusion: Interpolating Between Autoregressive and Diffusion Language Models
+Arriola et al.
+block 內去噪、block 間因果的分解
+arXiv ↗筆記
+2025Self-conditioning 與 flow mapHow to build a consistency model: Learning flow maps via self-distillation
+Boffi et al.
+flow map 的自蒸餾學習
+arXiv ↗筆記
+2025Block 擴散與 AR 調整Efficient-DLM: From Autoregressive to Diffusion Language Models, and Beyond in Speed
+Fu et al.
+AR 轉擴散模型的調整與速度，Lafa 的比較對象
+arXiv ↗筆記
+2026Self-conditioning 與 flow mapFlow Map Language Models: One-step Language Modeling via Continuous Denoising
+Lee et al.
+one-hot 連續 flow 與兩時間去噪器，Lafa 的直接前作
+arXiv ↗筆記
+2026連續 flowELF: Embedded Language Flows
+Hu et al.
+同期以詞嵌入為空間的連續 flow 語言模型
+arXiv ↗筆記
+2026平行解碼MARS: Enabling Autoregressive Models Multi-Token Generation
+Jin et al.
+將 AR 模型微調為多 token 預測，Lafa 的比較對象
+arXiv ↗筆記
+2026Self-conditioning 與 flow mapSelf-conditioned Flow Map Language Models via Fixed-point Flows
+Yoo et al.
+self-conditioning 與 flow map 的理論連結
+arXiv ↗筆記
+2026本文Large Flow Language Models
+Chavan et al.
+本論文：8B blockwise 非同步 flow 與自我推測解碼
+arXiv ↗筆記
+
+ 12 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 論文自述的限制：flow decoding 要多步才達到 AR 品質；flow map 與多步 flow 仍有差距；如何把 self-conditioning 與 prefix guidance 納入 flow map 留待未來（Sec. 3、Sec. 5）。
+
+ 實驗範圍：吞吐量只在 7B（與 Efficient-DLM 8B）、batch size 1 量測；8B 只有 B=4 $B=4$ 的 single-token 與自我推測結果；消融全為 0.5B、B=4 $B=4$ 、32 步；沒有 seed 或信賴區間；非 † 的 diffusion 基準不是 matched 比較；Table 8 的基準用各自的 native decoder，只有 Lafa 與 DeepSeek-MTP 以 greedy 驗證（AR SFT 為逐字 greedy；Efficient-DLM 門檻 0.7、MARS 門檻 0.95，App. C.2）。
+
+ 研究筆記（依閱讀順序）
+
+ Lafa（Large Flow Language Models）的研究脈絡總覽總覽
+
+ AR 生成的延遲與平行解碼方法（Blockwise decoding、MTP、Medusa）平行解碼的背景
+
+ 從預訓練 AR 模型調整為 block 模型（Block Diffusion 與 AR 轉 diffusion）第 04 節
+
+ 以詞嵌入為空間的 flow 與 clean-token 去噪器（CDCD 到 Lafa）第 02–03 節
+
+ block 內各位置的非同步時間（tokenwise time）第 02、05 節
+
+ self-conditioning 與 flow map 蒸餾在 Lafa 的使用第 06–07 節
+
+ 自我推測解碼：flow 草稿與 AR 驗證第 08 節
+
+ 規模、資料量與評估（Lafa 與其他大型擴散模型的比較）第 09 節
+
+ 2026 年連續 flow / flow matching 語言模型總覽站內既有筆記
+
+ Flow matching 的速度目標與 rectified flow 的大規模使用站內既有筆記
+
+ self-conditioning 在連續 flow 語言模型中的作用與理論解釋站內既有筆記
+
+ 連續 flow 語言模型的少步生成：flow map / consistency / 分佈匹配蒸餾站內既有筆記
+
+ 連續擴散語言模型的噪聲／時間排程站內既有筆記
+
+ 連續擴散語言模型的表示空間與 rounding / decoder 問題站內既有筆記
+
+ arXiv 2610.28559 ↗在關聯圖中查看
+
+ Arnav Chavan, Chanhyuk Lee, Udbhav Bamba, Jaehoon Yoo, Seunghoon Hong, Aditi Raghunathan, Jinwoo Kim. Large Flow Language Models. 2026. arXiv:2610.28559.
+
+ 本頁的方程式與數字取自論文 v1；標示「本頁推導」的內容為本頁自行推導，並非論文結論；標示「示意值」的數值為玩具示範用，不是論文數字。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記

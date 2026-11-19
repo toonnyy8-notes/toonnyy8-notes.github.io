@@ -1,0 +1,114 @@
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="conv" data-toc="06" data-tt="短卷積">
+  <div class="ch-num">06 · 短卷積</div>
+  <h2>短卷積擴大讀取範圍，殘差連接保留未經卷積的輸入</h2>
+  <div class="prose">
+    <p>閘門只看單一位置。作者在閘門之後加一層短卷積，擴大感受野並增加非線性（Sec. 2.3）。把所有位置的 $\tilde{\mathbf v}_t$ 排成矩陣 $\tilde{\mathbf V}$：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbf Y=\mathrm{SiLU}\big(\mathrm{Conv1D}(\mathrm{RMSNorm}(\tilde{\mathbf V}))\big)+\tilde{\mathbf V}$$</div><span class="eq-n">Eq. 5</span></div>
+  <div class="prose">
+    <p>Conv1D 是<b>深度（depthwise）因果卷積</b>：每個維度各自卷積、只讀目前與之前的位置；核大小 $w=4$，<b>擴張率（dilation）</b> $\delta$ 等於最大 N-gram 階數 $N=3$，激活函數為 SiLU，最後加上殘差 $\tilde{\mathbf V}$。結果以殘差方式融合進主幹：$\mathbf H^{(\ell)}\leftarrow\mathbf H^{(\ell)}+\mathbf Y$，之後接標準的 Attention 與 MoE。Engram 只插在部分層，Engram-27B 是第 2 與第 15 層。</p>
+    <p>卷積參數初始化為 0。訓練開始時 $\mathrm{Conv1D}(\cdot)=0$，而 $\mathrm{SiLU}(0)=0$，所以 $\mathbf Y=\tilde{\mathbf V}$：零初始化使模組一開始只是把閘門後的記憶加回殘差流，作者稱之為「strictly preserve the identity mapping」（Sec. 4.1）。</p>
+    <p>讀取範圍<span class="tag">本頁推導</span>：卷積在位置 $t$ 讀取 $t,\ t-\delta,\ t-2\delta,\ t-3\delta$ 四個位置的 $\tilde{\mathbf v}$。依 Eq. 2，每個位置的查表內容同時包含結尾於該處的 2-gram 與 3-gram，3-gram 的視窗涵蓋了 2-gram 的視窗。$\delta=N=3$ 時，四個 3-gram 視窗剛好首尾相接、不重疊，查表內容涵蓋連續 $wN=12$ 個位置；$\delta=1$ 時視窗重疊，只涵蓋 $N+w-1=6$ 個。位置靠近句首時，部分位置落在句首以前，由 pad 補齊：下圖預設的 $t=9$ 涵蓋 10 個句內 token 加 2 個 pad。這裡只計算查表內容的來源；閘門 $\alpha_{t'}$ 依賴 $\mathbf h_{t'}$，而 $\mathbf h_{t'}$ 經注意力看過整個前綴。</p>
+  </div>
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>卷積讀到哪些 token</h3></div>
+    <p class="plate-lead">點選位置 t：每一列括號是一個卷積 tap 讀到的 N-gram 視窗，底色格是所有視窗的聯集。</p>
+    <div class="tokscroll"><div class="fieldgrid" id="c3-grid" role="toolbar" aria-label="token 帶：左右方向鍵選擇位置 t"></div></div>
+    <p class="fieldnote">閘門 α 依賴 h，h 經注意力看過整個前綴；這張圖只標記查表內容的來源。</p>
+    <div class="pg two" style="margin-top:16px">
+      <div class="ctl">
+        <div><span class="lbl">最大階數 N</span><div class="seg" id="c3-N" role="group" aria-label="最大階數 N"><button type="button" data-v="2" aria-pressed="false">2</button><button type="button" data-v="3" aria-pressed="true">3</button><button type="button" data-v="4" aria-pressed="false">4</button></div></div>
+        <div class="rng"><label class="lbl" for="c3-w">核大小 w<output id="c3-wo">4</output></label><input id="c3-w" type="range" min="1" max="6" step="1" value="4"></div>
+        <div class="rng"><label class="lbl" for="c3-d">擴張率 δ<output id="c3-do">3</output></label><input id="c3-d" type="range" min="1" max="6" step="1" value="3" disabled></div>
+        <label class="chk"><input type="checkbox" id="c3-lock" checked>δ = N（論文設定）</label>
+        <label class="chk"><input type="checkbox" id="c3-zero">訓練開始時（卷積權重 = 0）</label>
+      </div>
+      <p class="readout" id="c3-ro"></p>
+    </div>
+    <p class="plate-f">tap j = 0…w−1 的中心為 t − jδ，視窗為中心往前 N 個位置；零初始化時只剩 j = 0。位置 &lt; 0 為 pad；pad 超過 3 格時，最左側收合成一格。讀數由本頁依 Eq. 5 的卷積設定即時計算（本頁推導）。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+  <details class="sym"><summary>本節符號</summary><div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$\tilde{\mathbf V}$、$\mathbf Y$</td><td>所有位置的閘門後 Value、Engram 模組的輸出</td></tr>
+    <tr><td>$w$、$\delta$</td><td>卷積核大小（4）、擴張率（= $N$）</td></tr>
+    <tr><td>$\mathbf H^{(\ell)}$</td><td>第 $\ell$ 層的隱藏狀態（$T\times d$）</td></tr>
+    </tbody></table></div></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 5 的卷積設定為何？$w=4,\delta=N=3$ 時查表內容涵蓋幾個位置？零初始化有什麼效果？</p>
+    <p class="a">深度因果卷積、核 4、擴張率 = 最大階數、SiLU、加殘差；涵蓋連續 12 個位置（來自四個首尾相接的 3-gram 視窗；靠近句首時含句首以前的 pad）〔本頁推導〕；零初始化使訓練開始時 $\mathbf Y=\tilde{\mathbf V}$（Sec. 2.3、4.1）。</p>
+  </div></details>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="branch" data-toc="07" data-tt="多分支">
+  <div class="ch-num">07 · 多分支</div>
+  <h2>多分支主幹共用記憶、各自計算閘門</h2>
+  <div class="prose">
+    <p>本文的主幹採 <b>mHC（Manifold-Constrained Hyper-Connections）</b>：殘差流不是一條向量，而是擴成 $M=4$ 條平行分支，各層以可學的連接權重混合這些分支（Sec. 2.4）。Engram 要為每條分支產生輸入，作者的做法是：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$s_t^{(m)}=\frac{\mathrm{RMSNorm}(\mathbf h_t^{(m)})^\top\mathrm{RMSNorm}(\mathbf W_K^{(m)}\mathbf e_t)}{\sqrt d}$$</div><span class="eq-n">Eq. 6</span></div>
+  <div class="eq"><div class="eq-m">$$\alpha_t^{(m)}=\sigma\big(s_t^{(m)}\big),\qquad \mathbf u_t^{(m)}=\alpha_t^{(m)}\cdot(\mathbf W_V\mathbf e_t)$$</div><span class="eq-n">Eq. 6</span></div>
+  <div class="prose">
+    <p>參數共享方式：一張嵌入表與一個 $\mathbf W_V$ 由 $M$ 條分支共享，每條分支只有自己的 $\mathbf W_K^{(m)}$。這樣閘門可以依分支的隱藏狀態 $\mathbf h_t^{(m)}$ 而不同，同時一個 $\mathbf W_V$ 與 $M$ 個 $\mathbf W_K^{(m)}$ 可以融合成一次稠密的 FP8 矩陣乘法，保留分支專屬閘門而不增加多次小矩陣乘法的開銷。Engram-27B 有 2 個 Engram 層 × 4 條分支，所以每個 token 共有 8 個閘門純量（Sec. 6.5 註腳 2）。消融中的「w/o multi branch」保留 mHC 主幹，但改為在 pre-mapping 後的 $\mathbf H_{pre}$ 上做單一融合（Sec. 6.2）。</p>
+  </div>
+  <details class="sym"><summary>本節符號</summary><div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$M$</td><td>mHC 的分支數（4）；與表大小 $M_{n,k}$ 不同</td></tr>
+    <tr><td>$\mathbf h_t^{(m)}$、$\mathbf W_K^{(m)}$</td><td>第 $m$ 條分支的隱藏向量、Key 投影</td></tr>
+    <tr><td>$\alpha_t^{(m)}$、$\mathbf u_t^{(m)}$</td><td>第 $m$ 條分支的閘門與輸出</td></tr>
+    </tbody></table></div></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">mHC 中哪些參數共享？為什麼？Engram-27B 每個 token 有幾個閘門？</p>
+    <p class="a">嵌入表與 $\mathbf W_V$ 共享，每分支一個 $\mathbf W_K^{(m)}$；可融合成一次 FP8 矩陣乘法並保留分支專屬閘門；2 層 × 4 分支 = 8 個（Sec. 2.4、6.5）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="engram-module-design.html">Engram 模組的設計</a></p>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="alloc" data-toc="08" data-tt="稀疏度分配">
+  <div class="ch-num">08 · 稀疏度分配</div>
+  <h2>固定預算下記憶與專家的分配呈 U 形</h2>
+  <div class="prose">
+    <p>有了兩種稀疏模組，作者提出<b>稀疏度分配（Sparsity Allocation）</b>問題：固定 $P_{\text{tot}}$ 與 $P_{\text{act}}$（等參數、等 FLOPs），未啟用的參數該如何分給 MoE 專家與 Engram？以 $\rho$ 表示未啟用參數分給 MoE 專家的比例（Sec. 3.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$P^{(\text{sparse})}_{\text{MoE}}=\rho\,P_{\text{sparse}},\qquad P_{\text{Engram}}=(1-\rho)\,P_{\text{sparse}}$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="prose">
+    <p>$\rho=1$ 是純 MoE。實驗只調整路由專家數與 Engram 槽數，其餘不變。作者用兩個計算預算（稀疏比 $P_{\text{tot}}/P_{\text{act}}\approx10$）：$C=2\times10^{20}$ FLOPs，$P_{\text{tot}}\approx5.7$B、$P_{\text{act}}=568$M、基準 106 個專家；$C=6\times10^{20}$ FLOPs，$P_{\text{tot}}\approx9.9$B、$P_{\text{act}}=993$M、基準 99 個專家。</p>
+    <p>結果：兩個預算下，驗證損失對 $\rho$ 都呈 U 形。$\rho\approx40\%$（5.7B 模型 46 個專家、9.9B 模型 43 個）時已與純 MoE 相當；最佳 $\rho\approx75\%$–$80\%$，也就是把約 20%–25% 的稀疏預算給 Engram。10B 預算下驗證損失由 1.7248（$\rho=100\%$）降到 1.7109（$\rho\approx80\%$），差 0.0139。作者的解釋：$\rho\to100\%$ 時缺少靜態模式的專用記憶，模型只能用深度與計算重建這些模式；$\rho\to0\%$ 時失去條件計算，記憶無法取代需要動態計算的部分。</p>
+    <p>專家數換算<span class="tag">本頁推導</span>：若 $\rho=1$ 時所有未啟用參數都是未被選中的路由專家（每個專家大小相同、top-6），則專家數 $E(\rho)=6+\rho(E_0-6)$。$E(0.4)=46.0$（$E_0=106$）與 43.2（$E_0=99$），與論文的 46、43 一致。Engram-27B 由 72 減到 55 個專家，$\rho=(55-6)/(72-6)=74.2\%$，論文寫 74.3%。這個值略低於小規模實驗找到的 75%–80% 區間；論文沒有說明為什麼選這個值，所以本頁只把它寫成「依小規模結果選擇的接近值」。</p>
+    <p>27B 的參數核對<span class="tag est">推定</span>：Table 1 的 26.7B 是否含詞嵌入無法確定。讀法 A：26.7B 含詞嵌入與 LM head（$2\times129{,}280\times2560=0.662$B），$P_{\text{tot}}=26.04$B、$P_{\text{sparse}}=22.24$B，$(1-49/66)\times22.24=5.73$B，與論文的 5.7B 一致。讀法 B：26.7B 已不含這兩者，$P_{\text{sparse}}=22.9$B，Engram 為 5.90B。讀法 A 較接近 5.7B，下圖的 27B 組採用讀法 A。</p>
+    <p>作者另外固定 3B MoE 主幹，把 Engram 的槽數 $M_{\text{slot}}$ 由 $2.58\times10^5$ 掃到 $10^7$（最多增加約 13B 參數），驗證損失對槽數呈冪律，在對數座標下為直線（Sec. 3.2）。這裡的「槽」與 Table 5 的每頭列數單位不同，本頁不在兩者之間換算。</p>
+  </div>
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>稀疏度分配計算器</h3></div>
+    <p class="plate-lead">選一個預算、拖動 ρ：長條是 P<sub>tot</sub> 的組成，下方軸標出論文文字給的點與區間。</p>
+    <div class="ctl">
+      <div class="ctl-row" role="group" aria-label="預設預算"><button class="chip" type="button" data-p="2e20" aria-pressed="false">2e20 FLOPs（5.7B、0.568B、E₀ = 106）</button><button class="chip" type="button" data-p="6e20" aria-pressed="true">6e20 FLOPs（9.9B、0.993B、99）</button><button class="chip" type="button" data-p="27B" aria-pressed="false">27B（26.04B 推定讀法 A、3.8B、72）</button></div>
+      <div class="rng"><label class="lbl" for="c4-r">ρ（未啟用參數分給 MoE 的比例）<output id="c4-ro2">80.0%</output></label><input id="c4-r" type="range" min="0.3" max="1" step="0.005" value="0.8"></div>
+    </div>
+    <div class="stackbar" id="c4-bar" role="img" style="margin-top:14px"><div class="sw-act"></div><div class="sw-moe"></div><div class="sw-eng"></div></div>
+    <ul class="sleg" id="c4-leg"></ul>
+    <p class="readout" id="c4-ro" style="margin-top:12px"></p>
+    <p class="fixed hide" id="c4-fixed">Engram-27B 實際配置（本頁推導）：72 → 55 個專家，ρ = 49/66 = 74.24%，P<sub>Engram</sub> = 5.728B（讀法 A）；論文寫 74.3%。</p>
+    <p class="cap">驗證損失對 ρ 呈 U 形：兩端較高，75%–80% 最低（Fig. 3 左，論文沒有給出完整數值）。</p>
+    <div class="fig" id="c4-fig"><svg role="img" aria-label="ρ 軸上的論文標記"></svg></div>
+    <ul class="marks" id="c4-marks"></ul>
+    <p class="plate-f">P<sub>sparse</sub> = P<sub>tot</sub> − P<sub>act</sub>；P<sub>Engram</sub> = (1 − ρ)P<sub>sparse</sub>（Eq. 7）；E(ρ) = 6 + ρ(E₀ − 6)（本頁推導）。top-k<sub>act</sub> = 6 固定。沒有擬合曲線：論文只給出這些點。不顯示槽數，因為 Table 5 與 Sec. 3.2 的單位不同。</p>
+    <p class="sr" aria-live="polite" id="c4-live"></p>
+  </div>
+  <details class="sym"><summary>本節符號</summary><div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$\rho$</td><td>未啟用參數分給 MoE 專家的比例（Eq. 7）</td></tr>
+    <tr><td>$E(\rho)$、$E_0$</td><td>專家數、$\rho=1$ 時的專家數（本頁推導）</td></tr>
+    <tr><td>$C$</td><td>訓練的計算預算（FLOPs）</td></tr>
+    <tr><td>$M_{\text{slot}}$</td><td>Sec. 3.2 的嵌入槽數（論文寫作 $M$）</td></tr>
+    </tbody></table></div></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$\rho$ 的定義？U 形的最佳點與兩端的解釋？</p>
+    <p class="a">$\rho$ = 未啟用參數分給 MoE 的比例（Eq. 7）；最佳 $\rho\approx75\%$–$80\%$，10B 預算損失 1.7248 → 1.7109；$\rho\to100\%$ 缺靜態記憶、$\rho\to0\%$ 缺條件計算；$\rho\approx40\%$ 即與純 MoE 相當（Sec. 3.1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="engram-sparsity-allocation-u-shape.html">稀疏度配置與 U 形縮放律</a></p>
+</section>

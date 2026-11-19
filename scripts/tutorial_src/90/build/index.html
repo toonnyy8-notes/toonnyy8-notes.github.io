@@ -1,0 +1,1422 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>條件記憶 Engram</title>
+<meta name="description" content="圖解 DeepSeek-AI 與北京大學的 Engram：以 N-gram 雜湊查表在 Transformer 中加入條件記憶，並研究總參數固定時記憶與 MoE 專家的分配。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1320px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1320px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1320px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details:is(.check,.sym){max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details:is(.check,.sym)>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details:is(.check,.sym)>summary::-webkit-details-marker{display:none}
+details:is(.check,.sym)>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details:is(.check,.sym)[open]>summary::before{transform:rotate(45deg)}
+details:is(.check,.sym) .qa{padding:0 20px 18px;font-size:15px}
+details:is(.check,.sym) .q{font-weight:600;margin:12px 0 4px}
+details:is(.check,.sym) .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:1080px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+
+/* ---- additions for No. 90 (Engram) ---- */
+@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
+/* colour roles: --c-par = memory / Engram path, --c-perp = computation / MoE, hidden state */
+.plate{max-width:min(1080px,100%)}
+.eq{position:relative}
+.eq.is-overflow .eq-m{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 24px),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 24px),transparent)}
+.eq.is-overflow::after{content:"可橫向捲動";position:absolute;right:0;bottom:-16px;font:400 12px/1 var(--f-body);color:var(--ink-3)}
+.tag.est,.tag.demo{color:var(--ink-3)}
+.sub{font:500 13px/1.4 var(--f-body);color:var(--ink-3);margin:-4px 0 18px}
+.sub a{color:var(--ink-2)}
+
+/* token band */
+.tokscroll{overflow-x:auto;padding:4px 2px 8px;scrollbar-width:thin;
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.10),transparent),linear-gradient(to left,rgba(0,0,0,.10),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+.hero .tokscroll{background-image:none}
+.band{display:flex;gap:6px;width:max-content;min-width:100%}
+.tok{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:44px;min-width:44px;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface-2);color:var(--ink);font:400 13px/1.3 var(--f-mono);white-space:pre;cursor:default}
+button.tok{cursor:pointer}
+button.tok:hover{border-color:var(--ink-3)}
+.tok .id{font-size:11px;color:var(--ink-3)}
+.tok .nk{font-size:12px;color:var(--ink-2)}
+.tok.merged{background:var(--accent-soft)}
+.tok.sel{outline:2px solid var(--accent);outline-offset:1px}
+.tok.pad{background:transparent;border-style:dashed;color:var(--ink-3)}
+.tok.ph{border:2px solid var(--accent)}
+.tok.cov{background:var(--accent-soft);border:2px solid var(--accent)}
+.tok.end{background:var(--accent);border-color:var(--accent);color:var(--surface)}
+.tok.end .id{color:var(--surface)}
+.hero .band{margin:28px 0 0}
+
+/* C1 */
+.tcol{display:flex;flex-direction:column;gap:5px}
+.tcol i{display:block;height:0;border-top:3px solid transparent}
+.tcol i.on2{border-top:3px solid var(--c-par)}
+.tcol i.on3{border-top:3px dashed var(--c-par)}
+.idxgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px;margin:6px 0 14px}
+.idxgrid div{border:1px solid var(--line);border-radius:6px;padding:4px 6px;background:var(--surface);font:400 12px/1.35 var(--f-mono);color:var(--ink);text-align:center}
+.idxgrid div small{display:block;font-size:10px;color:var(--ink-3)}
+.idxlab{font:500 13px/1.4 var(--f-body);color:var(--ink-2);margin:10px 0 0}
+.concat{display:flex;height:16px;border-radius:4px;overflow:hidden;margin:6px 0 4px;border:1px solid var(--line)}
+.concat i{flex:1;border-right:1px solid var(--surface)}
+.concat i.n2{background:var(--c-par)}
+.concat i.n3{background:color-mix(in oklab,var(--c-par) 45%,var(--surface))}
+textarea{width:100%;min-height:64px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);font:400 14px/1.5 var(--f-mono);resize:vertical}
+.warn{font-size:13px;color:var(--accent);margin:0}
+.ro-dim{color:var(--ink-3)!important;text-decoration:line-through}
+.panel-t{font:600 15px/1.4 var(--f-cjk);margin:24px 0 10px;padding-top:18px;border-top:1px solid var(--line)}
+.panel-t:first-of-type{border-top:0;padding-top:0;margin-top:0}
+input[type=number]{width:96px;min-height:40px;padding:0 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);font:400 14px var(--f-mono)}
+
+/* C3 */
+.fieldgrid{display:grid;gap:6px 6px;width:max-content;min-width:100%}
+.fieldgrid .tok{grid-row:1}
+.brk{height:14px;border:2px solid var(--ink-2);border-top:0;border-radius:0 0 6px 6px;position:relative}
+.brk.s1{border-style:dashed}.brk.s2{border-style:dotted}.brk.s3{border-color:var(--ink-3)}
+.brk b{position:absolute;right:-2px;top:14px;font:400 11px/1.2 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.fieldnote{font-size:13px;color:var(--ink-2);margin:12px 0 0}
+
+/* C4 */
+.stackbar{display:flex;height:34px;border-radius:6px;overflow:hidden;border:1px solid var(--line)}
+.stackbar>div{min-width:2px}
+.sw-act{background:repeating-linear-gradient(45deg,var(--ink-3) 0 2px,transparent 2px 7px)}
+.sw-moe{background:var(--c-perp)}
+.sw-eng{background:radial-gradient(circle,var(--c-par) 1.6px,transparent 2px) 0 0/7px 7px,color-mix(in oklab,var(--c-par) 22%,var(--surface))}
+.sleg{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:6px}
+.sleg li{display:grid;grid-template-columns:22px minmax(0,1fr) auto auto;gap:10px;align-items:center;font-size:14px;color:var(--ink-2)}
+.sleg i{display:block;width:22px;height:14px;border-radius:3px;border:1px solid var(--line)}
+.sleg .v{font:500 13px var(--f-mono);color:var(--ink);text-align:right}
+.sleg .p{font:400 13px var(--f-mono);color:var(--ink-3);text-align:right;min-width:4.5em}
+@media (max-width:479px){.sleg li{grid-template-columns:22px minmax(0,1fr);row-gap:0}.sleg .v,.sleg .p{grid-column:2;text-align:left}}
+.fixed{font-size:14px;line-height:1.65;color:var(--ink);background:var(--accent-soft);border-radius:10px;padding:10px 14px;margin:14px 0 0}
+.marks{margin:8px 0 0;padding-left:1.2em;font-size:13px;line-height:1.6;color:var(--ink-2)}
+
+/* C5 */
+.caveat{font-size:14px;color:var(--ink);margin:-8px 0 16px}
+svg .hatch{fill:url(#c5-hatch)}
+svg .gpu{fill:var(--surface-2);stroke:var(--ink-3);stroke-width:1}
+svg .eng{fill:var(--c-par)}
+svg .xfer{fill:var(--c-par);opacity:.55}
+
+/* compare table, dl */
+dl.gl{max-width:700px;margin:8px 0 24px}
+dl.gl dt{font-weight:600;margin-top:10px}
+dl.gl dd{margin:2px 0 0;color:var(--ink-2);font-size:15px}
+.ext{font:500 12px/1 var(--f-body);color:var(--accent);border:1px solid var(--accent);border-radius:999px;padding:4px 8px;margin-right:6px}
+@media (max-width:599px){.c40{display:none}}
+details.more{max-width:700px;margin:16px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.more>summary{cursor:pointer;padding:12px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center}
+details.more>.qa{padding:0 20px 16px;font-size:15px}
+.c40m{display:none}
+@media (max-width:599px){.c40m{display:block}}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 90</span>
+  <span class="ttl">條件記憶：用查表補上 MoE 之外的另一條稀疏軸</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 90</b> · 互動教學 · arXiv 2601.07372</div>
+  <h1>條件記憶：用查表補上 <span class="lat">MoE</span> 之外的另一條稀疏軸</h1>
+  <p class="dek">這篇論文在 Transformer 中加入以 N-gram 雜湊查表的記憶模組 Engram，並研究總參數固定時，記憶與專家該如何分配。</p>
+  <p class="sub">MoE 與「稀疏」的定義見 <a href="#why">01</a>、<a href="#budget">02</a> 節。</p>
+  <p class="byline">Xin Cheng、Rui Tian 等（北京大學、DeepSeek-AI）〈Conditional Memory via Scalable Lookup: A New Axis of Sparsity for Large Language Models〉</p>
+  <div class="tokscroll" role="img" aria-label="Fig. 1 例句的 token：Only Alexander the Great could tame the horse Bucephalus.，其中 Alexander the Great 三個 token 以外框標出"><div class="band" id="hero-band" aria-hidden="true"></div></div>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 查表</span><p>Engram 把目前 token 與前一、兩個 token 組成的片段當作鍵，直接在大型嵌入表中查出一個向量。不論表多大，每個 token 只查固定幾格。</p></div>
+    <div class="fact"><span class="n">02 · 分配</span><p>總參數與每個 token 的計算量都固定時，把約 20%–25% 的閒置參數從專家移到記憶，驗證集上的損失（越低越好）最小。</p></div>
+    <div class="fact"><span class="n">03 · 規模</span><p>27B 模型加入記憶後各類測驗都進步，一般推理題進步最多。100B 參數的表放在 CPU 記憶體，推論速度只下降不到 3%。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2601.07372">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-90">在關聯圖中查看</a>
+    <a class="btn" href="engram-lineage-overview.html">研究筆記總覽</a>
+  </div>
+</section>
+
+<!-- S1a =========================================================== -->
+<section class="ch" id="why" data-toc="01" data-tt="計算與查表">
+  <div class="ch-num">01 · 計算與查表</div>
+  <h2>語言模型同時需要計算與查表</h2>
+  <div class="prose">
+    <p>作者把語言建模分成兩種性質不同的子任務（Sec. 1）。第一種是<b>組合推理</b>：依上下文把多個資訊組合起來，需要深層、動態的計算。第二種是<b>知識檢索</b>：文本中有相當比例是局部、靜態、刻板的片段，例如具名實體（“Alexander the Great”）與固定片語（“By the way”）。這類片段只依賴前面少數幾個 token，經典的 N-gram 模型就能以查表的方式低成本捕捉。</p>
+    <p>問題在於標準 Transformer 沒有查表的基本運算。局部靜態模式原本可以查表解決，Transformer 卻只能用前幾層的多層注意力與 FFN 逐步「算出」它們，等於用序列深度重建一張靜態查找表。作者引用的例子是 Table 3。這張表是<b>外部例子</b>，轉載自 Ghandeharioun et al. (2024) 以 PatchScope 對另一個模型的分析，不是本文對 Engram 或 MoE-27B 的量測：模型讀到 “Wales” 時，第 1–2 層只把它解讀為英國的一個國家，到第 6 層才解析成完整的實體 “Diana, Princess of Wales”。Diana 這個實體要到第 6 層才解析完成，作者把它當作證據：前 5 層都花在逐步拼出一個固定的實體上，也就是把層數用來重建一張靜態查找表。作者的措辭是，這個過程「理論上可以用一次知識查找完成」（原文 “could theoretically be identified via a knowledge lookup operation”；Sec. 6.1）。</p>
+  </div>
+  <div class="tscroll" style="max-width:760px"><table>
+    <caption><span class="ext">外部例子</span>Table 3：轉載自 Ghandeharioun et al. 2024（PatchScope），最後一個 token “Wales” 在各層的解讀</caption>
+    <thead><tr><th>層</th><th>PatchScope 產生的解讀</th><th>原作者的說明</th></tr></thead><tbody>
+    <tr><td class="num">1–2</td><td>Country in the United Kingdom</td><td>Wales</td></tr>
+    <tr><td class="num">3</td><td>Country in Europe</td><td>Wales</td></tr>
+    <tr><td class="num">4</td><td>Title held by female sovereigns in their own right or by queens consort</td><td>Princess of Wales（未特指）</td></tr>
+    <tr><td class="num">5</td><td>Title given to the wife of the Prince of Wales (and later King)</td><td>Princess of Wales（未特指）</td></tr>
+    <tr class="hl"><td class="num">6</td><td>Diana, Princess of Wales (1961-1997), the first wife of Prince Charles, Prince of Wales, …</td><td>Diana, Princess of Wales</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>據此，作者提出與「條件計算」互補的另一條稀疏軸：<b>條件記憶（conditional memory）</b>。條件記憶指依輸入內容直接查出一段儲存的參數，而不是經由多層計算重建它。本文以 <b>Engram</b> 模組實作條件記憶：用目前位置結尾的 2-gram、3-gram 當作鍵，在大型嵌入表中以 O(1) 查出向量，再依目前的隱藏狀態調節後加回模型（Sec. 2）。下一節先說明條件計算（MoE）如何讓參數變多而計算量不變，條件記憶沿用同一個預算框架。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">作者把語言建模分成哪兩種子任務？Transformer 處理第二種有什麼問題？</p>
+    <p class="a">組合推理與知識檢索；局部靜態模式本可查表，但 Transformer 沒有查表運算，要用多層注意力與 FFN 重建；作者引用的外部例子 Table 3（轉載自 Ghandeharioun et al. 2024）中，Diana 實體到第 6 層才解析完成（Sec. 1、6.1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="ffn-as-key-value-memory.html">FFN 作為 key-value 記憶體與深度使用效率</a>、<a href="engram-lineage-overview.html">Engram 條件式記憶的研究脈絡總覽</a></p>
+</section>
+
+<!-- S1b =========================================================== -->
+<section class="ch" id="budget" data-toc="02" data-tt="參數預算">
+  <div class="ch-num">02 · 參數預算</div>
+  <h2>MoE 用路由增加參數而不增加每個 token 的計算量</h2>
+  <div class="prose">
+    <p><b>MoE（Mixture-of-Experts）</b>把 Transformer 每層的 FFN 換成多個並列的「專家」FFN。每層有一個<b>路由器（router）</b>，依目前 token 的隱藏狀態為它打分，只選分數最高的 top-$k_{\text{act}}$ 個專家計算，其餘專家對這個 token 不做任何運算。DeepSeekMoE 另有<b>共享專家</b>，每個 token 都會經過。本文的 MoE-27B 有 2 個共享專家與 72 個路由專家，每個 token 選 top-6。這種依輸入選擇部分參數的做法稱為<b>條件計算</b>（Shazeer et al. 2017 提出稀疏閘控 MoE，見研究筆記）。</p>
+    <p>為了比較不同架構，作者定義三種參數量（Sec. 3.1）：</p>
+    <ul>
+      <li>$P_{\text{tot}}$：總可訓練參數，<b>不含詞嵌入與 LM head</b>。</li>
+      <li>$P_{\text{act}}$：每個 token 實際啟用的參數，決定每個 token 的計算量（FLOPs）。</li>
+      <li>$P_{\text{sparse}}=P_{\text{tot}}-P_{\text{act}}$：未啟用的參數。它增加模型容量，但不增加每個 token 的 FLOPs。</li>
+    </ul>
+    <p>以 Table 1 為例，MoE-27B 的總參數為 26.7B，每個 token 啟用 3.8B，大部分參數屬於 $P_{\text{sparse}}$。MoE 增加 $P_{\text{tot}}$ 而不增加 FLOPs 的方式是：未被路由器選中的專家參數不參與該 token 的計算。Engram 的方式是：嵌入表可以非常大，但每個 token 只取固定數量的槽（每個階數、每個雜湊頭各一列），所以增加槽數只增加 $P_{\text{tot}}$，不增加 $P_{\text{act}}$。兩者都把參數放進 $P_{\text{sparse}}$，差別在選擇的依據。</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table class="stack">
+    <caption>條件計算與條件記憶的對照</caption>
+    <thead><tr><th></th><th>條件計算（MoE）</th><th>條件記憶（Engram）</th></tr></thead><tbody>
+    <tr><td>依據什麼選</td><td data-h="MoE">隱藏狀態，經路由器打分</td><td data-h="Engram">輸入 token 組成的後綴 N-gram，經雜湊</td></tr>
+    <tr><td>選到什麼</td><td data-h="MoE">top-$k_{\text{act}}$ 個專家 FFN</td><td data-h="Engram">每個雜湊頭的嵌入表中的一列</td></tr>
+    <tr><td>增加什麼</td><td data-h="MoE">專家數</td><td data-h="Engram">嵌入表的列數（槽數）</td></tr>
+    <tr><td>每 token 計算量</td><td data-h="MoE">固定（只算被選中的專家）</td><td data-h="Engram">固定（只取固定數量的槽）</td></tr>
+    </tbody></table></div>
+  <details class="sym"><summary>本節符號</summary><div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$k_{\text{act}}$</td><td>MoE 每個 token 選用的路由專家數（本文為 6）</td></tr>
+    <tr><td>$P_{\text{tot}}$</td><td>總可訓練參數（不含詞嵌入與 LM head）</td></tr>
+    <tr><td>$P_{\text{act}}$</td><td>每個 token 啟用的參數</td></tr>
+    <tr><td>$P_{\text{sparse}}$</td><td>未啟用參數 $P_{\text{tot}}-P_{\text{act}}$</td></tr>
+    </tbody></table></div></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$P_{\text{tot}}$、$P_{\text{act}}$、$P_{\text{sparse}}$ 各是什麼？MoE 與 Engram 如何增加 $P_{\text{tot}}$ 而不增加 FLOPs？</p>
+    <p class="a">總可訓練參數（不含詞嵌入與 LM head）、每 token 啟用參數、$P_{\text{tot}}-P_{\text{act}}$；MoE 未被選中的專家、Engram 每 token 只取固定數量的槽（Sec. 3.1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="moe-conditional-computation-lineage.html">MoE 與條件式計算的發展</a></p>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="compress" data-toc="03" data-tt="tokenizer 壓縮">
+  <div class="ch-num">03 · tokenizer 壓縮</div>
+  <h2>先把語意相同的 token 合併</h2>
+  <div class="prose">
+    <p><b>N-gram</b> 是連續 $n$ 個 token 組成的片段；<b>N-gram 嵌入</b>是為每個 N-gram 配置一個可學向量，使用時依片段直接取出，屬於 O(1) 的查表，不需要經過任何矩陣乘法。Engram 在查表之前先處理 tokenizer 的一個特性：子詞 tokenizer 為了能把 ID 無損地還原成原文，常給語意相同的字串不同 ID，例如 <code>Apple</code> 與 <code>␣apple</code>（<code>␣</code> 表示前導空白）。若直接用原始 ID 組成 N-gram，同一個片語會被拆成多個互不相干的鍵。</p>
+    <p>作者因此預先計算一個滿射 $\mathcal P:V\to V'$（Sec. 2.2）：依正規化後的文字（NFKC、轉小寫等）把語意相同的原始 ID 合併成同一個標準 ID，$x'_t=\mathcal P(x_t)$。對 128k 的 tokenizer，有效詞表縮小 23%（App. C 的 Table 6 寫 23.43%）。官方示範程式的正規化順序是 NFKC → NFD → 去除重音 → 小寫 → 連續空白改為單一空格 → 去頭尾空白；去頭尾空白使 <code>␣apple</code> 與 <code>apple</code> 合併。</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table>
+    <caption>Table 6：合併最多的前五個標準 token</caption>
+    <thead><tr><th class="num">排名</th><th class="num">合併數</th><th>標準 token</th><th>合併的原始 token（節錄）</th></tr></thead><tbody>
+    <tr><td class="num">1</td><td class="num">163</td><td><code>␣</code></td><td>所有空白類 token：<code>\t</code>、<code>\n</code>、<code>␣␣</code> 等</td></tr>
+    <tr><td class="num">2</td><td class="num">54</td><td><code>a</code></td><td><code>A</code>、<code>a</code>、<code>␣a</code>、<code>á</code>、<code>ä</code> 等</td></tr>
+    <tr><td class="num">3</td><td class="num">40</td><td><code>o</code></td><td><code>O</code>、<code>o</code>、<code>␣o</code>、<code>ó</code> 等</td></tr>
+    <tr><td class="num">4</td><td class="num">35</td><td><code>e</code></td><td><code>E</code>、<code>e</code>、<code>␣e</code>、<code>é</code> 等</td></tr>
+    <tr><td class="num">5</td><td class="num">30</td><td><code>i</code></td><td><code>I</code>、<code>i</code>、<code>␣i</code>、<code>í</code> 等</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>壓縮後，位置 $t$ 結尾的後綴 $n$-gram 寫成 $g_{t,n}=(x'_{t-n+1},\dots,x'_t)$。Engram-27B 的最大階數 $N=3$，所以每個位置使用 $g_{t,2}$ 與 $g_{t,3}$ 兩個鍵。序列開頭不足 $n$ 個 token 時，示範程式以 pad ID 補齊。不同的 $n$-gram 有 $|V'|^n$ 種可能，無法逐一配置參數，所以下一步用雜湊把它們映到大小固定的表中。</p>
+  </div>
+  <details class="sym"><summary>本節符號</summary><div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$x_t$、$x'_t$</td><td>位置 $t$ 的原始 token ID、壓縮後的標準 ID</td></tr>
+    <tr><td>$V$、$V'$</td><td>原始詞表、壓縮後詞表</td></tr>
+    <tr><td>$\mathcal P$</td><td>tokenizer 壓縮的滿射 $V\to V'$（論文寫作 P）</td></tr>
+    <tr><td>$g_{t,n}$</td><td>位置 $t$ 結尾的後綴 $n$-gram</td></tr>
+    <tr><td>$N$</td><td>最大 N-gram 階數（Engram-27B 為 3）</td></tr>
+    </tbody></table></div></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$\mathcal P$ 做什麼？128k tokenizer 縮小多少？</p>
+    <p class="a">依 NFKC、小寫等正規化把語意相同的原始 ID 合併成標準 ID 的滿射 $V\to V'$；有效詞表縮小 23%（Table 6：23.43%）（Sec. 2.2）。</p>
+  </div></details>
+</section>
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="hash" data-toc="04" data-tt="多頭雜湊">
+  <div class="ch-num">04 · 多頭雜湊</div>
+  <h2>多個雜湊頭把 N-gram 映到嵌入表</h2>
+  <div class="prose">
+    <p>Engram 沿用 Tito Svenstrup et al. (2017) 的雜湊嵌入（Hash Embeddings，見研究筆記）。對每個階數 $n$，模型準備 $K$ 個雜湊頭；第 $k$ 個頭有自己的雜湊函數 $\varphi_{n,k}$ 與嵌入表 $\mathbf E_{n,k}$，表的列數 $M_{n,k}$ 取質數（Sec. 2.2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$z_{t,n,k}\triangleq\varphi_{n,k}(g_{t,n}),\qquad \mathbf e_{t,n,k}=\mathbf E_{n,k}[z_{t,n,k}]$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="eq"><div class="eq-m">$$\mathbf e_t\triangleq\big\Vert_{n=2}^{N}\big\Vert_{k=1}^{K}\,\mathbf e_{t,n,k}$$</div><span class="eq-n">Eq. 2</span></div>
+  <div class="prose">
+    <p>$z_{t,n,k}$ 是雜湊得到的列索引，$\mathbf e_{t,n,k}$ 是查出的向量，$\Vert$ 表示串接。所有頭的向量串接成記憶向量 $\mathbf e_t\in\mathbb R^{d_{\text{mem}}}$，Engram-27B 的 $d_{\text{mem}}=1280$、$K=8$。$n\in\{2,3\}$ 共 16 個頭，所以每列是 $1280/16=80$ 維<span class="tag est">推定</span>。論文只寫 $\varphi_{n,k}$ 是輕量的乘法–XOR 雜湊。官方示範程式的寫法是：每層抽 $N$ 個奇數乘數 $m_0,\dots,m_{N-1}$，計算 $\text{mix}=(x'_t m_0)\oplus(x'_{t-1}m_1)\oplus\cdots$（$\oplus$ 為逐位元 XOR，共 $n$ 項），第 $k$ 頭的索引為 $\text{mix}\bmod M_{n,k}$；$M_{n,k}$ 是從設定的表大小往上找、彼此不重複的質數<span class="tag demo">示範程式</span>。</p>
+    <p>表的單位<span class="tag est">推定</span>：Table 5 的 Engram Vocab Size 2,262,400（27B）解讀為每頭列數，等於 129,280 × 17.5。Engram 參數 $=2\text{ 層}\times2\text{ 階}\times8\text{ 頭}\times2{,}262{,}400\times80=5.79$B，與論文的 5.7B 一致；40B 的 7,239,680 列給 18.53B，論文寫 18.5B。</p>
+    <h3>碰撞：多頭降低「無法區分」的機率</h3>
+    <p>雜湊會讓不同的 $n$-gram 落在同一格（碰撞）。以下是本頁的近似分析<span class="tag">本頁推導</span>。設表中共有 $U$ 個不同的 $n$-gram，單一頭有 $M_{n,k}$ 格（下文簡寫為 $M$）；$U$ 是讀者假設的值，論文沒有給出。某個 $n$-gram 在一個頭上與至少一個其他 $n$-gram 同格的機率為</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$p_1=1-\left(1-\tfrac1M\right)^{U-1}$$</div><span class="eq-n">本頁推導</span></div>
+  <div class="prose">
+    <p>若各頭近似獨立，$K$ 個頭都與別人同格（沒有任何一個無碰撞的頭）的機率為 $p_1^K$。例：$U=10^6$ 個不同 2-gram、每頭 $M=2{,}262{,}400$ 格時，$p_1\approx0.357$，單頭約三分之一的 2-gram 會與別人共用一格；8 個頭都與別人同格的機率 $p_1^8\approx2.65\times10^{-4}$，約 $2.7\times10^{-4}$。只要還有一個無碰撞的頭，串接後的 $\mathbf e_t$ 就與其他 $n$-gram 不同。</p>
+    <p>「與某一個 $n$-gram 在 $K$ 頭全部同格」比上述機率更罕見，但示範程式的 $K$ 個頭共用同一個 mix，只是模數不同。由中國餘數定理，兩個 $n$-gram 在 $K$ 頭全部同格，若且唯若兩者的 mix 對 $\prod_k M_{n,k}$ 同餘；$K=8$ 時這個乘積約 $10^{51}$，遠大於 mix 的範圍 $R\approx2^{48}$<span class="tag est">推定</span>，所以全部同格只在 mix 完全相同時發生。全部同格的期望個數因此寫成 $E_{\text{full}}\approx(U-1)/\min(M^K,R)$：$U=10^6$ 時獨立模型給 $10^{-44.8}$，mix 下限給 $10^{-8.45}$；$U=10^9$ 時下限約 $3.6\times10^{-6}$，比獨立模型高約 36 個數量級。這個值仍然很小，但不能說「8 個頭的組合必然唯一」。正式模型的雜湊細節論文沒有寫，$R$ 只依示範程式推定。</p>
+  </div>
+
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>從 token 到嵌入表索引</h3></div>
+    <p class="plate-lead">選一個句子與位置 t：第一列是原始 token 與原始 ID，第二列是正規化後的字串與標準 ID；下方是 2-gram、3-gram 在 K 個頭上的索引。</p>
+    <p class="panel-t">A · 管線<span class="tag demo">示範程式</span></p>
+    <div class="ctl">
+      <div class="ctl-row" role="group" aria-label="預設句"><button class="chip" type="button" data-s="0" aria-pressed="true">Fig. 1 例句</button><button class="chip" type="button" data-s="1" aria-pressed="false">壓縮示例</button></div>
+      <label class="lbl" for="c1-text">輸入文字（最多 200 字元、40 個 token）</label>
+      <textarea id="c1-text" maxlength="200" spellcheck="false"></textarea>
+      <p class="warn hide" id="c1-trunc">超過 40 個 token，只使用前 40 個。</p>
+      <div class="tokscroll" id="c1-bandwrap"><div class="band" id="c1-band" role="toolbar" aria-label="token 帶：左右方向鍵選擇位置 t"></div></div>
+      <div class="legend"><span class="lg par">2-gram 視窗</span><span class="lg npar">3-gram 視窗</span><span class="lg">底色＝與其他原始 token 合併</span></div>
+      <div class="pg two">
+        <div class="rng"><label class="lbl" for="c1-t">位置 t（0 到 T−1）<output id="c1-to">3</output></label><input id="c1-t" type="range" min="0" max="9" step="1" value="3"></div>
+        <div><span class="lbl">每個階數的頭數 K</span><div class="seg" id="c1-K" role="group" aria-label="頭數 K"><button type="button" data-v="1" aria-pressed="false">1</button><button type="button" data-v="2" aria-pressed="false">2</button><button type="button" data-v="4" aria-pressed="false">4</button><button type="button" data-v="8" aria-pressed="true">8</button></div></div>
+      </div>
+      <p class="readout" id="c1-ro"></p>
+      <div id="c1-idx"></div>
+      <p class="idxlab">串接 → e<sub>t</sub>（2K 段）</p>
+      <div class="concat" id="c1-cat" aria-hidden="true"></div>
+    </div>
+    <p class="panel-t">B · 碰撞<span class="tag">本頁推導</span></p>
+    <div class="pg two">
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1-U">不同 n-gram 數 U<output id="c1-Uo"></output></label><input id="c1-U" type="range" min="3" max="10" step="0.001" value="6"></div>
+        <div class="ctl-row" role="group" aria-label="U 預設值"><button class="chip" type="button" data-u="20000" aria-pressed="false">U = 2×10⁴</button><button class="chip" type="button" data-u="1000000" aria-pressed="true">U = 10⁶</button><button class="chip" type="button" data-u="1000000000" aria-pressed="false">U = 10⁹</button></div>
+        <div class="rng"><label class="lbl" for="c1-M"><span>每頭表大小 M<sub>n,k</sub></span><output id="c1-Mo"></output></label><input id="c1-M" type="range" min="3" max="8" step="0.001" value="6.3546"></div>
+        <div class="ctl-row" role="group" aria-label="M 預設值"><button class="chip" type="button" data-m="10000" aria-pressed="false">10,000</button><button class="chip" type="button" data-m="2262400" aria-pressed="true">Engram-27B 的表大小（推定）</button></div>
+        <div class="rng"><label class="lbl" for="c1-KB">頭數 K<output id="c1-KBo">8</output></label><input id="c1-KB" type="range" min="1" max="16" step="1" value="8"></div>
+        <p class="readout" id="c1-ro2"></p>
+      </div>
+      <div class="fig" id="c1-fig"><svg role="img" aria-label="K 個頭都同格的機率對 K 的長條圖"></svg></div>
+    </div>
+    <div class="ctl" style="margin-top:16px">
+      <div class="ctl-row"><button class="small-btn pri" type="button" id="c1-run">用示範雜湊實測</button><span class="note" id="c1-runmsg"></span></div>
+      <p class="readout" id="c1-emp">按下按鈕後，列舉 U 個 2-gram 並以面板 A 的乘數與質數表大小計算三個比例。</p>
+    </div>
+    <p class="plate-f">玩具分詞器：以正規表示式切出「前導空白＋字母數字」或單一符號，不是 DeepSeek-V3 tokenizer。乘數由 mulberry32(0) 產生（572152369、708123、479473029）；面板 A 的表大小固定從 10,000 往上取質數。實測列舉 (x′ₜ₋₁, x′ₜ) = (⌊i/1000⌋+1, (i mod 1000)+1)，分母為 U；解析值以第一個質數 P₀ 計算。讀數由本頁依 Eq. 1–2 與上述推導即時計算。</p>
+    <p class="sr" aria-live="polite" id="c1-live"></p>
+  </div>
+  <details class="sym"><summary>本節符號</summary><div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$K$、$k$</td><td>每個階數的雜湊頭數（Engram-27B 為 8）、頭的編號</td></tr>
+    <tr><td>$\varphi_{n,k}$、$M_{n,k}$、$\mathbf E_{n,k}$</td><td>第 $(n,k)$ 頭的雜湊函數、表的列數（質數）、嵌入表</td></tr>
+    <tr><td>$z_{t,n,k}$、$\mathbf e_{t,n,k}$</td><td>列索引、查出的向量</td></tr>
+    <tr><td>$\mathbf e_t$、$d_{\text{mem}}$</td><td>串接後的記憶向量、其維度（1280）</td></tr>
+    <tr><td>$U$、$p_1$</td><td>表中不同 $n$-gram 數（假設值）、單頭同格機率</td></tr>
+    </tbody></table></div></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">表中有 $U=10^6$ 個不同 2-gram、每頭 $M=2{,}262{,}400$ 格時，單頭碰撞機率與 8 頭全部碰撞機率約多少？</p>
+    <p class="a">$p_1=1-(1-1/M)^{U-1}\approx0.357$；8 頭都與別人同格 $p_1^8\approx2.7\times10^{-4}$〔本頁推導，假設各頭近似獨立〕（Eq. 1–2）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="ngram-hash-embedding-lineage.html">N-gram 與 hash 嵌入的發展</a></p>
+</section>
+
+<!-- S4 ============================================================ -->
+<section class="ch" id="gate" data-toc="05" data-tt="閘門">
+  <div class="ch-num">05 · 閘門</div>
+  <h2>閘門 α 依隱藏狀態縮放記憶向量</h2>
+  <div class="prose">
+    <p>雜湊查出的 $\mathbf e_t$ 只由輸入 token 決定，不看更遠的上下文，也會受碰撞與多義影響。Engram 因此以注意力為藍本，用目前的隱藏狀態 $\mathbf h_t$ 當 Query，記憶 $\mathbf e_t$ 同時產生 Key 與 Value（Sec. 2.3）。$\mathbf h_t$ 已經過前面的注意力層，彙整了整個前綴的上下文。</p>
+    <p>式中的 <b>RMSNorm</b> 把向量除以其元素的均方根，再乘以可學的增益：$\mathrm{RMSNorm}(\mathbf y)=\mathbf y/\sqrt{\tfrac1d\sum_i y_i^2}$（再逐元素乘以增益）。作者對 Query、Key 都做 RMSNorm，目的是讓梯度穩定。</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbf k_t=\mathbf W_K\mathbf e_t,\qquad \mathbf v_t=\mathbf W_V\mathbf e_t$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="eq"><div class="eq-m">$$s_t=\frac{\mathrm{RMSNorm}(\mathbf h_t)^\top\mathrm{RMSNorm}(\mathbf k_t)}{\sqrt d}$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="eq"><div class="eq-m">$$\alpha_t=\sigma(s_t),\qquad \tilde{\mathbf v}_t=\alpha_t\cdot\mathbf v_t$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="prose">
+    <p>合起來寫，閘門為 $\alpha_t=\sigma\big(\mathrm{RMSNorm}(\mathbf h_t)^\top\mathrm{RMSNorm}(\mathbf k_t)/\sqrt d\big)$，$\sigma$ 是 sigmoid，$\alpha_t\in(0,1)$ 是一個純量，乘在整個 Value 向量上。作者的解釋：若查出的記憶與目前上下文矛盾，$\alpha_t$ 趨近 0，該位置的記憶向量幾乎不加入殘差流。</p>
+    <p>引數的範圍<span class="tag">本頁推導</span>：假設 RMSNorm 增益為 1 並忽略 eps，正規化後的向量長度恰為 $\sqrt d$，所以 sigmoid 的引數等於 $\sqrt d\cos\theta$，$\theta$ 是 $\mathbf h_t$ 與 $\mathbf k_t$ 的夾角。在這個假設下，$d=2560$ 時引數的範圍是 $\pm50.6$，只有 $|\cos\theta|<5/\sqrt{2560}=0.099$ 時 $|s|<5$，閘門幾乎只取 0 或 1。論文的 RMSNorm 增益是可學的，實際範圍隨增益改變，$\pm50.6$ 只是增益為 1 時的值。下圖以 $s=\gamma\sqrt d\cos\theta$ 表示，$\gamma$ 代表學到的增益對引數的整體縮放（本頁簡化）。示範程式在 sigmoid 前多做一步帶號平方根 $s\mapsto\mathrm{sign}(s)\sqrt{|s|}$，論文 Eq. 4 沒有這一步；下圖提供切換，不宣稱哪一個是正式模型的實作。</p>
+  </div>
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>閘門 α 與夾角、維度的關係</h3></div>
+    <p class="plate-lead">調整 cos θ 與 d：曲線圖是 α 對 cos θ（或 s）的關係，小圓圖是 h 與 k 的夾角。d 越大，曲線越接近階梯。</p>
+    <div class="pg two">
+      <div>
+        <div class="fig" id="c2-fig"><svg role="img" aria-label="α 曲線"></svg></div>
+        <div class="legend"><span class="lg acc">Eq. 4</span><span class="lg ref">示範程式（帶號平方根）</span><span class="lg pt">目前的點</span></div>
+      </div>
+      <div class="ctl">
+        <div class="fig" id="c2-circ" style="max-width:220px"><svg role="img" aria-label="h 與 k 的夾角"></svg></div>
+        <div><span class="lbl">隱藏維度 d</span><div class="seg" id="c2-d" role="group" aria-label="隱藏維度 d"><button type="button" data-v="16" aria-pressed="false">16</button><button type="button" data-v="64" aria-pressed="false">64</button><button type="button" data-v="256" aria-pressed="false">256</button><button type="button" data-v="1024" aria-pressed="false">1024</button><button type="button" data-v="2560" aria-pressed="true">2560</button><button type="button" data-v="4096" aria-pressed="false">4096</button></div></div>
+        <div class="rng"><label class="lbl" for="c2-c">cos θ<output id="c2-co">0.300</output></label><input id="c2-c" type="range" min="-1" max="1" step="0.001" value="0.3"></div>
+        <div class="ctl-row"><label class="lbl" for="c2-cn">直接輸入 cos θ</label><input id="c2-cn" type="number" min="-1" max="1" step="0.001" value="0.3"></div>
+        <div class="rng"><label class="lbl" for="c2-g">增益縮放 γ（本頁簡化）<output id="c2-go">1.00</output></label><input id="c2-g" type="range" min="-1.30103" max="0.30103" step="0.001" value="0"></div>
+        <label class="chk"><input type="checkbox" id="c2-sq">示範程式：sigmoid 前取帶號平方根</label>
+        <div><span class="lbl">右圖橫軸</span><div class="seg" id="c2-view" role="group" aria-label="右圖橫軸"><button type="button" data-v="c" aria-pressed="true">cos θ</button><button type="button" data-v="s" aria-pressed="false">s</button></div></div>
+        <p class="readout" id="c2-ro"></p>
+      </div>
+    </div>
+    <p class="idxlab">ṽ<sub>t</sub> = α · v<sub>t</sub> 的長度比例</p>
+    <div class="stackbar" aria-hidden="true" style="height:16px"><div class="sw-eng" id="c2-bar" style="width:50%"></div></div>
+    <p class="plate-f">s = γ√d·cos θ（假設 RMSNorm 增益為 1、忽略 eps，再以 γ 整體縮放；本頁推導）。α 以數值穩定的 sigmoid 計算，1 − α 另以 σ(−s) 計算。帶號平方根取自示範程式，論文 Eq. 4 沒有這一步。讀數由本頁依 Eq. 4 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <details class="sym"><summary>本節符號</summary><div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$\mathbf h_t$、$d$</td><td>位置 $t$ 的隱藏向量、隱藏維度（主幹 2560）</td></tr>
+    <tr><td>$\mathbf W_K,\mathbf W_V$</td><td>Key、Value 投影矩陣</td></tr>
+    <tr><td>$\alpha_t$、$\sigma$</td><td>純量閘門、sigmoid</td></tr>
+    <tr><td>$\tilde{\mathbf v}_t$</td><td>閘門縮放後的 Value</td></tr>
+    <tr><td>$\theta$、$\gamma$</td><td>$\mathbf h_t$ 與 $\mathbf k_t$ 的夾角、增益縮放（本頁簡化）</td></tr>
+    </tbody></table></div></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">寫出 Eq. 4。假設 RMSNorm 增益為 1、忽略 eps、$d=2560$，sigmoid 的引數範圍是多少？</p>
+    <p class="a">$\alpha_t=\sigma(\mathrm{RMSNorm}(\mathbf h_t)^\top\mathrm{RMSNorm}(\mathbf k_t)/\sqrt d)$，記憶與上下文矛盾時趨近 0；在此假設下引數為 $\sqrt d\cos\theta$，範圍 $\pm50.6$；實際增益可學，範圍隨之改變〔本頁推導〕。</p>
+  </div></details>
+</section>
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="conv" data-toc="06" data-tt="短卷積">
+  <div class="ch-num">06 · 短卷積</div>
+  <h2>短卷積擴大讀取範圍，殘差連接保留未經卷積的輸入</h2>
+  <div class="prose">
+    <p>閘門只看單一位置。作者在閘門之後加一層短卷積，擴大感受野並增加非線性（Sec. 2.3）。把所有位置的 $\tilde{\mathbf v}_t$ 排成矩陣 $\tilde{\mathbf V}$：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbf Y=\mathrm{SiLU}\big(\mathrm{Conv1D}(\mathrm{RMSNorm}(\tilde{\mathbf V}))\big)+\tilde{\mathbf V}$$</div><span class="eq-n">Eq. 5</span></div>
+  <div class="prose">
+    <p>Conv1D 是<b>深度（depthwise）因果卷積</b>：每個維度各自卷積、只讀目前與之前的位置；核大小 $w=4$，<b>擴張率（dilation）</b> $\delta$ 等於最大 N-gram 階數 $N=3$，激活函數為 SiLU，最後加上殘差 $\tilde{\mathbf V}$。結果以殘差方式融合進主幹：$\mathbf H^{(\ell)}\leftarrow\mathbf H^{(\ell)}+\mathbf Y$，之後接標準的 Attention 與 MoE。Engram 只插在部分層，Engram-27B 是第 2 與第 15 層。</p>
+    <p>卷積參數初始化為 0。訓練開始時 $\mathrm{Conv1D}(\cdot)=0$，而 $\mathrm{SiLU}(0)=0$，所以 $\mathbf Y=\tilde{\mathbf V}$：零初始化使模組一開始只是把閘門後的記憶加回殘差流，作者稱之為「strictly preserve the identity mapping」（Sec. 4.1）。</p>
+    <p>讀取範圍<span class="tag">本頁推導</span>：卷積在位置 $t$ 讀取 $t,\ t-\delta,\ t-2\delta,\ t-3\delta$ 四個位置的 $\tilde{\mathbf v}$。依 Eq. 2，每個位置的查表內容同時包含結尾於該處的 2-gram 與 3-gram，3-gram 的視窗涵蓋了 2-gram 的視窗。$\delta=N=3$ 時，四個 3-gram 視窗剛好首尾相接、不重疊，查表內容涵蓋連續 $wN=12$ 個位置；$\delta=1$ 時視窗重疊，只涵蓋 $N+w-1=6$ 個。位置靠近句首時，部分位置落在句首以前，由 pad 補齊：下圖預設的 $t=9$ 涵蓋 10 個句內 token 加 2 個 pad。這裡只計算查表內容的來源；閘門 $\alpha_{t'}$ 依賴 $\mathbf h_{t'}$，而 $\mathbf h_{t'}$ 經注意力看過整個前綴。</p>
+  </div>
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>卷積讀到哪些 token</h3></div>
+    <p class="plate-lead">點選位置 t：每一列括號是一個卷積 tap 讀到的 N-gram 視窗，底色格是所有視窗的聯集。</p>
+    <div class="tokscroll"><div class="fieldgrid" id="c3-grid" role="toolbar" aria-label="token 帶：左右方向鍵選擇位置 t"></div></div>
+    <p class="fieldnote">閘門 α 依賴 h，h 經注意力看過整個前綴；這張圖只標記查表內容的來源。</p>
+    <div class="pg two" style="margin-top:16px">
+      <div class="ctl">
+        <div><span class="lbl">最大階數 N</span><div class="seg" id="c3-N" role="group" aria-label="最大階數 N"><button type="button" data-v="2" aria-pressed="false">2</button><button type="button" data-v="3" aria-pressed="true">3</button><button type="button" data-v="4" aria-pressed="false">4</button></div></div>
+        <div class="rng"><label class="lbl" for="c3-w">核大小 w<output id="c3-wo">4</output></label><input id="c3-w" type="range" min="1" max="6" step="1" value="4"></div>
+        <div class="rng"><label class="lbl" for="c3-d">擴張率 δ<output id="c3-do">3</output></label><input id="c3-d" type="range" min="1" max="6" step="1" value="3" disabled></div>
+        <label class="chk"><input type="checkbox" id="c3-lock" checked>δ = N（論文設定）</label>
+        <label class="chk"><input type="checkbox" id="c3-zero">訓練開始時（卷積權重 = 0）</label>
+      </div>
+      <p class="readout" id="c3-ro"></p>
+    </div>
+    <p class="plate-f">tap j = 0…w−1 的中心為 t − jδ，視窗為中心往前 N 個位置；零初始化時只剩 j = 0。位置 &lt; 0 為 pad；pad 超過 3 格時，最左側收合成一格。讀數由本頁依 Eq. 5 的卷積設定即時計算（本頁推導）。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+  <details class="sym"><summary>本節符號</summary><div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$\tilde{\mathbf V}$、$\mathbf Y$</td><td>所有位置的閘門後 Value、Engram 模組的輸出</td></tr>
+    <tr><td>$w$、$\delta$</td><td>卷積核大小（4）、擴張率（= $N$）</td></tr>
+    <tr><td>$\mathbf H^{(\ell)}$</td><td>第 $\ell$ 層的隱藏狀態（$T\times d$）</td></tr>
+    </tbody></table></div></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 5 的卷積設定為何？$w=4,\delta=N=3$ 時查表內容涵蓋幾個位置？零初始化有什麼效果？</p>
+    <p class="a">深度因果卷積、核 4、擴張率 = 最大階數、SiLU、加殘差；涵蓋連續 12 個位置（來自四個首尾相接的 3-gram 視窗；靠近句首時含句首以前的 pad）〔本頁推導〕；零初始化使訓練開始時 $\mathbf Y=\tilde{\mathbf V}$（Sec. 2.3、4.1）。</p>
+  </div></details>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="branch" data-toc="07" data-tt="多分支">
+  <div class="ch-num">07 · 多分支</div>
+  <h2>多分支主幹共用記憶、各自計算閘門</h2>
+  <div class="prose">
+    <p>本文的主幹採 <b>mHC（Manifold-Constrained Hyper-Connections）</b>：殘差流不是一條向量，而是擴成 $M=4$ 條平行分支，各層以可學的連接權重混合這些分支（Sec. 2.4）。Engram 要為每條分支產生輸入，作者的做法是：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$s_t^{(m)}=\frac{\mathrm{RMSNorm}(\mathbf h_t^{(m)})^\top\mathrm{RMSNorm}(\mathbf W_K^{(m)}\mathbf e_t)}{\sqrt d}$$</div><span class="eq-n">Eq. 6</span></div>
+  <div class="eq"><div class="eq-m">$$\alpha_t^{(m)}=\sigma\big(s_t^{(m)}\big),\qquad \mathbf u_t^{(m)}=\alpha_t^{(m)}\cdot(\mathbf W_V\mathbf e_t)$$</div><span class="eq-n">Eq. 6</span></div>
+  <div class="prose">
+    <p>參數共享方式：一張嵌入表與一個 $\mathbf W_V$ 由 $M$ 條分支共享，每條分支只有自己的 $\mathbf W_K^{(m)}$。這樣閘門可以依分支的隱藏狀態 $\mathbf h_t^{(m)}$ 而不同，同時一個 $\mathbf W_V$ 與 $M$ 個 $\mathbf W_K^{(m)}$ 可以融合成一次稠密的 FP8 矩陣乘法，保留分支專屬閘門而不增加多次小矩陣乘法的開銷。Engram-27B 有 2 個 Engram 層 × 4 條分支，所以每個 token 共有 8 個閘門純量（Sec. 6.5 註腳 2）。消融中的「w/o multi branch」保留 mHC 主幹，但改為在 pre-mapping 後的 $\mathbf H_{pre}$ 上做單一融合（Sec. 6.2）。</p>
+  </div>
+  <details class="sym"><summary>本節符號</summary><div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$M$</td><td>mHC 的分支數（4）；與表大小 $M_{n,k}$ 不同</td></tr>
+    <tr><td>$\mathbf h_t^{(m)}$、$\mathbf W_K^{(m)}$</td><td>第 $m$ 條分支的隱藏向量、Key 投影</td></tr>
+    <tr><td>$\alpha_t^{(m)}$、$\mathbf u_t^{(m)}$</td><td>第 $m$ 條分支的閘門與輸出</td></tr>
+    </tbody></table></div></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">mHC 中哪些參數共享？為什麼？Engram-27B 每個 token 有幾個閘門？</p>
+    <p class="a">嵌入表與 $\mathbf W_V$ 共享，每分支一個 $\mathbf W_K^{(m)}$；可融合成一次 FP8 矩陣乘法並保留分支專屬閘門；2 層 × 4 分支 = 8 個（Sec. 2.4、6.5）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="engram-module-design.html">Engram 模組的設計</a></p>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="alloc" data-toc="08" data-tt="稀疏度分配">
+  <div class="ch-num">08 · 稀疏度分配</div>
+  <h2>固定預算下記憶與專家的分配呈 U 形</h2>
+  <div class="prose">
+    <p>有了兩種稀疏模組，作者提出<b>稀疏度分配（Sparsity Allocation）</b>問題：固定 $P_{\text{tot}}$ 與 $P_{\text{act}}$（等參數、等 FLOPs），未啟用的參數該如何分給 MoE 專家與 Engram？以 $\rho$ 表示未啟用參數分給 MoE 專家的比例（Sec. 3.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$P^{(\text{sparse})}_{\text{MoE}}=\rho\,P_{\text{sparse}},\qquad P_{\text{Engram}}=(1-\rho)\,P_{\text{sparse}}$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="prose">
+    <p>$\rho=1$ 是純 MoE。實驗只調整路由專家數與 Engram 槽數，其餘不變。作者用兩個計算預算（稀疏比 $P_{\text{tot}}/P_{\text{act}}\approx10$）：$C=2\times10^{20}$ FLOPs，$P_{\text{tot}}\approx5.7$B、$P_{\text{act}}=568$M、基準 106 個專家；$C=6\times10^{20}$ FLOPs，$P_{\text{tot}}\approx9.9$B、$P_{\text{act}}=993$M、基準 99 個專家。</p>
+    <p>結果：兩個預算下，驗證損失對 $\rho$ 都呈 U 形。$\rho\approx40\%$（5.7B 模型 46 個專家、9.9B 模型 43 個）時已與純 MoE 相當；最佳 $\rho\approx75\%$–$80\%$，也就是把約 20%–25% 的稀疏預算給 Engram。10B 預算下驗證損失由 1.7248（$\rho=100\%$）降到 1.7109（$\rho\approx80\%$），差 0.0139。作者的解釋：$\rho\to100\%$ 時缺少靜態模式的專用記憶，模型只能用深度與計算重建這些模式；$\rho\to0\%$ 時失去條件計算，記憶無法取代需要動態計算的部分。</p>
+    <p>專家數換算<span class="tag">本頁推導</span>：若 $\rho=1$ 時所有未啟用參數都是未被選中的路由專家（每個專家大小相同、top-6），則專家數 $E(\rho)=6+\rho(E_0-6)$。$E(0.4)=46.0$（$E_0=106$）與 43.2（$E_0=99$），與論文的 46、43 一致。Engram-27B 由 72 減到 55 個專家，$\rho=(55-6)/(72-6)=74.2\%$，論文寫 74.3%。這個值略低於小規模實驗找到的 75%–80% 區間；論文沒有說明為什麼選這個值，所以本頁只把它寫成「依小規模結果選擇的接近值」。</p>
+    <p>27B 的參數核對<span class="tag est">推定</span>：Table 1 的 26.7B 是否含詞嵌入無法確定。讀法 A：26.7B 含詞嵌入與 LM head（$2\times129{,}280\times2560=0.662$B），$P_{\text{tot}}=26.04$B、$P_{\text{sparse}}=22.24$B，$(1-49/66)\times22.24=5.73$B，與論文的 5.7B 一致。讀法 B：26.7B 已不含這兩者，$P_{\text{sparse}}=22.9$B，Engram 為 5.90B。讀法 A 較接近 5.7B，下圖的 27B 組採用讀法 A。</p>
+    <p>作者另外固定 3B MoE 主幹，把 Engram 的槽數 $M_{\text{slot}}$ 由 $2.58\times10^5$ 掃到 $10^7$（最多增加約 13B 參數），驗證損失對槽數呈冪律，在對數座標下為直線（Sec. 3.2）。這裡的「槽」與 Table 5 的每頭列數單位不同，本頁不在兩者之間換算。</p>
+  </div>
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>稀疏度分配計算器</h3></div>
+    <p class="plate-lead">選一個預算、拖動 ρ：長條是 P<sub>tot</sub> 的組成，下方軸標出論文文字給的點與區間。</p>
+    <div class="ctl">
+      <div class="ctl-row" role="group" aria-label="預設預算"><button class="chip" type="button" data-p="2e20" aria-pressed="false">2e20 FLOPs（5.7B、0.568B、E₀ = 106）</button><button class="chip" type="button" data-p="6e20" aria-pressed="true">6e20 FLOPs（9.9B、0.993B、99）</button><button class="chip" type="button" data-p="27B" aria-pressed="false">27B（26.04B 推定讀法 A、3.8B、72）</button></div>
+      <div class="rng"><label class="lbl" for="c4-r">ρ（未啟用參數分給 MoE 的比例）<output id="c4-ro2">80.0%</output></label><input id="c4-r" type="range" min="0.3" max="1" step="0.005" value="0.8"></div>
+    </div>
+    <div class="stackbar" id="c4-bar" role="img" style="margin-top:14px"><div class="sw-act"></div><div class="sw-moe"></div><div class="sw-eng"></div></div>
+    <ul class="sleg" id="c4-leg"></ul>
+    <p class="readout" id="c4-ro" style="margin-top:12px"></p>
+    <p class="fixed hide" id="c4-fixed">Engram-27B 實際配置（本頁推導）：72 → 55 個專家，ρ = 49/66 = 74.24%，P<sub>Engram</sub> = 5.728B（讀法 A）；論文寫 74.3%。</p>
+    <p class="cap">驗證損失對 ρ 呈 U 形：兩端較高，75%–80% 最低（Fig. 3 左，論文沒有給出完整數值）。</p>
+    <div class="fig" id="c4-fig"><svg role="img" aria-label="ρ 軸上的論文標記"></svg></div>
+    <ul class="marks" id="c4-marks"></ul>
+    <p class="plate-f">P<sub>sparse</sub> = P<sub>tot</sub> − P<sub>act</sub>；P<sub>Engram</sub> = (1 − ρ)P<sub>sparse</sub>（Eq. 7）；E(ρ) = 6 + ρ(E₀ − 6)（本頁推導）。top-k<sub>act</sub> = 6 固定。沒有擬合曲線：論文只給出這些點。不顯示槽數，因為 Table 5 與 Sec. 3.2 的單位不同。</p>
+    <p class="sr" aria-live="polite" id="c4-live"></p>
+  </div>
+  <details class="sym"><summary>本節符號</summary><div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$\rho$</td><td>未啟用參數分給 MoE 專家的比例（Eq. 7）</td></tr>
+    <tr><td>$E(\rho)$、$E_0$</td><td>專家數、$\rho=1$ 時的專家數（本頁推導）</td></tr>
+    <tr><td>$C$</td><td>訓練的計算預算（FLOPs）</td></tr>
+    <tr><td>$M_{\text{slot}}$</td><td>Sec. 3.2 的嵌入槽數（論文寫作 $M$）</td></tr>
+    </tbody></table></div></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$\rho$ 的定義？U 形的最佳點與兩端的解釋？</p>
+    <p class="a">$\rho$ = 未啟用參數分給 MoE 的比例（Eq. 7）；最佳 $\rho\approx75\%$–$80\%$，10B 預算損失 1.7248 → 1.7109；$\rho\to100\%$ 缺靜態記憶、$\rho\to0\%$ 缺條件計算；$\rho\approx40\%$ 即與純 MoE 相當（Sec. 3.1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="engram-sparsity-allocation-u-shape.html">稀疏度配置與 U 形縮放律</a></p>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="results" data-toc="09" data-tt="27B 結果">
+  <div class="ch-num">09 · 27B 結果</div>
+  <h2>27B 規模下各類任務都進步，一般推理與長文脈檢索的提升最明顯</h2>
+  <div class="prose">
+    <p>作者依上一節的規律訓練四個模型（Sec. 4）：Dense-4B、MoE-27B、Engram-27B 與 Engram-40B。共同設定為 262B token、DeepSeek-V3 tokenizer、30 個 block、隱藏維度 2560、mHC 擴展率 4、Muon 最佳化器，啟用參數都是 3.8B。Engram-27B 由 MoE-27B 嚴格導出：總參數同為 26.7B、啟用參數同為 3.8B、同樣訓練 262B token，只把路由專家由 72 減到 55，空出的參數給 5.7B 的 Engram（$\rho=74.3\%$，第 2、15 層，最大 N-gram 3，8 頭，維度 1280）。所以這是等參數、等 FLOPs 的比較。</p>
+    <p>Table 1 顯示各類任務都進步。一般推理的增益最大：BBH +5.0、ARC-Challenge +3.7、DROP +3.3。知識類 MMLU +3.0、CMMLU +4.0、MMLU-Pro +1.8；程式與數學 HumanEval +3.0、MBPP +1.6、GSM8K +2.2、MATH +2.4，與知識類相當，並沒有更大。作者認為這支持「專用的查找運算提升表示效率」的假設（Sec. 4.2）。摘要與 Sec. 1 寫 MMLU +3.4，但 Table 1 為 57.4 → 60.4（+3.0），+3.4 是 MMLU-Redux 的差距；本頁一律用 Table 1 的值。Engram-40B（39.5B，18.5B Engram）進一步降低損失（Pile 1.942），但並非每項都超過 Engram-27B，例如 HumanEval 38.4、C3 61.8；作者歸因於訓練不足：40B 與基準的訓練損失差距在訓練末期仍在擴大。</p>
+  </div>
+  <div class="tscroll" style="max-width:860px"><table>
+    <caption>Table 1 摘錄（損失越低越好，其餘越高越好）</caption>
+    <thead><tr><th>項目</th><th class="num">MoE-27B</th><th class="num">Engram-27B</th><th class="num">差值</th><th class="num c40">Engram-40B</th></tr></thead><tbody>
+    <tr><td>Pile（loss）</td><td class="num">1.960</td><td class="num">1.950</td><td class="num">−0.010</td><td class="num c40">1.942</td></tr>
+    <tr><td>Validation（loss）</td><td class="num">1.634</td><td class="num">1.622</td><td class="num">−0.012</td><td class="num c40">1.610</td></tr>
+    <tr><td>MMLU</td><td class="num">57.4</td><td class="num">60.4</td><td class="num">+3.0</td><td class="num c40">60.6</td></tr>
+    <tr><td>MMLU-Pro</td><td class="num">28.3</td><td class="num">30.1</td><td class="num">+1.8</td><td class="num c40">31.3</td></tr>
+    <tr><td>CMMLU</td><td class="num">57.9</td><td class="num">61.9</td><td class="num">+4.0</td><td class="num c40">63.4</td></tr>
+    <tr class="hl"><td>BBH</td><td class="num">50.9</td><td class="num">55.9</td><td class="num">+5.0</td><td class="num c40">57.5</td></tr>
+    <tr class="hl"><td>ARC-Challenge</td><td class="num">70.1</td><td class="num">73.8</td><td class="num">+3.7</td><td class="num c40">76.4</td></tr>
+    <tr class="hl"><td>DROP</td><td class="num">55.7</td><td class="num">59.0</td><td class="num">+3.3</td><td class="num c40">60.7</td></tr>
+    <tr><td>C3</td><td class="num">60.1</td><td class="num">63.6</td><td class="num">+3.5</td><td class="num c40">61.8</td></tr>
+    <tr><td>HumanEval</td><td class="num">37.8</td><td class="num">40.8</td><td class="num">+3.0</td><td class="num c40">38.4</td></tr>
+    <tr><td>GSM8K</td><td class="num">58.4</td><td class="num">60.6</td><td class="num">+2.2</td><td class="num c40">62.6</td></tr>
+    <tr><td>MATH</td><td class="num">28.3</td><td class="num">30.7</td><td class="num">+2.4</td><td class="num c40">30.6</td></tr>
+    </tbody></table></div>
+  <details class="more c40m"><summary>Engram-40B 欄（窄螢幕）</summary><div class="qa"><p class="note">Pile 1.942、Validation 1.610、MMLU 60.6、MMLU-Pro 31.3、CMMLU 63.4、BBH 57.5、ARC-Challenge 76.4、DROP 60.7、C3 61.8、HumanEval 38.4、GSM8K 62.6、MATH 30.6。</p></div></details>
+  <div class="prose">
+    <h3>長文脈延伸</h3>
+    <p>預訓練後，作者以 YaRN 在 32768 token 上訓練 5,000 步（30B token），比較長文脈能力（Sec. 5）。先定義幾個詞：</p>
+  </div>
+  <dl class="gl">
+    <dt>YaRN</dt><dd>調整 RoPE 位置編碼頻率、讓模型延伸到更長文脈的方法；本文參數 $s=10,\alpha=1,\beta=32$（這裡的 $\alpha$ 與閘門無關）。</dd>
+    <dt>NIAH（Needle in a Haystack）</dt><dd>在長文中藏入少量資訊、要求模型找回的檢索測驗；MQ 為一次要找回多個鍵（Multi-Query）。</dd>
+    <dt>RULER</dt><dd>長文脈測驗集，包含多種 NIAH 變體與 VT（變數追蹤）、CWE、FWE（常見詞與高頻詞抽取）等任務。</dd>
+    <dt>LongPPL</dt><dd>長文脈困惑度，越低越好；Book 為書籍子集。</dd>
+    <dt>iso-loss</dt><dd>比較時讓兩個模型的預訓練損失相同，而不是讓訓練步數相同。</dd>
+  </dl>
+  <div class="prose">
+    <p>為什麼要用 iso-loss？Engram 在 41k、46k、50k 步的長文脈表現隨預訓練進度單調上升，表示長文脈能力與基礎模型的整體能力耦合：長文脈能力隨基礎模型損失降低而提升。若只對齊步數，Engram 的基礎模型本來就較好，無法分辨增益來自架構還是來自較低的損失，所以比較架構時要對齊預訓練損失（Sec. 5.2）。Iso-loss 設定下，Engram 46k（預訓練損失 1.63）對 MoE-27B 50k（損失同為 1.63）：Multi-Query NIAH 97.0 vs 84.2，VT 87.2 vs 77.0。Iso-FLOPs 設定（Engram 50k）的差距更大，例如 VT 89.0、LongPPL Book 4.14 vs 4.38。只用依步數換算約 82% 的預訓練計算量（41k/50k）時，Engram 41k 的 LongPPL 與基準相當（Book 4.37 vs 4.38），多數 RULER 子項較高（MQ 89.5 vs 84.2、FWE 99.6 vs 73.0），S（99.6 vs 100.0）與 CWE（3.8 vs 4.5）略低。論文圖說寫 46k、50k「across all metrics」都勝過基準，但表中 46k 的 S（97.6）與 CWE（4.3）、50k 的 S（99.3）低於基準，所以本頁寫「幾乎所有指標」。作者的解釋：局部依賴交給查表後，注意力的容量可用於全域上下文。</p>
+  </div>
+  <div class="tscroll" style="max-width:860px"><table class="stack">
+    <caption>Table 2 摘錄（括號為預訓練步數與損失；Book 越低越好，其餘越高越好）</caption>
+    <thead><tr><th>模型</th><th class="num">Book</th><th class="num">S</th><th class="num">MQ</th><th class="num">VT</th><th class="num">CWE</th><th class="num">FWE</th></tr></thead><tbody>
+    <tr><td>MoE-27B（50k，1.63）</td><td class="num" data-h="Book">4.38</td><td class="num" data-h="S">100.0</td><td class="num" data-h="MQ">84.2</td><td class="num" data-h="VT">77.0</td><td class="num" data-h="CWE">4.5</td><td class="num" data-h="FWE">73.0</td></tr>
+    <tr><td>Engram-27B（41k，1.66）</td><td class="num" data-h="Book">4.37</td><td class="num" data-h="S">99.6</td><td class="num" data-h="MQ">89.5</td><td class="num" data-h="VT">83.2</td><td class="num" data-h="CWE">3.8</td><td class="num" data-h="FWE">99.6</td></tr>
+    <tr class="hl"><td>Engram-27B（46k，1.63）iso-loss</td><td class="num" data-h="Book">4.19</td><td class="num" data-h="S">97.6</td><td class="num" data-h="MQ">97.0</td><td class="num" data-h="VT">87.2</td><td class="num" data-h="CWE">4.3</td><td class="num" data-h="FWE">98.6</td></tr>
+    <tr><td>Engram-27B（50k，1.62）iso-FLOPs</td><td class="num" data-h="Book">4.14</td><td class="num" data-h="S">99.3</td><td class="num" data-h="MQ">97.0</td><td class="num" data-h="VT">89.0</td><td class="num" data-h="CWE">5.9</td><td class="num" data-h="FWE">99.3</td></tr>
+    </tbody></table></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Engram-27B 與 MoE-27B 如何對齊？哪類任務增益較大？</p>
+    <p class="a">參數 26.7B、啟用 3.8B、262B token 都相同，專家 72 → 55、5.7B Engram；各類都進步：一般推理增益最大（BBH +5.0、ARC-C +3.7、DROP +3.3）；知識（MMLU +3.0、CMMLU +4.0）與程式數學（HumanEval +3.0、MATH +2.4）相當（Table 1、Sec. 4.2）。</p>
+    <p class="q">為什麼要用 iso-loss 設定？結果如何？</p>
+    <p class="a">長文脈能力隨基礎模型損失提升，需對齊預訓練損失；Engram 46k（損失 1.63）對 MoE 50k：MQ NIAH 97.0 vs 84.2、VT 87.2 vs 77.0（Sec. 5.2，Table 2）。</p>
+  </div></details>
+</section>
+
+<!-- S9a =========================================================== -->
+<section class="ch" id="mech" data-toc="10" data-tt="有效深度">
+  <div class="ch-num">10 · 有效深度</div>
+  <h2>Engram 讓淺層提早完成特徵組合</h2>
+  <div class="prose">
+    <p>作者的假設是：模型有了明確的查表能力後，前幾層不必再組合局部特徵，效果相當於增加深度（Sec. 6.1）。兩個工具用來檢驗這個假設。</p>
+    <p><b>LogitLens</b> 把每一層的隱藏狀態直接接到最終的 LM head，得到一個「提前輸出」的分布，再計算它與最終輸出分布的 <b>KL 散度</b>（衡量兩個機率分布差異的量，越小越接近）。結果：兩個 Engram 模型各層的 KL 都系統性地較小，差距在淺層最明顯（Fig. 4a），表示淺層較早完成特徵組合，較早接近最終預測。</p>
+    <p><b>CKA（Centered Kernel Alignment）</b>衡量兩組表示的相似度，值在 0 到 1 之間。作者對 Few-NERD 具名實體的最後一個 token，計算 Engram 模型第 $j$ 層與 MoE 模型各層的 CKA，再以軟對齊指標 $a_j$ 找出「Engram 第 $j$ 層最像 MoE 的第幾層」。觀察到 $a_j>j$：Engram-27B 第 5 層約對應 MoE 第 12 層（Fig. 4b–c）。也就是 Engram 的淺層表示相當於 MoE 較深層的表示。作者的結論：Engram 在功能上相當於增加有效深度。</p>
+  </div>
+  <details class="more"><summary>補充：HSIC 與 Eq. 8–9</summary><div class="qa">
+    <p>CKA 以 HSIC（Hilbert-Schmidt 獨立性準則）定義，使用線性核 $K=XX^\top$、$L=YY^\top$，並以 minibatch 無偏估計計算：</p>
+    <div class="eq"><div class="eq-m">$$\mathrm{CKA}(K,L)=\frac{\mathrm{HSIC}(K,L)}{\sqrt{\mathrm{HSIC}(K,K)\,\mathrm{HSIC}(L,L)}}$$</div><span class="eq-n">Eq. 8</span></div>
+    <p>軟對齊指標取與 Engram 第 $j$ 層最相似的 top-5 個 MoE 層 $I_j$，以相似度 $S_{i,j}$ 加權平均層號：</p>
+    <div class="eq"><div class="eq-m">$$a_j=\frac{\sum_{i\in I_j}S_{i,j}\,i}{\sum_{i\in I_j}S_{i,j}}$$</div><span class="eq-n">Eq. 9</span></div>
+  </div></details>
+  <div class="prose">
+    <h3>閘門在哪裡打開</h3>
+    <p>Fig. 7 把 Engram-27B 的閘門 $\alpha_t$ 畫成熱度圖（Sec. 6.5）。閘門在完成局部靜態模式的 token 上啟動：英文例如 “Alexander the Great”、“the Milky Way” 等多 token 具名實體，以及 “By the way”、“Princess of Wales” 等固定片語；中文例如「四大发明」「张仲景」。因為查的是後綴 N-gram（$N=3$），高啟動落在片語的最後一個 token。下方以 token 帶重繪 Fig. 7 的兩個英文句，只標出論文文字點名的片語與其最後一個 token，不標閘門數值。Fig. 7 只顯示 8 個閘門中與語意模式最相關的那一個。</p>
+  </div>
+  <div class="tokscroll" role="img" aria-label="Fig. 7 第一句：Only Alexander the Great could tame the horse Bucephalus.，片語 Alexander the Great 以外框標出，最後一個 token Great 以實心標出"><div class="band" id="f7a" aria-hidden="true"></div></div>
+  <div class="tokscroll" role="img" aria-label="Fig. 7 第二句：By the way, I am a fan of the Milky Way.，片語 By the way 與 the Milky Way 以外框標出，最後一個 token way 與 Way 以實心標出" style="margin-top:8px"><div class="band" id="f7b" aria-hidden="true"></div></div>
+  <div class="legend"><span class="lg">外框＝論文點名的片語</span><span class="lg acc">實心＝片語的最後一個 token</span></div>
+  <p class="read">延伸閱讀：<a href="stages-of-inference-weight-sharing.html">推論的階段與權重共享</a></p>
+</section>
+
+<!-- S9b =========================================================== -->
+<section class="ch" id="ablate" data-toc="11" data-tt="消融">
+  <div class="ch-num">11 · 消融</div>
+  <h2>移除元件與關閉記憶時的變化</h2>
+  <div class="prose">
+    <p><b>元件消融</b>（Sec. 6.2，Fig. 5）在較小的設定上進行：12 層 3B MoE（0.56B 啟用）、訓練 100B token，基準驗證損失 1.808。參考配置是 1.6B Engram、{2,3}-gram、插在第 2 與第 6 層，損失 1.768（降低 0.04）。從參考配置逐一移除元件，影響最大的三項是分支專屬融合、情境感知閘門與 tokenizer 壓縮；Fig. 5 沒有給出數值，本頁不排三者的先後。移除短卷積只稍微變差。在固定 1.6B 下加入 4-gram 稍差，作者推測它稀釋了較常見的 2/3-gram 的容量，不排除記憶更大時有益。</p>
+    <p><b>敏感度分析</b>（Sec. 6.3，Fig. 6）在推論時把 Engram 的輸出完全關掉、主幹不變，觀察各類任務還保留多少表現。事實知識類受影響最大，只保留 29%–44%（TriviaQA 29%）；閱讀理解類保留 81%–93%（C3 93%）。這表示事實知識大量依賴 Engram 查出的記憶，而閱讀理解主要依賴主幹對上下文的計算。作者提醒，這種事後消融造成訓練與推論不一致，所以只分析兩端的任務。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">LogitLens 與 CKA 各顯示什麼？關掉 Engram 時哪類任務受影響最大？</p>
+    <p class="a">LogitLens：淺層 KL 較小；CKA：$a_j>j$，Engram-27B 第 5 層約對應 MoE 第 12 層；事實知識只保留 29%–44%，閱讀理解保留 81%–93%（Sec. 6.1、6.3）。</p>
+  </div></details>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="system" data-toc="12" data-tt="預取">
+  <div class="ch-num">12 · 預取</div>
+  <h2>確定性位址讓查表可以預取</h2>
+  <div class="prose">
+    <p>MoE 的路由依賴執行時的隱藏狀態，模型要算到該層才知道選哪些專家。Engram 的索引只由輸入 token ID 決定，在執行該層之前就已知道要讀哪些列（Sec. 2.5）。這種<b>確定性位址</b>帶來兩個系統面的好處：</p>
+    <ul>
+      <li>訓練：嵌入表以模型平行切分到各 GPU，前向用 All-to-All 收集被用到的列，反向把梯度分派回去；總記憶容量隨 GPU 數線性增加。</li>
+      <li>推論：嵌入表放在主機記憶體，經 PCIe 非同步預取，與前面層的計算重疊（Fig. 2b）。插得越深，可以遮住傳輸延遲的計算時間越長。</li>
+    </ul>
+    <p>研究筆記整理的 PKM 等記憶層以學到的 key 比對隱藏狀態來選列，位址同樣要到執行時才知道；Engram 的位址由雜湊直接決定，所以可以預取。這是筆記的整理，論文沒有逐項比較。N-gram 的存取服從 Zipf 分布，少數模式佔大多數存取，所以常用的列可放在 HBM 或 DRAM，長尾放在 NVMe SSD（多層快取）。</p>
+    <p><b>插入層的取捨</b>：建模偏好早插入。12 層 3B MoE 上把單一模組由第 1 層掃到第 12 層，第 2 層最佳（Val Loss 1.770），越深越差；同樣 1.6B 拆成兩個模組放在第 2、6 層更好（1.768）（Sec. 6.2）。插得越早，查表結果越早進入殘差流，主幹花在重建局部模式上的層數越少；但越早的 $\mathbf h_t$ 上下文越少、各分支差異越小，閘門越不精確。系統面則偏好晚插入，留給預取更多計算時間。Engram-27B 用第 2、15 層同時滿足兩者。</p>
+    <p>Table 4 量測了代價（Sec. 6.4）：nano-vLLM、H800、512 條序列，把 100B 參數的 Engram 放在第二個 block、整張表放在主機 DRAM，與第一個 block 的計算重疊。4B-Dense 的吞吐量由 9,031.62 降到 8,858.28 tok/s（−1.92%，本頁推導），8B-Dense 由 6,315.52 降到 6,140.02 tok/s（−2.78%，論文寫 2.8%）。100B 表放主機記憶體，吞吐量最多只降 2.8%。每步的通訊量隨啟用的槽數增加，與表的總大小無關。這組實驗強制所有查表都走 PCIe、沒有使用快取，作者稱之為保守基準。</p>
+  </div>
+  <div class="plate" id="c5">
+    <div class="plate-h"><span class="id">C5</span><h3>預取與計算重疊</h3><span class="tag demo">示範值</span></div>
+    <p class="caveat">停頓 0 只表示本模型的估計，不保證實際沒有停頓；論文唯一的量測是 Table 4。</p>
+    <div class="pg two">
+      <div class="ctl">
+        <div><span class="lbl">模式</span><div class="seg" id="c5-mode" role="group" aria-label="模式"><button type="button" data-v="engram" aria-pressed="true">Engram：索引事先可知</button><button type="button" data-v="moe" aria-pressed="false">對照：索引到該層才可知</button></div></div>
+        <div class="rng"><label class="lbl" for="c5-l">插入層 ℓ<output id="c5-lo">2</output></label><input id="c5-l" type="range" min="1" max="15" step="1" value="2"></div>
+        <div class="rng"><label class="lbl" for="c5-n">每步 token 數（示範值）<output id="c5-no">512</output></label><input id="c5-n" type="range" min="6" max="16" step="1" value="9"></div>
+        <div><span class="lbl">每個參數位元組（示範值）</span><div class="seg" id="c5-b" role="group" aria-label="每個參數位元組"><button type="button" data-v="1" aria-pressed="false">1（FP8）</button><button type="button" data-v="2" aria-pressed="true">2（BF16）</button></div></div>
+        <div class="rng"><label class="lbl" for="c5-bw">PCIe 有效頻寬 GB/s（示範值）<output id="c5-bwo">25</output></label><input id="c5-bw" type="range" min="5" max="64" step="1" value="25"></div>
+        <div class="rng"><label class="lbl" for="c5-t">每層計算時間 ms（示範值）<output id="c5-to">0.50</output></label><input id="c5-t" type="range" min="0.01" max="2" step="0.01" value="0.5"></div>
+        <div class="rng"><label class="lbl" for="c5-sz">表總大小（不影響傳輸量）<output id="c5-szo">100B</output></label><input id="c5-sz" type="range" min="10" max="1000" step="10" value="100"></div>
+      </div>
+      <div>
+        <div class="fig" id="c5-fig"><svg role="img" aria-label="GPU 與 PCIe 時間軸"></svg></div>
+        <div class="legend"><span class="lg">GPU 層</span><span class="lg par">Engram 層／PCIe 傳輸</span><span class="lg ref">停頓（斜線）</span></div>
+        <p class="readout" id="c5-ro" style="margin-top:12px"></p>
+      </div>
+    </div>
+    <p class="cap">Table 4 原始數字：4B-Dense −1.92%、8B-Dense −2.78%。這是論文的量測，非本模型輸出。</p>
+    <p class="plate-f">每步傳輸量 = tokens × d<sub>mem</sub> × bytes（d<sub>mem</sub> = 1280，推定沿用 Engram-27B）；傳輸時間 = 量 ÷ 頻寬；可重疊時間 W = (ℓ − 1) × 每層時間（對照模式 W = 0）；停頓 = max(0, 傳輸時間 − W)。模型沒有考慮逐列 gather、隨機存取、延遲、PCIe 實際效率與主機端查表開銷，參數皆為示範值，不重現 Table 4。</p>
+    <p class="sr" aria-live="polite" id="c5-live"></p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼 Engram 能預取而 MoE 不能？100B 表放主機記憶體的代價？插入層如何取捨？</p>
+    <p class="a">索引只由輸入 token 決定，執行該層前已知；MoE 路由依賴隱藏狀態；吞吐量最多降 2.8%（Table 4）；建模偏好早插入（單層最佳第 2 層），預取偏好晚插入，Engram-27B 用第 2、15 層（Sec. 2.5、6.2、6.4）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="sparse-memory-layers-pkm-peer.html">稀疏記憶層：PKM、PEER 與 UltraMem</a>、<a href="retrieval-augmented-external-memory.html">檢索增強與外部記憶</a></p>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="impl" data-toc="13" data-tt="實作">
+  <div class="ch-num">13 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="tscroll" style="max-width:860px"><table class="stack">
+    <caption>Table 5 與 Sec. 4.1 的設定</caption>
+    <thead><tr><th>項目</th><th>值</th></tr></thead><tbody>
+    <tr><td>主幹</td><td data-h="值">30 層、維度 2560、第一層為稠密層、MLA（32 頭）、RoPE θ 10000、mHC 擴展率 4</td></tr>
+    <tr><td>MoE</td><td data-h="值">2 共享 + 72（MoE-27B）或 55（Engram）路由專家、top-6、Loss-Free 負載平衡</td></tr>
+    <tr><td>訓練</td><td data-h="值">序列長 4096、詞表 129,280、batch 1280、50,000 步、262B token</td></tr>
+    <tr><td>最佳化</td><td data-h="值">主幹 Muon；嵌入 Adam；基礎學習率 4e-4、Step Decay、weight decay 0.1</td></tr>
+    <tr><td>Engram</td><td data-h="值">$d_{\text{mem}}$ 1280；Vocab Size 2,262,400（27B）／7,239,680（40B）；8 頭；第 [2,15] 層；N-gram [2,3]；combine mHC；tokenizer 壓縮；卷積零初始化；學習率 ×5；weight decay 0</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <h3>常見錯誤</h3>
+    <ol>
+      <li><b>把 Engram 當成取代輸入詞嵌入。</b>Engram 插在中間層，輸入嵌入與輸出 un-embedding 保持不變（Fig. 1 說明）。</li>
+      <li><b>用原始 token ID 直接雜湊。</b>要先經 $\mathcal P$ 壓縮；消融顯示 tokenizer 壓縮是影響最大的三項之一。</li>
+      <li><b>只用一個雜湊頭。</b>每個階數用 $K$ 個頭與質數表大小；單頭時一旦碰撞就無法區分（C1）。</li>
+      <li><b>卷積沒有零初始化。</b>零初始化保證訓練開始時 $\mathbf Y=\tilde{\mathbf V}$。</li>
+      <li><b>嵌入表沿用主幹的最佳化設定。</b>論文對嵌入用 Adam、學習率 ×5、weight decay 0，主幹用 Muon、weight decay 0.1。</li>
+      <li><b>只看建模而把 Engram 插得很深，或只看系統而插得很淺。</b>插入層要同時滿足建模（早）與預取延遲（晚）。</li>
+      <li><b>比較長文脈能力時只對齊步數。</b>應對齊預訓練損失（Sec. 5.2）。</li>
+      <li><b>層編號。</b>論文寫第 2 與 15 層，示範程式的 <code>layer_ids</code> 為 [1, 15]（0 起算的 block 索引），兩者的起算方式論文沒有說明。</li>
+    </ol>
+  </div>
+  <details class="sym"><summary>完整符號表</summary><div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$X=(x_1,\dots,x_T)$</td><td>輸入 token 序列，長度 $T$；$x_t$ 為原始 token ID</td></tr>
+    <tr><td>$V$、$V'$、$\mathcal P$</td><td>原始詞表、壓縮後詞表、壓縮滿射；$x'_t=\mathcal P(x_t)$</td></tr>
+    <tr><td>$g_{t,n}$、$N$</td><td>位置 $t$ 結尾的後綴 $n$-gram、最大階數（3）</td></tr>
+    <tr><td>$K$、$k$</td><td>每個階數的雜湊頭數（8）、頭的編號</td></tr>
+    <tr><td>$\varphi_{n,k}$、$M_{n,k}$、$\mathbf E_{n,k}$</td><td>雜湊函數、表的列數（質數）、嵌入表；每列 80 維（推定）</td></tr>
+    <tr><td>$z_{t,n,k}$、$\mathbf e_{t,n,k}$、$\mathbf e_t$</td><td>列索引、查出的向量、串接後的記憶向量（$d_{\text{mem}}=1280$）</td></tr>
+    <tr><td>$\mathbf H^{(\ell)}$、$\mathbf h_t$、$d$</td><td>第 $\ell$ 層隱藏狀態、位置 $t$ 的隱藏向量、隱藏維度（2560）</td></tr>
+    <tr><td>$\mathbf W_K,\mathbf W_V$、$\alpha_t$</td><td>Key、Value 投影；純量閘門</td></tr>
+    <tr><td>$w$、$\delta$</td><td>卷積核大小（4）、擴張率（= $N$）</td></tr>
+    <tr><td>$M$</td><td>mHC 的分支數（4）</td></tr>
+    <tr><td>$P_{\text{tot}},P_{\text{act}},P_{\text{sparse}}$</td><td>總可訓練參數（不含詞嵌入與 LM head）、每 token 啟用參數、未啟用參數</td></tr>
+    <tr><td>$\rho$</td><td>未啟用參數分給 MoE 專家的比例</td></tr>
+    <tr><td>$M_{\text{slot}}$</td><td>Sec. 3.2 的嵌入槽數</td></tr>
+    <tr><td>$k_{\text{act}}$</td><td>MoE 每個 token 選用的路由專家數（6）</td></tr>
+    </tbody></table></div></div></details>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="history" data-toc="14" data-tt="研究脈絡">
+  <div class="ch-num">14 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>論文 §7 把源頭追溯到 Shannon 的 N-gram 語言模型。之後 FastText 以子詞 N-gram 嵌入表示詞，Hash Embeddings 用多個雜湊函數降低嵌入表的大小與碰撞，這是 Eq. 1 所沿用的做法。另一條線是 MoE：稀疏閘控 MoE、Switch Transformer 與 DeepSeekMoE 讓條件計算成為大型模型的標準做法。參數式記憶（PKM、PEER）在層內放大型 key-value 儲存，以學到的 key 選列；FFN 被解讀為鍵值記憶，說明模型會用計算重建靜態知識；REALM 等檢索增強方法則使用非參數的外部記憶。N-Grammer、OverEncoding 與 SCONE 把 N-gram 嵌入擴大到語言模型，但放在輸入層，也沒有在嚴格等參數、等 FLOPs 下驗證。本文把 N-gram 查表移到中間層，並以稀疏度分配把它與 MoE 放在同一個預算下比較。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S13 =========================================================== -->
+<section class="ch" id="next" data-toc="15" data-tt="保留與延伸">
+  <div class="ch-num">15 · 保留與延伸</div>
+  <h2>保留與延伸閱讀</h2>
+  <div class="prose">
+    <p>論文沒有獨立的限制章節，以下整理文中自述的保留：稀疏度分配的最佳點只在檢驗過的規模與固定稀疏比下穩定（Sec. 3.1）；Engram-40B 可能訓練不足（Sec. 4.2）；推論時關閉 Engram 造成訓練與推論不一致（Sec. 6.3）；更高階的 N-gram 在更大的記憶下可能有益（Sec. 6.2）；Table 4 沒有使用快取（Sec. 6.4）。作者把 N-gram 嵌入稱為條件記憶的「初步探索」（Sec. 1）。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="engram-lineage-overview.html">Engram 條件式記憶的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="moe-conditional-computation-lineage.html">MoE 與條件式計算的發展</a><span>第一條稀疏軸與 MoE 基線</span></div></li>
+    <li><div><a href="ffn-as-key-value-memory.html">FFN 作為 key-value 記憶體與深度使用效率</a><span>模型用計算重建靜態知識</span></div></li>
+    <li><div><a href="ngram-hash-embedding-lineage.html">N-gram 與 hash 嵌入的發展</a><span>Engram 查表機制繼承的技術</span></div></li>
+    <li><div><a href="sparse-memory-layers-pkm-peer.html">稀疏記憶層：PKM、PEER 與 UltraMem</a><span>層內大型 key-value 儲存</span></div></li>
+    <li><div><a href="retrieval-augmented-external-memory.html">檢索增強與外部記憶</a><span>非參數記憶</span></div></li>
+    <li><div><a href="engram-module-design.html">Engram 模組的設計</a><span>本論文的模組</span></div></li>
+    <li><div><a href="engram-sparsity-allocation-u-shape.html">稀疏度配置與 U 形縮放律</a><span>本論文的分配實驗</span></div></li>
+    <li><div><a href="stages-of-inference-weight-sharing.html">四階段推論假說與權重共享</a><span>站內既有筆記</span></div></li>
+  </ol>
+  <div class="links" style="margin-top:24px">
+    <a class="btn" href="https://arxiv.org/abs/2601.07372">arXiv 2601.07372 ↗</a>
+    <a class="btn" href="https://github.com/deepseek-ai/Engram">官方程式庫 ↗</a>
+  </div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Xin Cheng, Rui Tian, et al. Conditional Memory via Scalable Lookup: A New Axis of Sparsity for Large Language Models. <a href="https://arxiv.org/abs/2601.07372">arXiv:2601.07372</a>.</p>
+  <p>本頁的方程式與數字取自論文 v2；標示「本頁推導」的內容為本頁自行推導，「推定」為依論文數字推估的值，「示範值」只用於互動示範。示範程式指官方程式庫的 engram_demo_v1.py（作者註明為 demo 版本）。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+<script type="application/json" id="timeline-data">[{"year": "2016", "title": "Enriching Word Vectors with Subword Information (FastText)", "authors_short": "Bojanowski et al.", "arxiv": "1607.04606", "role": "N-gram 嵌入的典型例子", "source": "paper §1, §7"}, {"year": "2017", "title": "Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer", "authors_short": "Shazeer et al.", "arxiv": "1701.06538", "role": "提出 MoE 條件式計算", "source": "paper §1, §7"}, {"year": "2017", "title": "Hash Embeddings for Efficient Word Representations", "authors_short": "Svenstrup et al.", "arxiv": "1709.03933", "role": "Engram 多頭雜湊所依據", "source": "paper §2.2"}, {"year": "2019", "title": "Large Memory Layers with Product Keys", "authors_short": "Lample et al.", "arxiv": "1907.05242", "role": "參數式稀疏記憶層", "source": "paper §7"}, {"year": "2020", "title": "Transformer Feed-Forward Layers Are Key-Value Memories", "authors_short": "Geva et al.", "arxiv": "2012.14913", "role": "FFN 作為 key-value 記憶體", "source": "paper §7"}, {"year": "2020", "title": "REALM: Retrieval-Augmented Language Model Pre-Training", "authors_short": "Guu et al.", "arxiv": "2002.08909", "role": "非參數外部記憶", "source": "paper §7"}, {"year": "2021", "title": "Switch Transformers", "authors_short": "Fedus et al.", "arxiv": "2101.03961", "role": "MoE 擴充至超線性參數", "source": "paper §7"}, {"year": "2022", "title": "N-Grammer: Augmenting Transformers with latent n-grams", "authors_short": "Roy et al.", "arxiv": "2207.06366", "role": "以離散潛在 N-gram 擴充 Transformer", "source": "paper §7"}, {"year": "2024", "title": "DeepSeekMoE", "authors_short": "Dai et al.", "arxiv": "2401.06066", "role": "細粒度專家與共享專家", "source": "paper §7"}, {"year": "2024", "title": "Mixture of A Million Experts", "authors_short": "He", "arxiv": "2407.04153", "role": "參數式記憶（PEER）", "source": "paper §7"}, {"year": "2025", "title": "Over-Tokenized Transformer (OverEncoding)", "authors_short": "Huang et al.", "arxiv": "2501.16975", "role": "hash N-gram 嵌入，放於輸入層", "source": "paper §7"}, {"year": "2025", "title": "Scaling Embedding Layers in Language Models (SCONE)", "authors_short": "Yu et al.", "arxiv": "2502.01637", "role": "輔助編碼模型處理高頻 N-gram", "source": "paper §7"}, {"year": "2026", "title": "Conditional Memory via Scalable Lookup (Engram)", "authors_short": "Cheng, Tian et al.", "arxiv": "2601.07372", "role": "提出條件式記憶與 Engram", "source": "本論文"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function frame(svg,o){
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m=o.m,x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=m.t;
+  const X=lin(o.x[0],o.x[1],x0,x1),Y=lin(o.y[0],o.y[1],y0,y1);
+  const g=el('g',null,svg);
+  (o.yt||[]).forEach(v=>{const yy=Y(v);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},g);tx(g,x0-8,yy+4,o.yf?o.yf(v):String(v),{class:'tk','text-anchor':'end'})});
+  (o.xt||[]).forEach(v=>{const xx=X(v);el('line',{x1:xx,x2:xx,y1:y0,y2:y0+4,class:'axl'},g);tx(g,xx,y0+18,o.xf?o.xf(v):String(v),{class:'tk','text-anchor':'middle'})});
+  el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  if(o.xl)tx(g,(x0+x1)/2,o.H-4,o.xl,{class:'al','text-anchor':'middle'});
+  if(o.yl)tx(g,4,12,o.yl,{class:'al'});
+  return {X,Y,g,x0,x1,y0,y1};
+}
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SUP={'-':'⁻','0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹'};
+function sci(x,d=2){if(x===0)return '0';const [m,e]=x.toExponential(d).split('e');return m+'×10'+String(+e).replace(/[-0-9]/g,c=>SUP[c])}
+const minus=s=>String(s).replace(/-/g,'−');
+function segInit(id,cb){$$('#'+id+' button').forEach(b=>b.addEventListener('click',()=>{$$('#'+id+' button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));cb(b.dataset.v)}))}
+function segSet(id,v){$$('#'+id+' button').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.v===String(v))))}
+function roving(container,getT,setT){container.addEventListener('keydown',e=>{const btns=$$('button.tok',container);if(!btns.length)return;let t=getT();const n=btns.length;
+  if(e.key==='ArrowRight')t=Math.min(n-1,t+1);else if(e.key==='ArrowLeft')t=Math.max(0,t-1);else if(e.key==='Home')t=0;else if(e.key==='End')t=n-1;else return;
+  e.preventDefault();setT(t);const b=$$('button.tok',container)[t];if(b)b.focus()})}
+
+/* ---------- shared math (design.md Sec. 4) ---------- */
+function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function isPrime(n){if(n<2)return false;if(n%2===0)return n===2;for(let i=3;i*i<=n;i+=2)if(n%i===0)return false;return true}
+function nextPrimes(M,count,seen){seen=seen||new Set();const out=[];for(let c=M;out.length<count;c++)if(!seen.has(c)&&isPrime(c)){seen.add(c);out.push(c)}return out}
+const MULTS=(()=>{const r=mulberry32(0);return [0,1,2].map(()=>BigInt(2*Math.floor(r()*2**30)+1))})();
+const TOKRE=/\s*[\p{L}\p{N}]+|\s*[^\s\p{L}\p{N}]/gu;
+function tokenize(s){return s.match(TOKRE)||[]}
+function normKey(tok){let s=tok.normalize('NFKC').normalize('NFD').replace(/\p{M}/gu,'').toLowerCase().replace(/[ \t\r\n]+/g,' ');if(s===' ')return ' ';s=s.trim();return s||tok}
+function compress(toks){const raw=new Map(),can=new Map(),rawIds=[],canonIds=[],keys=[];
+  for(const t of toks){if(!raw.has(t))raw.set(t,raw.size+1);const k=normKey(t);if(!can.has(k))can.set(k,can.size+1);rawIds.push(raw.get(t));canonIds.push(can.get(k));keys.push(k)}
+  return {rawIds,canonIds,keys,V:raw.size,Vp:can.size}}
+function hashHeads(ids,t,n,primes){let mix=0n;for(let i=0;i<n;i++){const v=BigInt(t-i>=0?ids[t-i]:0)*MULTS[i];mix=i?(mix^v):v}return {mix,idx:primes.map(p=>Number(mix%BigInt(p)))}}
+const LOG10R=48*Math.log10(2);
+function collide(U,M,K){if(U<=1)return {p1:0,pAll:0,log10Ind:-Infinity,log10Floor:-Infinity};
+  const p1=-Math.expm1((U-1)*Math.log1p(-1/M)),lk=K*Math.log10(M),lu=Math.log10(U-1);
+  return {p1,pAll:Math.pow(p1,K),log10Ind:lu-lk,log10Floor:lu-Math.min(lk,LOG10R)}}
+async function empirical(U,M,K,onProg,alive){alive=alive||(()=>true);
+  const P=nextPrimes(M,K).map(BigInt),occ=P.map(()=>new Map()),tup=new Map(),z=new Int32Array(U*K),key=new Array(U);
+  for(let i=0;i<U;i++){const a=Math.floor(i/1000),b=i%1000,mix=(BigInt(b+1)*MULTS[0])^(BigInt(a+1)*MULTS[1]);
+    for(let k=0;k<K;k++){const v=Number(mix%P[k]);z[i*K+k]=v;occ[k].set(v,(occ[k].get(v)||0)+1)}
+    const s=Array.from(z.subarray(i*K,i*K+K)).join(',');key[i]=s;tup.set(s,(tup.get(s)||0)+1);
+    if((i+1)%2000===0){if(onProg)onProg(i+1);await new Promise(r=>setTimeout(r,0));if(!alive())return null}}
+  let c1=0,cAll=0,full=0;
+  for(let i=0;i<U;i++){if(occ[0].get(z[i*K])>=2)c1++;let all=true;for(let k=0;k<K;k++)if(occ[k].get(z[i*K+k])<2){all=false;break}if(all)cAll++;if(tup.get(key[i])>=2)full++}
+  return {U,c1,cAll,full,P0:Number(P[0])}}
+const frac=(c,U)=>(c/U).toFixed(4);
+const sig=s=>s>=0?1/(1+Math.exp(-s)):Math.exp(s)/(1+Math.exp(s));
+function gate(d,c,g,sq){let s=g*Math.sqrt(d)*c;if(sq)s=s===0?0:Math.sign(s)*Math.sqrt(Math.abs(s));return {s,a:sig(s),oma:sig(-s)}}
+function field(t,N,w,delta,zero){const S=new Set(),taps=zero?1:w;for(let j=0;j<taps;j++){const c=t-j*delta;for(let i=0;i<N;i++)S.add(c-i)}return [...S].sort((a,b)=>a-b)}
+const EMB=2*129280*2560/1e9;
+const PRESETS={'2e20':{Pt:5.7,Pa:0.568,E0:106},'6e20':{Pt:9.9,Pa:0.993,E0:99},'27B':{Pt:26.7-EMB,Pa:3.8,E0:72}};
+function alloc(p,rho){const P=PRESETS[p],Ps=P.Pt-P.Pa;return {Pt:P.Pt,Pa:P.Pa,Ps,Pm:rho*Ps,Pe:(1-rho)*Ps,E:6+rho*(P.E0-6)}}
+function prefetch(o){const vol=o.tokens*1280*o.bytes,tx=vol/(o.bw*1e9)*1e3,win=o.mode==='engram'?(o.ell-1)*o.tl:0;return {vol,tx,win,stall:Math.max(0,tx-win)}}
+
+/* ---------- static token bands (hero, Fig. 7) ---------- */
+const FIG1='Only Alexander the Great could tame the horse Bucephalus.';
+const vis=s=>s.replace(/ /g,'␣');
+function staticBand(id,toks,ph,ends){const b=$('#'+id);if(!b)return;b.innerHTML=toks.map((t,i)=>`<span class="tok${ph.includes(i)?' ph':''}${ends.includes(i)?' end':''}">${esc(t)}</span>`).join('')}
+
+/* ---------- C1 ---------- */
+const C1TXT=[FIG1,'The cat saw the CAT. Thé café, the Café.'];
+const c1={text:C1TXT[0],t:3,K:8,U:1e6,M:2262400,KB:8,run:0,emp:null};
+function c1Model(){let toks=tokenize(c1.text);const trunc=toks.length>40;if(trunc)toks=toks.slice(0,40);return {toks,trunc,comp:compress(toks)}}
+function renderC1A(){
+  const {toks,trunc,comp}=c1Model(),T=toks.length;$('#c1-trunc').classList.toggle('hide',!trunc);
+  const band=$('#c1-band'),sl=$('#c1-t');
+  if(!T){band.innerHTML='<span class="note">沒有 token。</span>';$('#c1-ro').textContent='請輸入文字。';$('#c1-idx').innerHTML='';$('#c1-cat').innerHTML='';return}
+  c1.t=Math.min(c1.t,T-1);sl.max=T-1;sl.value=c1.t;$('#c1-to').textContent=c1.t;
+  const forms=new Map();comp.canonIds.forEach((c,i)=>{if(!forms.has(c))forms.set(c,new Set());forms.get(c).add(comp.rawIds[i])});
+  const t=c1.t,in2=p=>p<=t&&p>t-2,in3=p=>p<=t&&p>t-3;
+  let h='';
+  for(const p of [-2,-1])h+=`<div class="tcol"><span class="tok pad">pad<span class="id">0</span></span><i class="${in2(p)?'on2':''}"></i><i class="${in3(p)?'on3':''}"></i></div>`;
+  toks.forEach((tok,i)=>{const c=comp.canonIds[i],mg=forms.get(c).size>1;
+    h+=`<div class="tcol"><button type="button" class="tok${mg?' merged':''}${i===t?' sel':''}" tabindex="${i===t?0:-1}" data-i="${i}" aria-label="位置 ${i}，原始 ${esc(tok.trim()||'空白')}，原始 ID ${comp.rawIds[i]}，標準 ID ${c}${mg?'，與其他原始 token 合併':''}"><span>${esc(vis(tok))}</span><span class="id">ID ${comp.rawIds[i]}</span><span class="nk">${esc(vis(comp.keys[i]))}</span><span class="id">${mg?'= ':''}標準 ${c}</span></button><i class="${in2(i)?'on2':''}"></i><i class="${in3(i)?'on3':''}"></i></div>`});
+  band.innerHTML=h;
+  $$('button.tok',band).forEach(b=>b.addEventListener('click',()=>{c1.t=+b.dataset.i;renderC1A()}));
+  const seen=new Set(),P2=nextPrimes(10000,c1.K,seen),P3=nextPrimes(10000,c1.K,seen);
+  const h2=hashHeads(comp.canonIds,t,2,P2),h3=hashHeads(comp.canonIds,t,3,P3);
+  const red=comp.V?(1-comp.Vp/comp.V)*100:0;
+  $('#c1-ro').innerHTML=`|V| = <b>${comp.V}</b> → |V′| = <b>${comp.Vp}</b>，縮小 <b class="acc">${red.toFixed(1)}%</b>；t = ${t}（${esc(vis(toks[t]))}，標準 ID ${comp.canonIds[t]}）`;
+  const grid=(n,hh,P,lab)=>`<p class="idxlab">${n}-gram（${lab}）· mix = <span class="mono">${hh.mix}</span></p><div class="idxgrid" aria-label="${n}-gram 的 ${P.length} 個索引">${hh.idx.map((z,k)=>`<div><small>M${n},${k+1} = ${P[k]}</small>${z}</div>`).join('')}</div>`;
+  $('#c1-idx').innerHTML=grid(2,h2,P2,'實線視窗')+grid(3,h3,P3,'虛線視窗');
+  $('#c1-cat').innerHTML='<i class="n2"></i>'.repeat(c1.K)+'<i class="n3"></i>'.repeat(c1.K);
+  announce('c1',`|V| = ${comp.V}，|V′| = ${comp.Vp}；t = ${t}；2-gram 索引 ${h2.idx.join('、')}；3-gram 索引 ${h3.idx.join('、')}`);
+}
+function fmtU(U){return U<1e7?U.toLocaleString('en-US'):sci(U,2)}
+function p10(l){return isFinite(l)?`10<sup>${minus(l.toFixed(2))}</sup>`:'0'}
+function renderC1B(){
+  const {U,M,KB:K}=c1,r=collide(U,M,K);
+  $('#c1-Uo').textContent=fmtU(U);$('#c1-Mo').textContent=M.toLocaleString('en-US');$('#c1-KBo').textContent=K;
+  $$('#c1 [data-u]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.u===U)));$$('#c1 [data-m]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.m===M)));
+  const pa=r.pAll<1e-3?sci(r.pAll,2):r.pAll.toFixed(4),differ=Math.abs(r.log10Ind-r.log10Floor)>1e-9,ok=U<Math.sqrt(2**48);
+  $('#c1-ro2').innerHTML=`p₁ = <b>${r.p1.toFixed(6)}</b><br>K 頭都同格 p₁ᴷ = <b class="acc">${pa}</b><br><span class="${differ?'ro-dim':''}">E<sub>full</sub>（獨立模型）= ${p10(r.log10Ind)}</span>${differ?'<br><span class="note">此時 M<sup>K</sup> 超過 mix 範圍，獨立模型不適用</span>':''}<br>E<sub>full</sub>（示範雜湊，mix &lt; 2⁴⁸，推定）= <b>${p10(r.log10Floor)}</b><br>整張表沒有任何全部同格組合的條件：U² ≪ 2⁴⁸（U ≪ 1.7×10⁷）：<b>${ok?'滿足':'不滿足'}</b>`;
+  const box=$('#c1-fig'),svg=$('svg',box),W=widthOf(box,260,460),H=220;
+  const f=frame(svg,{W,H,m:{l:40,r:10,t:28,b:38},x:[0.5,16.5],y:[0,1],yt:[0,.5,1],xt:[1,4,8,12,16],xl:'頭數 K',yl:'p₁ᴷ'});
+  const bw=Math.max(3,(f.x1-f.x0)/16*0.66);
+  for(let k=1;k<=16;k++){const v=Math.pow(r.p1,k),x=f.X(k),y=f.Y(v);el('rect',{x:x-bw/2,y:Math.min(y,f.y0-1),width:bw,height:Math.max(1,f.y0-y),class:k===K?'acc-f':'par-f',opacity:k===K?1:.45},f.g)}
+  tx(f.g,Math.min(f.X(K),f.x1-40),Math.max(f.Y(r.pAll)-8,28),pa,{class:'labm','text-anchor':'middle'});
+  svg.setAttribute('aria-label',`K 個頭都同格的機率對 K 的長條圖；目前 K = ${K}，p₁ᴷ = ${pa.replace(/<[^>]+>/g,'')}`);
+  const can=U<=20000&&M<=1e5;$('#c1-run').disabled=!can;
+  $('#c1-runmsg').textContent=can?'':'實測僅在 U ≤ 20,000 且 M ≤ 100,000 時啟用。';
+  announce('c1',`p₁ = ${r.p1.toFixed(6)}，K 頭都同格 = ${pa}，示範雜湊 E_full = 10^${minus(r.log10Floor.toFixed(2))}`);
+}
+function empText(e,K){const r=collide(e.U,e.P0,K),pa=r.pAll<1e-3?sci(r.pAll,2):r.pAll.toFixed(4);
+  return `第 1 頭同格比例 = <b>${frac(e.c1,e.U)}</b>（${e.c1} / ${e.U}）<br>K 頭都同格比例 = <b class="acc">${frac(e.cAll,e.U)}</b>（${e.cAll} / ${e.U}）<br>索引組完全相同比例 = <b>${frac(e.full,e.U)}</b>（${e.full} / ${e.U}）<br>解析值（P₀ = ${e.P0}）：p₁ = ${r.p1.toFixed(4)}，p₁ᴷ = ${pa}`}
+async function runC1(){const my=++c1.run,{U,M,KB:K}=c1,btn=$('#c1-run');btn.disabled=true;
+  const e=await empirical(U,M,K,i=>{$('#c1-runmsg').textContent=`已處理 ${i.toLocaleString('en-US')} / ${U.toLocaleString('en-US')}`},()=>my===c1.run);
+  if(!e)return;btn.disabled=false;$('#c1-runmsg').textContent='完成。';$('#c1-emp').innerHTML=empText(e,K);
+  $('#c1-live').textContent=`實測完成：第 1 頭同格 ${frac(e.c1,U)}，K 頭都同格 ${frac(e.cAll,U)}，完全相同 ${frac(e.full,U)}`}
+function c1Changed(){c1.run++;$('#c1-emp').textContent='參數已改變，按下按鈕重新實測。';renderC1B()}
+function initC1(){
+  const ta=$('#c1-text');ta.value=c1.text;
+  $$('#c1 [data-s]').forEach(b=>b.addEventListener('click',()=>{c1.text=C1TXT[+b.dataset.s];ta.value=c1.text;c1.t=3;$$('#c1 [data-s]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderC1A()}));
+  ta.addEventListener('input',()=>{c1.text=ta.value;$$('#c1 [data-s]').forEach(x=>x.setAttribute('aria-pressed',String(C1TXT[+x.dataset.s]===ta.value)));renderC1A()});
+  $('#c1-t').addEventListener('input',e=>{c1.t=+e.target.value;renderC1A()});
+  segInit('c1-K',v=>{c1.K=+v;renderC1A()});
+  roving($('#c1-band'),()=>c1.t,t=>{c1.t=t;renderC1A()});
+  $('#c1-U').addEventListener('input',e=>{c1.U=Math.round(10**+e.target.value);c1Changed()});
+  $('#c1-M').addEventListener('input',e=>{c1.M=Math.round(10**+e.target.value);c1Changed()});
+  $('#c1-KB').addEventListener('input',e=>{c1.KB=+e.target.value;c1Changed()});
+  $$('#c1 [data-u]').forEach(b=>b.addEventListener('click',()=>{c1.U=+b.dataset.u;$('#c1-U').value=Math.log10(c1.U);c1Changed()}));
+  $$('#c1 [data-m]').forEach(b=>b.addEventListener('click',()=>{c1.M=+b.dataset.m;$('#c1-M').value=Math.log10(c1.M);c1Changed()}));
+  $('#c1-run').addEventListener('click',runC1);
+  $('#c1-U').setAttribute('aria-valuetext','U = 1,000,000');
+  renderC1A();renderC1B()}
+
+/* ---------- C2 ---------- */
+const c2={d:2560,c:0.3,g:1,sq:false,view:'c'};
+function renderC2(){
+  const {d,c,g,sq,view}=c2,r=gate(d,c,g,sq),k=Math.sqrt(d)*g;
+  $('#c2-co').textContent=c.toFixed(3);$('#c2-go').textContent=g.toFixed(2);$('#c2-c').setAttribute('aria-valuetext',`cos θ = ${c.toFixed(3)}`);$('#c2-g').setAttribute('aria-valuetext',`γ = ${g.toFixed(2)}`);
+  const box=$('#c2-fig'),svg=$('svg',box),W=widthOf(box,280,560),H=260;
+  const xr=view==='c'?[-1,1]:[-6,6];
+  const f=frame(svg,{W,H,m:{l:40,r:14,t:18,b:40},x:xr,y:[0,1],yt:[0,.5,1],xt:view==='c'?[-1,-.5,0,.5,1]:[-6,-3,0,3,6],xl:view==='c'?'cos θ':'s',yl:'α'});
+  const sOf=x=>view==='c'?k*x:x,sq1=s=>s===0?0:Math.sign(s)*Math.sqrt(Math.abs(s));
+  let xs=[];for(let i=0;i<=800;i++)xs.push(xr[0]+(xr[1]-xr[0])*i/800);
+  if(view==='c'){for(const lim of [6/k,36/k]){const L=Math.min(1,lim);for(let i=0;i<400;i++)xs.push(-L+2*L*i/399)}xs.sort((a,b)=>a-b)}
+  el('path',{d:lp(xs.map(x=>[f.X(x),f.Y(sig(sOf(x)))])),class:'acc'},f.g);
+  el('path',{d:lp(xs.map(x=>[f.X(x),f.Y(sig(sq1(sOf(x))))])),class:'ref'},f.g);
+  const sRaw=g*Math.sqrt(d)*c,px=view==='c'?c:Math.max(-6,Math.min(6,sRaw)),py=r.a;
+  el('circle',{cx:f.X(px),cy:f.Y(py),r:5.5,class:'ink-f'},f.g);
+  if(view==='s'&&Math.abs(sRaw)>6)tx(f.g,f.X(px)+(sRaw>0?-8:8),f.Y(py)+(sRaw>0?20:-12),`s = ${minus(sRaw.toFixed(2))} ${sRaw>0?'→':'←'}`,{class:'labm','text-anchor':sRaw>0?'end':'start'});
+  tx(f.g,f.x1-4,f.Y(.92),'Eq. 4',{class:'lab','text-anchor':'end'});
+  svg.setAttribute('aria-label',`α 曲線；目前 s = ${r.s.toFixed(4)}，α = ${r.a.toFixed(8)}`);
+  const cb=$('#c2-circ'),cs=$('svg',cb),S=200,R=74,cx=S/2,cy=S/2;cs.textContent='';cs.setAttribute('viewBox',`0 0 ${S} ${S}`);cs.setAttribute('width',S);cs.setAttribute('height',S);
+  el('circle',{cx,cy,r:R,class:'faint',fill:'none'},cs);
+  const th=Math.acos(Math.max(-1,Math.min(1,c))),kx=cx+R*Math.cos(th),ky=cy-R*Math.sin(th);
+  const ar=(x0,y0,x1,y1,cls,dash)=>{const dx=x1-x0,dy=y1-y0,L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L,h=9;el('line',{x1:x0,y1:y0,x2:x1-ux*h*.7,y2:y1-uy*h*.7,class:cls+(dash?' dash':'')},cs);el('path',{d:`M${x1} ${y1}L${x1-ux*h-uy*h*.45} ${y1-uy*h+ux*h*.45}L${x1-ux*h+uy*h*.45} ${y1-uy*h-ux*h*.45}Z`,class:cls+'-f'},cs)};
+  const rr=26;el('path',{d:`M${cx+rr} ${cy}A${rr} ${rr} 0 0 0 ${cx+rr*Math.cos(th)} ${cy-rr*Math.sin(th)}`,class:'ink',style:'stroke-width:1.2'},cs);
+  ar(cx,cy,cx+R,cy,'perp');ar(cx,cy,kx,ky,'par',true);
+  tx(cs,cx+R,cy+18,'h（Query）',{class:'al','text-anchor':'end'});tx(cs,kx+(Math.cos(th)>=0?6:-6),ky+(ky<cy?-6:16),'k（Key）',{class:'al','text-anchor':Math.cos(th)>=0?'start':'end'});
+  tx(cs,cx,S-6,`θ = ${(th*180/Math.PI).toFixed(1)}°`,{class:'labm','text-anchor':'middle'});
+  cs.setAttribute('aria-label',`h 與 k 的夾角 θ = ${(th*180/Math.PI).toFixed(1)} 度`);
+  const oma=r.oma<1e-3?sci(r.oma,3):r.oma.toFixed(4);
+  $('#c2-ro').innerHTML=`s = <b>${minus(r.s.toFixed(4))}</b><br>α = <b class="acc">${r.a.toFixed(8)}</b><br>1 − α = <b>${oma}</b>`;
+  $('#c2-bar').style.width=(r.a*100).toFixed(2)+'%';
+  announce('c2',`s = ${minus(r.s.toFixed(2))}，α = ${r.a.toFixed(8)}`);
+}
+function initC2(){
+  segInit('c2-d',v=>{c2.d=+v;renderC2()});segInit('c2-view',v=>{c2.view=v;renderC2()});
+  const setC=v=>{if(!isFinite(v))return;c2.c=Math.max(-1,Math.min(1,v));$('#c2-c').value=c2.c;$('#c2-cn').value=c2.c;renderC2()};
+  $('#c2-c').addEventListener('input',e=>setC(+e.target.value));$('#c2-cn').addEventListener('change',e=>setC(+e.target.value));
+  $('#c2-g').addEventListener('input',e=>{c2.g=10**+e.target.value;renderC2()});
+  $('#c2-sq').addEventListener('change',e=>{c2.sq=e.target.checked;renderC2()});
+  renderC2()}
+
+/* ---------- C3 ---------- */
+const c3={t:9,N:3,w:4,d:3,lock:true,zero:false};
+const C3TOK=tokenize(FIG1);
+function renderC3(){
+  if(c3.lock)c3.d=c3.N;
+  const {t,N,w,zero}=c3,d=c3.d,pos=field(t,N,w,d,zero),P=new Set(pos);
+  $('#c3-wo').textContent=w;$('#c3-do').textContent=d;$('#c3-d').value=d;$('#c3-d').disabled=c3.lock;
+  const minP=Math.min(pos[0],0),nPad=-minP,coll=nPad>3;
+  const cells=[];if(coll)cells.push({k:'c',a:minP,b:-3});
+  for(let p=coll?-2:minP;p<0;p++)cells.push({k:'p',p});
+  C3TOK.forEach((tok,i)=>cells.push({k:'t',p:i,tok}));
+  const colOf=p=>{if(coll&&p<=-3)return 1;return cells.findIndex(c=>c.k!=='c'&&c.p===p)+1};
+  let h='';
+  cells.forEach((c,i)=>{const col=i+1;
+    if(c.k==='c')h+=`<span class="tok pad cov" style="grid-column:${col}">pad ×${c.b-c.a+1}<span class="id">位置 ${minus(c.a)}…${minus(c.b)}</span></span>`;
+    else if(c.k==='p')h+=`<span class="tok pad${P.has(c.p)?' cov':''}" style="grid-column:${col}">pad<span class="id">${minus(c.p)}</span></span>`;
+    else h+=`<button type="button" class="tok${P.has(c.p)?' cov':''}${c.p===t?' sel':''}" style="grid-column:${col}" tabindex="${c.p===t?0:-1}" data-i="${c.p}" aria-label="位置 ${c.p}：${esc(c.tok.trim())}${P.has(c.p)?'，在讀取範圍內':''}"><span>${esc(vis(c.tok))}</span><span class="id">${c.p}</span></button>`});
+  const taps=zero?1:w;
+  for(let j=0;j<taps;j++){const cc=t-j*d,a=colOf(cc-N+1),b=colOf(cc);h+=`<div class="brk s${j%4}" style="grid-row:${j+2};grid-column:${a}/${b+1}"><b>${j?`t − ${j*d}`:'t'}</b></div>`}
+  const grid=$('#c3-grid');grid.style.gridTemplateColumns=`repeat(${cells.length},max-content)`;grid.style.paddingBottom='18px';grid.innerHTML=h;
+  $$('button.tok',grid).forEach(b=>b.addEventListener('click',()=>{c3.t=+b.dataset.i;renderC3()}));
+  const ins=pos.filter(p=>p>=0).length,span=pos[pos.length-1]-pos[0]+1,cont=span===pos.length;
+  $('#c3-ro').innerHTML=`涵蓋位置數（含 pad）= <b class="acc">${pos.length}</b><br>句內 token 數 = <b>${ins}</b><br>跨度 = <b>${span}</b><br>pad 格數 = <b>${pos.length-ins}</b><br>連續：<b>${cont?'是':'否'}</b><br>位置：${pos.map(minus).join(', ')}`;
+  announce('c3',`t = ${t}，涵蓋 ${pos.length} 個位置，句內 ${ins} 個，pad ${pos.length-ins} 個，${cont?'連續':'不連續'}；位置 ${pos.map(minus).join('、')}`);
+}
+function initC3(){
+  segInit('c3-N',v=>{c3.N=+v;renderC3()});
+  $('#c3-w').addEventListener('input',e=>{c3.w=+e.target.value;renderC3()});
+  $('#c3-d').addEventListener('input',e=>{c3.d=+e.target.value;renderC3()});
+  $('#c3-lock').addEventListener('change',e=>{c3.lock=e.target.checked;renderC3()});
+  $('#c3-zero').addEventListener('change',e=>{c3.zero=e.target.checked;renderC3()});
+  roving($('#c3-grid'),()=>c3.t,t=>{c3.t=t;renderC3()});
+  renderC3()}
+
+/* ---------- C4 ---------- */
+const c4={p:'6e20',rho:0.8};
+function renderC4(){
+  const {p,rho}=c4,a=alloc(p,rho),pct=v=>(v/a.Pt*100);
+  $('#c4-ro2').textContent=(rho*100).toFixed(1)+'%';$('#c4-r').setAttribute('aria-valuetext',`ρ = ${(rho*100).toFixed(1)}%`);
+  const segs=$$('#c4-bar>div');[a.Pa,a.Pm,a.Pe].forEach((v,i)=>{segs[i].style.flex=`0 0 ${pct(v).toFixed(3)}%`});
+  $('#c4-bar').setAttribute('aria-label',`P_tot ${a.Pt.toFixed(3)}B 的組成：啟用 ${a.Pa.toFixed(3)}B，MoE 未啟用 ${a.Pm.toFixed(3)}B，Engram ${a.Pe.toFixed(3)}B`);
+  $('#c4-leg').innerHTML=[['sw-act','P_act（每個 token 啟用）',a.Pa],['sw-moe','MoE 未啟用（ρ·P_sparse）',a.Pm],['sw-eng','Engram（(1 − ρ)·P_sparse）',a.Pe]].map(([c,n,v])=>`<li><i class="${c}"></i><span>${n}</span><span class="v">${v.toFixed(3)}B</span><span class="p">${pct(v).toFixed(1)}%</span></li>`).join('');
+  $('#c4-ro').innerHTML=`P<sub>sparse</sub> = ${a.Pt.toFixed(3)} − ${a.Pa.toFixed(3)} = <b>${a.Ps.toFixed(3)}B</b><br>P<sub>Engram</sub> = <b class="acc">${a.Pe.toFixed(3)}B</b><br>路由專家數 E = <b>${a.E.toFixed(1)}</b>（約 ${Math.round(a.E)} 個），每個 token 選 top-6`;
+  $('#c4-fixed').classList.toggle('hide',p!=='27B');
+  $$('#c4 [data-p]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.p===p)));
+  const box=$('#c4-fig'),svg=$('svg',box),W=widthOf(box,300,880),top=p==='6e20'?78:0,H=top+144,nar=W<520;
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const x0=18,x1=W-18,X=lin(.3,1,x0,x1),ay=top+64;
+  if(p==='6e20'){const Y=lin(1.7109,1.7248,top-14,top-56);tx(svg,x0,12,'驗證損失（6e20，論文值）',{class:'al'});
+    el('line',{x1:X(.8),x2:X(.8),y1:Y(1.7109),y2:ay,class:'cur'},svg);el('line',{x1:X(1),x2:X(1),y1:Y(1.7248),y2:ay,class:'cur'},svg);
+    el('circle',{cx:X(1),cy:Y(1.7248),r:5,class:'ink-f'},svg);el('circle',{cx:X(.8),cy:Y(1.7109),r:5,class:'ink-f'},svg);
+    tx(svg,X(1)-10,Y(1.7248)+4,'1.7248（ρ = 100%）',{class:'labm','text-anchor':'end'});tx(svg,X(.8)-10,Y(1.7109)+4,'1.7109（ρ ≈ 80%）',{class:'labm','text-anchor':'end'})}
+  tx(svg,x0,ay-40,'↑ 較高',{class:'al'});tx(svg,x1,ay-40,'↑ 較高',{class:'al','text-anchor':'end'});
+  el('rect',{x:X(.75),y:ay-18,width:X(.8)-X(.75),height:18,class:'filla'},svg);
+  el('line',{x1:x0,x2:x1,y1:ay,y2:ay,class:'ink'},svg);
+  for(let v=3;v<=10;v++){const x=X(v/10);el('line',{x1:x,x2:x,y1:ay,y2:ay+6,class:'axl'},svg);if(!nar||[3,5,7,10].includes(v))tx(svg,x,ay+20,v*10+'%',{class:'tk','text-anchor':v===3?'start':v===10?'end':'middle'})}
+  el('circle',{cx:X(.4),cy:ay,r:5,class:'hollow'},svg);el('circle',{cx:X(1),cy:ay,r:5,class:'hollow'},svg);
+  tx(svg,X(.4)-6,ay+42,'40% 與純 MoE 相當',{class:'al'});tx(svg,X(.775),ay+(nar?62:42),'最佳 75–80%',{class:'lab','text-anchor':'middle'});
+  tx(svg,x1,ay+62,'純 MoE',{class:'al','text-anchor':'end'});
+  if(p==='27B'){const x=X(.743);el('path',{d:`M${x} ${ay-6}L${x+6} ${ay}L${x} ${ay+6}L${x-6} ${ay}Z`,class:'perp-f'},svg);tx(svg,x,ay+82,'74.3%',{class:'labm','text-anchor':'middle'})}
+  const cx=X(rho);el('path',{d:`M${cx-7} ${ay-26}L${cx+7} ${ay-26}L${cx} ${ay-14}Z`,class:'acc-f'},svg);
+  tx(svg,Math.max(x0+40,Math.min(x1-90,cx)),ay-30,`ρ = ${(rho*100).toFixed(1)}%`,{class:'labm','text-anchor':'middle'});
+  svg.setAttribute('aria-label',`ρ 軸 30% 到 100%：40% 與純 MoE 相當，75% 到 80% 最佳，100% 為純 MoE；目前 ρ = ${(rho*100).toFixed(1)}%`);
+  const marks=['空心點 40%：與純 MoE 相當（兩個預算的文字結果）','底色區間 75%–80%：兩個預算的最佳位置','空心點 100%：純 MoE（ρ = 1）'];
+  if(p==='6e20')marks.push('實心點：6e20 預算的驗證損失 1.7248（ρ = 100%）與 1.7109（ρ ≈ 80%），只有這組有損失數字');
+  if(p==='27B')marks.push('菱形 74.3%（Engram-27B，論文值，略低於最佳區間）；本頁由專家數推得 74.24%，見上方固定讀數');
+  $('#c4-marks').innerHTML=marks.map(s=>`<li>${s}</li>`).join('');
+  announce('c4',`ρ = ${(rho*100).toFixed(1)}%，P_Engram = ${a.Pe.toFixed(3)}B，專家數 ${a.E.toFixed(1)}`);
+}
+function initC4(){
+  $$('#c4 [data-p]').forEach(b=>b.addEventListener('click',()=>{c4.p=b.dataset.p;renderC4()}));
+  $('#c4-r').addEventListener('input',e=>{c4.rho=Math.round(+e.target.value*200)/200;renderC4()});
+  renderC4()}
+
+/* ---------- C5 ---------- */
+const c5={mode:'engram',ell:2,tokens:512,bytes:2,bw:25,tl:0.5,size:100};
+function niceStep(raw){const p=10**Math.floor(Math.log10(raw));for(const m of [1,2,5,10])if(m*p>=raw)return m*p;return 10*p}
+function renderC5(){
+  const o=c5,r=prefetch(o),L=(o.ell-1)*o.tl;
+  $('#c5-lo').textContent=o.ell;$('#c5-no').textContent=o.tokens.toLocaleString('en-US');$('#c5-bwo').textContent=o.bw;$('#c5-to').textContent=o.tl.toFixed(2);$('#c5-szo').textContent=o.size+'B';
+  const box=$('#c5-fig'),svg=$('svg',box),W=widthOf(box,300,620),H=170;
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const defs=el('defs',null,svg),pat=el('pattern',{id:'c5-hatch',width:6,height:6,patternUnits:'userSpaceOnUse',patternTransform:'rotate(45)'},defs);el('line',{x1:0,y1:0,x2:0,y2:6,class:'axl',style:'stroke-width:2'},pat);
+  const x0=48,x1=W-12,Tmax=L+r.stall+o.tl,X=lin(0,Tmax,x0,x1),gy=40,py=100;
+  const step=niceStep(Tmax/5),dec=Math.max(0,-Math.floor(Math.log10(step)));
+  for(let v=0;v<=Tmax+1e-12;v+=step){const x=X(v);el('line',{x1:x,x2:x,y1:gy-8,y2:py+26,class:'grid'},svg);tx(svg,x,H-10,v.toFixed(dec),{class:'tk','text-anchor':'middle'})}
+  tx(svg,4,H-10,'ms',{class:'tk'});
+  tx(svg,4,gy+19,'GPU',{class:'al'});tx(svg,4,py+15,'PCIe',{class:'al'});
+  for(let i=1;i<o.ell;i++){const a=X((i-1)*o.tl),b=X(i*o.tl);el('rect',{x:a+.5,y:gy,width:Math.max(1,b-a-1),height:28,rx:3,class:'gpu'},svg);
+    if((i===1||i===o.ell-1)&&b-a>34)tx(svg,(a+b)/2,gy+19,`層 ${i}`,{class:'al','text-anchor':'middle'})}
+  if(r.stall>0){const a=X(L),w=Math.max(4,X(L+r.stall)-a);el('rect',{x:a,y:gy,width:w,height:28,class:'hatch'},svg);el('rect',{x:a,y:gy,width:w,height:28,fill:'none',class:'axl'},svg);
+    tx(svg,Math.min(a+2,x1-90),gy-12,`停頓 ${r.stall.toFixed(3)} ms`,{class:'labm'})}
+  const ea=X(L+r.stall),eb=X(L+r.stall+o.tl);el('rect',{x:ea+.5,y:gy,width:Math.max(2,eb-ea-1),height:28,rx:3,class:'eng'},svg);
+  tx(svg,eb-4,gy+44,`層 ${o.ell}（Engram）`,{class:'al','text-anchor':'end'});
+  const ta=X(o.mode==='engram'?0:L),tw=Math.max(4,X(r.tx)-X(0));el('rect',{x:ta,y:py,width:tw,height:20,rx:3,class:'xfer'},svg);
+  const lab=`傳輸 ${r.tx.toFixed(3)} ms`;if(tw>110)tx(svg,ta+6,py+15,lab,{class:'lab'});else tx(svg,Math.min(ta+tw+6,x1-100),py+15,lab,{class:'labm'});
+  svg.setAttribute('aria-label',`時間軸：${o.mode==='engram'?'傳輸從 0 開始':'傳輸從第 '+o.ell+' 層開始'}，傳輸 ${r.tx.toFixed(5)} ms，可重疊 ${r.win.toFixed(3)} ms，停頓 ${r.stall.toFixed(5)} ms`);
+  $('#c5-ro').innerHTML=`傳輸量 = <b>${(r.vol/1e6).toFixed(4)} MB</b><br>傳輸時間 Tₓ = <b>${r.tx.toFixed(5)} ms</b><br>可重疊時間 W = <b>${r.win.toFixed(3)} ms</b><br>停頓 = <b class="acc">${r.stall===0?'0':r.stall.toFixed(5)} ms</b><br>表大小 ${o.size}B（不影響傳輸量）`;
+  announce('c5',`傳輸量 ${(r.vol/1e6).toFixed(4)} MB，傳輸 ${r.tx.toFixed(5)} ms，可重疊 ${r.win.toFixed(3)} ms，停頓 ${r.stall===0?'0':r.stall.toFixed(5)} ms`);
+}
+function initC5(){
+  segInit('c5-mode',v=>{c5.mode=v;renderC5()});segInit('c5-b',v=>{c5.bytes=+v;renderC5()});
+  $('#c5-l').addEventListener('input',e=>{c5.ell=+e.target.value;renderC5()});
+  $('#c5-n').addEventListener('input',e=>{c5.tokens=2**+e.target.value;e.target.setAttribute('aria-valuetext',`${c5.tokens} 個 token`);renderC5()});
+  $('#c5-bw').addEventListener('input',e=>{c5.bw=+e.target.value;renderC5()});
+  $('#c5-t').addEventListener('input',e=>{c5.tl=+e.target.value;renderC5()});
+  $('#c5-sz').addEventListener('input',e=>{c5.size=+e.target.value;renderC5()});
+  $('#c5-n').setAttribute('aria-valuetext','512 個 token');
+  renderC5()}
+
+/* ---------- timeline ---------- */
+const TL_GROUP={'1607.04606':['ng','ngram-hash-embedding-lineage'],'1709.03933':['ng','ngram-hash-embedding-lineage'],'2207.06366':['ng','ngram-hash-embedding-lineage'],'2501.16975':['ng','ngram-hash-embedding-lineage'],'2502.01637':['ng','ngram-hash-embedding-lineage'],
+  '1701.06538':['moe','moe-conditional-computation-lineage'],'2101.03961':['moe','moe-conditional-computation-lineage'],'2401.06066':['moe','moe-conditional-computation-lineage'],
+  '1907.05242':['pm','sparse-memory-layers-pkm-peer'],'2407.04153':['pm','sparse-memory-layers-pkm-peer'],
+  '2012.14913':['ffn','ffn-as-key-value-memory'],'2002.08909':['rag','retrieval-augmented-external-memory'],'2601.07372':['me','overview']};
+const TL_NAME={ng:'N-gram 與雜湊嵌入',moe:'MoE',pm:'參數式記憶',ffn:'FFN 作為鍵值記憶',rag:'檢索增強',me:'條件記憶 · 本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  if(!data.some(e=>e.arxiv==='2601.07372'))data.push({year:2026,title:'Conditional Memory via Scalable Lookup: A New Axis of Sparsity for Large Language Models',authors_short:'本論文',arxiv:'2601.07372',role:'以 N-gram 雜湊查表實作條件記憶，並研究記憶與 MoE 專家的分配。'});
+  data=data.map((e,i)=>({e,i})).sort((a,b)=>(+a.e.year||0)-(+b.e.year||0)||a.i-b.i).map(o=>o.e);
+  const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const slug=g[1]==='overview'?'engram-lineage-overview':g[1];const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${slug?`<a href="${slug}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k].split(' · ')[0];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+
+/* ---------- toc, theme, appbar ---------- */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  $$('.toc a,.tocbar a').forEach(a=>a.addEventListener('click',e=>{const t=$(a.getAttribute('href'));if(!t)return;e.preventDefault();t.scrollIntoView({behavior:RM?'auto':'smooth'});history.replaceState(null,'',a.getAttribute('href'))}));
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));
+  addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+function markOverflow(){$$('.eq').forEach(e=>{const k=$('.katex-display',e)||$('.eq-m',e);const o=k.scrollWidth>k.clientWidth+1;e.classList.toggle('is-overflow',o);
+  if(o){k.tabIndex=0;k.setAttribute('aria-label','公式，可橫向捲動')}else{k.removeAttribute('tabindex');k.removeAttribute('aria-label')}})}
+
+/* ---------- self test (design.md Sec. 5) ---------- */
+async function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t)=>Math.abs(a-b)<=t+1e-12,rel=(a,b,t)=>Math.abs(a-b)<=t*Math.abs(b)+1e-300,eqA=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+  ok(eqA(MULTS.map(String),['572152369','708123','479473029']),'MULTS');
+  const sn=new Set(),P2=nextPrimes(10000,8,sn),P3=nextPrimes(10000,8,sn);
+  ok(eqA(P2,[10007,10009,10037,10039,10061,10067,10069,10079])&&eqA(P3,[10091,10093,10099,10103,10111,10133,10139,10141]),'primes M=10000 K=8');
+  let tk=tokenize(FIG1),cp=compress(tk);
+  ok(tk.length===10&&eqA(cp.rawIds,[1,2,3,4,5,6,3,7,8,9])&&eqA(cp.canonIds,[1,2,3,4,5,6,3,7,8,9])&&cp.V===9&&cp.Vp===9,'Fig.1 compress');
+  let h=hashHeads(cp.canonIds,3,2,P2);ok(h.mix===2286486165n&&eqA(h.idx,[6749,178,7380,3525,3183,8723,7576,4541]),'Fig.1 t=3 2-gram');
+  h=hashHeads(cp.canonIds,3,3,P3);ok(h.mix===2975947167n&&eqA(h.idx,[266,5931,4144,7487,6870,6663,8721,9871]),'Fig.1 t=3 3-gram');
+  tk=tokenize(C1TXT[1]);cp=compress(tk);
+  ok(eqA(cp.rawIds,[1,2,3,4,5,6,7,8,9,4,10,6])&&eqA(cp.canonIds,[1,2,3,1,2,4,1,5,6,1,5,4])&&cp.V===10&&cp.Vp===6,'compress example |V|=10 |V\'|=6');
+  ok(eqA(hashHeads(cp.canonIds,3,2,P2).idx,[7135,2468,1972,8016,7241,7069,3746,7949]),'example t=3 2-gram');
+  ok(eqA(hashHeads(cp.canonIds,3,3,P3).idx,[6159,6978,9651,1510,5858,519,5334,7011]),'example t=3 3-gram');
+  [[2e4,10007,1,.864475,.864475,.301,.301],[2e4,10007,2,.864475,.747317,-3.700,-3.700],[2e4,10007,8,.864475,.311904,-27.701,-10.148],[1e6,2262400,1,.357256,.357256,-.355,-.355],
+   [1e6,2262400,8,.357256,2.65358e-4,-44.837,-8.449],[1e9,2262400,8,1,1,-41.837,-5.449],[1e10,2262400,8,1,1,-40.837,-4.449]].forEach(([U,M,K,p1,pa,li,lf])=>{const r=collide(U,M,K);
+    ok(near(r.p1,p1,5e-7)&&(pa<1e-3?rel(r.pAll,pa,2e-5):near(r.pAll,pa,5e-7))&&near(r.log10Ind,li,.001)&&near(r.log10Floor,lf,.001),`collide ${U} ${M} ${K}: ${r.p1} ${r.pAll} ${r.log10Ind} ${r.log10Floor}`)});
+  for(const [U,M,K,c1v,cav,fu,s1,sa,sf] of [[20000,10000,2,17303,14905,2,'0.8651','0.7452','0.0001'],[20000,10000,8,17303,6155,0,'0.8651','0.3078','0.0000'],[5000,1000,4,4969,4844,0,'0.9938','0.9688','0.0000'],[20000,50000,8,6595,4,0,'0.3297','0.0002','0.0000']]){
+    const e=await empirical(U,M,K);ok(e.c1===c1v&&e.cAll===cav&&e.full===fu,`empirical counts ${U},${M},${K}: ${e.c1} ${e.cAll} ${e.full}`);
+    ok(frac(e.c1,U)===s1&&frac(e.cAll,U)===sa&&frac(e.full,U)===sf,`empirical strings ${U},${M},${K}`)}
+  [[16,.0625,1,false,.25,.56217650,.4378],[16,.0625,1,true,.5,.62245933,.3775],[2560,.3,1,false,15.1789,.99999974,2.558e-7],[2560,.3,1,true,3.8960,.98008205,1.992e-2],[2560,.05,1,false,2.5298,.92620620,7.379e-2],
+   [2560,0,1,false,0,.5,.5],[16,.3,1,false,1.2,.76852478,.2315],[2560,.3,.1,false,1.5179,.82022805,.1798],[4096,1,2,false,128,1,2.572e-56]].forEach(([d,c,g,sq,s,a,o])=>{const r=gate(d,c,g,sq);
+    ok(near(r.s,s,1e-4)&&near(r.a,a,1e-8)&&rel(r.oma,o,2e-3),`gate ${d} ${c} ${g} ${sq}: s=${r.s} a=${r.a} 1-a=${r.oma}`)});
+  const rng=(a,b)=>Array.from({length:b-a+1},(_,i)=>a+i);
+  [[9,3,4,3,false,rng(-2,9),10,12,2],[11,3,4,3,false,rng(0,11),12,12,0],[11,3,4,1,false,rng(6,11),6,6,0],[11,3,4,3,true,rng(9,11),3,3,0],[4,3,4,3,false,rng(-7,4),5,12,7],[13,3,6,5,false,null,9,28,9]].forEach(([t,N,w,d,z,list,ins,span,pad])=>{
+    const f=field(t,N,w,d,z),fi=f.filter(p=>p>=0).length;ok((!list||eqA(f,list))&&fi===ins&&f[f.length-1]-f[0]+1===span&&f.length-fi===pad&&(list||f.length===18),`field ${t},${N},${w},${d},${z}: ${f}`)});
+  const E={'2e20':[106,86,81,46],'6e20':[99,80.4,75.75,43.2],'27B':[72,58.8,55.5,32.4]};
+  for(const p in E)[1,.8,.75,.4].forEach((r,i)=>ok(near(alloc(p,r).E,E[p][i],.01),`alloc E ${p} rho=${r}`));
+  ok(near(alloc('2e20',1).Ps,5.132,.01)&&near(alloc('6e20',1).Ps,8.907,.01)&&near(alloc('27B',1).Ps,22.238,.01),'alloc Psparse');
+  ok(near(alloc('2e20',.8).Pe,1.026,.01)&&near(alloc('6e20',.8).Pe,1.781,.01)&&near(alloc('2e20',.4).Pe,3.079,.01)&&near(alloc('6e20',.4).Pe,5.344,.01),'alloc PEngram');
+  const a27=alloc('27B',49/66);ok(near(a27.E,55,.01)&&near(a27.Pe,5.728,.01),'alloc 27B fixed row');
+  const a745=alloc('27B',.745);ok(near(a745.E,55.17,.01)&&near(a745.Pe,5.671,.01),'alloc 27B rho=0.745');
+  const base={tokens:512,bytes:2,bw:25,tl:.5,ell:2,mode:'engram'};
+  [[{},1.3107,.05243,.5,0],[{mode:'moe'},1.3107,.05243,0,.05243],[{tl:.01},1.3107,.05243,.01,.04243],[{tokens:65536},167.77,6.71089,.5,6.21089],[{tokens:65536,ell:15},167.77,6.71089,7,0],[{ell:1},1.3107,.05243,0,.05243]].forEach(([o,v,t,w,s],i)=>{
+    const r=prefetch(Object.assign({},base,o));ok(near(r.vol/1e6,v,v>100?.01:1e-4)&&near(r.tx,t,1e-4)&&near(r.win,w,1e-4)&&near(r.stall,s,1e-4),`prefetch row ${i+1}: ${r.tx} ${r.stall}`)});
+  ok(/0\.8651（17303 \/ 20000）/.test(empText({U:20000,c1:17303,cAll:6155,full:0,P0:10007},8).replace(/<[^>]+>/g,'')),'C1 empirical display string');
+  ok(!!document.querySelector('.katex'),'KaTeX rendered');
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ---------- boot ---------- */
+initTheme();initToc();
+const f1=tokenize(FIG1);staticBand('hero-band',f1,[1,2,3],[]);
+staticBand('f7a',['<bos>','Only','Alexander','the','Great','could','tame','the','horse','B','uce','phal','us','.'],[2,3,4],[4]);
+staticBand('f7b',['<bos>','By','the','way',',','I','am','a','fan','of','the','Milky','Way','.'],[1,2,3,10,11,12],[3,12]);
+initC1();initC2();initC3();initC4();initC5();renderTimeline();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{renderC1B();renderC2();renderC4();renderC5();markOverflow()})});
+let mathDone=false;
+function renderMath(){if(mathDone||typeof renderMathInElement!=='function')return;mathDone=true;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false});markOverflow()}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{renderMath();markOverflow();if(/[?&]test\b/.test(location.search))selfTest()});
+})();
+</script>
+</body>
+</html>

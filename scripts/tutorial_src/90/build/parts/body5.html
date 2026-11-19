@@ -1,0 +1,98 @@
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="impl" data-toc="13" data-tt="實作">
+  <div class="ch-num">13 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="tscroll" style="max-width:860px"><table class="stack">
+    <caption>Table 5 與 Sec. 4.1 的設定</caption>
+    <thead><tr><th>項目</th><th>值</th></tr></thead><tbody>
+    <tr><td>主幹</td><td data-h="值">30 層、維度 2560、第一層為稠密層、MLA（32 頭）、RoPE θ 10000、mHC 擴展率 4</td></tr>
+    <tr><td>MoE</td><td data-h="值">2 共享 + 72（MoE-27B）或 55（Engram）路由專家、top-6、Loss-Free 負載平衡</td></tr>
+    <tr><td>訓練</td><td data-h="值">序列長 4096、詞表 129,280、batch 1280、50,000 步、262B token</td></tr>
+    <tr><td>最佳化</td><td data-h="值">主幹 Muon；嵌入 Adam；基礎學習率 4e-4、Step Decay、weight decay 0.1</td></tr>
+    <tr><td>Engram</td><td data-h="值">$d_{\text{mem}}$ 1280；Vocab Size 2,262,400（27B）／7,239,680（40B）；8 頭；第 [2,15] 層；N-gram [2,3]；combine mHC；tokenizer 壓縮；卷積零初始化；學習率 ×5；weight decay 0</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <h3>常見錯誤</h3>
+    <ol>
+      <li><b>把 Engram 當成取代輸入詞嵌入。</b>Engram 插在中間層，輸入嵌入與輸出 un-embedding 保持不變（Fig. 1 說明）。</li>
+      <li><b>用原始 token ID 直接雜湊。</b>要先經 $\mathcal P$ 壓縮；消融顯示 tokenizer 壓縮是影響最大的三項之一。</li>
+      <li><b>只用一個雜湊頭。</b>每個階數用 $K$ 個頭與質數表大小；單頭時一旦碰撞就無法區分（C1）。</li>
+      <li><b>卷積沒有零初始化。</b>零初始化保證訓練開始時 $\mathbf Y=\tilde{\mathbf V}$。</li>
+      <li><b>嵌入表沿用主幹的最佳化設定。</b>論文對嵌入用 Adam、學習率 ×5、weight decay 0，主幹用 Muon、weight decay 0.1。</li>
+      <li><b>只看建模而把 Engram 插得很深，或只看系統而插得很淺。</b>插入層要同時滿足建模（早）與預取延遲（晚）。</li>
+      <li><b>比較長文脈能力時只對齊步數。</b>應對齊預訓練損失（Sec. 5.2）。</li>
+      <li><b>層編號。</b>論文寫第 2 與 15 層，示範程式的 <code>layer_ids</code> 為 [1, 15]（0 起算的 block 索引），兩者的起算方式論文沒有說明。</li>
+    </ol>
+  </div>
+  <details class="sym"><summary>完整符號表</summary><div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$X=(x_1,\dots,x_T)$</td><td>輸入 token 序列，長度 $T$；$x_t$ 為原始 token ID</td></tr>
+    <tr><td>$V$、$V'$、$\mathcal P$</td><td>原始詞表、壓縮後詞表、壓縮滿射；$x'_t=\mathcal P(x_t)$</td></tr>
+    <tr><td>$g_{t,n}$、$N$</td><td>位置 $t$ 結尾的後綴 $n$-gram、最大階數（3）</td></tr>
+    <tr><td>$K$、$k$</td><td>每個階數的雜湊頭數（8）、頭的編號</td></tr>
+    <tr><td>$\varphi_{n,k}$、$M_{n,k}$、$\mathbf E_{n,k}$</td><td>雜湊函數、表的列數（質數）、嵌入表；每列 80 維（推定）</td></tr>
+    <tr><td>$z_{t,n,k}$、$\mathbf e_{t,n,k}$、$\mathbf e_t$</td><td>列索引、查出的向量、串接後的記憶向量（$d_{\text{mem}}=1280$）</td></tr>
+    <tr><td>$\mathbf H^{(\ell)}$、$\mathbf h_t$、$d$</td><td>第 $\ell$ 層隱藏狀態、位置 $t$ 的隱藏向量、隱藏維度（2560）</td></tr>
+    <tr><td>$\mathbf W_K,\mathbf W_V$、$\alpha_t$</td><td>Key、Value 投影；純量閘門</td></tr>
+    <tr><td>$w$、$\delta$</td><td>卷積核大小（4）、擴張率（= $N$）</td></tr>
+    <tr><td>$M$</td><td>mHC 的分支數（4）</td></tr>
+    <tr><td>$P_{\text{tot}},P_{\text{act}},P_{\text{sparse}}$</td><td>總可訓練參數（不含詞嵌入與 LM head）、每 token 啟用參數、未啟用參數</td></tr>
+    <tr><td>$\rho$</td><td>未啟用參數分給 MoE 專家的比例</td></tr>
+    <tr><td>$M_{\text{slot}}$</td><td>Sec. 3.2 的嵌入槽數</td></tr>
+    <tr><td>$k_{\text{act}}$</td><td>MoE 每個 token 選用的路由專家數（6）</td></tr>
+    </tbody></table></div></div></details>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="history" data-toc="14" data-tt="研究脈絡">
+  <div class="ch-num">14 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>論文 §7 把源頭追溯到 Shannon 的 N-gram 語言模型。之後 FastText 以子詞 N-gram 嵌入表示詞，Hash Embeddings 用多個雜湊函數降低嵌入表的大小與碰撞，這是 Eq. 1 所沿用的做法。另一條線是 MoE：稀疏閘控 MoE、Switch Transformer 與 DeepSeekMoE 讓條件計算成為大型模型的標準做法。參數式記憶（PKM、PEER）在層內放大型 key-value 儲存，以學到的 key 選列；FFN 被解讀為鍵值記憶，說明模型會用計算重建靜態知識；REALM 等檢索增強方法則使用非參數的外部記憶。N-Grammer、OverEncoding 與 SCONE 把 N-gram 嵌入擴大到語言模型，但放在輸入層，也沒有在嚴格等參數、等 FLOPs 下驗證。本文把 N-gram 查表移到中間層，並以稀疏度分配把它與 MoE 放在同一個預算下比較。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S13 =========================================================== -->
+<section class="ch" id="next" data-toc="15" data-tt="保留與延伸">
+  <div class="ch-num">15 · 保留與延伸</div>
+  <h2>保留與延伸閱讀</h2>
+  <div class="prose">
+    <p>論文沒有獨立的限制章節，以下整理文中自述的保留：稀疏度分配的最佳點只在檢驗過的規模與固定稀疏比下穩定（Sec. 3.1）；Engram-40B 可能訓練不足（Sec. 4.2）；推論時關閉 Engram 造成訓練與推論不一致（Sec. 6.3）；更高階的 N-gram 在更大的記憶下可能有益（Sec. 6.2）；Table 4 沒有使用快取（Sec. 6.4）。作者把 N-gram 嵌入稱為條件記憶的「初步探索」（Sec. 1）。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="engram-lineage-overview.html">Engram 條件式記憶的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="moe-conditional-computation-lineage.html">MoE 與條件式計算的發展</a><span>第一條稀疏軸與 MoE 基線</span></div></li>
+    <li><div><a href="ffn-as-key-value-memory.html">FFN 作為 key-value 記憶體與深度使用效率</a><span>模型用計算重建靜態知識</span></div></li>
+    <li><div><a href="ngram-hash-embedding-lineage.html">N-gram 與 hash 嵌入的發展</a><span>Engram 查表機制繼承的技術</span></div></li>
+    <li><div><a href="sparse-memory-layers-pkm-peer.html">稀疏記憶層：PKM、PEER 與 UltraMem</a><span>層內大型 key-value 儲存</span></div></li>
+    <li><div><a href="retrieval-augmented-external-memory.html">檢索增強與外部記憶</a><span>非參數記憶</span></div></li>
+    <li><div><a href="engram-module-design.html">Engram 模組的設計</a><span>本論文的模組</span></div></li>
+    <li><div><a href="engram-sparsity-allocation-u-shape.html">稀疏度配置與 U 形縮放律</a><span>本論文的分配實驗</span></div></li>
+    <li><div><a href="stages-of-inference-weight-sharing.html">四階段推論假說與權重共享</a><span>站內既有筆記</span></div></li>
+  </ol>
+  <div class="links" style="margin-top:24px">
+    <a class="btn" href="https://arxiv.org/abs/2601.07372">arXiv 2601.07372 ↗</a>
+    <a class="btn" href="https://github.com/deepseek-ai/Engram">官方程式庫 ↗</a>
+  </div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Xin Cheng, Rui Tian, et al. Conditional Memory via Scalable Lookup: A New Axis of Sparsity for Large Language Models. <a href="https://arxiv.org/abs/2601.07372">arXiv:2601.07372</a>.</p>
+  <p>本頁的方程式與數字取自論文 v2；標示「本頁推導」的內容為本頁自行推導，「推定」為依論文數字推估的值，「示範值」只用於互動示範。示範程式指官方程式庫的 engram_demo_v1.py（作者註明為 demo 版本）。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
