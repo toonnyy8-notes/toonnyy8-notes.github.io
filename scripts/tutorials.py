@@ -12,6 +12,7 @@ T=[
  ('zeroth-order','零階之路',sorted(set(grad+[122,123,148,200,258]))),
  ('rejection-mh','拒絕取樣與 Metropolis–Hastings 入門',[273,1]),
  ('mala','MALA 入門',[273,146,228]),
+ ('prediction-targets-k-diff','擴散模型的預測目標：從 ε、v、x 到連續的 k',[238]),
 ]
 os.makedirs('out/tutorials',exist_ok=True)
 BAR='''<nav id="pm-bar" aria-label="Paper Master" style="position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif">
@@ -22,7 +23,8 @@ for slug,title,ids in T:
   src=f'tutorials_raw/{slug}.html'
   if not os.path.exists(src): continue
   s=open(src).read()
-  s=re.sub(r'</body>',BAR+'\n</body>',s,count=1,flags=re.I) if re.search(r'</body>',s,re.I) else s+BAR
+  if 'id="pm-bar"' not in s:
+    s=re.sub(r'</body>',BAR+'\n</body>',s,count=1,flags=re.I) if re.search(r'</body>',s,re.I) else s+BAR
   open(f'out/tutorials/{slug}.html','w').write(s)
   out.append({'file':f'{slug}.html','title':title,'papers':ids})
 ax={}
