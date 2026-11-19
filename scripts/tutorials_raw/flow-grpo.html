@@ -1,0 +1,1161 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flow-GRPO 線上強化學習</title>
+<meta name="description" content="圖解 Flow-GRPO（arXiv 2505.05470）：把流匹配模型的確定性 ODE 取樣換成邊際分布相同的 SDE，以 GRPO 的組相對優勢做線上強化學習，並以去噪步數縮減加速訓練；附四個即時計算的互動元件。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+
+
+/* ---- No. 438 additions ---- */
+:root{--c-ref:var(--c-par)}
+details.more{max-width:760px;margin:16px 0 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.more>summary{cursor:pointer;list-style:none;padding:12px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px;color:var(--ink-2)}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.more[open]>summary::before{transform:rotate(45deg)}
+details.more>.tscroll{margin:0 12px 12px}
+details.more>.prose{padding:0 20px 8px}
+.lg.cref::before{border-top:3px dashed var(--c-ref)}
+.lg.samp::before{border-top:2px dashed var(--ink-2)}
+.lg.bar::before{width:14px;height:10px;border:1px solid var(--accent);background:color-mix(in oklab,var(--accent) 35%,var(--surface))}
+.lg.hat::before{content:none}
+.lg.hat svg{width:14px;height:10px;color:var(--c-ref)}
+.lg.sq::before{width:9px;height:9px;border:2px solid var(--ink-2);border-radius:1px}
+.lg.dia::before{width:9px;height:9px;border:2px solid var(--ink);transform:rotate(45deg)}
+.plate .readout{white-space:pre-line}
+.duo{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+@media (min-width:768px){.duo{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}.ctl.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px 24px}}
+.hscroll{overflow-x:auto;max-width:100%}
+.figcap{font-size:13px;color:var(--ink-3);margin:4px 0 10px}
+.stale{opacity:.45}
+svg .acc-thin{stroke:var(--accent);stroke-width:1.5;fill:none}
+svg .ink2-thin{stroke:var(--ink-2);stroke-width:1.5;fill:none;stroke-dasharray:4 3}
+svg .ink2-step{stroke:var(--ink-2);stroke-width:1.6;fill:none}
+svg .cref{stroke:var(--c-ref);stroke-width:2.6;fill:none;stroke-dasharray:7 5}
+svg .bar{fill:color-mix(in oklab,var(--accent) 35%,var(--surface));stroke:var(--accent);stroke-width:1}
+svg .band{fill:var(--surface-2)}
+svg .frame{fill:none;stroke:var(--line)}
+svg .warn{font:500 13px var(--f-body);fill:var(--accent)}
+svg .cell{fill:var(--surface-2);stroke:var(--ink-3);stroke-width:1}
+svg .cell-acc{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1}
+.mathwarn{max-width:700px;margin:0 0 16px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);font-size:14px;color:var(--ink-2)}
+.ev .lk{margin-top:auto}
+.note.small{font-size:13px;margin:-6px 0 0;line-height:1.55}
+input[type=range]:disabled{opacity:.35;cursor:not-allowed}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 438</span>
+  <span class="ttl">Flow-GRPO：用線上強化學習訓練流匹配模型</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+<p class="mathwarn hide" id="math-fallback" role="status">數學排版元件（KaTeX）未能載入，頁面中的數學式以 TeX 原始碼顯示，例如 <code>\sigma_t</code> 表示 σ_t。互動元件與讀數不受影響。</p>
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 438</b> · 互動教學 · arXiv 2505.05470 · NeurIPS 2025</div>
+  <h1><span class="lat">Flow-GRPO</span>：用線上強化學習訓練流匹配模型</h1>
+  <p class="dek">把確定性的取樣改成每個時刻分布不變的隨機取樣，再以同一提示詞的一組影像互相比較來更新模型。</p>
+  <p class="byline">Jie Liu、Gongye Liu、Jiajun Liang、Yangguang Li、Jiaheng Liu、Xintao Wang、Pengfei Wan、Di Zhang、Wanli Ouyang（2025）〈Flow-GRPO: Training Flow Matching Models via Online RL〉</p>
+  <div class="hero-strip" style="max-width:560px"><div class="fig" id="hero-strip"><svg role="img" aria-label="時間軸示意：左端 t 等於 1 是噪聲，右端 t 等於 0 是資料，訓練取樣分成 10 步"></svg></div>
+    <p class="figcap">時間軸示意：左端是噪聲（t = 1），右端是資料（t = 0）；訓練時取樣分成 10 步。本頁所有時間軸都採用這個方向。</p></div>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 從確定到隨機</span><p>流匹配模型以常微分方程（ODE）把噪聲確定地變成影像；本文把它換成隨機微分方程（SDE），每個時刻的分布不變，但每一步多了隨機性，可用來探索。</p></div>
+    <div class="fact"><span class="n">02 · 組相對比較</span><p>GRPO（組相對策略最佳化）：同一提示詞產生 24 張影像，以「獎勵減組平均、除以組標準差」作為每張的優劣分數，不需要另外訓練價值網路。</p></div>
+    <div class="fact"><span class="n">03 · 結果</span><p>在 GenEval（以物體偵測自動檢查物體數量、顏色、位置是否符合提示詞的測驗）上，SD3.5-M 由 0.63 提升到 0.95；訓練取樣只用 10 步，推論仍用 40 步。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2505.05470">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-438">在關聯圖中查看</a>
+    <a class="btn" href="flowgrpo-lineage-hub.html">研究筆記總覽</a>
+    <a class="btn" href="https://github.com/yifan123/flow_grpo">程式碼 ↗</a>
+  </div>
+</section>
+
+<!-- S1 ============================================================ -->
+<section class="ch" id="problem" data-toc="01" data-tt="問題">
+  <div class="ch-num">01 · 問題</div>
+  <h2>線上強化學習需要隨機取樣與便宜的樣本</h2>
+  <div class="prose">
+    <p>文字生成影像（text-to-image，T2I）模型的輸入是一段文字提示詞 $c$，輸出是一張影像。目前主流的 T2I 模型屬於流匹配（flow matching）模型。作者指出，這類模型在組合多個物體、屬性與相對位置的場景，以及在影像中渲染文字時，仍然常出錯（Sec. 1）。</p>
+    <p>線上強化學習（online reinforcement learning, online RL）的做法是：用目前的模型產生樣本，以一個獎勵函數為每個樣本打分數，依分數更新模型，再用更新後的模型產生下一批樣本。這種做法已大幅提升大型語言模型的推理能力（例如 DeepSeek-R1、OpenAI-o1，Sec. 2）。在影像生成上，先前的線上 RL 多用在較早的擴散模型，例如 DDPO（把去噪過程當作決策過程、以 PPO 式策略梯度更新擴散模型的方法）；流匹配模型則多用離線方法，例如 DPO（用「較好／較差」成對資料直接調整模型、不需要線上取樣的方法）。作者認為，線上 RL 用在流匹配模型的潛力仍很少被探討（Sec. 1）。</p>
+    <p>把線上 RL 用在流匹配模型有兩個障礙（Sec. 1）。第一，流匹配模型以確定性的 ODE 取樣：給定起始噪聲，產生的影像就固定了，取樣過程中沒有隨機性；但 RL 依賴隨機取樣來嘗試不同的動作（探索），而且更新時需要每一步動作的機率，確定性取樣下這個機率也難以計算。第二，線上 RL 需要不斷收集新樣本，而流模型的每張影像都要經過很多步迭代去噪，收集資料很慢，大模型更是如此。</p>
+    <p>Flow-GRPO 的三個貢獻（Sec. 1）以字面描述如下。(1) 把取樣改成隨機的：把 ODE 換成每個時刻分布都相同的隨機微分方程，使 GRPO 這種線上 RL 方法能用在流匹配模型上；SD3.5-M 的 GenEval 準確率由 63% 提升到 95%。(2) 訓練時少用去噪步：收集訓練樣本時用較少的步數，測試時保留原步數，顯著加快訓練。(3) 加入使模型不偏離原模型太遠的懲罰，懲罰的大小以 KL 散度（Kullback–Leibler divergence，衡量兩個機率分布差多少的量）計算；它能防止 reward hacking，也就是獎勵上升、但影像品質或多樣性下降的情形。</p>
+    <p>本頁前兩章用到的符號：$x_0$ 是資料樣本（一張影像在模型內部的表示），$x_1$ 是噪聲樣本，$t\in[0,1]$ 是連續時間，$x_t$ 是兩者之間的中間狀態，$v$ 是速度，$c$ 是提示詞。其餘符號在第一次使用時定義，第 10 章開頭有一張可收合的符號總表。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="flowgrpo-lineage-hub.html">Flow-GRPO 的研究脈絡總覽</a>、<a href="rl-finetuning-text-to-image-diffusion.html">文字生成圖像擴散模型的 RL 微調脈絡</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼不能直接把線上 RL 套到流匹配模型上？</p>
+    <p class="a">ODE 取樣是確定性的，沒有探索用的隨機性，策略機率也難算；每個樣本要很多步去噪，收集資料慢（Sec. 1）。</p>
+  </div></details>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="flow" data-toc="02" data-tt="流匹配與 MDP">
+  <div class="ch-num">02 · 流匹配與 MDP</div>
+  <h2>流匹配沿直線插值並回歸速度</h2>
+  <div class="prose">
+    <p>令 $x_0$ 來自資料分布，$x_1\sim\mathcal N(0,I)$ 是標準常態噪聲。SD3、FLUX 等模型採用的 Rectified Flow 定義中間狀態為兩者的直線插值（Sec. 3）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$x_t=(1-t)\,x_0+t\,x_1,\qquad t\in[0,1]$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="prose">
+    <p>所以 $t=0$ 是資料端，$t=1$ 是噪聲端。沿這條直線，$x_t$ 對 $t$ 的變化率是 $v=x_1-x_0$。模型 $v_\theta(x_t,t)$（$\theta$ 是網路參數）以均方誤差回歸這個速度（Eq. 2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathcal L(\theta)=\mathbb E_{t,\,x_0,\,x_1}\big\|v-v_\theta(x_t,t)\big\|^2,\qquad v=x_1-x_0$$</div><span class="eq-n">Eq. 2</span></div>
+  <div class="prose">
+    <p>取樣時從噪聲 $x_1$ 出發，沿學到的速度解常微分方程 $dx_t=v_t\,dt$（Eq. 6），由 $t=1$ 走到 $t=0$。實作上把時間切成有限步，每一步用目前位置的速度往前走。這種離散化在相鄰兩步之間是一對一的映射（Sec. 4）：除了起始噪聲之外，整個過程沒有任何隨機性。</p>
+    <p>DDPO 的作者把去噪過程寫成馬可夫決策過程（Markov decision process, MDP），Flow-GRPO 沿用這個寫法（Sec. 3）。這裡的 $t$ 改為整數步索引 $T,T-1,\dots,0$（$T$ 是去噪步數），與 Eq. 1 的連續時間同一個字母：</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="去噪與 MDP 的對應表"><table>
+    <thead><tr><th>MDP 元素</th><th>在去噪中的意義（Sec. 3）</th></tr></thead>
+    <tbody>
+      <tr><td>狀態 $s_t$</td><td>$(c,t,x_t)$：提示詞、目前步數、目前的帶噪樣本</td></tr>
+      <tr><td>動作 $a_t$</td><td>$x_{t-1}$：模型產生的下一個（較不帶噪的）樣本</td></tr>
+      <tr><td>策略 $\pi(a_t\mid s_t)$</td><td>$p_\theta(x_{t-1}\mid x_t,c)$</td></tr>
+      <tr><td>轉移</td><td>確定性：下一個狀態就是 $(c,t-1,x_{t-1})$</td></tr>
+      <tr><td>初始分布</td><td>提示詞 $c\sim p(c)$，步數 $T$，$x_T\sim\mathcal N(0,I)$</td></tr>
+      <tr><td>獎勵</td><td>只在最後一步給：$t=0$ 時為 $r(x_0,c)$，其餘為 0</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>注意策略這一列：在 ODE 取樣下，$x_{t-1}$ 由 $x_t$ 唯一決定，策略退化為確定性映射，沒有可用的機率密度。第 05、06 章把每一步改成隨機的，這個 MDP 的策略才成為真正的機率分布。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="flowgrpo-flow-matching-backbone.html">Flow matching 與 rectified flow 作為生成骨幹</a>、<a href="flow-matching-velocity-target.html">Flow matching 的速度目標</a>、<a href="rl-mdp-q-learning-basics.html">MDP、Q 函數與 Bellman backup</a>、<a href="flowgrpo-denoising-mdp-and-grpo.html">Denoising 作為 MDP，以及 Flow-GRPO 的目標函數</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$x_t$ 怎麼定義？速度的回歸目標是什麼？哪一端是資料？</p>
+    <p class="a">$x_t=(1-t)x_0+t\,x_1$；目標 $v=x_1-x_0$；$t=0$ 是資料、$t=1$ 是噪聲（Eq. 1–2）。</p>
+    <p class="q">狀態、動作、轉移、獎勵各是什麼？ODE 取樣下策略是什麼？</p>
+    <p class="a">狀態 $(c,t,x_t)$、動作 $x_{t-1}$、轉移確定性、獎勵只在 $t=0$ 給 $r(x_0,c)$；ODE 下策略是確定性映射，沒有機率密度。</p>
+  </div></details>
+</section>
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="advantage" data-toc="03" data-tt="組相對優勢">
+  <div class="ch-num">03 · 組相對優勢</div>
+  <h2>GRPO 以同組影像的相對獎勵作為優勢</h2>
+  <div class="prose">
+    <p>本節先假設每一步取樣已經是隨機的；第 05 節說明如何做到。RL 的目標是讓模型產生的軌跡得到的期望獎勵最大，同時加上一個懲罰，讓模型不要離預訓練模型太遠（Eq. 3）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\max_\theta\ \mathbb E_{(s_0,a_0,\dots,s_T,a_T)\sim\pi_\theta}\Big[\sum_{t=0}^{T}\Big(R(s_t,a_t)-\beta\,D_{\mathrm{KL}}\big(\pi_\theta(\cdot\mid s_t)\,\|\,\pi_{\mathrm{ref}}(\cdot\mid s_t)\big)\Big)\Big]$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="prose">
+    <p>其中 $\pi_\theta$ 是正在訓練的策略，$\pi_{\mathrm{ref}}$ 是參考策略（預訓練模型，訓練中固定不變），$D_{\mathrm{KL}}$ 是兩者的 KL 散度，$\beta\ge0$ 是懲罰的權重。</p>
+    <p>估計「某張影像比平均好多少」的量稱為優勢（advantage）。PPO 需要另一個網路估計每個狀態的期望獎勵（價值網路）。GRPO 不用價值網路，改用組內統計（Sec. 4）：給定提示詞 $c$，用目前模型取樣 $G$ 張影像 $\{x^i_0\}_{i=1}^G$ 與它們的去噪軌跡，第 $i$ 張的優勢是它的獎勵減去組平均、再除以組標準差：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\hat A^i_t=\frac{R(x^i_0,c)-\operatorname{mean}\big(\{R(x^j_0,c)\}_{j=1}^G\big)}{\operatorname{std}\big(\{R(x^j_0,c)\}_{j=1}^G\big)}$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="prose">
+    <p>同一條軌跡的每一步 $t$ 都用同一個優勢。作者選 GRPO 而不是 PPO 的理由是：不需要價值網路，比較省記憶體（Sec. 2）；他們也指出 PPO 可用類似方式套用。</p>
+    <p>由定義可推出兩個性質<span class="tag">本頁推導</span>。第一，只要組內獎勵不全相同，組內優勢加總為 0；若標準差取母體標準差（除以 $G$），優勢平方和等於 $G$。所以這時一組中同時有優勢為正的樣本（更新使它們的機率增大）與優勢為負的樣本（機率減小）。第二，若組內獎勵全部相同，分子為 0，整組優勢為 0，這組提示詞在下一節的替代目標項沒有梯度；KL 項仍有梯度。若組內 $G$ 個二元獎勵彼此獨立、成功率都是 $p$（本頁的假設，論文沒有寫），這種情形的機率是 $p^G+(1-p)^G$。論文沒有寫標準差用母體或樣本公式，也沒有寫分母是否加小常數；本頁玩具取母體標準差，標準差小於 $10^{-12}$ 時整組優勢設為 0<span class="tag">推定</span>。</p>
+    <p>組大小 $G$ 決定組平均與組標準差的估計品質。論文 Fig. 5（以 PickScore 為獎勵）中，$G=12$ 與 $G=6$ 時訓練不穩定並最終崩潰，$G=24$ 則全程穩定；作者認為小組使優勢估計不準確、變異增加（Sec. 5.3）。</p>
+  </div>
+
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>組相對優勢與組大小</h3></div>
+    <p class="plate-lead">抽一組獎勵，看 Eq. 4 的優勢；下方曲線是 2000 組模擬的優勢估計誤差。</p>
+    <div class="pg side">
+      <div class="fig">
+        <p class="figcap">獎勵 R（每根長條一張影像）</p><div class="hscroll" id="c1-a"><svg role="img" aria-label="一組獎勵的長條圖"></svg></div>
+        <p class="figcap">優勢 A（向上為正，向下為負）</p><div class="hscroll" id="c1-b"><svg role="img" aria-label="每張影像的優勢，向上為正、向下為負"></svg></div>
+        <p class="figcap">RMSE 對組大小 G（對數橫軸）</p><div id="c1-c"><svg role="img" aria-label="優勢估計誤差對組大小 G 的曲線"></svg></div>
+        <div class="legend"><span class="lg bar">優勢為正</span><span class="lg hat"><svg viewBox="0 0 14 10" aria-hidden="true"><rect x=".5" y=".5" width="13" height="9" fill="none" stroke="currentColor"/><path d="M0 8L8 0M4 10L14 0M10 10L14 6" stroke="currentColor" stroke-width="1.2"/></svg>優勢為負（斜線）</span><span class="lg acc">RMSE（圓點）</span><span class="lg sq">全相同機率（方形、虛線，右軸）</span></div>
+      </div>
+      <div class="ctl">
+        <div><div class="lbl">獎勵類型</div><div class="seg" id="c1-kind" role="radiogroup" aria-label="獎勵類型"></div></div>
+        <div class="rng"><label class="lbl" for="c1-g">組大小 G <output id="c1-go"></output></label><input type="range" id="c1-g" min="0" max="9" step="1" value="7"></div>
+        <div class="rng"><label class="lbl" for="c1-p">成功率 p <output id="c1-po"></output></label><input type="range" id="c1-p" min="2" max="98" step="1" value="30"></div>
+        <p class="note small" id="c1-pnote">連續模式不使用 p。</p>
+        <div class="ctl-row"><button class="small-btn" type="button" id="c1-seed">重新抽樣</button></div>
+        <p class="readout" id="c1-read"></p>
+        <p class="sr" id="c1-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁的一維玩具依第 03 章的公式即時計算，不是論文的模型，也不重現論文數字。連續獎勵為 N(0.5, 0.15²)；二元獎勵是簡化（例如單一物件是否畫對），論文的 GenEval 獎勵有部分給分，不是二元。組內獎勵假設獨立同分布。RMSE 以真實分布的標準化值為基準，每個 G 用固定種子 7 的 2000 組。</p>
+  </div>
+  <div class="prose">
+    <p>本頁玩具中可以看到三件事。第一，獎勵不全相同時，ΣA 一定是 0、ΣA² 一定等於 G。第二，連續模式的 RMSE 從 $G=2$ 的 0.923 降到 $G=24$ 的 0.254、$G=48$ 的 0.179：組越小，優勢估計的誤差越大。第三，二元模式 $p=0.05$ 時，即使 $G=24$，仍有約 0.29 的組整組獎勵相同（閉式 0.2920），這些組的替代目標項沒有梯度；$p=0.3$ 時 $G=24$ 只有 0.0002。論文 Fig. 5 的崩潰是真實訓練的結果；玩具只顯示估計誤差隨 $G$ 的變化，不模擬訓練。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="rlvr-grpo-credit-assignment.html">RLVR、GRPO 與信用分配瓶頸</a>、<a href="flowgrpo-denoising-mdp-and-grpo.html">Denoising 作為 MDP，以及 Flow-GRPO 的目標函數</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 4 怎麼算？組內獎勵全相同時會怎樣？</p>
+    <p class="a">獎勵減組平均、除以組標準差；全相同時整組優勢為 0，替代目標項沒有梯度，KL 項仍有。</p>
+    <p class="q">為什麼用 GRPO 而不是 PPO？$G$ 太小會怎樣？</p>
+    <p class="a">不需要價值網路、較省記憶體；$G=12$、6 時訓練崩潰，$G=24$ 穩定（Fig. 5）。</p>
+  </div></details>
+</section>
+
+<!-- S4 ============================================================ -->
+<section class="ch" id="clip" data-toc="04" data-tt="機率比與裁剪">
+  <div class="ch-num">04 · 機率比與裁剪</div>
+  <h2>機率比與裁剪限制單批資料造成的改變</h2>
+  <div class="prose">
+    <p>一批樣本是用某個時刻的模型收集的，這個模型記為 $\pi_{\theta_{\mathrm{old}}}$。同一批樣本通常會拿來做多次參數更新；更新後的模型 $\pi_\theta$ 與收集時的模型不同。對第 $i$ 條軌跡的第 $t$ 步，兩者對同一個動作的機率比是</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\rho^i_t(\theta)=\frac{p_\theta(x^i_{t-1}\mid x^i_t,c)}{p_{\theta_{\mathrm{old}}}(x^i_{t-1}\mid x^i_t,c)}$$</div><span class="eq-n">Eq. 5 的比值</span></div>
+  <div class="prose">
+    <p>論文把這個比值記為 $r^i_t(\theta)$；本頁寫成 $\rho$，以免與獎勵 $r$ 混淆。這裡先把 $\rho$ 當作一個數；第 06 節說明每一步的機率如何計算。第一次更新前 $\pi_\theta=\pi_{\theta_{\mathrm{old}}}$，所以 $\rho=1$。若優勢 $\hat A>0$，增大 $\rho\hat A$ 就是增大這個動作的機率；$\hat A\lt 0$ 時則是減小它的機率。</p>
+    <p>Flow-GRPO 最大化的目標是（Eq. 5）</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}\mathcal J(\theta)&=\mathbb E_{c,\ \{x^i\}\sim\pi_{\theta_{\mathrm{old}}}}\ \frac1G\sum_{i=1}^{G}\frac1T\sum_{t=0}^{T-1}\Big(\min\big(\rho^i_t\hat A^i_t,\ \operatorname{clip}(\rho^i_t,1-\varepsilon,1+\varepsilon)\,\hat A^i_t\big)\\&\qquad-\beta\,D_{\mathrm{KL}}(\pi_\theta\,\|\,\pi_{\mathrm{ref}})\Big)\end{aligned}$$</div><span class="eq-n">Eq. 5</span></div>
+  <div class="prose">
+    <p>$\operatorname{clip}(\rho,1-\varepsilon,1+\varepsilon)$ 把 $\rho$ 截到區間 $[1-\varepsilon,1+\varepsilon]$ 內，$\varepsilon$ 是裁剪範圍。min 前面的部分稱為替代目標項。注意兩個不同的參考對象：機率比的分母是收集樣本的 $\pi_{\theta_{\mathrm{old}}}$，KL 懲罰的對象是預訓練的 $\pi_{\mathrm{ref}}$。論文沒有寫 $\varepsilon$ 的值（App. B.3 未列），本頁預設 0.2<span class="tag">推定</span>。</p>
+    <p>對單一樣本，替代目標項對 $\rho$ 的導數規則如下<span class="tag">本頁推導</span>：當 $\hat A>0$ 且 $\rho>1+\varepsilon$，或 $\hat A\lt 0$ 且 $\rho\lt 1-\varepsilon$ 時，導數為 0；其餘情形導數為 $\hat A$。也就是說，機率比已經朝優勢的方向改變超過 $\varepsilon$ 的樣本，替代目標項不再提供梯度，但 KL 項仍有梯度；機率比朝相反方向改變時，裁剪不限制這個方向的更新。裁剪的目的是讓單批資料造成的機率改變不超過約 $\varepsilon$。</p>
+  </div>
+
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>裁剪替代目標</h3></div>
+    <p class="plate-lead">調整優勢 A、裁剪範圍 ε 與機率比 ρ，看替代目標 L(ρ) 與它的斜率。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div id="c2-fig"><svg role="img" aria-label="替代目標 L 對機率比 ρ 的曲線"></svg></div>
+        <div class="legend"><span class="lg acc">L(ρ)＝min(ρA, clip(ρ)A)</span><span class="lg samp">未裁剪 ρA（虛線）</span></div>
+      </div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c2-a">優勢 A <output id="c2-ao"></output></label><input type="range" id="c2-a" min="-20" max="20" step="1" value="10"></div>
+        <div class="rng"><label class="lbl" for="c2-e">裁剪範圍 ε <output id="c2-eo"></output></label><input type="range" id="c2-e" min="5" max="50" step="1" value="20"></div>
+        <p class="note small">論文未寫 ε，0.2 為推定。這個 ε 也用於 C4。</p>
+        <div class="rng"><label class="lbl" for="c2-r">機率比 ρ <output id="c2-ro"></output></label><input type="range" id="c2-r" min="50" max="150" step="1" value="100"></div>
+        <p class="readout" id="c2-read"></p>
+        <p class="sr" id="c2-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">曲線依 Eq. 5 的替代目標項即時計算；只畫單一樣本、單一步，不含 KL 項。斜率為 0 的區段只表示替代目標項沒有梯度，KL 項不受影響。</p>
+  </div>
+  <div class="prose">
+    <p>取 $\hat A=1$、$\varepsilon=0.2$：$\rho=1.3$ 時 $L=1.2$、斜率 0；$\rho=0.7$ 時 $L=0.7$、斜率 1。取 $\hat A=-1$：$\rho=0.7$ 時 $L=-0.8$、斜率 0；$\rho=1.3$ 時 $L=-1.3$、斜率 −1，裁剪不限制這個方向的更新。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$\rho$ 是什麼？什麼情況下替代目標項的梯度為 0？</p>
+    <p class="a">目前模型與 $\pi_{\theta_{\mathrm{old}}}$ 對同一動作的機率比，第一次更新前為 1；$\hat A>0,\rho>1+\varepsilon$ 或 $\hat A\lt 0,\rho\lt 1-\varepsilon$ 時為 0，KL 項仍有梯度。</p>
+  </div></details>
+</section>
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="sde" data-toc="05" data-tt="ODE 轉 SDE">
+  <div class="ch-num">05 · ODE 轉 SDE</div>
+  <h2>邊際分布相同的 SDE 帶來隨機性</h2>
+  <div class="prose">
+    <p>確定性的 ODE 取樣不符合 GRPO 的需要，理由有兩個（Sec. 4）。(1) Eq. 5 的機率比需要 $p(x_{t-1}\mid x_t,c)$。在確定性映射下要追蹤機率密度，必須計算速度場的散度（divergence），也就是速度場各分量對自身座標的偏導數總和；影像的維度很高，這個計算很昂貴。(2) 更重要的是，RL 依賴探索；Sec. 5.3 顯示隨機性減少會大幅降低訓練效率，而只有起始噪聲帶隨機性的確定性取樣特別有問題。</p>
+    <p>作者的做法是構造一個隨機微分方程（stochastic differential equation, SDE），使它在每個時刻 $t$ 的邊際分布（只看時刻 $t$、不管前後的 $x_t$ 的分布，記為 $p_t$）與原 ODE 相同。SDE 在每一小段時間 $dt$ 內，除了沿漂移項移動，還加入一份噪聲 $\sigma_t\,dw$。$dw$ 是 Wiener 過程的增量：每一小段時間加入的獨立高斯噪聲，變異數等於這段時間的長度。$\sigma_t\ge0$ 是擴散係數，控制每一小段時間加入多少噪聲；論文選用</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\sigma_t=a\sqrt{\frac{t}{1-t}}$$</div><span class="eq-n">Sec. 4</span></div>
+  <div class="prose">
+    <p>其中 $a$ 是噪聲等級，一個純量超參數（論文用 0.7，App. B.3）。另外需要分數（score）$\nabla\log p_t(x)$：邊際密度取對數後對 $x$ 的梯度，指向密度增加最快的方向。</p>
+    <p>推導分五步（App. A）。(1) 一般 SDE $dx_t=f_{\mathrm{SDE}}\,dt+\sigma_t\,dw$（Eq. 11）的邊際密度服從 Fokker–Planck 方程（Eq. 12），這是描述密度 $p_t$ 如何隨漂移與噪聲隨時間改變的偏微分方程；ODE 的邊際則服從連續方程（Eq. 13）。(2) 令兩者相等（Eq. 14），得漂移 $f_{\mathrm{SDE}}=v_t+\tfrac{\sigma_t^2}{2}\nabla\log p_t$（Eq. 16）。(3) 取這個前向 SDE 的反向時間形式（Eq. 18–20），得到從噪聲走向資料的 SDE：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$dx_t=\Big[v_t(x_t)-\frac{\sigma_t^2}{2}\nabla\log p_t(x_t)\Big]dt+\sigma_t\,dw$$</div><span class="eq-n">Eq. 7（＝Eq. 21）</span></div>
+  <div class="prose">
+    <p>(4) 分數不必另外學習。對 Rectified Flow，邊際分數可由速度換算（Eq. 23–27；此處推導中的插值係數 $\beta_t=t$ 與 KL 權重 $\beta$ 不同）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\nabla\log p_t(x)=-\frac{x}{t}-\frac{1-t}{t}\,v_t(x)$$</div><span class="eq-n">Eq. 27</span></div>
+  <div class="prose">
+    <p>(5) 代入 Eq. 7，得到論文使用的 SDE：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$dx_t=\Big[v_t(x_t)+\frac{\sigma_t^2}{2t}\big(x_t+(1-t)\,v_t(x_t)\big)\Big]dt+\sigma_t\,dw$$</div><span class="eq-n">Eq. 8（＝Eq. 28）</span></div>
+  <details class="more"><summary>App. A 的中間式（Eq. 12–20）</summary><div class="prose">
+    <p>Fokker–Planck：$\partial_tp_t=-\nabla\cdot[f_{\mathrm{SDE}}\,p_t]+\tfrac12\nabla^2[\sigma_t^2p_t]$（Eq. 12）；ODE：$\partial_tp_t=-\nabla\cdot[v_t\,p_t]$（Eq. 13）。利用 $\nabla^2[\sigma_t^2p_t]=\sigma_t^2\nabla\cdot(p_t\nabla\log p_t)$（Eq. 15）即得 Eq. 16。前向 SDE $dx=f\,dt+g\,dw$ 的反向時間 SDE 為 $dx=[f-g^2\nabla\log p_t]\,dt+g\,dw$（Eq. 18–19）；令 $g=\sigma_t$、$f=f_{\mathrm{SDE}}$ 得 Eq. 20，化簡為 Eq. 21。</p>
+  </div></details>
+  <div class="prose">
+    <p>這個推導有前提<span class="tag">本頁推導</span>：$v_t$ 必須是真實邊際 $p_t$ 對應的速度場，等於一個完全正確的模型；學到的 $v_\theta$ 有誤差時，SDE 與 ODE 的邊際不再保證相同。另外 $p_t$ 要足夠平滑使 Fokker–Planck 成立，而 Eq. 26–27 與 $\sigma_t=a\sqrt{t/(1-t)}$ 在 $t=1$ 奇異。在這些前提下，等式對 $t\in(0,1)$ 上的任何 $\sigma_t$ 都成立，$\sigma_t$ 只控制隨機性的大小；$\sigma_t=0$ 時退回原來的 ODE。邊際相同是連續時間的結論；切成有限步之後會有誤差，第 06 章的 C3 會顯示這一點。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="flowgrpo-diffusion-sde-background.html">從 DDPM 到 score SDE 與 stochastic interpolants</a>、<a href="flow-ode-to-sde-for-rl.html">Flow 模型 RL 的 ODE-to-SDE 轉換</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼 ODE 取樣不能直接用？</p>
+    <p class="a">機率比需要計算散度、昂貴；RL 需要探索（Sec. 4）。</p>
+    <p class="q">新 SDE 的漂移怎麼來？分數從哪裡來？前提是什麼？</p>
+    <p class="a">令 Fokker–Planck 與連續方程相等再取反向時間；分數由 Eq. 27 換算；前提是速度場正確、$p_t$ 平滑、$t=1$ 奇異。</p>
+  </div></details>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="discrete" data-toc="06" data-tt="離散化">
+  <div class="ch-num">06 · 離散化</div>
+  <h2>離散化後每一步是高斯分布</h2>
+  <div class="prose">
+    <p>把 Eq. 8 以 Euler–Maruyama 法離散化（每一步用目前的漂移乘時間步長，再加上 $\sigma_t$ 乘步長平方根倍的標準常態噪聲），得到更新規則（Eq. 9）。$\sigma_t$ 與噪聲等級 $a$ 見第 05 章；$\Delta t$ 是時間步長，$\epsilon\sim\mathcal N(0,I)$ 是每一步新抽的噪聲：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}x_{t+\Delta t}={}&x_t+\Big[v_\theta(x_t,t)+\frac{\sigma_t^2}{2t}\big(x_t+(1-t)\,v_\theta(x_t,t)\big)\Big]\Delta t\\&+\sigma_t\sqrt{\Delta t}\,\epsilon\end{aligned}$$</div><span class="eq-n">Eq. 9</span></div>
+  <div class="callout">
+    <p class="ct">實作注意<span class="tag">本頁推導</span></p>
+    <p>取樣方向是 $t$ 由 1 往 0，所以 $\Delta t\lt 0$。論文 Eq. 9 寫 $\sigma_t\sqrt{\Delta t}$，沒有明寫正負號；應讀成 $\sigma_t\sqrt{|\Delta t|}$，因為反向時間 SDE 每一步噪聲的變異數是 $\sigma_t^2|\Delta t|$。另外 $\sigma_t$ 在 $t=1$ 時分母為 0 而發散，論文沒有說明 $t=1$ 的處理；本頁玩具在 $t=1$ 時以下一個格點 $t'=1-1/T$ 代入 $\sigma$<span class="tag">推定</span>。</p>
+  </div>
+  <div class="prose">
+    <p>Eq. 9 顯示，給定 $x_t$，下一步 $x_{t-1}$ 是等向高斯分布（Sec. 4）：平均是 $x_t+\big[v_\theta+\frac{\sigma_t^2}{2t}(x_t+(1-t)v_\theta)\big]\Delta t$，標準差是 $\sigma_t\sqrt{|\Delta t|}$。所以第 04 章的機率比 $\rho$ 就是兩個高斯密度的比，可以直接計算；KL 散度也有閉式（第 07 章）。噪聲等級 $a$ 控制這個標準差的大小：$a$ 越大，每一步的隨機性越大。</p>
+    <p>下面的 C3 用一個一維玩具檢查兩件事：SDE 與 ODE 的分布是否相同，以及有限步數造成多少誤差。玩具的資料分布是兩個高斯的混合 $0.4\,\mathcal N(-1.2,0.3^2)+0.6\,\mathcal N(1.2,0.3^2)$<span class="tag">推定</span>，這時每個時刻的精確邊際 $p_t$ 與精確速度場都有閉式，等於一個完全正確的模型。比較兩個分布用 W₁ 距離（Wasserstein-1）：兩條累積分布曲線之間的面積，越小代表兩個分布越接近。</p>
+  </div>
+
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>ODE 與 SDE：同樣的邊際分布（玩具）</h3></div>
+    <p class="plate-lead">4000 個粒子從噪聲出發，依 Eq. 9 走 T 步。拖動「顯示時刻」看任一時刻的分布與精確邊際。</p>
+    <div class="duo">
+      <div class="fig" id="c3-hist"><svg role="img" aria-label="粒子分布的直方圖與精確邊際密度"></svg></div>
+      <div class="fig" id="c3-traj"><svg role="img" aria-label="前 12 個粒子的軌跡，左端 t 等於 1，右端 t 等於 0"></svg></div>
+    </div>
+    <div class="legend"><span class="lg bar">所選取樣器的直方圖</span><span class="lg samp">ODE 對照（階梯輪廓／虛線軌跡）</span><span class="lg cref">精確邊際 p_t</span><span class="lg acc">SDE 軌跡</span></div>
+    <div class="ctl grid2" style="margin-top:16px">
+      <div><div class="lbl">取樣器</div><div class="seg" id="c3-mode" role="radiogroup" aria-label="取樣器"></div></div>
+      <div><div class="lbl">步數 T</div><div class="seg" id="c3-T" role="radiogroup" aria-label="步數 T"></div></div>
+      <div class="rng"><label class="lbl" for="c3-a">噪聲等級 a（論文 a = 0.7） <output id="c3-ao"></output></label><input type="range" id="c3-a" min="0" max="50" step="1" value="14"></div>
+      <div class="rng"><label class="lbl" for="c3-j">顯示時刻 <output id="c3-jo"></output></label><input type="range" id="c3-j" min="0" max="10" step="1" value="10"></div>
+      <label class="chk"><input type="checkbox" id="c3-ode" checked>同時顯示 ODE</label>
+      <div class="ctl-row"><button class="small-btn" type="button" id="c3-seed">重新抽樣</button></div>
+    </div>
+    <p class="readout" id="c3-read" style="margin-top:14px"></p>
+    <p class="sr" id="c3-live" aria-live="polite"></p>
+    <p class="plate-f">讀數由本頁的一維玩具依第 06 章的公式即時計算，不是論文的模型，也不重現論文數字。速度場由玩具分布直接算出，等於完全正確的模型；論文的 v_θ 是學出來的，有誤差。時間格點均勻（推定）；t = 1 的 σ 以 t′ = 1 − 1/T 代入（推定）。4000 個精確樣本本身的 W₁ 約 0.009–0.043（平均 0.027），低於此範圍的差異來自抽樣。</p>
+  </div>
+  <div class="prose">
+    <p>本頁玩具中（種子 1，看 $t=0$）可以看到四件事。第一，$a=0$ 時 SDE 與 ODE 的每個粒子完全相同。第二，$T=40$ 時 ODE 的 W₁ 是 0.0175，$a$ 從 0.1 到 2.5 的 SDE 在 0.017 到 0.041 之間，都在抽樣誤差的範圍內，與「連續時間邊際相同」一致。第三，步數少時分布偏離精確邊際：$T=5$ 的 ODE 標準差 1.071（精確 1.213），W₁ 0.143，10 個種子都在 0.139 到 0.159 之間，明顯高於抽樣誤差。第四，$T=5$、$a=2.5$ 時 SDE 的標準差變成 15.5、W₁ 2.02，數值發散。原因是漂移中 $\frac{\sigma_t^2}{2t}x_t\Delta t$ 這一項在大步長下的放大：只看這一項，第 2 步 $x$ 的係數是 $1-a^2/2=-2.125$；再加上 $t=1$ 的 σ 處理（推定，第 1 步 $\sigma=a\sqrt{T-1}$）。這是玩具與推定處理的結果。</p>
+    <p>另外，$T=10$ 時 SDE（$a=0.7$）的 W₁ 在 10 個種子中介於 0.031 與 0.059，與抽樣誤差的上緣重疊，本頁不據此比較 SDE 與 ODE 的優劣。論文中 $a$ 過大的失敗（Fig. 7b）發生在學習到的模型上；玩具的速度場沒有誤差，不重現那個現象。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">一步 SDE 取樣的平均與標準差是什麼？步數少時會怎樣？</p>
+    <p class="a">平均 $x_t+[v+\frac{\sigma^2}{2t}(x_t+(1-t)v)]\Delta t$，標準差 $\sigma_t\sqrt{|\Delta t|}$；步數少時分布偏離精確邊際，玩具中 $T=5$、$a=2.5$ 時數值發散。</p>
+  </div></details>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="kl" data-toc="07" data-tt="KL 閉式">
+  <div class="ch-num">07 · KL 閉式</div>
+  <h2>KL 懲罰有閉式，權重集中在接近資料的步</h2>
+  <div class="prose">
+    <p>兩個策略 $\pi_\theta$ 與 $\pi_{\mathrm{ref}}$ 在同一個 $x_t$ 上都是標準差相同的等向高斯分布，只有平均不同。這時 KL 散度等於平均差的平方除以兩倍變異數；平均差只來自兩個速度的差，所以（Sec. 4）</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}D_{\mathrm{KL}}(\pi_\theta\,\|\,\pi_{\mathrm{ref}})&=\frac{\|\bar x_{t+\Delta t,\theta}-\bar x_{t+\Delta t,\mathrm{ref}}\|^2}{2\sigma_t^2\Delta t}\\&=\frac{\Delta t}{2}\Big(\frac{\sigma_t(1-t)}{2t}+\frac{1}{\sigma_t}\Big)^2\big\|v_\theta(x_t,t)-v_{\mathrm{ref}}(x_t,t)\big\|^2\end{aligned}$$</div><span class="eq-n">Sec. 4 KL 閉式</span></div>
+  <div class="prose">
+    <p>$\bar x$ 表示一步的平均（論文寫成 $x_{t+\Delta t,\theta}$）；與第 06 章相同，$\Delta t$ 取絕對值。論文的 KL 權重 $\beta$：GenEval 與文字渲染任務 0.04，PickScore 任務 0.01（App. B.3）。</p>
+    <p>把速度差前面的係數記為 $c(t)=\frac{|\Delta t|}{2}\big(\frac{\sigma_t(1-t)}{2t}+\frac1{\sigma_t}\big)^2$<span class="tag">本頁推導</span>。$t\to1$ 時 $\sigma_t\to\infty$，括號內兩項都趨近 0，$c\to0$；但這一步的標準差 $\sigma_t\sqrt{|\Delta t|}$ 最大，所以這不表示第一步不重要。$t\to0$ 時 $\sigma_t\approx a\sqrt t$，$c\approx\frac{|\Delta t|}{2t}\big(\frac1a+\frac a2\big)^2$。在均勻格點上，最接近資料端的最後一步係數最大。$\big(\frac1a+\frac a2\big)^2$ 在 $a=\sqrt2$ 時最小（值 2），$a=0.7$ 時為 3.163：$a$ 小於 $\sqrt2$ 時，$a$ 越小，$1/\sigma_t$ 項越大，KL 對速度差越敏感；$a$ 大於 $\sqrt2$ 時，$\sigma_t(1-t)/(2t)$ 項變大，係數又上升。機率比的對數則與「平均差除以標準差」成正比，$a$ 越小，機率比越極端。</p>
+  </div>
+
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>一步的高斯策略、機率比與 KL</h3></div>
+    <p class="plate-lead">兩個策略只差速度 Δv。選一步 j，看兩個高斯分布、KL 與樣本的機率比；下方長條是每一步的 KL 係數。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div id="c4-den"><svg role="img" aria-label="兩個策略在這一步的高斯密度"></svg></div>
+        <div class="hscroll" id="c4-bar"><svg role="img" aria-label="每一步的 KL 係數長條圖，對數縱軸"></svg></div>
+        <div class="legend"><span class="lg acc">πθ（實線）</span><span class="lg cref">π′（虛線）</span><span class="lg dia">樣本 x</span></div>
+      </div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c4-a">噪聲等級 a <output id="c4-ao"></output></label><input type="range" id="c4-a" min="2" max="40" step="1" value="14"></div>
+        <div><div class="lbl">步數 T</div><div class="seg" id="c4-T" role="radiogroup" aria-label="步數 T"></div></div>
+        <div class="rng"><label class="lbl" for="c4-j">步 j <output id="c4-jo"></output></label><input type="range" id="c4-j" min="0" max="9" step="1" value="5"></div>
+        <div class="rng"><label class="lbl" for="c4-d">速度差 Δv <output id="c4-do"></output></label><input type="range" id="c4-d" min="-100" max="100" step="1" value="20"></div>
+        <p class="note small">一維；影像中為所有維度的平方和。</p>
+        <div class="rng"><label class="lbl" for="c4-z">樣本位置 z <output id="c4-zo"></output></label><input type="range" id="c4-z" min="-30" max="30" step="1" value="10"></div>
+        <p class="readout" id="c4-read"></p>
+        <p class="sr" id="c4-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">閉式由 Eq. 9 與 Sec. 4 的 KL 式即時計算；一維、Δv 為示意值。π′ 可以是 πθ,old（算機率比）或 πref（算 KL），數學相同。樣本 x ＝ π′ 的平均 x′ ＋ z × 標準差。σ 在 t = 1 時以 t′ = 1 − 1/T 代入（推定），(1 − t)/(2t) 用真實 t。</p>
+  </div>
+  <div class="prose">
+    <p>由閉式可以讀出三件事<span class="tag">本頁推導</span>。第一，長條在最右（$j=T-1$）最高：$T=10$、$a=0.7$ 時 $c_0=0.0113$、$c_5=0.158$、$c_9=1.423$；最左一根最低，但那一步的標準差最大（0.664，對照 $j=9$ 的 0.0738）。第二，$a$ 由 0.7 減到 0.1 時，$j=9$、$\Delta v=0.2$ 的 KL 由 0.0569 增為 1.818，樣本 $z=1$ 的 $\log\rho$ 由 −0.394 變為 −3.72（$\rho\approx0.024$，遠在裁剪範圍外）。第三，$T=10$ 時各步係數的總和：$a=0.1$ 為 97.97、$a=0.7$ 為 3.062、$a=1.4$ 為 1.932、$a=2.0$ 為 2.171，$a$ 超過約 $\sqrt2$ 後又上升。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">兩個高斯策略的 KL 是什麼？哪些步的權重最大？$a$ 如何影響？</p>
+    <p class="a">$\frac{|\Delta t|}2\big(\frac{\sigma_t(1-t)}{2t}+\frac1{\sigma_t}\big)^2\|v_\theta-v_{\mathrm{ref}}\|^2$；最接近資料端的步；$a=\sqrt2$ 時最小，小於時越小越敏感、大於時又變大。</p>
+  </div></details>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="reduction" data-toc="08" data-tt="去噪步數縮減">
+  <div class="ch-num">08 · 去噪步數縮減</div>
+  <h2>訓練只用 10 步取樣，推論保留 40 步</h2>
+  <div class="prose">
+    <p>去噪步數縮減（Denoising Reduction）的做法是：收集訓練樣本時只用 $T=10$ 步，推論時仍用 SD3.5-M 預設的 $T=40$ 步（Sec. 4、App. B.3）。每個提示詞每次迭代需要 $G\times T$ 次模型前向計算<span class="tag">本頁推導</span>：$24\times10=240$ 次，對照 $24\times40=960$ 次。這只是取樣次數的比例；論文報告的加速是以 GPU 小時計算，兩者不是同一個量。</p>
+  </div>
+  <div class="fig" id="s8-cost" style="max-width:760px"><svg role="img" aria-label="訓練取樣 10 步與推論 40 步的時間軸對照"></svg></div>
+  <p class="figcap">上列：訓練取樣 T = 10（SDE，有噪聲）；下列：推論 T = 40。格數就是步數。</p>
+  <div class="prose">
+    <p>Sec. 5.3 的實驗（未加 KL）顯示，收集樣本的步數由 40 降到 10，三個任務都有超過 4 倍的加速（GPU 小時），最終獎勵不受影響（GenEval 見 Fig. 7a；文字渲染與 PickScore 見 App. C.2 的 Fig. 9）；再降到 5 不一定更快，有時更慢，因此採用 10。App. D（Fig. 19）比較同一提示詞的影像：40 步 ODE 與 40 步 SDE 肉眼無法區分；10 步與 5 步 SDE 出現明顯瑕疵，例如顏色漂移與細節模糊。作者認為，因為 Flow-GRPO 依賴組內的相對比較，這些低品質樣本仍提供有用的獎勵訊號。定量評估的步數是 $T=40$（B.3），論文沒有寫定量評估用 ODE 或 SDE；App. C.7 的訓練過程圖以 40 步 ODE 取樣產生。</p>
+    <p>噪聲等級 $a$ 的實驗只在文字渲染（OCR）任務上做（Fig. 7b）：$a=0.1$ 探索不足、獎勵上升慢；增加到 0.7 使獎勵上升加快；從 0.7 到 1.0 沒有額外好處；再增加會使影像品質下降，獎勵變成零、訓練失敗。Fig. 7 的圖說寫明 $a=0.7$ 使 OCR 準確率最高。第 06 章 C3 的 $T$ 選項只顯示步數少時分布誤差變大，不顯示訓練速度。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">訓練與推論各用幾步？效果如何？$a$ 怎麼選？</p>
+    <p class="a">訓練 10、推論 40；超過 4 倍加速、最終獎勵不受影響；OCR 任務中 $a=0.7$ 最好。</p>
+  </div></details>
+</section>
+
+<!-- S9 ============================================================ -->
+<section class="ch" id="results" data-toc="09" data-tt="實驗">
+  <div class="ch-num">09 · 實驗</div>
+  <h2>實驗：三個任務都提升，KL 抑制 reward hacking</h2>
+  <div class="prose">
+    <p>三個任務的獎勵（Sec. 5.1）。<b>組合生成</b>用 GenEval 的六類任務；計數的獎勵是 $r=1-|N_{\mathrm{gen}}-N_{\mathrm{ref}}|/N_{\mathrm{ref}}$（產生的物體數與要求數的相對差）；位置與顏色則在物體數正確時給部分獎勵，位置或顏色也正確時再給其餘部分。訓練提示詞的比例是 Position : Counting : Attribute Binding : Colors : Two Objects : Single Object = 7 : 5 : 3 : 1 : 1 : 0，依基礎模型在六類上的初始準確率決定。<b>文字渲染</b>的提示詞模板是「A sign that says "text"」，獎勵 $r=\max(1-N_e/N_{\mathrm{ref}},0)$，$N_e$ 是渲染文字與目標文字的最小編輯距離，$N_{\mathrm{ref}}$ 是目標字元數；這個獎勵也是 OCR 準確率指標。<b>人類偏好</b>以 PickScore（以大量人工成對比較資料訓練的影像評分模型）為獎勵。為了偵測 reward hacking，作者在 DrawBench（一組內容多樣的評測提示詞）上另外計算 Aesthetic、DeQA、ImageReward、UnifiedReward 四個品質指標（App. B.1）。</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="Table 1 摘錄（可橫向捲動）"><table>
+    <caption>Table 1 摘錄：GenEval 分數（Obj. 物體；Attr. 屬性）</caption>
+    <thead><tr><th>模型</th><th class="num">Overall</th><th class="num">Single Obj.</th><th class="num">Two Obj.</th><th class="num">Counting</th><th class="num">Colors</th><th class="num">Position</th><th class="num">Attr. Binding</th></tr></thead>
+    <tbody>
+      <tr><td>GPT-4o</td><td class="num">0.84</td><td class="num">0.99</td><td class="num">0.92</td><td class="num">0.85</td><td class="num">0.92</td><td class="num">0.75</td><td class="num">0.61</td></tr>
+      <tr><td>FLUX.1 Dev</td><td class="num">0.66</td><td class="num">0.98</td><td class="num">0.81</td><td class="num">0.74</td><td class="num">0.79</td><td class="num">0.22</td><td class="num">0.45</td></tr>
+      <tr><td>SD3.5-L</td><td class="num">0.71</td><td class="num">0.98</td><td class="num">0.89</td><td class="num">0.73</td><td class="num">0.83</td><td class="num">0.34</td><td class="num">0.47</td></tr>
+      <tr><td>SANA-1.5 4.8B</td><td class="num">0.81</td><td class="num">0.99</td><td class="num">0.93</td><td class="num">0.86</td><td class="num">0.84</td><td class="num">0.59</td><td class="num">0.65</td></tr>
+      <tr><td>SD3.5-M</td><td class="num">0.63</td><td class="num">0.98</td><td class="num">0.78</td><td class="num">0.50</td><td class="num">0.81</td><td class="num">0.24</td><td class="num">0.52</td></tr>
+      <tr class="hl"><td>SD3.5-M + Flow-GRPO</td><td class="num">0.95</td><td class="num">1.00</td><td class="num">0.99</td><td class="num">0.95</td><td class="num">0.92</td><td class="num">0.99</td><td class="num">0.86</td></tr>
+    </tbody></table></div>
+  <details class="more"><summary>Table 1 全表</summary><div class="tscroll" tabindex="0" role="region" aria-label="Table 1 全表（可橫向捲動）"><table>
+    <thead><tr><th>模型</th><th class="num">Overall</th><th class="num">Single</th><th class="num">Two</th><th class="num">Count</th><th class="num">Colors</th><th class="num">Position</th><th class="num">Attr.</th></tr></thead>
+    <tbody>
+      <tr><td colspan="8"><b>擴散模型</b></td></tr>
+      <tr><td>LDM</td><td class="num">0.37</td><td class="num">0.92</td><td class="num">0.29</td><td class="num">0.23</td><td class="num">0.70</td><td class="num">0.02</td><td class="num">0.05</td></tr>
+      <tr><td>SD1.5</td><td class="num">0.43</td><td class="num">0.97</td><td class="num">0.38</td><td class="num">0.35</td><td class="num">0.76</td><td class="num">0.04</td><td class="num">0.06</td></tr>
+      <tr><td>SD2.1</td><td class="num">0.50</td><td class="num">0.98</td><td class="num">0.51</td><td class="num">0.44</td><td class="num">0.85</td><td class="num">0.07</td><td class="num">0.17</td></tr>
+      <tr><td>SD-XL</td><td class="num">0.55</td><td class="num">0.98</td><td class="num">0.74</td><td class="num">0.39</td><td class="num">0.85</td><td class="num">0.15</td><td class="num">0.23</td></tr>
+      <tr><td>DALLE-2</td><td class="num">0.52</td><td class="num">0.94</td><td class="num">0.66</td><td class="num">0.49</td><td class="num">0.77</td><td class="num">0.10</td><td class="num">0.19</td></tr>
+      <tr><td>DALLE-3</td><td class="num">0.67</td><td class="num">0.96</td><td class="num">0.87</td><td class="num">0.47</td><td class="num">0.83</td><td class="num">0.43</td><td class="num">0.45</td></tr>
+      <tr><td colspan="8"><b>自迴歸模型</b></td></tr>
+      <tr><td>Show-o</td><td class="num">0.53</td><td class="num">0.95</td><td class="num">0.52</td><td class="num">0.49</td><td class="num">0.82</td><td class="num">0.11</td><td class="num">0.28</td></tr>
+      <tr><td>Emu3-Gen</td><td class="num">0.54</td><td class="num">0.98</td><td class="num">0.71</td><td class="num">0.34</td><td class="num">0.81</td><td class="num">0.17</td><td class="num">0.21</td></tr>
+      <tr><td>JanusFlow</td><td class="num">0.63</td><td class="num">0.97</td><td class="num">0.59</td><td class="num">0.45</td><td class="num">0.83</td><td class="num">0.53</td><td class="num">0.42</td></tr>
+      <tr><td>Janus-Pro-7B</td><td class="num">0.80</td><td class="num">0.99</td><td class="num">0.89</td><td class="num">0.59</td><td class="num">0.90</td><td class="num">0.79</td><td class="num">0.66</td></tr>
+      <tr><td>GPT-4o</td><td class="num">0.84</td><td class="num">0.99</td><td class="num">0.92</td><td class="num">0.85</td><td class="num">0.92</td><td class="num">0.75</td><td class="num">0.61</td></tr>
+      <tr><td colspan="8"><b>流匹配模型</b></td></tr>
+      <tr><td>FLUX.1 Dev</td><td class="num">0.66</td><td class="num">0.98</td><td class="num">0.81</td><td class="num">0.74</td><td class="num">0.79</td><td class="num">0.22</td><td class="num">0.45</td></tr>
+      <tr><td>SD3.5-L</td><td class="num">0.71</td><td class="num">0.98</td><td class="num">0.89</td><td class="num">0.73</td><td class="num">0.83</td><td class="num">0.34</td><td class="num">0.47</td></tr>
+      <tr><td>SANA-1.5 4.8B</td><td class="num">0.81</td><td class="num">0.99</td><td class="num">0.93</td><td class="num">0.86</td><td class="num">0.84</td><td class="num">0.59</td><td class="num">0.65</td></tr>
+      <tr><td>SD3.5-M</td><td class="num">0.63</td><td class="num">0.98</td><td class="num">0.78</td><td class="num">0.50</td><td class="num">0.81</td><td class="num">0.24</td><td class="num">0.52</td></tr>
+      <tr class="hl"><td>SD3.5-M + Flow-GRPO</td><td class="num">0.95</td><td class="num">1.00</td><td class="num">0.99</td><td class="num">0.95</td><td class="num">0.92</td><td class="num">0.99</td><td class="num">0.86</td></tr>
+    </tbody></table></div></details>
+  <div class="tscroll" tabindex="0" role="region" aria-label="Table 2（可橫向捲動）"><table>
+    <caption>Table 2：任務指標（測試提示詞）與 DrawBench 上的品質、偏好分數。ImgRwd＝ImageReward，UniRwd＝UnifiedReward，DB＝DrawBench</caption>
+    <thead><tr><th>模型</th><th class="num">GenEval</th><th class="num">OCR</th><th class="num">PickScore</th><th class="num">Aesthetic</th><th class="num">DeQA</th><th class="num">ImgRwd</th><th class="num">PickScore(DB)</th><th class="num">UniRwd</th></tr></thead>
+    <tbody>
+      <tr><td>SD3.5-M</td><td class="num">0.63</td><td class="num">0.59</td><td class="num">21.72</td><td class="num">5.39</td><td class="num">4.07</td><td class="num">0.87</td><td class="num">22.34</td><td class="num">3.33</td></tr>
+      <tr><td>組合生成 w/o KL</td><td class="num">0.95</td><td class="num">—</td><td class="num">—</td><td class="num">4.93</td><td class="num">2.77</td><td class="num">0.44</td><td class="num">21.16</td><td class="num">2.94</td></tr>
+      <tr class="hl"><td>組合生成 w/ KL</td><td class="num">0.95</td><td class="num">—</td><td class="num">—</td><td class="num">5.25</td><td class="num">4.01</td><td class="num">1.03</td><td class="num">22.37</td><td class="num">3.51</td></tr>
+      <tr><td>文字渲染 w/o KL</td><td class="num">—</td><td class="num">0.93</td><td class="num">—</td><td class="num">5.13</td><td class="num">3.66</td><td class="num">0.58</td><td class="num">21.79</td><td class="num">3.15</td></tr>
+      <tr class="hl"><td>文字渲染 w/ KL</td><td class="num">—</td><td class="num">0.92</td><td class="num">—</td><td class="num">5.32</td><td class="num">4.06</td><td class="num">0.95</td><td class="num">22.44</td><td class="num">3.42</td></tr>
+      <tr><td>人類偏好 w/o KL</td><td class="num">—</td><td class="num">—</td><td class="num">23.41</td><td class="num">6.15</td><td class="num">4.16</td><td class="num">1.24</td><td class="num">23.56</td><td class="num">3.57</td></tr>
+      <tr class="hl"><td>人類偏好 w/ KL</td><td class="num">—</td><td class="num">—</td><td class="num">23.31</td><td class="num">5.92</td><td class="num">4.22</td><td class="num">1.28</td><td class="num">23.53</td><td class="num">3.66</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>主要結果：GenEval 由 0.63 提升到 0.95（Table 1，高於 GPT-4o 的 0.84）；OCR 準確率由 0.59 提升到 0.92（w/ KL；w/o KL 為 0.93）；PickScore 由 21.72 提升到 23.31（w/ KL；w/o KL 為 23.41）（Table 2）。</p>
+    <p>KL 的作用（Sec. 5.3）：組合生成與文字渲染去掉 KL 時，DrawBench 上的品質與偏好分數明顯下降（例如組合生成的 DeQA 由 4.07 降為 2.77）；加上適當的 KL 時，任務指標的提升相近，品質大致保持。人類偏好任務去掉 KL 時品質指標沒有下降，作者認為可能因為 PickScore 與評估指標重疊；但視覺多樣性崩潰，不同種子產生幾乎相同的影像（Fig. 6）。KL 不等同於提早停止：加上適當 KL 能達到與無 KL 版本相同的高獎勵並保持品質，代價是訓練較久（App. C.5、Fig. 12）。不能說 w/ KL 在所有指標上都較好：組合生成 w/ KL 的 Aesthetic 5.25 仍低於 SD3.5-M 的 5.39，人類偏好 w/ KL 的 Aesthetic 5.92 也低於 w/o KL 的 6.15。</p>
+    <p>與其他方法的比較（Fig. 4、App. C.1）：在相同組大小下，對照 SFT（選每組最高獎勵的影像做監督式微調）、Flow-RWR（以組內獎勵的 softmax 為權重做加權最大概似）、Flow-DPO（以每組最高與最低獎勵的影像為較好／較差的一對，套用 DPO 損失）以及它們的線上版本（每 40 步更新收集資料的模型）；Flow-GRPO 優於全部。線上 DPO 優於離線 DPO；DPO 的 $\beta$ 太小可能使訓練崩潰；RWR 沒有隨訓練改善。在人類偏好任務上（Fig. 8），經 ODE 轉 SDE 改用於流模型的 DDPO 獎勵上升較慢、後期崩潰；ReFL（把獎勵梯度反向傳到隨機選的晚期步 $t\in[30,40]$ 的方法）也被超越，而且 GRPO 不需要可微分的獎勵。ORW（以 Wasserstein-2 正則化的線上獎勵加權迴歸）：Table 5 在 step 960 時為 23.05，Flow-GRPO 為 29.89；Table 6 的 CLIP 分數 28.40 對 30.18、Diversity 0.97 對 1.02（SD3.5-M 為 27.99、0.96）。</p>
+    <p>其他分析：每個 rollout 使用不同的初始噪聲，比使用相同初始噪聲持續得到較高的獎勵（App. C.3、Fig. 10）。泛化方面，Table 4 中未見物體類別的 Overall 由 0.64 提升到 0.90；計數只訓練 2–4 個物體，5–6 個物體由 0.13 提升到 0.48，12 個物體由 0.02 提升到 0.12。T2I-CompBench++（Table 3）七項中六項提升，例如 2D-Spatial 由 0.2850 提升到 0.5447；Texture 則由 0.7338 降為 0.7236。FLUX.1-Dev（App. C.4、Table 7）的 PickScore 由 22.62 提升到 23.97，DeQA 由 4.31 略降為 4.24，其餘指標上升。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="flowgrpo-design-choices-and-results.html">Denoising Reduction、KL 與 Flow-GRPO 的實驗結果</a>、<a href="rl-finetuning-text-to-image-diffusion.html">文字生成圖像擴散模型的 RL 微調脈絡</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">三個任務的提升？去掉 KL 會怎樣？</p>
+    <p class="a">GenEval 0.63→0.95、OCR 0.59→0.92、PickScore 21.72→23.31；去掉 KL 時 GenEval／OCR 品質下降、PickScore 多樣性崩潰。</p>
+  </div></details>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="impl" data-toc="10" data-tt="實作">
+  <div class="ch-num">10 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <details class="more"><summary>符號總表（各符號的定義見對應章節；此表供回查）</summary><div class="tscroll" tabindex="0" role="region" aria-label="符號總表（可橫向捲動）"><table>
+    <thead><tr><th>符號</th><th>意義</th><th>出處</th></tr></thead>
+    <tbody>
+      <tr><td>$x_0$、$x_1$</td><td>資料樣本、噪聲樣本</td><td>Sec. 3</td></tr>
+      <tr><td>$t$</td><td>連續時間（$t=0$ 資料、$t=1$ 噪聲）；在 MDP 中也是整數步索引</td><td>Eq. 1、Sec. 3</td></tr>
+      <tr><td>$v_\theta$、$v_t$</td><td>模型預測的速度、真實速度；目標 $v=x_1-x_0$</td><td>Eq. 2、Eq. 6</td></tr>
+      <tr><td>$c$</td><td>提示詞</td><td>Sec. 3</td></tr>
+      <tr><td>$T$、$G$</td><td>去噪步數、組大小</td><td>Sec. 3–4</td></tr>
+      <tr><td>$\hat A^i_t$</td><td>優勢</td><td>Eq. 4</td></tr>
+      <tr><td>$\rho^i_t$</td><td>機率比（論文記為 $r^i_t$）</td><td>Eq. 5</td></tr>
+      <tr><td>$\varepsilon$、$\beta$</td><td>裁剪範圍、KL 權重</td><td>Eq. 5</td></tr>
+      <tr><td>$\pi_{\mathrm{ref}}$、$\pi_{\theta_{\mathrm{old}}}$</td><td>預訓練模型、收集樣本時的模型</td><td>Eq. 3、5</td></tr>
+      <tr><td>$\sigma_t$、$a$</td><td>擴散係數 $a\sqrt{t/(1-t)}$、噪聲等級</td><td>Sec. 4</td></tr>
+      <tr><td>$\nabla\log p_t$</td><td>分數</td><td>Eq. 7</td></tr>
+      <tr><td>$\Delta t$、$\epsilon$</td><td>時間步長、標準常態噪聲</td><td>Eq. 9</td></tr>
+    </tbody></table></div></details>
+  <div class="tscroll" tabindex="0" role="region" aria-label="超參數表（可橫向捲動）"><table>
+    <caption>論文的設定（App. B.3–B.4）</caption>
+    <thead><tr><th>項目</th><th>值</th><th>出處</th></tr></thead>
+    <tbody>
+      <tr><td>訓練取樣步數 / 評估步數</td><td>10 / 40（評估取樣器未寫；C.7 的質性圖為 40 步 ODE）</td><td>B.3、C.7</td></tr>
+      <tr><td>組大小 $G$</td><td>24</td><td>B.3</td></tr>
+      <tr><td>噪聲等級 $a$</td><td>0.7</td><td>B.3</td></tr>
+      <tr><td>解析度</td><td>512</td><td>B.3</td></tr>
+      <tr><td>KL 權重 $\beta$</td><td>GenEval、文字渲染 0.04；PickScore 0.01</td><td>B.3</td></tr>
+      <tr><td>LoRA</td><td>$\alpha=64$、$r=32$</td><td>B.3</td></tr>
+      <tr><td>硬體</td><td>24 張 NVIDIA A800</td><td>B.4</td></tr>
+      <tr><td>裁剪範圍 $\varepsilon$、學習率、批次大小、時間格點</td><td>論文未寫</td><td>—</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>實作 Flow-GRPO 時容易犯的七個錯誤：</p>
+    <ol>
+      <li>把 Eq. 9 的 $\sqrt{\Delta t}$ 直接用在負的 $\Delta t$ 上。取樣時 $\Delta t\lt 0$，應取 $\sqrt{|\Delta t|}$<span class="tag">本頁推導</span>。</li>
+      <li>在 $t=1$ 直接計算 $\sigma_t=a\sqrt{t/(1-t)}$，會除以零；論文沒有寫處理方式，本頁玩具以 $t'=1-1/T$ 代入<span class="tag">推定</span>。</li>
+      <li>混淆兩個參考策略：機率比的分母是收集樣本的 $\pi_{\theta_{\mathrm{old}}}$，KL 的對象是預訓練的 $\pi_{\mathrm{ref}}$（Eq. 5）。論文 Fig. 2 的圖中把 KL 寫成 $D_{KL}(\pi_\theta\mid\pi_{\theta_{old}})$，與 Eq. 5 不同；本頁依 Eq. 5。</li>
+      <li>組內獎勵全相同時標準差為 0，若不保護，Eq. 4 會得到 NaN。</li>
+      <li>用訓練時的 10 步去評估；論文的定量評估用 40 步（B.3）。</li>
+      <li>同一組的影像使用相同的初始噪聲；App. C.3 顯示不同初始噪聲得到較高的獎勵。</li>
+      <li>為了訓練快而把 $\beta$ 設為 0：獎勵仍可上升，但組合生成與文字渲染的品質下降，人類偏好任務的多樣性崩潰（Table 2、Fig. 6）。</li>
+    </ol>
+  </div>
+  <p class="read">延伸閱讀：<a href="flow-ode-to-sde-for-rl.html">Flow 模型 RL 的 ODE-to-SDE 轉換</a>、<a href="flowgrpo-design-choices-and-results.html">Denoising Reduction、KL 與 Flow-GRPO 的實驗結果</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">說出三個實作 Flow-GRPO 時容易犯的錯誤與正確做法。</p>
+    <p class="a">例如：$\sqrt{\Delta t}$ 取 $|\Delta t|$；$t=1$ 的 $\sigma_t$ 除以零；比值分母是 $\pi_{\theta_{\mathrm{old}}}$、KL 對象是 $\pi_{\mathrm{ref}}$。</p>
+  </div></details>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="history" data-toc="11" data-tt="研究脈絡">
+  <div class="ch-num">11 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>Flow-GRPO 結合五條脈絡：擴散模型與分數 SDE（DDPM、DDIM、Score SDE）提供 SDE 與機率流 ODE 的對應；流匹配與 Rectified Flow，以及把流與擴散統一的 Stochastic Interpolants，是本文要訓練的模型與理論基礎，SD3 是基礎模型；生成模型的 RL 與偏好對齊（AWR、DDPO、DPO、Adjoint Matching）是對照方法與前身；GRPO 來自 LLM 推理的 DeepSeekMath。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="next" data-toc="12" data-tt="限制與延伸">
+  <div class="ch-num">12 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>論文的實驗限於文字生成影像。作者列出用在影片生成的三個方向（Sec. 6）：獎勵設計（物體偵測器或追蹤器等簡單規則能鼓勵物理合理性與時間一致性，但需要更好的獎勵模型）、多個獎勵的平衡（真實感、流暢度、連貫性彼此競爭），以及規模化（影片的資源需求遠大於影像，需要更有效率的資料收集與訓練流程）。另外，KL 正則化雖有明顯幫助，但需要更長的訓練，而且某些提示詞仍偶爾出現 reward hacking。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="flowgrpo-lineage-hub.html">Flow-GRPO 的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="flowgrpo-flow-matching-backbone.html">Flow matching 與 rectified flow 作為生成骨幹</a><span>生成骨幹</span></div></li>
+    <li><div><a href="flow-matching-velocity-target.html">Flow matching 的速度目標與 rectified flow 的大規模使用</a><span>生成骨幹</span></div></li>
+    <li><div><a href="flowgrpo-diffusion-sde-background.html">從 DDPM 到 score SDE 與 stochastic interpolants</a><span>SDE 背景</span></div></li>
+    <li><div><a href="flowgrpo-denoising-mdp-and-grpo.html">Denoising 作為 MDP，以及 Flow-GRPO 的目標函數</a><span>MDP 與 GRPO</span></div></li>
+    <li><div><a href="rl-mdp-q-learning-basics.html">MDP、Q 函數與 Bellman backup：value-based RL 的基本記號</a><span>MDP 與 GRPO</span></div></li>
+    <li><div><a href="rlvr-grpo-credit-assignment.html">RLVR、GRPO 與信用分配瓶頸</a><span>MDP 與 GRPO</span></div></li>
+    <li><div><a href="rl-finetuning-text-to-image-diffusion.html">文字生成圖像擴散模型的 RL 微調脈絡</a><span>T2I 的 RL 微調</span></div></li>
+    <li><div><a href="flow-ode-to-sde-for-rl.html">Flow 模型 RL 的 ODE-to-SDE 轉換</a><span>ODE 轉 SDE</span></div></li>
+    <li><div><a href="flowgrpo-design-choices-and-results.html">Denoising Reduction、KL 與 Flow-GRPO 的實驗結果</a><span>設計選擇與結果</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Jie Liu, Gongye Liu, Jiajun Liang, Yangguang Li, Jiaheng Liu, Xintao Wang, Pengfei Wan, Di Zhang, Wanli Ouyang. Flow-GRPO: Training Flow Matching Models via Online RL. NeurIPS 2025. <a href="https://arxiv.org/abs/2505.05470">arXiv:2505.05470</a>；程式碼 <a href="https://github.com/yifan123/flow_grpo">github.com/yifan123/flow_grpo</a>。</p>
+  <p>本頁的方程式與數字取自論文 v5；標示「本頁推導」的內容為本頁自行推導，「推定」為本頁選定的值，皆非論文結論。C1、C3 使用本頁的一維玩具，C2、C4 為閉式，數值都在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+<script type="application/json" id="timeline-data">[{"year": 2019, "title": "Advantage-Weighted Regression", "authors_short": "Peng et al.", "arxiv": "1910.00177"}, {"year": 2020, "title": "Denoising Diffusion Probabilistic Models", "authors_short": "Ho et al.", "arxiv": "2006.11239"}, {"year": 2020, "title": "Denoising Diffusion Implicit Models", "authors_short": "Song et al.", "arxiv": "2010.02502"}, {"year": 2020, "title": "Score-Based Generative Modeling through SDEs", "authors_short": "Song et al.", "arxiv": "2011.13456"}, {"year": 2022, "title": "Flow Straight and Fast: Rectified Flow", "authors_short": "Liu et al.", "arxiv": "2209.03003"}, {"year": 2022, "title": "Flow Matching for Generative Modeling", "authors_short": "Lipman et al.", "arxiv": "2210.02747"}, {"year": 2023, "title": "Stochastic Interpolants", "authors_short": "Albergo et al.", "arxiv": "2303.08797"}, {"year": 2023, "title": "Training Diffusion Models with Reinforcement Learning (DDPO)", "authors_short": "Black et al.", "arxiv": "2305.13301"}, {"year": 2023, "title": "Direct Preference Optimization", "authors_short": "Rafailov et al.", "arxiv": "2305.18290"}, {"year": 2024, "title": "DeepSeekMath (introduces GRPO)", "authors_short": "Shao et al.", "arxiv": "2402.03300"}, {"year": 2024, "title": "Scaling Rectified Flow Transformers (SD3)", "authors_short": "Esser et al.", "arxiv": "2403.03206"}, {"year": 2024, "title": "Adjoint Matching", "authors_short": "Domingo-Enrich et al.", "arxiv": "2409.08861"}, {"year": 2025, "title": "Flow-GRPO: Training Flow Matching Models via Online RL", "authors_short": "Liu et al.", "arxiv": "2505.05470"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function svgOf(box,W,H){const svg=$('svg',box);svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);return svg}
+const f4=v=>(Math.abs(v)<5e-5?0:v).toFixed(4),f3=v=>(Math.abs(v)<5e-4?0:v).toFixed(3),f2=v=>(Math.abs(v)<.005?0:v).toFixed(2);
+const g6=v=>{if(v===0)return'0';const s=Number(v.toPrecision(6));return Math.abs(s)<1e-3||Math.abs(s)>=1e5?s.toExponential(3).replace('e','×10^'):String(s)};
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+function frameSched(fn){let q=0;return(...a)=>{if(q)return;q=requestAnimationFrame(()=>{q=0;fn(...a)})}}
+function segInit(box,opts,cur,label,onPick){box.textContent='';opts.forEach(o=>{const b=document.createElement('button');b.type='button';b.setAttribute('role','radio');
+    b.textContent=label?label(o):String(o);b.dataset.v=String(o);box.appendChild(b)});
+  const sync=v=>$$('button',box).forEach(b=>{const on=b.dataset.v===String(v);b.setAttribute('aria-checked',String(on));b.setAttribute('aria-pressed',String(on));b.tabIndex=on?0:-1});sync(cur);
+  box.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const v=opts.find(o=>String(o)===b.dataset.v);sync(v);onPick(v)});
+  box.addEventListener('keydown',e=>{const bs=$$('button',box),i=bs.findIndex(b=>b.tabIndex===0);let j=i;if(e.key==='ArrowRight'||e.key==='ArrowDown')j=(i+1)%bs.length;else if(e.key==='ArrowLeft'||e.key==='ArrowUp')j=(i-1+bs.length)%bs.length;else return;e.preventDefault();bs[j].focus();bs[j].click()});
+  return sync}
+function rangeInit(id,fmt,onInput,onChange){const s=$('#'+id),o=$('#'+id+'o');const upd=()=>{const t=fmt(+s.value);o.textContent=t[0];s.setAttribute('aria-valuetext',t[1]||t[0])};upd();
+  s.addEventListener('input',()=>{upd();onInput(+s.value)});s.addEventListener('change',()=>{upd();onChange(+s.value)});return{s,upd}}
+
+/* ================= shared math (mirrors verify/core.py) ================= */
+function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}  // core.mulberry32
+function gauss(r){const u1=r(),u2=r();return Math.sqrt(-2*Math.log(1-u1))*Math.cos(2*Math.PI*u2)}                                                     // core.gauss
+const TOY={w:[.4,.6],mu:[-1.2,1.2],s:[.3,.3]},LW=TOY.w.map(Math.log);
+function comp(t){return TOY.mu.map((m,k)=>[(1-t)*m,(1-t)**2*TOY.s[k]*TOY.s[k]+t*t])}                                                                 // core.comp
+function density(x,t){const c=comp(t);let s=0;for(let k=0;k<2;k++){const [m,v]=c[k];s+=TOY.w[k]*Math.exp(-((x-m)**2)/(2*v))/Math.sqrt(2*Math.PI*v)}return s}  // core.density
+function velC(x,t,c,lv){                                                                                                                               // core.velocity (c, log v precomputed)
+  const l0=LW[0]-(x-c[0][0])**2/(2*c[0][1])-.5*lv[0],l1=LW[1]-(x-c[1][0])**2/(2*c[1][1])-.5*lv[1],mx=Math.max(l0,l1),p0=Math.exp(l0-mx),p1=Math.exp(l1-mx),z=p0+p1;
+  let e0=0;e0+=p0/z*(TOY.mu[0]+(1-t)*TOY.s[0]*TOY.s[0]/c[0][1]*(x-c[0][0]));e0+=p1/z*(TOY.mu[1]+(1-t)*TOY.s[1]*TOY.s[1]/c[1][1]*(x-c[1][0]));return(x-e0)/t}
+function velocity(x,t){const c=comp(t);return velC(x,t,c,[Math.log(c[0][1]),Math.log(c[1][1])])}
+function sigmaT(t,a,T){const tt=t<1-1e-12?t:1-1/T;return a*Math.sqrt(tt/(1-tt))}                                                                          // core.sigma
+// core.simulate: snapshots[j] at t_j = 1 - j/T. RNG: M initial draws, then per step, per particle (SDE only).
+function simulate(a,T,seed,sde,M=4000){const r=mulberry32(seed),x=new Float64Array(M);for(let m=0;m<M;m++)x[m]=gauss(r);
+  const snaps=[Float64Array.from(x)],dt=-1/T,sq=Math.sqrt(-dt);let divergedAt=null;
+  for(let j=0;j<T;j++){const t=1-j/T,sg=sde?sigmaT(t,a,T):0,k2=sg*sg/(2*t),c=comp(t),lv=[Math.log(c[0][1]),Math.log(c[1][1])];let bad=false;
+    for(let m=0;m<M;m++){const xm=x[m],v=velC(xm,t,c,lv),drift=v+k2*(xm+(1-t)*v),nz=sde?gauss(r):0;const nx=xm+drift*dt+sg*sq*nz;x[m]=nx;if(!(Math.abs(nx)<=1e6))bad=true}
+    snaps.push(Float64Array.from(x));if(bad){divergedAt=j+1;break}}
+  return{snaps,divergedAt}}
+function erf(x){const s=x>=0?1:-1;x=Math.abs(x);const t=1/(1+.3275911*x);                                                                             // core.erf (A&S 7.1.26)
+  const y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-.284496736)*t+.254829592)*t*Math.exp(-x*x);return s*y}
+function cdf(x,t){const c=comp(t);let s=0;for(let k=0;k<2;k++){const [m,v]=c[k];s+=TOY.w[k]*.5*(1+erf((x-m)/Math.sqrt(2*v)))}return s}                    // core.cdf
+function w1(xs,t,lo=-4,hi=4,n=801){const s=Float64Array.from(xs).sort(),M=s.length,h=(hi-lo)/(n-1);let k=0,acc=0,prev=null;                         // core.w1
+  for(let i=0;i<n;i++){const g=lo+i*h;while(k<M&&s[k]<=g)k++;const d=Math.abs(k/M-cdf(g,t));if(prev!==null)acc+=.5*(d+prev)*h;prev=d}return acc}
+function stats(xs){const M=xs.length;let m=0;for(const x of xs)m+=x;m/=M;let v=0,p=0;for(const x of xs){v+=(x-m)**2;if(x>0)p++}return[m,Math.sqrt(v/M),p/M]}  // core.stats
+const EXACT0=[.24,1.2134,.6];
+// GRPO advantage (core.advantages): population std; std < 1e-12 -> all zero (推定)
+function advantages(R){const G=R.length;let m=0;for(const x of R)m+=x;m/=G;let v=0;for(const x of R)v+=(x-m)**2;const s=Math.sqrt(v/G);
+  return{A:s<1e-12?R.map(()=>0):R.map(x=>(x-m)/s),m,s}}
+const drawReward=(r,kind,p)=>kind==='binary'?(r()<p?1:0):.5+.15*gauss(r);                                                                            // core.draw_reward
+const trueZ=(R,kind,p)=>kind==='binary'?(R-p)/Math.sqrt(p*(1-p)):(R-.5)/.15;                                                                       // core.true_z
+function advMC(G,kind,p,seed,K=2000){const r=mulberry32(seed);let se=0,deg=0;                                                                       // core.adv_mc
+  for(let q=0;q<K;q++){const R=[];for(let i=0;i<G;i++)R.push(drawReward(r,kind,p));const {A,s}=advantages(R);if(s<1e-12)deg++;let e=0;for(let i=0;i<G;i++)e+=(A[i]-trueZ(R[i],kind,p))**2;se+=e}
+  return[Math.sqrt(se/(K*G)),deg/K]}
+const pDegenerate=(G,kind,p)=>kind==='binary'?p**G+(1-p)**G:0;
+function clipObj(rho,A,eps){const c=Math.min(Math.max(rho,1-eps),1+eps),u=rho*A,k=c*A;return[Math.min(u,k),u<=k+1e-9?A:0]}                              // core.clip_obj
+function klCoeff(j,T,a){const t=1-j/T,sg=sigmaT(t,a,T);return(sg*(1-t)/(2*t)+1/sg)**2/(2*T)}                                                        // core.kl_coeff
+function stepPolicy(j,T,a,dv,z){const t=1-j/T,adt=1/T,sg=sigmaT(t,a,T),sd=sg*Math.sqrt(adt),shift=(1+sg*sg*(1-t)/(2*t))*dv*(-adt);                   // core.step_policy
+  const kl1=shift**2/(2*sg*sg*adt),kl2=adt/2*(sg*(1-t)/(2*t)+1/sg)**2*dv*dv,logr=((sd*z)**2-(sd*z-shift)**2)/(2*sd*sd);return{t,sg,sd,shift,kl1,kl2,logr}}
+const shared={ei:20};
+
+/* ================= time strips (Hero, S8) ================= */
+function strip(svg,x0,y0,w,h,T,label,acc){const cw=w/T;for(let j=0;j<T;j++)el('rect',{x:x0+j*cw,y:y0,width:Math.max(cw-(cw>6?2:1),1),height:h,class:acc?'cell-acc':'cell',rx:cw>6?3:1},svg);if(label)tx(svg,x0,y0-6,label,{class:'al'})}
+function renderHero(){const box=$('#hero-strip'),W=widthOf(box,260,560),svg=svgOf(box,W,64);strip(svg,0,8,W,24,10,null,true);
+  tx(svg,0,52,'t = 1 噪聲',{class:'tk'});tx(svg,W,52,'t = 0 資料',{class:'tk','text-anchor':'end'});tx(svg,W/2,52,'10 步',{class:'tk','text-anchor':'middle'})}
+function renderCost(){const box=$('#s8-cost'),W=widthOf(box,280,760),narrow=W<520,svg=svgOf(box,W,narrow?150:126);
+  const lw=narrow?0:150,x0=lw,w=W-lw,r1=narrow?24:20,r2=narrow?86:72;
+  tx(svg,0,narrow?r1-6:r1+16,'訓練取樣：T = 10（SDE）',{class:'al'});strip(svg,x0,narrow?r1:r1,w,22,10,null,true);
+  tx(svg,0,narrow?r2-6:r2+16,'推論：T = 40',{class:'al'});strip(svg,x0,r2,w,22,40,null,false);
+  tx(svg,x0,narrow?r2+40:r2+44,'每個提示詞 24 × 10 = 240 次 vs 24 × 40 = 960 次模型前向',{class:'tk'})}
+
+/* ================= C1 · group-relative advantage ================= */
+const GS=[2,3,4,6,8,12,16,24,32,48];
+const c1={kind:'continuous',gi:7,pp:30,seed:1,token:0,curve:null,curveKey:'',stale:false};
+const c1p=()=>c1.pp/100;
+function c1curve(){const key=`${c1.kind}|${c1.pp}`;if(c1.curveKey===key&&c1.curve&&c1.curve.length===GS.length)return;const tok=++c1.token,kind=c1.kind,p=c1p(),out=[];c1.stale=true;c1.curveKey=key;c1.curve=out;
+  let i=0;const step=()=>{if(tok!==c1.token)return;const [rm,dg]=advMC(GS[i],kind,p,7);out.push({G:GS[i],rm,dg});i++;if(i<GS.length)setTimeout(step,0);else{c1.stale=false;c1draw();announce('c1',c1sum())}c1draw()};setTimeout(step,0)}
+function c1group(){const r=mulberry32(c1.seed),G=GS[c1.gi],R=[];for(let i=0;i<G;i++)R.push(drawReward(r,c1.kind,c1p()));return Object.assign({R},advantages(R))}
+function c1sum(){const G=GS[c1.gi],pt=c1.curve&&c1.curve.find(d=>d.G===G);return `G = ${G}，RMSE ${pt?f3(pt.rm):'計算中'}，全相同機率 ${f3(pDegenerate(G,c1.kind,c1p()))}`}
+function c1draw(){const G=GS[c1.gi],g=c1group(),boxA=$('#c1-a'),boxB=$('#c1-b'),avail=widthOf(boxA,240,520),l=36,rp=48,W=Math.max(avail,l+rp+5*G),bw=(W-l-rp)/G;
+  {const H=104,svg=svgOf(boxA,W,H),y=lin(0,1,H-8,10);[0,.5,1].forEach(v=>{el('line',{x1:l,x2:W-rp,y1:y(v),y2:y(v),class:'grid'},svg);tx(svg,l-6,y(v)+4,String(v),{class:'tk','text-anchor':'end'})});
+    g.R.forEach((v,i)=>{const vv=Math.max(0,Math.min(1,v)),x=l+i*bw+1;el('rect',{x,y:y(vv),width:Math.max(bw-2,1),height:y(0)-y(vv),class:'bar'},svg);
+      if(v>1||v<0){const yy=v>1?y(1)-2:y(0)+2,d=v>1?-6:6;el('path',{d:`M${x+bw/2-4} ${yy}L${x+bw/2+4} ${yy}L${x+bw/2} ${yy+d}Z`,class:'acc-f'},svg)}})}
+  {const H=150,svg=svgOf(boxB,W,H),y=lin(-4,4,H-10,10),defs=el('defs',null,svg),pat=el('pattern',{id:'hatch',width:5,height:5,patternUnits:'userSpaceOnUse',patternTransform:'rotate(45)'},defs);
+    const gg=el('g',{style:'color:var(--c-ref)'},svg);el('rect',{width:5,height:5,fill:'none'},pat);el('line',{x1:0,y1:0,x2:0,y2:5,stroke:'currentColor','stroke-width':2},pat);
+    [-4,-2,0,2,4].forEach(v=>{el('line',{x1:l,x2:W-rp,y1:y(v),y2:y(v),class:'grid'},svg);tx(svg,l-6,y(v)+4,v<0?'−'+(-v):String(v),{class:'tk','text-anchor':'end'})});
+    el('line',{x1:l,x2:W-rp,y1:y(0),y2:y(0),class:'axl'},svg);tx(svg,W-rp+6,y(0)+4,'組平均',{class:'tk'});
+    g.A.forEach((a,i)=>{const av=Math.max(-4,Math.min(4,a)),x=l+i*bw+1,w=Math.max(bw-2,1);
+      if(av>=0)el('rect',{x,y:y(av),width:w,height:y(0)-y(av),class:'bar'},svg);else el('rect',{x,y:y(0),width:w,height:y(av)-y(0),fill:'url(#hatch)',stroke:'currentColor','stroke-width':1},gg);
+      if(Math.abs(a)>4){const yy=a>0?y(4):y(-4),d=a>0?-6:6;el('path',{d:`M${x+bw/2-4} ${yy}L${x+bw/2+4} ${yy}L${x+bw/2} ${yy+d}Z`,class:'ink-f'},svg)}});
+    if(g.s<1e-12){tx(svg,l+8,24,'整組獎勵相同：std = 0，所有優勢為 0；',{class:'warn'});tx(svg,l+8,42,'替代目標項沒有梯度，KL 項仍有。',{class:'warn'})}
+  }
+  {const box=$('#c1-c'),W2=widthOf(box,240,520),H=160,r2=c1.kind==='binary'?34:10,svg=svgOf(box,W2,H),x=v=>lin(Math.log(2),Math.log(48),l,W2-r2)(Math.log(v)),y=lin(0,1,H-28,10);
+    [0,.5,1].forEach(v=>{el('line',{x1:l,x2:W2-r2,y1:y(v),y2:y(v),class:'grid'},svg);tx(svg,l-6,y(v)+4,String(v),{class:'tk','text-anchor':'end'});if(c1.kind==='binary')tx(svg,W2-r2+6,y(v)+4,String(v),{class:'tk'})});
+    [2,6,12,24,48].forEach(v=>tx(svg,x(v),H-12,String(v),{class:'tk','text-anchor':'middle'}));
+    const d=c1.curve||[],gp=el('g',c1.stale?{class:'stale'}:null,svg);
+    if(d.length){el('path',{d:lp(d.map(q=>[x(q.G),y(Math.min(1,q.rm))])),class:'acc'},gp);d.forEach(q=>el('circle',{cx:x(q.G),cy:y(Math.min(1,q.rm)),r:3.5,class:'acc-f'},gp));
+      if(c1.kind==='binary'){el('path',{d:lp(d.map(q=>[x(q.G),y(q.dg)])),class:'ink2-thin'},gp);d.forEach(q=>el('rect',{x:x(q.G)-3.5,y:y(q.dg)-3.5,width:7,height:7,fill:'var(--surface)',stroke:'var(--ink-2)','stroke-width':1.5},gp))}
+      const cur=d.find(q=>q.G===G);if(cur)el('circle',{cx:x(G),cy:y(Math.min(1,cur.rm)),r:8,class:'hollow'},svg)}
+    if(c1.stale)tx(svg,l+8,y(.5),d.length?'p 已變更或計算中，曲線更新中':'計算中',{class:'warn'})}
+  const cur=c1.curve&&!c1.stale?c1.curve.find(q=>q.G===G):null;let sA=0,sA2=0;g.A.forEach(a=>{sA+=a;sA2+=a*a});
+  $('#c1-read').textContent=`組平均 ${f4(g.m)} · 組標準差 ${f4(g.s)}\nΣA ${Math.abs(sA)<1e-12?'0':sA.toExponential(2)} · ΣA² ${f4(sA2)}\nRMSE（G = ${G}）${cur?f4(cur.rm):'更新中'}\n全相同機率：閉式 ${f4(pDegenerate(G,c1.kind,c1p()))} · 模擬 ${cur?f4(cur.dg):'更新中'}`}
+function initC1(){const sched=frameSched(c1draw);
+  segInit($('#c1-kind'),['continuous','binary'],c1.kind,v=>v==='binary'?'二元':'連續',v=>{c1.kind=v;syncP();c1curve();c1draw();announce('c1',c1sum())});
+  const syncP=()=>{const on=c1.kind==='binary';$('#c1-p').disabled=!on;$('#c1-pnote').classList.toggle('hide',on)};syncP();
+  rangeInit('c1-g',v=>[String(GS[v]),`G = ${GS[v]}`],v=>{c1.gi=v;sched()},v=>{c1.gi=v;c1draw();announce('c1',c1sum())});
+  rangeInit('c1-p',v=>[(v/100).toFixed(2),`p = ${(v/100).toFixed(2)}`],v=>{c1.pp=v;c1.stale=true;sched()},v=>{c1.pp=v;c1curve();c1draw()});
+  $('#c1-seed').addEventListener('click',()=>{c1.seed++;c1draw()});c1curve();c1draw()}
+
+/* ================= C2 · clipped surrogate ================= */
+const c2={ai:10,ri:100};
+function c2draw(){const A=c2.ai/10,eps=shared.ei/100,rho=c2.ri/100,box=$('#c2-fig'),W=widthOf(box,260,560),H=236,l=36,r=14,svg=svgOf(box,W,H),x=lin(.5,1.5,l,W-r),y=lin(-3,3,H-32,10);
+  el('rect',{x:x(1-eps),y:10,width:x(1+eps)-x(1-eps),height:H-42,class:'band'},svg);tx(svg,x(1),24,'裁剪範圍',{class:'tk','text-anchor':'middle'});
+  [-3,-2,-1,0,1,2,3].forEach(v=>{el('line',{x1:l,x2:W-r,y1:y(v),y2:y(v),class:'grid'},svg);tx(svg,l-6,y(v)+4,v<0?'−'+(-v):String(v),{class:'tk','text-anchor':'end'})});
+  const tk=[.5,1,1.5,1-eps,1+eps].sort((a,b)=>a-b);tk.forEach(v=>tx(svg,x(v),H-12,(Math.round(v*100)/100).toString(),{class:'tk','text-anchor':'middle'}));
+  const xs=[];for(let i=0;i<=200;i++)xs.push(.5+i/200);xs.push(1-eps,1+eps);xs.sort((a,b)=>a-b);
+  el('path',{d:lp(xs.map(v=>[x(v),y(Math.max(-3,Math.min(3,v*A)))])),class:'ink2-thin'},svg);
+  el('path',{d:lp(xs.map(v=>[x(v),y(Math.max(-3,Math.min(3,clipObj(v,A,eps)[0])))])),class:'acc'},svg);
+  if(A!==0){const zl=A>0?[1+eps,1.5]:[.5,1-eps],ym=y(Math.max(-3,Math.min(3,clipObj((zl[0]+zl[1])/2,A,eps)[0])));tx(svg,(x(zl[0])+x(zl[1]))/2,ym+(A>0?20:-10),'替代目標項梯度 0',{class:'tk','text-anchor':'middle'})}
+  const [L,gr]=clipObj(rho,A,eps);el('circle',{cx:x(rho),cy:y(Math.max(-3,Math.min(3,L))),r:6,class:'hollow'},svg);
+  const clipped=gr===0&&A!==0;$('#c2-read').textContent=`L ${f3(L)} · 斜率 ∂L/∂ρ ${f2(gr)}\n${clipped?'已裁剪：替代目標項梯度 0，KL 項不受影響':A===0?'A = 0：替代目標項為 0':'未裁剪'}`;
+  return{L,gr,clipped}}
+function initC2(){const sched=frameSched(c2draw),sum=()=>{const r=c2draw();announce('c2',`ρ = ${(c2.ri/100).toFixed(2)}，L = ${f3(r.L)}，${r.clipped?'已裁剪':'未裁剪'}`)};
+  rangeInit('c2-a',v=>[(v/10).toFixed(1),`A = ${(v/10).toFixed(1)}`],v=>{c2.ai=v;sched()},v=>{c2.ai=v;sum()});
+  rangeInit('c2-e',v=>[(v/100).toFixed(2),`ε = ${(v/100).toFixed(2)}`],v=>{shared.ei=v;sched();c4draw()},v=>{shared.ei=v;sum();c4draw()});
+  rangeInit('c2-r',v=>[(v/100).toFixed(2),`ρ = ${(v/100).toFixed(2)}`],v=>{c2.ri=v;sched()},v=>{c2.ri=v;sum()});c2draw()}
+
+/* ================= C3 · ODE vs SDE toy ================= */
+const c3={mode:'sde',ak:14,T:10,j:10,showOde:true,seed:1,sim:null,stale:false,w:null};const odeCache=new Map();
+function odeSim(T,seed){const k=`${T}|${seed}`;if(!odeCache.has(k))odeCache.set(k,simulate(0,T,seed,false));return odeCache.get(k)}
+function c3compute(){const a=c3.ak/20;c3.sim=c3.mode==='ode'?odeSim(c3.T,c3.seed):simulate(a,c3.T,c3.seed,true)}
+function c3metrics(){const j=c3.j,t=1-j/c3.T,s=c3.sim,o=odeSim(c3.T,c3.seed);const ok=s.divergedAt==null||j<s.snaps.length;
+  return{t,sw:ok&&s.divergedAt==null?w1(s.snaps[j],t):null,ow:w1(o.snaps[j],t)}}
+function c3draw(){const j=c3.j,T=c3.T,t=1-j/T,s=c3.sim,o=odeSim(T,c3.seed),div=s.divergedAt!=null,snap=div?null:s.snaps[j];
+  {const box=$('#c3-hist'),W=widthOf(box,260,600),H=210,l=34,r=8,svg=svgOf(box,W,H),x=lin(-4,4,l,W-r),y=lin(0,1,H-24,10);
+    [0,.5,1].forEach(v=>{el('line',{x1:l,x2:W-r,y1:y(v),y2:y(v),class:'grid'},svg);tx(svg,l-6,y(v)+4,String(v),{class:'tk','text-anchor':'end'})});
+    [-4,-2,0,2,4].forEach(v=>tx(svg,x(v),H-8,v<0?'−'+(-v):String(v),{class:'tk','text-anchor':'middle'}));tx(svg,l+4,22,'密度',{class:'tk'});
+    const hist=xs=>{const c=new Array(64).fill(0);let out=0;for(const v of xs){const b=Math.floor((v+4)/.125);if(b>=0&&b<64)c[b]++;else out++}return{d:c.map(n=>n/(xs.length*.125)),out}};
+    let outN=0;if(snap){const h=hist(snap);outN=h.out;h.d.forEach((d,b)=>{const dd=Math.min(1,d);if(dd>0)el('rect',{x:x(-4+b*.125),y:y(dd),width:x(-4+.125)-x(-4),height:y(0)-y(dd),class:'bar'},svg);
+      if(d>1){const cx=x(-4+(b+.5)*.125);el('path',{d:`M${cx-3} ${y(1)}L${cx+3} ${y(1)}L${cx} ${y(1)-5}Z`,class:'acc-f'},svg)}})}
+    if(c3.showOde&&c3.mode==='sde'){const h=hist(o.snaps[j]),pts=[];h.d.forEach((d,b)=>{const yy=y(Math.min(1,d));pts.push([x(-4+b*.125),yy],[x(-4+(b+1)*.125),yy])});el('path',{d:lp(pts),class:'ink2-step'},svg)}
+    const ep=[];for(let i=0;i<=240;i++){const xv=-4+8*i/240;ep.push([x(xv),y(Math.min(1,density(xv,t)))])}el('path',{d:lp(ep),class:'cref'},svg);
+    const pk=0;tx(svg,W-r,22,'精確邊際 p_t',{class:'tk','text-anchor':'end'});
+    if(div)tx(svg,l+8,y(.6),`數值發散：第 ${s.divergedAt} 步有粒子超過 10⁶`,{class:'warn'});
+    else if(outN)tx(svg,l+8,y(.85),`範圍外 ${outN} 個`,{class:'tk'})}
+  {const box=$('#c3-traj'),W=widthOf(box,240,420),H=210,l=30,r=8,svg=svgOf(box,W,H),x=lin(1,0,l,W-r),y=lin(-4,4,H-24,10);
+    [-4,-2,0,2,4].forEach(v=>{el('line',{x1:l,x2:W-r,y1:y(v),y2:y(v),class:'grid'},svg);tx(svg,l-6,y(v)+4,v<0?'−'+(-v):String(v),{class:'tk','text-anchor':'end'})});
+    tx(svg,l,H-8,'t = 1',{class:'tk'});tx(svg,W-r,H-8,'t = 0',{class:'tk','text-anchor':'end'});
+    const cp='c3cp';const defs=el('defs',null,svg),c=el('clipPath',{id:cp},defs);el('rect',{x:l,y:10,width:W-l-r,height:H-34},c);const gg=el('g',{'clip-path':`url(#${cp})`},svg);
+    if(c3.showOde&&c3.mode==='sde')for(let m=0;m<12;m++)el('path',{d:lp(o.snaps.map((sn,k)=>[x(1-k/T),y(Math.max(-5,Math.min(5,sn[m])))])),class:'ink2-thin'},gg);
+    for(let m=0;m<12;m++)el('path',{d:lp(s.snaps.map((sn,k)=>[x(1-k/T),y(Math.max(-5,Math.min(5,sn[m])))])),class:c3.mode==='sde'?'acc-thin':'ink2-step'},gg);
+    el('line',{x1:x(t),x2:x(t),y1:10,y2:H-24,class:'cur'},svg)}
+  const os=stats(o.snaps[j]),ss=snap?stats(snap):null,ex=j===T?EXACT0:null,w=c3.w;
+  const lab=c3.mode==='sde'?'SDE':'ODE';
+  $('#c3-read').textContent=`t = ${f2(t)}（第 ${j} / ${T} 步）\n${lab}：平均 ${ss?f4(ss[0]):'—'}，標準差 ${ss?f4(ss[1]):'—'}，P(x>0) ${ss?f4(ss[2]):'—'}，W₁ ${c3.stale?'更新中':w&&w.sw!=null?f4(w.sw):'—'}\n`+
+    (c3.mode==='sde'?`ODE：平均 ${f4(os[0])}，標準差 ${f4(os[1])}，P(x>0) ${f4(os[2])}，W₁ ${c3.stale?'更新中':w?f4(w.ow):'—'}\n`:'')+
+    (ex?`精確：平均 ${f4(ex[0])}，標準差 ${f4(ex[1])}，P(x>0) ${f4(ex[2])}`:'精確邊際見直方圖虛線')}
+function c3full(){c3compute();c3.w=c3metrics();c3.stale=false;c3draw();
+  announce('c3',`t = ${f2(1-c3.j/c3.T)}，${c3.mode==='sde'?'SDE':'ODE'} W₁ ${c3.w.sw!=null?f3(c3.w.sw):'發散'}`+(c3.mode==='sde'?`，ODE W₁ ${f3(c3.w.ow)}`:''))}
+function initC3(){const sched=frameSched(()=>{c3compute();c3draw()}),jr=$('#c3-j');
+  const syncA=()=>{$('#c3-a').disabled=c3.mode==='ode'};
+  segInit($('#c3-mode'),['sde','ode'],c3.mode,v=>v.toUpperCase(),v=>{c3.mode=v;syncA();c3full()});syncA();
+  segInit($('#c3-T'),[5,10,20,40],c3.T,null,v=>{c3.T=v;c3.j=v;jr.max=v;jr.value=v;jupd.upd();c3full()});
+  rangeInit('c3-a',v=>[(v/20).toFixed(2),`a = ${(v/20).toFixed(2)}`],v=>{c3.ak=v;c3.stale=true;sched()},v=>{c3.ak=v;c3full()});
+  const jupd=rangeInit('c3-j',v=>{const t=1-v/c3.T;return[`t = ${f2(t)}`,`顯示時刻 t = ${f2(t)}，第 ${v} 步`]},v=>{c3.j=v;c3.w=c3metrics();c3draw()},v=>{c3.j=v;c3full()});
+  $('#c3-ode').addEventListener('change',e=>{c3.showOde=e.target.checked;c3draw()});
+  $('#c3-seed').addEventListener('click',()=>{c3.seed++;c3full()});c3full()}
+
+/* ================= C4 · Gaussian step policy, ratio, KL ================= */
+const c4={ak:14,T:10,j:5,dk:20,zk:10};
+function c4draw(){const a=c4.ak/20,dv=c4.dk/100,z=c4.zk/10,eps=shared.ei/100,p=stepPolicy(c4.j,c4.T,a,dv,z),cj=klCoeff(c4.j,c4.T,a),kl2=cj*dv*dv;
+  {const box=$('#c4-den'),W=widthOf(box,260,560),H=170,l=10,r=10,svg=svgOf(box,W,H),half=4*p.sd+Math.abs(p.shift),x=lin(-half,half,l,W-r),pk=1/(p.sd*Math.sqrt(2*Math.PI)),y=lin(0,1.1*pk,H-26,10);
+    el('line',{x1:l,x2:W-r,y1:y(0),y2:y(0),class:'axl'},svg);[-half,0,half].forEach((v,i)=>tx(svg,x(v),H-8,(v>=0?'':'−')+g6(Math.abs(v)),{class:'tk','text-anchor':i===0?'start':i===2?'end':'middle'}));
+    const curve=m=>{const pts=[];for(let i=0;i<=200;i++){const xv=-half+2*half*i/200;pts.push([x(xv),y(Math.exp(-((xv-m)**2)/(2*p.sd*p.sd))*pk)])}return lp(pts)};
+    el('path',{d:curve(0),class:'cref'},svg);el('path',{d:curve(p.shift),class:'acc'},svg);
+    {const s=p.shift<0?-1:1;tx(svg,x(p.shift+s*1.6*p.sd)+s*4,y(.45*pk),'πθ',{class:'lab','text-anchor':s<0?'end':'start'});tx(svg,x(-s*1.6*p.sd)-s*4,y(.45*pk),'π′',{class:'lab','text-anchor':s<0?'start':'end'})}
+    const xs=x(Math.max(-half,Math.min(half,p.sd*z)));el('line',{x1:xs,x2:xs,y1:y(0),y2:16,class:'cur'},svg);el('path',{d:`M${xs} ${y(0)-14}L${xs+7} ${y(0)-7}L${xs} ${y(0)}L${xs-7} ${y(0)-7}Z`,class:'hollow'},svg);
+    tx(svg,l,14,`峰值 ${g6(pk)}`,{class:'tk'})}
+  {const box=$('#c4-bar'),T=c4.T,avail=widthOf(box,240,560),l=44,r=8,W=Math.max(avail,l+r+4*T),H=160,svg=svgOf(box,W,H),bw=(W-l-r)/T,y=v=>lin(-5,2,H-24,10)(Math.log10(Math.max(1e-5,Math.min(100,v))));
+    [-5,-4,-3,-2,-1,0,1,2].forEach(e=>{el('line',{x1:l,x2:W-r,y1:y(10**e),y2:y(10**e),class:'grid'},svg);tx(svg,l-6,y(10**e)+4,'10'+String(e).replace('-','⁻').replace(/\d/g,d=>'⁰¹²³⁴⁵⁶⁷⁸⁹'[d]),{class:'tk','text-anchor':'end'})});
+    for(let j=0;j<T;j++){const c=klCoeff(j,T,a),x0=l+j*bw+.5;el('rect',{x:x0,y:y(c),width:Math.max(bw-1,1),height:y(1e-5)-y(c),class:'bar'},svg);if(j===c4.j)el('rect',{x:x0-1,y:y(c)-1,width:Math.max(bw-1,1)+2,height:y(1e-5)-y(c)+2,fill:'none',stroke:'var(--ink)','stroke-width':2},svg)}
+    tx(svg,l,H-6,'t = 1',{class:'tk'});tx(svg,W-r,H-6,'t = 0',{class:'tk','text-anchor':'end'});
+    const xc=l+(c4.j+.5)*bw;tx(svg,Math.min(W-r-40,Math.max(l+40,xc)),Math.max(22,y(cj)-6),'c_j = '+g6(cj),{class:'labm','text-anchor':'middle'})}
+  const lr=Math.max(-50,Math.min(50,p.logr)),rho=Math.exp(lr),inside=rho>=1-eps&&rho<=1+eps;
+  $('#c4-read').textContent=`t ${f2(p.t)} · σ ${g6(p.sg)} · 標準差 ${g6(p.sd)}\n平均差 δ ${g6(p.shift)}\nKL₁ ${g6(p.kl1)} · KL₂ ${g6(kl2)} · c_j ${g6(cj)}\nlog ρ ${g6(p.logr)} · ρ ${p.logr>50?'> e⁵⁰':p.logr<-50?'< e⁻⁵⁰':g6(rho)}\nρ ${inside?'在':'不在'}裁剪範圍 [${(1-eps).toFixed(2)}, ${(1+eps).toFixed(2)}] 內（ε = ${eps.toFixed(2)}）`;
+  return{p,cj,rho}}
+function c4sum(){const r=c4draw();announce('c4',`第 ${c4.j} 步，KL ${g6(r.cj*(c4.dk/100)**2)}，ρ ${g6(r.rho)}`)}
+function initC4(){const sched=frameSched(c4draw),jr=$('#c4-j');
+  rangeInit('c4-a',v=>[(v/20).toFixed(2),`a = ${(v/20).toFixed(2)}`],v=>{c4.ak=v;sched()},v=>{c4.ak=v;c4sum()});
+  segInit($('#c4-T'),[10,40],c4.T,null,v=>{c4.T=v;c4.j=Math.floor(v/2);jr.max=v-1;jr.value=c4.j;ju.upd();c4sum()});
+  const ju=rangeInit('c4-j',v=>[`${v}（t = ${f2(1-v/c4.T)}）`,`步 ${v}，t = ${f2(1-v/c4.T)}`],v=>{c4.j=v;sched()},v=>{c4.j=v;c4sum()});
+  rangeInit('c4-d',v=>[(v/100).toFixed(2),`Δv = ${(v/100).toFixed(2)}`],v=>{c4.dk=v;sched()},v=>{c4.dk=v;c4sum()});
+  rangeInit('c4-z',v=>[(v/10).toFixed(1),`z = ${(v/10).toFixed(1)}`],v=>{c4.zk=v;sched()},v=>{c4.zk=v;c4sum()});c4draw()}
+
+/* ================= timeline ================= */
+const TL_GROUP={'2006.11239':['df','flowgrpo-diffusion-sde-background'],'2010.02502':['df','flowgrpo-diffusion-sde-background'],'2011.13456':['df','flowgrpo-diffusion-sde-background'],
+ '2209.03003':['fm','flowgrpo-flow-matching-backbone'],'2210.02747':['fm','flowgrpo-flow-matching-backbone'],'2303.08797':['fm','flowgrpo-flow-matching-backbone'],'2403.03206':['fm','flowgrpo-flow-matching-backbone'],
+ '1910.00177':['rl','rl-finetuning-text-to-image-diffusion'],'2305.13301':['rl','rl-finetuning-text-to-image-diffusion'],'2305.18290':['rl','rl-finetuning-text-to-image-diffusion'],'2409.08861':['rl','rl-finetuning-text-to-image-diffusion'],
+ '2402.03300':['gr','flowgrpo-denoising-mdp-and-grpo'],'2505.05470':['me','flowgrpo-design-choices-and-results']};
+const TL_NAME={df:'擴散模型與分數 SDE',fm:'流匹配與統一框架',rl:'生成模型的 RL 與偏好對齊',gr:'LLM 的 GRPO',me:'本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  data=data.slice().sort((a,b)=>(Number(a.year)||0)-(Number(b.year)||0)||String(a.arxiv).localeCompare(String(b.arxiv)));
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div><div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${g[1]?`<a href="${g[1]}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}});
+  return data}
+
+/* ================= toc, theme ================= */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+/* ================= self test (acceptance tables: design.md section 5) ================= */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t=1e-4)=>Math.abs(a-b)<=t+1e-12,rel=(a,b,t=1e-5)=>Math.abs(a-b)<=t*Math.abs(b)+1e-15;
+  {const r=mulberry32(1);ok([.627074,.002736,.527447].every(v=>near(r(),v,1e-6)),'mulberry32 seed 1');const g=mulberry32(1);ok(near(gauss(g),1.4043)&&near(gauss(g),1.2158),'gauss seed 1')}
+  ok(near(velocity(.5,.5),-1.0646)&&near(velocity(-1,1),-1.24)&&near(velocity(1,.1),-1.2183),'velocity');
+  ok(near(density(0,0),.0004)&&near(density(1.2,0),.7979)&&near(density(0,1),.3989),'density');
+  ok(near(sigmaT(.5,.7,10),.7)&&near(sigmaT(1,.7,10),2.1)&&near(sigmaT(1,.7,40),4.3715),'sigma');
+  {const r=mulberry32(1),R=[];for(let i=0;i<24;i++)R.push(drawReward(r,'continuous',.3));const {A,m,s}=advantages(R);let s2=0;A.forEach(a=>s2+=a*a);
+    ok(near(R[0],.7107)&&near(R[1],.6824)&&near(R[2],.4234)&&near(m,.5272)&&near(s,.1235)&&near(A[0],1.4858)&&near(A[1],1.2568)&&near(A[2],-.8398)&&near(s2,24),'C1 continuous group')}
+  {const r=mulberry32(1),R=[];for(let i=0;i<24;i++)R.push(drawReward(r,'binary',.3));const {A,m,s}=advantages(R);
+    ok(R.join('')==='010001000000101101001110'&&near(m,.375)&&near(s,.4841)&&near(Math.max(...A),1.291)&&near(Math.min(...A),-.7746),'C1 binary group')}
+  ok(advantages([1,1]).A.every(a=>a===0),'C1 degenerate group');
+  [['continuous',.3,[[2,.9228],[6,.5156],[12,.3576],[24,.2536],[48,.1788]]],['binary',.3,[[2,.7022,.572],[6,.4167,.116],[12,.3204,.0165],[24,.2276,.0015],[48,.1583,0]]],['binary',.05,[[2,.845,.9005],[6,.5751,.7385],[12,.4238,.5425],[24,.315,.282],[48,.2795,.076]]]]
+    .forEach(([kind,p,rows])=>rows.forEach(([G,rm,dg])=>{const [a,b]=advMC(G,kind,p,7);ok(near(a,rm)&&(dg===undefined||near(b,dg)),`advMC ${kind} p=${p} G=${G}`)}));
+  ok(near(pDegenerate(24,'binary',.05),.292)&&near(pDegenerate(2,'binary',.3),.58)&&near(pDegenerate(24,'binary',.3),.0002),'pDegenerate');
+  [[1,.7,.7,1],[1,.9,.9,1],[1,1,1,1],[1,1.1,1.1,1],[1,1.3,1.2,0],[-1,.7,-.8,0],[-1,.9,-.9,-1],[-1,1,-1,-1],[-1,1.1,-1.1,-1],[-1,1.3,-1.3,-1]].forEach(([A,r,L,g])=>{const [l,gg]=clipObj(r,A,.2);ok(near(l,L)&&gg===g,`clip A=${A} rho=${r}`)});
+  {const sv=[c2.ai,c2.ri,shared.ei];c2.ai=10;c2.ri=120;shared.ei=20;ok(!c2draw().clipped,'C2 boundary rho=1+eps is unclipped');[c2.ai,c2.ri,shared.ei]=sv;c2draw()}
+  {const a=simulate(0,10,1,true).snaps[10],b=simulate(0,10,1,false).snaps[10];let mx=0;for(let i=0;i<a.length;i++)mx=Math.max(mx,Math.abs(a[i]-b[i]));ok(mx===0&&near(a[0],1.4485),'C3 a=0 equals ODE')}
+  const C3T=[['ode',0,5,.272,1.0705,.6178,.1426],['ode',0,10,.2554,1.1402,.6075,.0712],['ode',0,40,.2438,1.1953,.5998,.0175],['sde',.1,10,.2602,1.1411,.61,.0725],['sde',.7,10,.2315,1.1756,.5975,.0429],['sde',1.5,10,.1986,1.1995,.583,.0481],
+    ['sde',2.5,10,.1093,1.2343,.5487,.1375],['sde',.7,5,.2401,1.1368,.5988,.0841],['sde',2.5,5,.0085,15.4839,.503,2.0233],['sde',.1,40,.2438,1.1963,.602,.017],['sde',.7,40,.2086,1.2075,.5877,.0356],['sde',1.5,40,.1992,1.214,.583,.041],['sde',2.5,40,.2167,1.2174,.5903,.0237]];
+  C3T.forEach(([md,a,T,m,s,p,w])=>{const sim=simulate(a,T,1,md==='sde'),x=sim.snaps[T],st=stats(x);ok(sim.divergedAt==null&&near(st[0],m)&&near(st[1],s)&&near(st[2],p)&&near(w1(x,0),w,5e-4),`C3 ${md} a=${a} T=${T}`)});
+  {const sn=simulate(.7,10,1,true).snaps;ok(near(sn[0][0],1.4043)&&near(sn[1][0],1.143)&&near(sn[2][0],.5522)&&near(sn[3][0],-.4426)&&near(w1(sn[5],.5),.0297,5e-4),'C3 snapshots');
+   ok(near(w1(simulate(0,40,1,false).snaps[20],.5),.0147,5e-4),'C3 ODE T=40 t=0.5')}
+  const C4T=[[5,10,.7,.2,1,.7,.221359,-.0249,.00632663,-.118813],[0,10,.7,.2,1,2.1,.664078,-.02,.000453515,-.0305704],[9,10,.7,.2,1,.233333,.0737865,-.0249,.0569397,-.3944],[9,10,.1,.2,1,.0333333,.0105409,-.0201,1.81805,-3.7249],
+    [9,10,1.4,.2,1,.466667,.147573,-.0396,.0360037,-.304346],[20,40,.7,.2,1,.7,.11068,-.006225,.00158166,-.057825],[39,40,.7,.2,1,.11209,.0177229,-.006225,.0616847,-.412924]];
+  C4T.forEach(([j,T,a,dv,z,sg,sd,sh,kl,lr])=>{const p=stepPolicy(j,T,a,dv,z);ok(rel(p.sg,sg)&&rel(p.sd,sd)&&rel(p.shift,sh)&&rel(p.kl1,kl)&&rel(p.kl2,kl)&&rel(klCoeff(j,T,a)*dv*dv,kl)&&rel(p.logr,lr),`C4 (${j},${T},${a})`)});
+  {const sum=(T,a)=>{let s=0;for(let j=0;j<T;j++)s+=klCoeff(j,T,a);return s};ok(rel(sum(10,.7),3.06231)&&rel(sum(10,.1),97.9709)&&rel(sum(10,1.4),1.932)&&rel(sum(10,2),2.17148)&&rel(sum(40,.7),5.18619),'C4 coefficient sums');
+   ok(rel(klCoeff(0,10,.7),.0113379)&&rel(klCoeff(9,10,.7),1.42349)&&rel(klCoeff(39,40,.7),1.54212),'C4 coefficients')}
+  {const p=stepPolicy(5,10,.7,0,1);ok(p.kl1===0&&p.kl2===0&&p.logr===0&&rel(klCoeff(5,10,.7),.158166)&&Number.isFinite(klCoeff(5,10,.7)),'C4 dv=0 has no NaN')}
+  {const nodes=[...$$('.readout'),...$$('svg text'),...$$('[aria-label]'),...$$('[aria-valuetext]')];const bad=nodes.filter(n=>/[̀-ͯ]/.test(n.textContent+(n.getAttribute('aria-label')||'')+(n.getAttribute('aria-valuetext')||'')));ok(bad.length===0,'no combining marks in dynamic text: '+bad.length)}
+  {const w=$('#s8-cost');ok(!!w&&w.textContent.includes('T = 10')&&w.textContent.includes('T = 40'),'S8 diagram labels')}
+  {const fb=$('#math-fallback'),was=fb.classList.contains('hide');mathFallback(true);const shown=!fb.classList.contains('hide');mathFallback(!was);ok(shown,'KaTeX fallback notice')}
+  {const tl=JSON.parse($('#timeline-data').textContent);ok(tl.length===13&&tl.every(e=>TL_GROUP[e.arxiv]&&!('role' in e)&&!('source' in e)),'timeline groups')}
+  ok(!!document.querySelector('.katex')||!window.katex,'KaTeX rendered');
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ================= boot ================= */
+function mathFallback(on){$('#math-fallback').classList.toggle('hide',!on)}
+initTheme();initToc();renderHero();renderCost();initC1();initC2();initC3();initC4();renderTimeline();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{renderHero();renderCost();c1draw();c2draw();c3draw();c4draw()})});
+function renderMath(){if(typeof renderMathInElement!=='function')return false;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false});return true}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex')&&!renderMath())mathFallback(true);if(/[?&]test\b/.test(location.search))selfTest()});
+})();
+</script>
+</body>
+</html>

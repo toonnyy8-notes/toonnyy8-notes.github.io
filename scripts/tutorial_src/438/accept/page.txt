@@ -1,0 +1,577 @@
+Flow-GRPO 線上強化學習
+
+跳到內容
+
+ No. 438
+ Flow-GRPO：用線上強化學習訓練流匹配模型
+
+00 摘要01 問題02 流匹配與 MDP03 組相對優勢04 機率比與裁剪05 ODE 轉 SDE06 離散化07 KL 閉式08 去噪步數縮減09 實驗10 實作11 研究脈絡12 限制與延伸
+
+00摘要
+01問題
+02流匹配與 MDP
+03組相對優勢
+04機率比與裁剪
+05ODE 轉 SDE
+06離散化
+07KL 閉式
+08去噪步數縮減
+09實驗
+10實作
+11研究脈絡
+12限制與延伸
+
+數學排版元件（KaTeX）未能載入，頁面中的數學式以 TeX 原始碼顯示，例如 \sigma_t 表示 σ_t。互動元件與讀數不受影響。
+
+ No. 438 · 互動教學 · arXiv 2505.05470 · NeurIPS 2025
+
+ Flow-GRPO：用線上強化學習訓練流匹配模型
+
+ 把確定性的取樣改成每個時刻分布不變的隨機取樣，再以同一提示詞的一組影像互相比較來更新模型。
+
+ Jie Liu、Gongye Liu、Jiajun Liang、Yangguang Li、Jiaheng Liu、Xintao Wang、Pengfei Wan、Di Zhang、Wanli Ouyang（2025）〈Flow-GRPO: Training Flow Matching Models via Online RL〉
+
+ 時間軸示意：左端是噪聲（t = 1），右端是資料（t = 0）；訓練時取樣分成 10 步。本頁所有時間軸都採用這個方向。
+
+ 01 · 從確定到隨機流匹配模型以常微分方程（ODE）把噪聲確定地變成影像；本文把它換成隨機微分方程（SDE），每個時刻的分布不變，但每一步多了隨機性，可用來探索。
+
+ 02 · 組相對比較GRPO（組相對策略最佳化）：同一提示詞產生 24 張影像，以「獎勵減組平均、除以組標準差」作為每張的優劣分數，不需要另外訓練價值網路。
+
+ 03 · 結果在 GenEval（以物體偵測自動檢查物體數量、顏色、位置是否符合提示詞的測驗）上，SD3.5-M 由 0.63 提升到 0.95；訓練取樣只用 10 步，推論仍用 40 步。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+ 程式碼 ↗
+
+ 01 · 問題
+
+ 線上強化學習需要隨機取樣與便宜的樣本
+
+ 文字生成影像（text-to-image，T2I）模型的輸入是一段文字提示詞 c $c$ ，輸出是一張影像。目前主流的 T2I 模型屬於流匹配（flow matching）模型。作者指出，這類模型在組合多個物體、屬性與相對位置的場景，以及在影像中渲染文字時，仍然常出錯（Sec. 1）。
+
+ 線上強化學習（online reinforcement learning, online RL）的做法是：用目前的模型產生樣本，以一個獎勵函數為每個樣本打分數，依分數更新模型，再用更新後的模型產生下一批樣本。這種做法已大幅提升大型語言模型的推理能力（例如 DeepSeek-R1、OpenAI-o1，Sec. 2）。在影像生成上，先前的線上 RL 多用在較早的擴散模型，例如 DDPO（把去噪過程當作決策過程、以 PPO 式策略梯度更新擴散模型的方法）；流匹配模型則多用離線方法，例如 DPO（用「較好／較差」成對資料直接調整模型、不需要線上取樣的方法）。作者認為，線上 RL 用在流匹配模型的潛力仍很少被探討（Sec. 1）。
+
+ 把線上 RL 用在流匹配模型有兩個障礙（Sec. 1）。第一，流匹配模型以確定性的 ODE 取樣：給定起始噪聲，產生的影像就固定了，取樣過程中沒有隨機性；但 RL 依賴隨機取樣來嘗試不同的動作（探索），而且更新時需要每一步動作的機率，確定性取樣下這個機率也難以計算。第二，線上 RL 需要不斷收集新樣本，而流模型的每張影像都要經過很多步迭代去噪，收集資料很慢，大模型更是如此。
+
+ Flow-GRPO 的三個貢獻（Sec. 1）以字面描述如下。(1) 把取樣改成隨機的：把 ODE 換成每個時刻分布都相同的隨機微分方程，使 GRPO 這種線上 RL 方法能用在流匹配模型上；SD3.5-M 的 GenEval 準確率由 63% 提升到 95%。(2) 訓練時少用去噪步：收集訓練樣本時用較少的步數，測試時保留原步數，顯著加快訓練。(3) 加入使模型不偏離原模型太遠的懲罰，懲罰的大小以 KL 散度（Kullback–Leibler divergence，衡量兩個機率分布差多少的量）計算；它能防止 reward hacking，也就是獎勵上升、但影像品質或多樣性下降的情形。
+
+ 本頁前兩章用到的符號：x0 $x_0$ ​ 是資料樣本（一張影像在模型內部的表示），x1 $x_1$ ​ 是噪聲樣本，t∈[0,1] $t\in[0,1]$ 是連續時間，xt $x_t$ ​ 是兩者之間的中間狀態，v $v$ 是速度，c $c$ 是提示詞。其餘符號在第一次使用時定義，第 10 章開頭有一張可收合的符號總表。
+
+ 延伸閱讀：Flow-GRPO 的研究脈絡總覽、文字生成圖像擴散模型的 RL 微調脈絡
+
+ 02 · 流匹配與 MDP
+
+ 流匹配沿直線插值並回歸速度
+
+ 令 x0 $x_0$ ​ 來自資料分布，x1∼N(0,I) $x_1\sim\mathcal N(0,I)$ ​∼N(0,I) 是標準常態噪聲。SD3、FLUX 等模型採用的 Rectified Flow 定義中間狀態為兩者的直線插值（Sec. 3）：
+
+ xt=(1−t) x0+t x1,t∈[0,1] $x_t=(1-t)\,x_0+t\,x_1,\qquad t\in[0,1]$ ​=(1−t)x0​+tx1​,t∈[0,1]
+Eq. 1
+
+ 所以 t=0 $t=0$ 是資料端，t=1 $t=1$ 是噪聲端。沿這條直線，xt $x_t$ ​ 對 t $t$ 的變化率是 v=x1−x0 $v=x_1-x_0$ ​−x0​。模型 vθ(xt,t) $v_\theta(x_t,t)$ ​(xt​,t)（θ $\theta$ 是網路參數）以均方誤差回歸這個速度（Eq. 2）：
+
+ L(θ)=Et, x0, x1∥v−vθ(xt,t)∥2,v=x1−x0 $\mathcal L(\theta)=\mathbb E_{t,\,x_0,\,x_1}\big\|v-v_\theta(x_t,t)\big\|^2,\qquad v=x_1-x_0$ ​,x1​​​v−vθ​(xt​,t)​2,v=x1​−x0​
+Eq. 2
+
+ 取樣時從噪聲 x1 $x_1$ ​ 出發，沿學到的速度解常微分方程 dxt=vt dt $dx_t=v_t\,dt$ ​=vt​dt（Eq. 6），由 t=1 $t=1$ 走到 t=0 $t=0$ 。實作上把時間切成有限步，每一步用目前位置的速度往前走。這種離散化在相鄰兩步之間是一對一的映射（Sec. 4）：除了起始噪聲之外，整個過程沒有任何隨機性。
+
+ DDPO 的作者把去噪過程寫成馬可夫決策過程（Markov decision process, MDP），Flow-GRPO 沿用這個寫法（Sec. 3）。這裡的 t $t$ 改為整數步索引 T,T−1,…,0 $T,T-1,\dots,0$ （T $T$ 是去噪步數），與 Eq. 1 的連續時間同一個字母：
+
+ MDP 元素在去噪中的意義（Sec. 3）
+
+ 狀態 st $s_t$ ​(c,t,xt) $(c,t,x_t)$ ​)：提示詞、目前步數、目前的帶噪樣本
+
+ 動作 at $a_t$ ​xt−1 $x_{t-1}$ ​：模型產生的下一個（較不帶噪的）樣本
+
+ 策略 π(at∣st) $\pi(a_t\mid s_t)$ ​∣st​)pθ(xt−1∣xt,c) $p_\theta(x_{t-1}\mid x_t,c)$ ​(xt−1​∣xt​,c)
+
+ 轉移確定性：下一個狀態就是 (c,t−1,xt−1) $(c,t-1,x_{t-1})$ ​)
+
+ 初始分布提示詞 c∼p(c) $c\sim p(c)$ ，步數 T $T$ ，xT∼N(0,I) $x_T\sim\mathcal N(0,I)$ ​∼N(0,I)
+
+ 獎勵只在最後一步給：t=0 $t=0$ 時為 r(x0,c) $r(x_0,c)$ ​,c)，其餘為 0
+
+ 注意策略這一列：在 ODE 取樣下，xt−1 $x_{t-1}$ ​ 由 xt $x_t$ ​ 唯一決定，策略退化為確定性映射，沒有可用的機率密度。第 05、06 章把每一步改成隨機的，這個 MDP 的策略才成為真正的機率分布。
+
+ 延伸閱讀：Flow matching 與 rectified flow 作為生成骨幹、Flow matching 的速度目標、MDP、Q 函數與 Bellman backup、Denoising 作為 MDP，以及 Flow-GRPO 的目標函數
+
+ 03 · 組相對優勢
+
+ GRPO 以同組影像的相對獎勵作為優勢
+
+ 本節先假設每一步取樣已經是隨機的；第 05 節說明如何做到。RL 的目標是讓模型產生的軌跡得到的期望獎勵最大，同時加上一個懲罰，讓模型不要離預訓練模型太遠（Eq. 3）：
+
+ max⁡θ E(s0,a0,…,sT,aT)∼πθ[∑t=0T(R(st,at)−β DKL(πθ(⋅∣st) ∥ πref(⋅∣st)))] $\max_\theta\ \mathbb E_{(s_0,a_0,\dots,s_T,a_T)\sim\pi_\theta}\Big[\sum_{t=0}^{T}\Big(R(s_t,a_t)-\beta\,D_{\mathrm{KL}}\big(\pi_\theta(\cdot\mid s_t)\,\|\,\pi_{\mathrm{ref}}(\cdot\mid s_t)\big)\Big)\Big]$ max​ E(s0​,a0​,…,sT​,aT​)∼πθ​​[t=0∑T​(R(st​,at​)−βDKL​(πθ​(⋅∣st​)∥πref​(⋅∣st​)))]
+Eq. 3
+
+ 其中 πθ $\pi_\theta$ ​ 是正在訓練的策略，πref $\pi_{\mathrm{ref}}$ ​ 是參考策略（預訓練模型，訓練中固定不變），DKL $D_{\mathrm{KL}}$ ​ 是兩者的 KL 散度，β≥0 $\beta\ge0$ 是懲罰的權重。
+
+ 估計「某張影像比平均好多少」的量稱為優勢（advantage）。PPO 需要另一個網路估計每個狀態的期望獎勵（價值網路）。GRPO 不用價值網路，改用組內統計（Sec. 4）：給定提示詞 c $c$ ，用目前模型取樣 G $G$ 張影像 {x0i}i=1G $\{x^i_0\}_{i=1}^G$ i​}i=1G​ 與它們的去噪軌跡，第 i $i$ 張的優勢是它的獎勵減去組平均、再除以組標準差：
+
+ A^ti=R(x0i,c)−mean⁡({R(x0j,c)}j=1G)std⁡({R(x0j,c)}j=1G) $\hat A^i_t=\frac{R(x^i_0,c)-\operatorname{mean}\big(\{R(x^j_0,c)\}_{j=1}^G\big)}{\operatorname{std}\big(\{R(x^j_0,c)\}_{j=1}^G\big)}$ ti​=std({R(x0j​,c)}j=1G​)R(x0i​,c)−mean({R(x0j​,c)}j=1G​)​
+Eq. 4
+
+ 同一條軌跡的每一步 t $t$ 都用同一個優勢。作者選 GRPO 而不是 PPO 的理由是：不需要價值網路，比較省記憶體（Sec. 2）；他們也指出 PPO 可用類似方式套用。
+
+ 由定義可推出兩個性質本頁推導。第一，只要組內獎勵不全相同，組內優勢加總為 0；若標準差取母體標準差（除以 G $G$ ），優勢平方和等於 G $G$ 。所以這時一組中同時有優勢為正的樣本（更新使它們的機率增大）與優勢為負的樣本（機率減小）。第二，若組內獎勵全部相同，分子為 0，整組優勢為 0，這組提示詞在下一節的替代目標項沒有梯度；KL 項仍有梯度。若組內 G $G$ 個二元獎勵彼此獨立、成功率都是 p $p$ （本頁的假設，論文沒有寫），這種情形的機率是 pG+(1−p)G $p^G+(1-p)^G$ +(1−p)G。論文沒有寫標準差用母體或樣本公式，也沒有寫分母是否加小常數；本頁玩具取母體標準差，標準差小於 10−12 $10^{-12}$ 時整組優勢設為 0推定。
+
+ 組大小 G $G$ 決定組平均與組標準差的估計品質。論文 Fig. 5（以 PickScore 為獎勵）中，G=12 $G=12$ 與 G=6 $G=6$ 時訓練不穩定並最終崩潰，G=24 $G=24$ 則全程穩定；作者認為小組使優勢估計不準確、變異增加（Sec. 5.3）。
+
+ C1組相對優勢與組大小
+
+ 抽一組獎勵，看 Eq. 4 的優勢；下方曲線是 2000 組模擬的優勢估計誤差。
+
+ 獎勵 R（每根長條一張影像）
+
+ 優勢 A（向上為正，向下為負）
+
+ RMSE 對組大小 G（對數橫軸）
+
+ 優勢為正優勢為負（斜線）RMSE（圓點）全相同機率（方形、虛線，右軸）
+
+ 獎勵類型
+連續二元
+
+ 組大小 G 24
+
+ 成功率 p 0.30
+
+ 連續模式不使用 p。
+
+ 重新抽樣
+
+ 組平均 0.5272 · 組標準差 0.1235
+ΣA 0 · ΣA² 24.0000
+RMSE（G = 24）0.2536
+全相同機率：閉式 0.0000 · 模擬 0.0000
+
+ G = 24，RMSE 0.254，全相同機率 0.000
+
+ 讀數由本頁的一維玩具依第 03 章的公式即時計算，不是論文的模型，也不重現論文數字。連續獎勵為 N(0.5, 0.15²)；二元獎勵是簡化（例如單一物件是否畫對），論文的 GenEval 獎勵有部分給分，不是二元。組內獎勵假設獨立同分布。RMSE 以真實分布的標準化值為基準，每個 G 用固定種子 7 的 2000 組。
+
+ 本頁玩具中可以看到三件事。第一，獎勵不全相同時，ΣA 一定是 0、ΣA² 一定等於 G。第二，連續模式的 RMSE 從 G=2 $G=2$ 的 0.923 降到 G=24 $G=24$ 的 0.254、G=48 $G=48$ 的 0.179：組越小，優勢估計的誤差越大。第三，二元模式 p=0.05 $p=0.05$ 時，即使 G=24 $G=24$ ，仍有約 0.29 的組整組獎勵相同（閉式 0.2920），這些組的替代目標項沒有梯度；p=0.3 $p=0.3$ 時 G=24 $G=24$ 只有 0.0002。論文 Fig. 5 的崩潰是真實訓練的結果；玩具只顯示估計誤差隨 G $G$ 的變化，不模擬訓練。
+
+ 延伸閱讀：RLVR、GRPO 與信用分配瓶頸、Denoising 作為 MDP，以及 Flow-GRPO 的目標函數
+
+ 04 · 機率比與裁剪
+
+ 機率比與裁剪限制單批資料造成的改變
+
+ 一批樣本是用某個時刻的模型收集的，這個模型記為 πθold $\pi_{\theta_{\mathrm{old}}}$ ​​。同一批樣本通常會拿來做多次參數更新；更新後的模型 πθ $\pi_\theta$ ​ 與收集時的模型不同。對第 i $i$ 條軌跡的第 t $t$ 步，兩者對同一個動作的機率比是
+
+ ρti(θ)=pθ(xt−1i∣xti,c)pθold(xt−1i∣xti,c) $\rho^i_t(\theta)=\frac{p_\theta(x^i_{t-1}\mid x^i_t,c)}{p_{\theta_{\mathrm{old}}}(x^i_{t-1}\mid x^i_t,c)}$ i​(θ)=pθold​​(xt−1i​∣xti​,c)pθ​(xt−1i​∣xti​,c)​
+Eq. 5 的比值
+
+ 論文把這個比值記為 rti(θ) $r^i_t(\theta)$ i​(θ)；本頁寫成 ρ $\rho$ ，以免與獎勵 r $r$ 混淆。這裡先把 ρ $\rho$ 當作一個數；第 06 節說明每一步的機率如何計算。第一次更新前 πθ=πθold $\pi_\theta=\pi_{\theta_{\mathrm{old}}}$ ​=πθold​​，所以 ρ=1 $\rho=1$ 。若優勢 A^>0 $\hat A>0$ >0，增大 ρA^ $\rho\hat A$ 就是增大這個動作的機率；A^<0 $\hat A\lt 0$ <0 時則是減小它的機率。
+
+ Flow-GRPO 最大化的目標是（Eq. 5）
+
+ J(θ)=Ec, {xi}∼πθold 1G∑i=1G1T∑t=0T−1(min⁡(ρtiA^ti, clip⁡(ρti,1−ε,1+ε) A^ti)−β DKL(πθ ∥ πref)) $\begin{aligned}\mathcal J(\theta)&=\mathbb E_{c,\ \{x^i\}\sim\pi_{\theta_{\mathrm{old}}}}\ \frac1G\sum_{i=1}^{G}\frac1T\sum_{t=0}^{T-1}\Big(\min\big(\rho^i_t\hat A^i_t,\ \operatorname{clip}(\rho^i_t,1-\varepsilon,1+\varepsilon)\,\hat A^i_t\big)\\&\qquad-\beta\,D_{\mathrm{KL}}(\pi_\theta\,\|\,\pi_{\mathrm{ref}})\Big)\end{aligned}$ ​=Ec, {xi}∼πθold​​​ G1​i=1∑G​T1​t=0∑T−1​(min(ρti​A^ti​, clip(ρti​,1−ε,1+ε)A^ti​)−βDKL​(πθ​∥πref​))​
+Eq. 5
+
+ clip⁡(ρ,1−ε,1+ε) $\operatorname{clip}(\rho,1-\varepsilon,1+\varepsilon)$ 把 ρ $\rho$ 截到區間 [1−ε,1+ε] $[1-\varepsilon,1+\varepsilon]$ 內，ε $\varepsilon$ 是裁剪範圍。min 前面的部分稱為替代目標項。注意兩個不同的參考對象：機率比的分母是收集樣本的 πθold $\pi_{\theta_{\mathrm{old}}}$ ​​，KL 懲罰的對象是預訓練的 πref $\pi_{\mathrm{ref}}$ ​。論文沒有寫 ε $\varepsilon$ 的值（App. B.3 未列），本頁預設 0.2推定。
+
+ 對單一樣本，替代目標項對 ρ $\rho$ 的導數規則如下本頁推導：當 A^>0 $\hat A>0$ >0 且 ρ>1+ε $\rho>1+\varepsilon$ ，或 A^<0 $\hat A\lt 0$ <0 且 ρ<1−ε $\rho\lt 1-\varepsilon$ 時，導數為 0；其餘情形導數為 A^ $\hat A$ 。也就是說，機率比已經朝優勢的方向改變超過 ε $\varepsilon$ 的樣本，替代目標項不再提供梯度，但 KL 項仍有梯度；機率比朝相反方向改變時，裁剪不限制這個方向的更新。裁剪的目的是讓單批資料造成的機率改變不超過約 ε $\varepsilon$ 。
+
+ C2裁剪替代目標
+
+ 調整優勢 A、裁剪範圍 ε 與機率比 ρ，看替代目標 L(ρ) 與它的斜率。
+
+ L(ρ)＝min(ρA, clip(ρ)A)未裁剪 ρA（虛線）
+
+ 優勢 A 1.0
+
+ 裁剪範圍 ε 0.20
+
+ 論文未寫 ε，0.2 為推定。這個 ε 也用於 C4。
+
+ 機率比 ρ 1.00
+
+ L 1.000 · 斜率 ∂L/∂ρ 1.00
+未裁剪
+
+ 曲線依 Eq. 5 的替代目標項即時計算；只畫單一樣本、單一步，不含 KL 項。斜率為 0 的區段只表示替代目標項沒有梯度，KL 項不受影響。
+
+ 取 A^=1 $\hat A=1$ =1、ε=0.2 $\varepsilon=0.2$ ：ρ=1.3 $\rho=1.3$ 時 L=1.2 $L=1.2$ 、斜率 0；ρ=0.7 $\rho=0.7$ 時 L=0.7 $L=0.7$ 、斜率 1。取 A^=−1 $\hat A=-1$ =−1：ρ=0.7 $\rho=0.7$ 時 L=−0.8 $L=-0.8$ 、斜率 0；ρ=1.3 $\rho=1.3$ 時 L=−1.3 $L=-1.3$ 、斜率 −1，裁剪不限制這個方向的更新。
+
+ 05 · ODE 轉 SDE
+
+ 邊際分布相同的 SDE 帶來隨機性
+
+ 確定性的 ODE 取樣不符合 GRPO 的需要，理由有兩個（Sec. 4）。(1) Eq. 5 的機率比需要 p(xt−1∣xt,c) $p(x_{t-1}\mid x_t,c)$ ​∣xt​,c)。在確定性映射下要追蹤機率密度，必須計算速度場的散度（divergence），也就是速度場各分量對自身座標的偏導數總和；影像的維度很高，這個計算很昂貴。(2) 更重要的是，RL 依賴探索；Sec. 5.3 顯示隨機性減少會大幅降低訓練效率，而只有起始噪聲帶隨機性的確定性取樣特別有問題。
+
+ 作者的做法是構造一個隨機微分方程（stochastic differential equation, SDE），使它在每個時刻 t $t$ 的邊際分布（只看時刻 t $t$ 、不管前後的 xt $x_t$ ​ 的分布，記為 pt $p_t$ ​）與原 ODE 相同。SDE 在每一小段時間 dt $dt$ 內，除了沿漂移項移動，還加入一份噪聲 σt dw $\sigma_t\,dw$ ​dw。dw $dw$ 是 Wiener 過程的增量：每一小段時間加入的獨立高斯噪聲，變異數等於這段時間的長度。σt≥0 $\sigma_t\ge0$ ​≥0 是擴散係數，控制每一小段時間加入多少噪聲；論文選用
+
+ σt=at1−t $\sigma_t=a\sqrt{\frac{t}{1-t}}$ ​=a1−tt​​
+Sec. 4
+
+ 其中 a $a$ 是噪聲等級，一個純量超參數（論文用 0.7，App. B.3）。另外需要分數（score）∇log⁡pt(x) $\nabla\log p_t(x)$ ​(x)：邊際密度取對數後對 x $x$ 的梯度，指向密度增加最快的方向。
+
+ 推導分五步（App. A）。(1) 一般 SDE dxt=fSDE dt+σt dw $dx_t=f_{\mathrm{SDE}}\,dt+\sigma_t\,dw$ ​=fSDE​dt+σt​dw（Eq. 11）的邊際密度服從 Fokker–Planck 方程（Eq. 12），這是描述密度 pt $p_t$ ​ 如何隨漂移與噪聲隨時間改變的偏微分方程；ODE 的邊際則服從連續方程（Eq. 13）。(2) 令兩者相等（Eq. 14），得漂移 fSDE=vt+σt22∇log⁡pt $f_{\mathrm{SDE}}=v_t+\tfrac{\sigma_t^2}{2}\nabla\log p_t$ ​=vt​+2σt2​​∇logpt​（Eq. 16）。(3) 取這個前向 SDE 的反向時間形式（Eq. 18–20），得到從噪聲走向資料的 SDE：
+
+ dxt=[vt(xt)−σt22∇log⁡pt(xt)]dt+σt dw $dx_t=\Big[v_t(x_t)-\frac{\sigma_t^2}{2}\nabla\log p_t(x_t)\Big]dt+\sigma_t\,dw$ ​=[vt​(xt​)−2σt2​​∇logpt​(xt​)]dt+σt​dw
+Eq. 7（＝Eq. 21）
+
+ (4) 分數不必另外學習。對 Rectified Flow，邊際分數可由速度換算（Eq. 23–27；此處推導中的插值係數 βt=t $\beta_t=t$ ​=t 與 KL 權重 β $\beta$ 不同）：
+
+ ∇log⁡pt(x)=−xt−1−tt vt(x) $\nabla\log p_t(x)=-\frac{x}{t}-\frac{1-t}{t}\,v_t(x)$ ​(x)=−tx​−t1−t​vt​(x)
+Eq. 27
+
+ (5) 代入 Eq. 7，得到論文使用的 SDE：
+
+ dxt=[vt(xt)+σt22t(xt+(1−t) vt(xt))]dt+σt dw $dx_t=\Big[v_t(x_t)+\frac{\sigma_t^2}{2t}\big(x_t+(1-t)\,v_t(x_t)\big)\Big]dt+\sigma_t\,dw$ ​=[vt​(xt​)+2tσt2​​(xt​+(1−t)vt​(xt​))]dt+σt​dw
+Eq. 8（＝Eq. 28）
+
+ App. A 的中間式（Eq. 12–20）
+
+ Fokker–Planck：∂tpt=−∇⋅[fSDE pt]+12∇2[σt2pt] $\partial_tp_t=-\nabla\cdot[f_{\mathrm{SDE}}\,p_t]+\tfrac12\nabla^2[\sigma_t^2p_t]$ ​pt​=−∇⋅[fSDE​pt​]+21​∇2[σt2​pt​]（Eq. 12）；ODE：∂tpt=−∇⋅[vt pt] $\partial_tp_t=-\nabla\cdot[v_t\,p_t]$ ​pt​=−∇⋅[vt​pt​]（Eq. 13）。利用 ∇2[σt2pt]=σt2∇⋅(pt∇log⁡pt) $\nabla^2[\sigma_t^2p_t]=\sigma_t^2\nabla\cdot(p_t\nabla\log p_t)$ [σt2​pt​]=σt2​∇⋅(pt​∇logpt​)（Eq. 15）即得 Eq. 16。前向 SDE dx=f dt+g dw $dx=f\,dt+g\,dw$ 的反向時間 SDE 為 dx=[f−g2∇log⁡pt] dt+g dw $dx=[f-g^2\nabla\log p_t]\,dt+g\,dw$ ∇logpt​]dt+gdw（Eq. 18–19）；令 g=σt $g=\sigma_t$ ​、f=fSDE $f=f_{\mathrm{SDE}}$ ​ 得 Eq. 20，化簡為 Eq. 21。
+
+ 這個推導有前提本頁推導：vt $v_t$ ​ 必須是真實邊際 pt $p_t$ ​ 對應的速度場，等於一個完全正確的模型；學到的 vθ $v_\theta$ ​ 有誤差時，SDE 與 ODE 的邊際不再保證相同。另外 pt $p_t$ ​ 要足夠平滑使 Fokker–Planck 成立，而 Eq. 26–27 與 σt=at/(1−t) $\sigma_t=a\sqrt{t/(1-t)}$ ​=at/(1−t)​ 在 t=1 $t=1$ 奇異。在這些前提下，等式對 t∈(0,1) $t\in(0,1)$ 上的任何 σt $\sigma_t$ ​ 都成立，σt $\sigma_t$ ​ 只控制隨機性的大小；σt=0 $\sigma_t=0$ ​=0 時退回原來的 ODE。邊際相同是連續時間的結論；切成有限步之後會有誤差，第 06 章的 C3 會顯示這一點。
+
+ 延伸閱讀：從 DDPM 到 score SDE 與 stochastic interpolants、Flow 模型 RL 的 ODE-to-SDE 轉換
+
+ 06 · 離散化
+
+ 離散化後每一步是高斯分布
+
+ 把 Eq. 8 以 Euler–Maruyama 法離散化（每一步用目前的漂移乘時間步長，再加上 σt $\sigma_t$ ​ 乘步長平方根倍的標準常態噪聲），得到更新規則（Eq. 9）。σt $\sigma_t$ ​ 與噪聲等級 a $a$ 見第 05 章；Δt $\Delta t$ 是時間步長，ϵ∼N(0,I) $\epsilon\sim\mathcal N(0,I)$ 是每一步新抽的噪聲：
+
+ xt+Δt=xt+[vθ(xt,t)+σt22t(xt+(1−t) vθ(xt,t))]Δt+σtΔt ϵ $\begin{aligned}x_{t+\Delta t}={}&x_t+\Big[v_\theta(x_t,t)+\frac{\sigma_t^2}{2t}\big(x_t+(1-t)\,v_\theta(x_t,t)\big)\Big]\Delta t\\&+\sigma_t\sqrt{\Delta t}\,\epsilon\end{aligned}$ ​=​xt​+[vθ​(xt​,t)+2tσt2​​(xt​+(1−t)vθ​(xt​,t))]Δt+σt​Δt​ϵ​
+Eq. 9
+
+ 實作注意本頁推導
+
+ 取樣方向是 t $t$ 由 1 往 0，所以 Δt<0 $\Delta t\lt 0$ 。論文 Eq. 9 寫 σtΔt $\sigma_t\sqrt{\Delta t}$ ​Δt​，沒有明寫正負號；應讀成 σt∣Δt∣ $\sigma_t\sqrt{|\Delta t|}$ ​∣Δt∣​，因為反向時間 SDE 每一步噪聲的變異數是 σt2∣Δt∣ $\sigma_t^2|\Delta t|$ 2​∣Δt∣。另外 σt $\sigma_t$ ​ 在 t=1 $t=1$ 時分母為 0 而發散，論文沒有說明 t=1 $t=1$ 的處理；本頁玩具在 t=1 $t=1$ 時以下一個格點 t′=1−1/T $t'=1-1/T$ =1−1/T 代入 σ $\sigma$ 推定。
+
+ Eq. 9 顯示，給定 xt $x_t$ ​，下一步 xt−1 $x_{t-1}$ ​ 是等向高斯分布（Sec. 4）：平均是 xt+[vθ+σt22t(xt+(1−t)vθ)]Δt $x_t+\big[v_\theta+\frac{\sigma_t^2}{2t}(x_t+(1-t)v_\theta)\big]\Delta t$ ​+[vθ​+2tσt2​​(xt​+(1−t)vθ​)]Δt，標準差是 σt∣Δt∣ $\sigma_t\sqrt{|\Delta t|}$ ​∣Δt∣​。所以第 04 章的機率比 ρ $\rho$ 就是兩個高斯密度的比，可以直接計算；KL 散度也有閉式（第 07 章）。噪聲等級 a $a$ 控制這個標準差的大小：a $a$ 越大，每一步的隨機性越大。
+
+ 下面的 C3 用一個一維玩具檢查兩件事：SDE 與 ODE 的分布是否相同，以及有限步數造成多少誤差。玩具的資料分布是兩個高斯的混合 0.4 N(−1.2,0.32)+0.6 N(1.2,0.32) $0.4\,\mathcal N(-1.2,0.3^2)+0.6\,\mathcal N(1.2,0.3^2)$ )+0.6N(1.2,0.32)推定，這時每個時刻的精確邊際 pt $p_t$ ​ 與精確速度場都有閉式，等於一個完全正確的模型。比較兩個分布用 W₁ 距離（Wasserstein-1）：兩條累積分布曲線之間的面積，越小代表兩個分布越接近。
+
+ C3ODE 與 SDE：同樣的邊際分布（玩具）
+
+ 4000 個粒子從噪聲出發，依 Eq. 9 走 T 步。拖動「顯示時刻」看任一時刻的分布與精確邊際。
+
+ 所選取樣器的直方圖ODE 對照（階梯輪廓／虛線軌跡）精確邊際 p_tSDE 軌跡
+
+ 取樣器
+SDEODE
+
+ 步數 T
+5102040
+
+ 噪聲等級 a（論文 a = 0.7） 0.70
+
+ 顯示時刻 t = 0.00
+
+ 同時顯示 ODE
+ 重新抽樣
+
+ t = 0.00（第 10 / 10 步）
+SDE：平均 0.2315，標準差 1.1756，P(x>0) 0.5975，W₁ 0.0429
+ODE：平均 0.2554，標準差 1.1402，P(x>0) 0.6075，W₁ 0.0712
+精確：平均 0.2400，標準差 1.2134，P(x>0) 0.6000
+
+ t = 0.00，SDE W₁ 0.043，ODE W₁ 0.071
+
+ 讀數由本頁的一維玩具依第 06 章的公式即時計算，不是論文的模型，也不重現論文數字。速度場由玩具分布直接算出，等於完全正確的模型；論文的 v_θ 是學出來的，有誤差。時間格點均勻（推定）；t = 1 的 σ 以 t′ = 1 − 1/T 代入（推定）。4000 個精確樣本本身的 W₁ 約 0.009–0.043（平均 0.027），低於此範圍的差異來自抽樣。
+
+ 本頁玩具中（種子 1，看 t=0 $t=0$ ）可以看到四件事。第一，a=0 $a=0$ 時 SDE 與 ODE 的每個粒子完全相同。第二，T=40 $T=40$ 時 ODE 的 W₁ 是 0.0175，a $a$ 從 0.1 到 2.5 的 SDE 在 0.017 到 0.041 之間，都在抽樣誤差的範圍內，與「連續時間邊際相同」一致。第三，步數少時分布偏離精確邊際：T=5 $T=5$ 的 ODE 標準差 1.071（精確 1.213），W₁ 0.143，10 個種子都在 0.139 到 0.159 之間，明顯高於抽樣誤差。第四，T=5 $T=5$ 、a=2.5 $a=2.5$ 時 SDE 的標準差變成 15.5、W₁ 2.02，數值發散。原因是漂移中 σt22txtΔt $\frac{\sigma_t^2}{2t}x_t\Delta t$ σt2​​xt​Δt 這一項在大步長下的放大：只看這一項，第 2 步 x $x$ 的係數是 1−a2/2=−2.125 $1-a^2/2=-2.125$ /2=−2.125；再加上 t=1 $t=1$ 的 σ 處理（推定，第 1 步 σ=aT−1 $\sigma=a\sqrt{T-1}$ ​）。這是玩具與推定處理的結果。
+
+ 另外，T=10 $T=10$ 時 SDE（a=0.7 $a=0.7$ ）的 W₁ 在 10 個種子中介於 0.031 與 0.059，與抽樣誤差的上緣重疊，本頁不據此比較 SDE 與 ODE 的優劣。論文中 a $a$ 過大的失敗（Fig. 7b）發生在學習到的模型上；玩具的速度場沒有誤差，不重現那個現象。
+
+ 07 · KL 閉式
+
+ KL 懲罰有閉式，權重集中在接近資料的步
+
+ 兩個策略 πθ $\pi_\theta$ ​ 與 πref $\pi_{\mathrm{ref}}$ ​ 在同一個 xt $x_t$ ​ 上都是標準差相同的等向高斯分布，只有平均不同。這時 KL 散度等於平均差的平方除以兩倍變異數；平均差只來自兩個速度的差，所以（Sec. 4）
+
+ DKL(πθ ∥ πref)=∥xˉt+Δt,θ−xˉt+Δt,ref∥22σt2Δt=Δt2(σt(1−t)2t+1σt)2∥vθ(xt,t)−vref(xt,t)∥2 $\begin{aligned}D_{\mathrm{KL}}(\pi_\theta\,\|\,\pi_{\mathrm{ref}})&=\frac{\|\bar x_{t+\Delta t,\theta}-\bar x_{t+\Delta t,\mathrm{ref}}\|^2}{2\sigma_t^2\Delta t}\\&=\frac{\Delta t}{2}\Big(\frac{\sigma_t(1-t)}{2t}+\frac{1}{\sigma_t}\Big)^2\big\|v_\theta(x_t,t)-v_{\mathrm{ref}}(x_t,t)\big\|^2\end{aligned}$ ​(πθ​∥πref​)​=2σt2​Δt∥xˉt+Δt,θ​−xˉt+Δt,ref​∥2​=2Δt​(2tσt​(1−t)​+σt​1​)2​vθ​(xt​,t)−vref​(xt​,t)​2​
+Sec. 4 KL 閉式
+
+ xˉ $\bar x$ 表示一步的平均（論文寫成 xt+Δt,θ $x_{t+\Delta t,\theta}$ ​）；與第 06 章相同，Δt $\Delta t$ 取絕對值。論文的 KL 權重 β $\beta$ ：GenEval 與文字渲染任務 0.04，PickScore 任務 0.01（App. B.3）。
+
+ 把速度差前面的係數記為 c(t)=∣Δt∣2(σt(1−t)2t+1σt)2 $c(t)=\frac{|\Delta t|}{2}\big(\frac{\sigma_t(1-t)}{2t}+\frac1{\sigma_t}\big)^2$ ∣Δt∣​(2tσt​(1−t)​+σt​1​)2本頁推導。t→1 $t\to1$ 時 σt→∞ $\sigma_t\to\infty$ ​→∞，括號內兩項都趨近 0，c→0 $c\to0$ ；但這一步的標準差 σt∣Δt∣ $\sigma_t\sqrt{|\Delta t|}$ ​∣Δt∣​ 最大，所以這不表示第一步不重要。t→0 $t\to0$ 時 σt≈at $\sigma_t\approx a\sqrt t$ ​≈at​，c≈∣Δt∣2t(1a+a2)2 $c\approx\frac{|\Delta t|}{2t}\big(\frac1a+\frac a2\big)^2$ ∣Δt∣​(a1​+2a​)2。在均勻格點上，最接近資料端的最後一步係數最大。(1a+a2)2 $\big(\frac1a+\frac a2\big)^2$ 1​+2a​)2 在 a=2 $a=\sqrt2$ ​ 時最小（值 2），a=0.7 $a=0.7$ 時為 3.163：a $a$ 小於 2 $\sqrt2$ ​ 時，a $a$ 越小，1/σt $1/\sigma_t$ ​ 項越大，KL 對速度差越敏感；a $a$ 大於 2 $\sqrt2$ ​ 時，σt(1−t)/(2t) $\sigma_t(1-t)/(2t)$ ​(1−t)/(2t) 項變大，係數又上升。機率比的對數則與「平均差除以標準差」成正比，a $a$ 越小，機率比越極端。
+
+ C4一步的高斯策略、機率比與 KL
+
+ 兩個策略只差速度 Δv。選一步 j，看兩個高斯分布、KL 與樣本的機率比；下方長條是每一步的 KL 係數。
+
+ πθ（實線）π′（虛線）樣本 x
+
+ 噪聲等級 a 0.70
+
+ 步數 T
+1040
+
+ 步 j 5（t = 0.50）
+
+ 速度差 Δv 0.20
+
+ 一維；影像中為所有維度的平方和。
+
+ 樣本位置 z 1.0
+
+ t 0.50 · σ 0.7 · 標準差 0.221359
+平均差 δ -0.0249
+KL₁ 0.00632663 · KL₂ 0.00632663 · c_j 0.158166
+log ρ -0.118813 · ρ 0.887974
+ρ 在裁剪範圍 [0.80, 1.20] 內（ε = 0.20）
+
+ 閉式由 Eq. 9 與 Sec. 4 的 KL 式即時計算；一維、Δv 為示意值。π′ 可以是 πθ,old（算機率比）或 πref（算 KL），數學相同。樣本 x ＝ π′ 的平均 x′ ＋ z × 標準差。σ 在 t = 1 時以 t′ = 1 − 1/T 代入（推定），(1 − t)/(2t) 用真實 t。
+
+ 由閉式可以讀出三件事本頁推導。第一，長條在最右（j=T−1 $j=T-1$ ）最高：T=10 $T=10$ 、a=0.7 $a=0.7$ 時 c0=0.0113 $c_0=0.0113$ ​=0.0113、c5=0.158 $c_5=0.158$ ​=0.158、c9=1.423 $c_9=1.423$ ​=1.423；最左一根最低，但那一步的標準差最大（0.664，對照 j=9 $j=9$ 的 0.0738）。第二，a $a$ 由 0.7 減到 0.1 時，j=9 $j=9$ 、Δv=0.2 $\Delta v=0.2$ 的 KL 由 0.0569 增為 1.818，樣本 z=1 $z=1$ 的 log⁡ρ $\log\rho$ 由 −0.394 變為 −3.72（ρ≈0.024 $\rho\approx0.024$ ，遠在裁剪範圍外）。第三，T=10 $T=10$ 時各步係數的總和：a=0.1 $a=0.1$ 為 97.97、a=0.7 $a=0.7$ 為 3.062、a=1.4 $a=1.4$ 為 1.932、a=2.0 $a=2.0$ 為 2.171，a $a$ 超過約 2 $\sqrt2$ ​ 後又上升。
+
+ 08 · 去噪步數縮減
+
+ 訓練只用 10 步取樣，推論保留 40 步
+
+ 去噪步數縮減（Denoising Reduction）的做法是：收集訓練樣本時只用 T=10 $T=10$ 步，推論時仍用 SD3.5-M 預設的 T=40 $T=40$ 步（Sec. 4、App. B.3）。每個提示詞每次迭代需要 G×T $G\times T$ 次模型前向計算本頁推導：24×10=240 $24\times10=240$ 次，對照 24×40=960 $24\times40=960$ 次。這只是取樣次數的比例；論文報告的加速是以 GPU 小時計算，兩者不是同一個量。
+
+ 上列：訓練取樣 T = 10（SDE，有噪聲）；下列：推論 T = 40。格數就是步數。
+
+ Sec. 5.3 的實驗（未加 KL）顯示，收集樣本的步數由 40 降到 10，三個任務都有超過 4 倍的加速（GPU 小時），最終獎勵不受影響（GenEval 見 Fig. 7a；文字渲染與 PickScore 見 App. C.2 的 Fig. 9）；再降到 5 不一定更快，有時更慢，因此採用 10。App. D（Fig. 19）比較同一提示詞的影像：40 步 ODE 與 40 步 SDE 肉眼無法區分；10 步與 5 步 SDE 出現明顯瑕疵，例如顏色漂移與細節模糊。作者認為，因為 Flow-GRPO 依賴組內的相對比較，這些低品質樣本仍提供有用的獎勵訊號。定量評估的步數是 T=40 $T=40$ （B.3），論文沒有寫定量評估用 ODE 或 SDE；App. C.7 的訓練過程圖以 40 步 ODE 取樣產生。
+
+ 噪聲等級 a $a$ 的實驗只在文字渲染（OCR）任務上做（Fig. 7b）：a=0.1 $a=0.1$ 探索不足、獎勵上升慢；增加到 0.7 使獎勵上升加快；從 0.7 到 1.0 沒有額外好處；再增加會使影像品質下降，獎勵變成零、訓練失敗。Fig. 7 的圖說寫明 a=0.7 $a=0.7$ 使 OCR 準確率最高。第 06 章 C3 的 T $T$ 選項只顯示步數少時分布誤差變大，不顯示訓練速度。
+
+ 09 · 實驗
+
+ 實驗：三個任務都提升，KL 抑制 reward hacking
+
+ 三個任務的獎勵（Sec. 5.1）。組合生成用 GenEval 的六類任務；計數的獎勵是 r=1−∣Ngen−Nref∣/Nref $r=1-|N_{\mathrm{gen}}-N_{\mathrm{ref}}|/N_{\mathrm{ref}}$ ​−Nref​∣/Nref​（產生的物體數與要求數的相對差）；位置與顏色則在物體數正確時給部分獎勵，位置或顏色也正確時再給其餘部分。訓練提示詞的比例是 Position : Counting : Attribute Binding : Colors : Two Objects : Single Object = 7 : 5 : 3 : 1 : 1 : 0，依基礎模型在六類上的初始準確率決定。文字渲染的提示詞模板是「A sign that says "text"」，獎勵 r=max⁡(1−Ne/Nref,0) $r=\max(1-N_e/N_{\mathrm{ref}},0)$ ​/Nref​,0)，Ne $N_e$ ​ 是渲染文字與目標文字的最小編輯距離，Nref $N_{\mathrm{ref}}$ ​ 是目標字元數；這個獎勵也是 OCR 準確率指標。人類偏好以 PickScore（以大量人工成對比較資料訓練的影像評分模型）為獎勵。為了偵測 reward hacking，作者在 DrawBench（一組內容多樣的評測提示詞）上另外計算 Aesthetic、DeQA、ImageReward、UnifiedReward 四個品質指標（App. B.1）。
+
+ Table 1 摘錄：GenEval 分數（Obj. 物體；Attr. 屬性）
+ 模型OverallSingle Obj.Two Obj.CountingColorsPositionAttr. Binding
+
+ GPT-4o0.840.990.920.850.920.750.61
+
+ FLUX.1 Dev0.660.980.810.740.790.220.45
+
+ SD3.5-L0.710.980.890.730.830.340.47
+
+ SANA-1.5 4.8B0.810.990.930.860.840.590.65
+
+ SD3.5-M0.630.980.780.500.810.240.52
+
+ SD3.5-M + Flow-GRPO0.951.000.990.950.920.990.86
+
+ Table 1 全表
+
+ 模型OverallSingleTwoCountColorsPositionAttr.
+
+ 擴散模型
+
+ LDM0.370.920.290.230.700.020.05
+
+ SD1.50.430.970.380.350.760.040.06
+
+ SD2.10.500.980.510.440.850.070.17
+
+ SD-XL0.550.980.740.390.850.150.23
+
+ DALLE-20.520.940.660.490.770.100.19
+
+ DALLE-30.670.960.870.470.830.430.45
+
+ 自迴歸模型
+
+ Show-o0.530.950.520.490.820.110.28
+
+ Emu3-Gen0.540.980.710.340.810.170.21
+
+ JanusFlow0.630.970.590.450.830.530.42
+
+ Janus-Pro-7B0.800.990.890.590.900.790.66
+
+ GPT-4o0.840.990.920.850.920.750.61
+
+ 流匹配模型
+
+ FLUX.1 Dev0.660.980.810.740.790.220.45
+
+ SD3.5-L0.710.980.890.730.830.340.47
+
+ SANA-1.5 4.8B0.810.990.930.860.840.590.65
+
+ SD3.5-M0.630.980.780.500.810.240.52
+
+ SD3.5-M + Flow-GRPO0.951.000.990.950.920.990.86
+
+ Table 2：任務指標（測試提示詞）與 DrawBench 上的品質、偏好分數。ImgRwd＝ImageReward，UniRwd＝UnifiedReward，DB＝DrawBench
+ 模型GenEvalOCRPickScoreAestheticDeQAImgRwdPickScore(DB)UniRwd
+
+ SD3.5-M0.630.5921.725.394.070.8722.343.33
+
+ 組合生成 w/o KL0.95——4.932.770.4421.162.94
+
+ 組合生成 w/ KL0.95——5.254.011.0322.373.51
+
+ 文字渲染 w/o KL—0.93—5.133.660.5821.793.15
+
+ 文字渲染 w/ KL—0.92—5.324.060.9522.443.42
+
+ 人類偏好 w/o KL——23.416.154.161.2423.563.57
+
+ 人類偏好 w/ KL——23.315.924.221.2823.533.66
+
+ 主要結果：GenEval 由 0.63 提升到 0.95（Table 1，高於 GPT-4o 的 0.84）；OCR 準確率由 0.59 提升到 0.92（w/ KL；w/o KL 為 0.93）；PickScore 由 21.72 提升到 23.31（w/ KL；w/o KL 為 23.41）（Table 2）。
+
+ KL 的作用（Sec. 5.3）：組合生成與文字渲染去掉 KL 時，DrawBench 上的品質與偏好分數明顯下降（例如組合生成的 DeQA 由 4.07 降為 2.77）；加上適當的 KL 時，任務指標的提升相近，品質大致保持。人類偏好任務去掉 KL 時品質指標沒有下降，作者認為可能因為 PickScore 與評估指標重疊；但視覺多樣性崩潰，不同種子產生幾乎相同的影像（Fig. 6）。KL 不等同於提早停止：加上適當 KL 能達到與無 KL 版本相同的高獎勵並保持品質，代價是訓練較久（App. C.5、Fig. 12）。不能說 w/ KL 在所有指標上都較好：組合生成 w/ KL 的 Aesthetic 5.25 仍低於 SD3.5-M 的 5.39，人類偏好 w/ KL 的 Aesthetic 5.92 也低於 w/o KL 的 6.15。
+
+ 與其他方法的比較（Fig. 4、App. C.1）：在相同組大小下，對照 SFT（選每組最高獎勵的影像做監督式微調）、Flow-RWR（以組內獎勵的 softmax 為權重做加權最大概似）、Flow-DPO（以每組最高與最低獎勵的影像為較好／較差的一對，套用 DPO 損失）以及它們的線上版本（每 40 步更新收集資料的模型）；Flow-GRPO 優於全部。線上 DPO 優於離線 DPO；DPO 的 β $\beta$ 太小可能使訓練崩潰；RWR 沒有隨訓練改善。在人類偏好任務上（Fig. 8），經 ODE 轉 SDE 改用於流模型的 DDPO 獎勵上升較慢、後期崩潰；ReFL（把獎勵梯度反向傳到隨機選的晚期步 t∈[30,40] $t\in[30,40]$ 的方法）也被超越，而且 GRPO 不需要可微分的獎勵。ORW（以 Wasserstein-2 正則化的線上獎勵加權迴歸）：Table 5 在 step 960 時為 23.05，Flow-GRPO 為 29.89；Table 6 的 CLIP 分數 28.40 對 30.18、Diversity 0.97 對 1.02（SD3.5-M 為 27.99、0.96）。
+
+ 其他分析：每個 rollout 使用不同的初始噪聲，比使用相同初始噪聲持續得到較高的獎勵（App. C.3、Fig. 10）。泛化方面，Table 4 中未見物體類別的 Overall 由 0.64 提升到 0.90；計數只訓練 2–4 個物體，5–6 個物體由 0.13 提升到 0.48，12 個物體由 0.02 提升到 0.12。T2I-CompBench++（Table 3）七項中六項提升，例如 2D-Spatial 由 0.2850 提升到 0.5447；Texture 則由 0.7338 降為 0.7236。FLUX.1-Dev（App. C.4、Table 7）的 PickScore 由 22.62 提升到 23.97，DeQA 由 4.31 略降為 4.24，其餘指標上升。
+
+ 延伸閱讀：Denoising Reduction、KL 與 Flow-GRPO 的實驗結果、文字生成圖像擴散模型的 RL 微調脈絡
+
+ 10 · 實作
+
+ 實作設定與常見錯誤
+
+ 符號總表（各符號的定義見對應章節；此表供回查）
+
+ 符號意義出處
+
+ x0 $x_0$ ​、x1 $x_1$ ​資料樣本、噪聲樣本Sec. 3
+
+ t $t$ 連續時間（t=0 $t=0$ 資料、t=1 $t=1$ 噪聲）；在 MDP 中也是整數步索引Eq. 1、Sec. 3
+
+ vθ $v_\theta$ ​、vt $v_t$ ​模型預測的速度、真實速度；目標 v=x1−x0 $v=x_1-x_0$ ​−x0​Eq. 2、Eq. 6
+
+ c $c$ 提示詞Sec. 3
+
+ T $T$ 、G $G$ 去噪步數、組大小Sec. 3–4
+
+ A^ti $\hat A^i_t$ ti​優勢Eq. 4
+
+ ρti $\rho^i_t$ i​機率比（論文記為 rti $r^i_t$ i​）Eq. 5
+
+ ε $\varepsilon$ 、β $\beta$ 裁剪範圍、KL 權重Eq. 5
+
+ πref $\pi_{\mathrm{ref}}$ ​、πθold $\pi_{\theta_{\mathrm{old}}}$ ​​預訓練模型、收集樣本時的模型Eq. 3、5
+
+ σt $\sigma_t$ ​、a $a$ 擴散係數 at/(1−t) $a\sqrt{t/(1-t)}$ ​、噪聲等級Sec. 4
+
+ ∇log⁡pt $\nabla\log p_t$ ​分數Eq. 7
+
+ Δt $\Delta t$ 、ϵ $\epsilon$ 時間步長、標準常態噪聲Eq. 9
+
+ 論文的設定（App. B.3–B.4）
+ 項目值出處
+
+ 訓練取樣步數 / 評估步數10 / 40（評估取樣器未寫；C.7 的質性圖為 40 步 ODE）B.3、C.7
+
+ 組大小 G $G$ 24B.3
+
+ 噪聲等級 a $a$ 0.7B.3
+
+ 解析度512B.3
+
+ KL 權重 β $\beta$ GenEval、文字渲染 0.04；PickScore 0.01B.3
+
+ LoRAα=64 $\alpha=64$ 、r=32 $r=32$ B.3
+
+ 硬體24 張 NVIDIA A800B.4
+
+ 裁剪範圍 ε $\varepsilon$ 、學習率、批次大小、時間格點論文未寫—
+
+ 實作 Flow-GRPO 時容易犯的七個錯誤：
+
+ 把 Eq. 9 的 Δt $\sqrt{\Delta t}$ ​ 直接用在負的 Δt $\Delta t$ 上。取樣時 Δt<0 $\Delta t\lt 0$ ，應取 ∣Δt∣ $\sqrt{|\Delta t|}$ ​本頁推導。
+
+ 在 t=1 $t=1$ 直接計算 σt=at/(1−t) $\sigma_t=a\sqrt{t/(1-t)}$ ​=at/(1−t)​，會除以零；論文沒有寫處理方式，本頁玩具以 t′=1−1/T $t'=1-1/T$ =1−1/T 代入推定。
+
+ 混淆兩個參考策略：機率比的分母是收集樣本的 πθold $\pi_{\theta_{\mathrm{old}}}$ ​​，KL 的對象是預訓練的 πref $\pi_{\mathrm{ref}}$ ​（Eq. 5）。論文 Fig. 2 的圖中把 KL 寫成 DKL(πθ∣πθold) $D_{KL}(\pi_\theta\mid\pi_{\theta_{old}})$ ​(πθ​∣πθold​​)，與 Eq. 5 不同；本頁依 Eq. 5。
+
+ 組內獎勵全相同時標準差為 0，若不保護，Eq. 4 會得到 NaN。
+
+ 用訓練時的 10 步去評估；論文的定量評估用 40 步（B.3）。
+
+ 同一組的影像使用相同的初始噪聲；App. C.3 顯示不同初始噪聲得到較高的獎勵。
+
+ 為了訓練快而把 β $\beta$ 設為 0：獎勵仍可上升，但組合生成與文字渲染的品質下降，人類偏好任務的多樣性崩潰（Table 2、Fig. 6）。
+
+ 延伸閱讀：Flow 模型 RL 的 ODE-to-SDE 轉換、Denoising Reduction、KL 與 Flow-GRPO 的實驗結果
+
+ 11 · 研究脈絡
+
+ 研究脈絡
+
+ Flow-GRPO 結合五條脈絡：擴散模型與分數 SDE（DDPM、DDIM、Score SDE）提供 SDE 與機率流 ODE 的對應；流匹配與 Rectified Flow，以及把流與擴散統一的 Stochastic Interpolants，是本文要訓練的模型與理論基礎，SD3 是基礎模型；生成模型的 RL 與偏好對齊（AWR、DDPO、DPO、Adjoint Matching）是對照方法與前身；GRPO 來自 LLM 推理的 DeepSeekMath。每張卡片連到對應的研究筆記。
+
+ 擴散模型與分數 SDE流匹配與統一框架生成模型的 RL 與偏好對齊LLM 的 GRPO本文
+
+ 2019生成模型的 RL 與偏好對齊Advantage-Weighted Regression
+Peng et al.
+arXiv ↗筆記
+2020擴散模型與分數 SDEDenoising Diffusion Probabilistic Models
+Ho et al.
+arXiv ↗筆記
+2020擴散模型與分數 SDEDenoising Diffusion Implicit Models
+Song et al.
+arXiv ↗筆記
+2020擴散模型與分數 SDEScore-Based Generative Modeling through SDEs
+Song et al.
+arXiv ↗筆記
+2022流匹配與統一框架Flow Straight and Fast: Rectified Flow
+Liu et al.
+arXiv ↗筆記
+2022流匹配與統一框架Flow Matching for Generative Modeling
+Lipman et al.
+arXiv ↗筆記
+2023流匹配與統一框架Stochastic Interpolants
+Albergo et al.
+arXiv ↗筆記
+2023生成模型的 RL 與偏好對齊Training Diffusion Models with Reinforcement Learning (DDPO)
+Black et al.
+arXiv ↗筆記
+2023生成模型的 RL 與偏好對齊Direct Preference Optimization
+Rafailov et al.
+arXiv ↗筆記
+2024LLM 的 GRPODeepSeekMath (introduces GRPO)
+Shao et al.
+arXiv ↗筆記
+2024流匹配與統一框架Scaling Rectified Flow Transformers (SD3)
+Esser et al.
+arXiv ↗筆記
+2024生成模型的 RL 與偏好對齊Adjoint Matching
+Domingo-Enrich et al.
+arXiv ↗筆記
+2025本文Flow-GRPO: Training Flow Matching Models via Online RL
+Liu et al.
+arXiv ↗筆記
+
+ 12 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 論文的實驗限於文字生成影像。作者列出用在影片生成的三個方向（Sec. 6）：獎勵設計（物體偵測器或追蹤器等簡單規則能鼓勵物理合理性與時間一致性，但需要更好的獎勵模型）、多個獎勵的平衡（真實感、流暢度、連貫性彼此競爭），以及規模化（影片的資源需求遠大於影像，需要更有效率的資料收集與訓練流程）。另外，KL 正則化雖有明顯幫助，但需要更長的訓練，而且某些提示詞仍偶爾出現 reward hacking。
+
+ 研究筆記（依閱讀順序）
+
+ Flow-GRPO 的研究脈絡總覽總覽
+
+ Flow matching 與 rectified flow 作為生成骨幹生成骨幹
+
+ Flow matching 的速度目標與 rectified flow 的大規模使用生成骨幹
+
+ 從 DDPM 到 score SDE 與 stochastic interpolantsSDE 背景
+
+ Denoising 作為 MDP，以及 Flow-GRPO 的目標函數MDP 與 GRPO
+
+ MDP、Q 函數與 Bellman backup：value-based RL 的基本記號MDP 與 GRPO
+
+ RLVR、GRPO 與信用分配瓶頸MDP 與 GRPO
+
+ 文字生成圖像擴散模型的 RL 微調脈絡T2I 的 RL 微調
+
+ Flow 模型 RL 的 ODE-to-SDE 轉換ODE 轉 SDE
+
+ Denoising Reduction、KL 與 Flow-GRPO 的實驗結果設計選擇與結果
+
+ Jie Liu, Gongye Liu, Jiajun Liang, Yangguang Li, Jiaheng Liu, Xintao Wang, Pengfei Wan, Di Zhang, Wanli Ouyang. Flow-GRPO: Training Flow Matching Models via Online RL. NeurIPS 2025. arXiv:2505.05470；程式碼 github.com/yifan123/flow_grpo。
+
+ 本頁的方程式與數字取自論文 v5；標示「本頁推導」的內容為本頁自行推導，「推定」為本頁選定的值，皆非論文結論。C1、C3 使用本頁的一維玩具，C2、C4 為閉式，數值都在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記
