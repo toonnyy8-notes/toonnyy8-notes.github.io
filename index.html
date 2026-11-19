@@ -24,7 +24,7 @@
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
-body{background:var(--bg);color:var(--ink);font:14px/1.5 Inter,"Noto Sans TC",system-ui,sans-serif;display:grid;grid-template-columns:300px 1fr 360px;grid-template-rows:56px 1fr;height:100vh;overflow:hidden}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 Inter,"Noto Sans TC",system-ui,sans-serif;display:grid;grid-template-columns:300px 1fr 360px;grid-template-rows:56px 1fr;height:100vh;overflow:hidden}
 header{grid-column:1/-1;display:flex;align-items:center;gap:16px;padding:0 20px;border-bottom:1px solid var(--line);background:var(--surface)}
 header h1{font-size:16px;font-weight:600;margin:0;letter-spacing:-.01em}
 header .stat{color:var(--muted);font-size:13px}
@@ -52,15 +52,14 @@ svg{width:100%;height:100%;display:block;cursor:grab}
 svg:active{cursor:grabbing}
 .link{stroke:var(--edge);stroke-opacity:.55}
 .node circle{stroke:var(--surface);stroke-width:1.5;cursor:pointer;transition:opacity .2s}
-.node text{font-size:10px;fill:var(--muted);pointer-events:none;opacity:0;transition:opacity .2s}
+.node text{font-size:13px;font-weight:500;fill:var(--ink);pointer-events:none;display:none;paint-order:stroke;stroke:var(--bg);stroke-width:4px;stroke-linejoin:round}
 .dim .node circle{opacity:.12}
 .dim .link{stroke-opacity:.05}
 .dim .node.hl circle{opacity:1}
-.dim .node.hl text{opacity:1}
 .dim .link.hl{stroke:var(--accent);stroke-opacity:.8}
-.node.lbl text{opacity:1}
+.node.lbl text{display:block}
 .node.sel circle{stroke:var(--ink);stroke-width:2.5}
-.node.sel text{opacity:1;fill:var(--ink);font-weight:600}
+.node.sel text{font-weight:700}
 .legend{position:absolute;left:16px;bottom:16px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;box-shadow:var(--shadow);font-size:12px;color:var(--muted);max-width:280px}
 .empty{color:var(--muted);padding:24px 0;line-height:1.7}
 #detail h2{font-size:18px;line-height:1.35;margin:0 0 8px;letter-spacing:-.01em}
@@ -120,6 +119,7 @@ const clusters = [...new Set(DATA.map(d => d.cluster))];
 const palette = ['#c96442','#3b7ea1','#6a9a4b','#9b5fb0','#d19a2a','#3f9c8f','#b5527a','#5b6bbf','#8a7a5c','#d4553b'];
 const color = c => palette[clusters.indexOf(c) % palette.length];
 const branches = [...new Set(DATA.flatMap(d => d.branch))];
+let nodeVisible = new Set(DATA.map(d => d.id)), hlSet = new Set();
 const state = { q:'', clusters:new Set(clusters), branches:new Set(branches), tag:'', sel:null };
 
 // theme toggle (per-viewer convenience only)
@@ -162,7 +162,23 @@ const radius = d => 4 + Math.sqrt(d.degree) * 2.6;
 nodeSel.append('circle').attr('r', radius).attr('fill', d => color(d.cluster))
   .on('click', (e, d) => select(d.id))
   .append('title').text(d => d.title);
-nodeSel.append('text').attr('dy', d => -radius(d) - 3).attr('text-anchor','middle').text(d => d.title.length > 48 ? d.title.slice(0,46) + '…' : d.title);
+// wrap long titles into up to 3 lines (word-based; CJK runs split per character)
+const LINE = 15, CH = 7.2, MAXC = 24;
+function wrap(t){
+  const words = t.match(/[\u3000-\u9fff\uff00-\uffef]|[^\s\u3000-\u9fff\uff00-\uffef]+/g) || [t];
+  const lines = []; let cur = '';
+  for (const w of words) {
+    const sep = cur && /^[\x00-\x7f]/.test(w) && /[\x00-\x7f]$/.test(cur) ? ' ' : '';
+    if ((cur + sep + w).length > MAXC && cur) { lines.push(cur); cur = w; } else cur += sep + w;
+  }
+  if (cur) lines.push(cur);
+  if (lines.length > 3) { lines.length = 3; lines[2] = lines[2].replace(/.{0,2}$/, '…'); }
+  return lines;
+}
+const textW = s => [...s].reduce((a, c) => a + (c.charCodeAt(0) > 0x2e80 ? CH * 1.8 : CH), 0);
+DATA.forEach(d => { d.lines = wrap(d.title); d.lw = Math.max(...d.lines.map(textW)); d.lh = d.lines.length * LINE; });
+const textSel = nodeSel.append('text').attr('text-anchor','middle');
+textSel.selectAll('tspan').data(d => d.lines).join('tspan').attr('x', 0).attr('dy', (l, i) => i ? LINE : 0).text(l => l);
 nodeSel.call(d3.drag()
   .subject((e,d) => ({x: T.applyX(d.x), y: T.applyY(d.y)}))
   .on('start', (e,d) => { if (!e.active) sim.alphaTarget(.2).restart(); d.fx = d.x; d.fy = d.y; })
@@ -182,8 +198,28 @@ function draw(){
   linkSel.attr('x1', d => T.applyX(d.source.x)).attr('y1', d => T.applyY(d.source.y)).attr('x2', d => T.applyX(d.target.x)).attr('y2', d => T.applyY(d.target.y));
   nodeSel.attr('transform', d => `translate(${T.applyX(d.x)},${T.applyY(d.y)})`);
   // labels appear once nodes are spread far enough apart to read them
-  const z = T.k / K0;
-  nodeSel.classed('lbl', d => z >= 5 || (z >= 2.5 && d.degree >= 6));
+  placeLabels();
+}
+// greedy label placement: highest-priority labels first, each tries above then below its node,
+// and is skipped if it would overlap a label already placed — so labels never collide
+// ponytail: O(n^2) box checks over visible labels; fine for a few hundred nodes, use a grid index beyond that
+function placeLabels(){
+  const z = T.k / K0, dim = g.classed('dim');
+  const want = d => nodeVisible.has(d.id) && (d.id === state.sel || (dim ? hlSet.has(d.id) : (z >= 5 || (z >= 2.5 && d.degree >= 6))));
+  const cand = DATA.filter(want).sort((a, b) => (b.id === state.sel) - (a.id === state.sel) || b.degree - a.degree);
+  const placed = [], shown = new Map();
+  const hit = b => placed.some(p => b[0] < p[2] && b[2] > p[0] && b[1] < p[3] && b[3] > p[1]);
+  for (const d of cand) {
+    const x = T.applyX(d.x), y = T.applyY(d.y), r = radius(d), pad = 3;
+    const above = [x - d.lw/2 - pad, y - r - 4 - d.lh - pad, x + d.lw/2 + pad, y - r - 4 + pad];
+    const below = [x - d.lw/2 - pad, y + r + 4 - pad, x + d.lw/2 + pad, y + r + 4 + d.lh + pad];
+    const b = !hit(above) ? above : !hit(below) ? below : null;
+    if (!b) continue;
+    placed.push(b);
+    shown.set(d.id, b === above ? -r - 4 - d.lh + LINE - 3 : r + 4 + LINE - 3);
+  }
+  nodeSel.classed('lbl', d => shown.has(d.id));
+  textSel.attr('transform', d => shown.has(d.id) ? `translate(0,${shown.get(d.id)})` : null);
 }
 sim.on('tick', draw);
 draw();
@@ -211,8 +247,10 @@ function update(){
   const hl = new Set(filtering ? vis : []);
   if (state.sel) { hl.add(state.sel); byId.get(state.sel).related.forEach(r => hl.add(r)); }
   g.classed('dim', hl.size > 0);
+  nodeVisible = vis; hlSet = hl;
   nodeSel.classed('hl', d => hl.has(d.id)).classed('sel', d => d.id === state.sel);
   linkSel.classed('hl', d => state.sel && (d.source.id === state.sel || d.target.id === state.sel));
+  placeLabels();
   const list = DATA.filter(d => vis.has(d.id));
   document.getElementById('rcount').textContent = `論文 · ${list.length}`;
   document.getElementById('stat').textContent = `${DATA.length} 篇論文 · ${clusters.length} 個群集 · ${links.length} 條關聯`;
