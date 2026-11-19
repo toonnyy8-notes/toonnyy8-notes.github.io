@@ -1,0 +1,323 @@
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="qloss" data-toc="06" data-tt="Q 損失">
+  <div class="ch-num">06 · Q 損失</div>
+  <h2>Q 損失：把 flow Bellman 方程變成回歸</h2>
+  <div class="prose">
+    <p>有了每層都有唯一不動點的算子，下一步是設計能實際訓練的損失（Sec. 4.2）。先把 Eq. 5 拆成狀態價值 V 與動作價值 Q 兩部分：$Z^\pi_V(s,\tau)$ 是 V 回報，$Z^\pi_Q(s,a,\tau)$ 是 Q 回報，$A$ 是目前步的動作隨機變數（Eq. 7）。</p>
+  </div>
+  <div class="eq eq-w"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 7，可水平捲動">$$Z^\pi_V(s,\tau)\overset{d}{=}Z^\pi_Q(s,A,\tau),\qquad Z^\pi_Q(s,a,\tau)\overset{d}{=}\tau r(s,a)+\gamma Z^\pi_V(S',\tau)+(1-\tau)\sqrt{1-\gamma^2}\,N$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="eq eq-nr"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 7，可水平捲動">$$\begin{aligned}Z^\pi_V(s,\tau)&amp;\overset{d}{=}Z^\pi_Q(s,A,\tau)\\Z^\pi_Q(s,a,\tau)&amp;\overset{d}{=}\tau r(s,a)+\gamma Z^\pi_V(S',\tau)\\&amp;\quad+(1-\tau)\sqrt{1-\gamma^2}\,N\end{aligned}$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="prose">
+    <p>作者用兩條 flow $\phi^\pi_V$、$\phi^\pi_Q$ 把<b>獨立</b>的標準高斯 $N_V$、$N_Q$ 轉換成這兩個分佈（Eq. 8、9）；$\phi_V,\phi_Q$ 分別解速度為 $u_V,u_Q$ 的 Eq. 2。等號都是分佈相等，不是同一顆粒子的軌跡相等。</p>
+  </div>
+  <div class="eq eq-w"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 8 與 Eq. 9，可水平捲動">$$\phi^\pi_V(N_V\mid s,\tau)\overset{d}{=}\phi^\pi_Q(N_Q\mid s,A,\tau),\qquad \phi^\pi_Q(N_Q\mid s,a,\tau)\overset{d}{=}\tau r(s,a)+\gamma\phi^\pi_V(N_V\mid S',\tau)+(1-\tau)\sqrt{1-\gamma^2}\,N$$</div><span class="eq-n">Eq. 8–9</span></div>
+  <div class="eq eq-nr"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 8 與 Eq. 9，可水平捲動">$$\begin{aligned}\phi^\pi_V(N_V\mid s,\tau)&amp;\overset{d}{=}\phi^\pi_Q(N_Q\mid s,A,\tau)\\\phi^\pi_Q(N_Q\mid s,a,\tau)&amp;\overset{d}{=}\tau r+\gamma\phi^\pi_V(N_V\mid S',\tau)\\&amp;\quad+(1-\tau)\sqrt{1-\gamma^2}\,N\end{aligned}$$</div><span class="eq-n">Eq. 8–9</span></div>
+  <div class="prose">
+    <p>Q 部分套 Lemma 1。Eq. 9 的右邊由隨機變數 $\mathcal X_Q=\{N_V,N,S'\}$ 決定，所以定義過程 $X_Q(s,a,\tau)\triangleq\tau r(s,a)+\gamma\phi_V(N_V\mid S',\tau)+(1-\tau)\sqrt{1-\gamma^2}N$。給定 $\mathcal X_Q$，它是 τ 的確定函數。對 τ 微分，用 $\tfrac{d}{d\tau}\phi_V=u_V$：$\tfrac{d}{d\tau}X_Q=r(s,a)+\gamma u_V(\phi_V(N_V\mid S',\tau)\mid S',\tau)-\sqrt{1-\gamma^2}N$。依 Lemma 1，在輸入點 $X_Q$ 上讓參數化 Q 速度 $v_Q$ 回歸這個導數，就得到 Eq. 11：</p>
+  </div>
+  <div class="eq eq-w"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 11，可水平捲動">$$\mathbb E_{s',\tau,\ z^0,\epsilon\overset{iid}\sim\mathcal N(0,1),\ z^\tau=\phi^\pi_V(z^0\mid s',\tau)}\Big[\Big(v_Q\big(\tau r+\gamma z^\tau+(1-\tau)\sqrt{1-\gamma^2}\,\epsilon\mid s,a,\tau\big)-\big(r+\gamma u^\pi_V(z^\tau\mid s',\tau)-\sqrt{1-\gamma^2}\,\epsilon\big)\Big)^2\Big]$$</div><span class="eq-n">Eq. 11</span></div>
+  <div class="eq eq-nr"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 11，可水平捲動">$$\begin{aligned}\mathbb E\Big[\Big(&amp;v_Q\big(\tau r+\gamma z^\tau+(1-\tau)\sqrt{1-\gamma^2}\,\epsilon\mid s,a,\tau\big)\\&amp;-\big(r+\gamma u^\pi_V(z^\tau\mid s',\tau)-\sqrt{1-\gamma^2}\,\epsilon\big)\Big)^2\Big]\end{aligned}$$</div><span class="eq-n">Eq. 11</span></div>
+  <div class="prose">
+    <p>Eq. 11 的回歸輸入點是 $\tau r+\gamma z^\tau+(1-\tau)\sqrt{1-\gamma^2}\epsilon$，在目前的 $(s,a)$ 求值；目標是 $r+\gamma u_V(z^\tau\mid s',\tau)-\sqrt{1-\gamma^2}\epsilon$，其中 $z^\tau$ 是下一狀態 V flow 上第 τ 層的點。輸入點與目標用同一個 ε，但符號相反；輸入點中的 $r$ 乘了 τ，目標中的 $r$ 沒有。</p>
+    <p>C3 用一個高斯玩具驗證 Lemma 1 在這裡的意思（推定）：下一狀態的乾淨 V 回報設為 $\mathcal N(m',\sigma'^2)$。一維高斯 flow 是仿射映射，V flow 的路徑為 $z^\tau=\tau m'+\sigma_V(\tau)z^0$，$\sigma_V^2(\tau)=\tau^2\sigma'^2+(1-\tau)^2$。<span class="tag">本頁推導</span>對獨立耦合、線性內插到 $\mathcal N(m,s^2)$ 的路徑，真實速度是 $u(z\mid\tau)=m+k(\tau)(z-\tau m)$，$k=(\tau s^2-(1-\tau))/(\tau^2s^2+(1-\tau)^2)$。Q 的乾淨回報因此是 $\mathcal N(r+\gamma m',\gamma^2\sigma'^2)$，$u_Q$ 也有閉式。每個 $(z^0,\epsilon)$ 給出一個（輸入點, 目標）資料點；因為兩者都是 $(z^0,\epsilon)$ 的線性函數，以輸入點為條件的目標平均有閉式。</p>
+  </div>
+
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>Q 損失的回歸目標：雜訊很大，條件平均恰好是速度</h3><span class="pill-toy">玩具：不是論文實驗</span><span class="tag">推定</span></div>
+    <p class="plate-lead">左：下一狀態的 V flow 路徑。右：300 組 $(z^0,\epsilon)$ 產生的回歸資料。正確版的條件平均（虛線）與 Q 回報的真實速度 $u_Q$（實線）重合；切換到兩種抄寫錯誤，虛線就離開實線。</p>
+    <div class="ctl" style="margin-bottom:14px">
+      <div class="pg two">
+        <div class="rng"><label class="lbl" for="c3-g">折扣因子 γ<output id="c3-go">0.900</output></label><input id="c3-g" type="range" min="0.5" max="0.999" step="0.001" value="0.9"></div>
+        <div class="rng"><label class="lbl" for="c3-t">noise level τ<output id="c3-to">0.500</output></label><input id="c3-t" type="range" min="0" max="0.999" step="0.001" value="0.5"></div>
+        <div class="rng"><label class="lbl" for="c3-r">獎勵 r<output id="c3-ro2">−1.0</output></label><input id="c3-r" type="range" min="-2" max="2" step="0.1" value="-1"></div>
+        <div class="rng"><label class="lbl" for="c3-m">下一狀態回報平均 m′<output id="c3-mo">−2.0</output></label><input id="c3-m" type="range" min="-4" max="2" step="0.1" value="-2"></div>
+        <div class="rng"><label class="lbl" for="c3-s">下一狀態回報標準差 σ′<output id="c3-so">0.60</output></label><input id="c3-s" type="range" min="0.05" max="2" step="0.05" value="0.6"></div>
+        <div class="rng"><label class="lbl" for="c3-z">選取樣本的起點 z⁰<output id="c3-zo">1.00</output></label><input id="c3-z" type="range" min="-2.5" max="2.5" step="0.05" value="1"></div>
+        <div class="rng"><label class="lbl" for="c3-e">選取樣本的 ε<output id="c3-eo">−1.00</output></label><input id="c3-e" type="range" min="-2.5" max="2.5" step="0.05" value="-1"></div>
+      </div>
+      <span class="seg" role="group" aria-label="目標的寫法"><button type="button" data-mode="ok" aria-pressed="true">正確（Eq. 11）</button><button type="button" data-mode="sign" aria-pressed="false">抄寫錯誤（本頁假設）：目標用 +ε</button><button type="button" data-mode="taur" aria-pressed="false">抄寫錯誤（本頁假設）：目標的 r 乘 τ</button></span>
+    </div>
+    <div class="pg two">
+      <div class="fig" id="c3-f1"><svg role="img" aria-label="V flow 路徑"></svg></div>
+      <div class="fig" id="c3-f2"><svg role="img" aria-label="回歸資料"></svg></div>
+    </div>
+    <p class="readout" id="c3-ro" style="margin-top:16px"></p>
+    <div class="legend"><span class="lg ok">u_Q：Q 回報的真實速度</span><span class="lg ref">目標的條件平均</span><span class="lg dotl">300 點的最小平方線</span></div>
+    <p class="plate-f">τ 上限 0.999，避開 τ = 1 的退化。散點、路徑與讀數由本頁以閉式即時計算<span class="tag">本頁推導</span>；300 組樣本由固定種子產生。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+
+  <div class="prose">
+    <p>正確模式下，目標的條件平均與 $u_Q$ 完全重合：回歸目標本身散得很開，但以輸入點為條件取平均，恰好是 Q 回報的真實速度，這就是 Lemma 1。τ = 0 時 $u_Q$ 的斜率是 −1、截距是 $r+\gamma m'$，也就是 $z^0+u(z^0\mid0)$ 對任何 $z^0$ 都等於 Q，第 10 章的一步估計用到這點。兩種抄寫錯誤都會讓條件平均離開 $u_Q$：「目標用 +ε」改變斜率，「目標的 r 乘 τ」把截距平移 $-(1-\tau)r$。γ 接近 1 時，「+ε」造成的斜率偏差在這個玩具中變小；這只是條件平均的偏差，不是訓練結果，偏差小也不代表無害。</p>
+  </div>
+  <div class="warn"><b>抄寫時易犯的三個錯誤</b>（本頁假設，不是論文或實作中觀察到的錯誤）：(1) 輸入點是 $+(1-\tau)\sqrt{1-\gamma^2}\epsilon$、目標是 $-\sqrt{1-\gamma^2}\epsilon$，同一個 ε；(2) 輸入點中的 $r$ 乘 τ，目標中的 $r$ 不乘；(3) $u_V$ 在未變換的 $z^\tau$、下一狀態 $s'$ 求值，$v_Q$ 在變換後的點、目前的 $(s,a)$ 求值。</div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 11 的回歸輸入點與目標？列出兩個抄寫時易犯的錯誤。</p>
+    <p class="a">輸入 $\tau r+\gamma z^\tau+(1-\tau)\sqrt{1-\gamma^2}\epsilon$（在 $(s,a)$ 求值），目標 $r+\gamma u_V(z^\tau\mid s',\tau)-\sqrt{1-\gamma^2}\epsilon$；易犯錯誤（本頁假設）：輸入 +、目標 −（同一個 ε）；輸入的 r 乘 τ、目標的 r 不乘；C3 中正確版的條件平均恰好等於 $u_Q$，兩種錯誤版都不等。</p>
+  </div></details>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="vloss" data-toc="07" data-tt="V 損失">
+  <div class="ch-num">07 · V 損失</div>
+  <h2>V 損失與實用的交替訓練</h2>
+  <div class="prose">
+    <p>V 部分同樣套 Lemma 1。Eq. 8 的右邊由 $\mathcal X_V=\{N_Q,A\}$ 決定：動作 $A$ 也是隨機變數，所以 V 的分佈是對動作混合後的 Q 分佈。定義 $X_V(s,\tau)\triangleq\phi_Q(N_Q\mid s,A,\tau)$，對 τ 微分得 $u_Q(\phi_Q(N_Q\mid s,A,\tau)\mid s,A,\tau)$。於是 Eq. 10 讓 V 速度在同一個點 $z^\tau$ 上回歸 Q 速度，沒有獎勵，也沒有 ε：</p>
+  </div>
+  <div class="eq eq-w"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 10，可水平捲動">$$\mathbb E_{a\sim\pi(a\mid s),\ \tau\sim\mathrm{Unif}([0,1]),\ z^0\sim\mathcal N(0,1),\ z^\tau=\phi^\pi_Q(z^0\mid s,a,\tau)}\Big[\big(v_V(z^\tau\mid s,\tau)-u^\pi_Q(z^\tau\mid s,a,\tau)\big)^2\Big]$$</div><span class="eq-n">Eq. 10</span></div>
+  <div class="eq eq-nr"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 10，可水平捲動">$$\begin{aligned}&amp;\mathbb E\Big[\big(v_V(z^\tau\mid s,\tau)-u^\pi_Q(z^\tau\mid s,a,\tau)\big)^2\Big]\\&amp;a\sim\pi(a\mid s),\ z^\tau=\phi^\pi_Q(z^0\mid s,a,\tau)\end{aligned}$$</div><span class="eq-n">Eq. 10</span></div>
+  <div class="prose">
+    <p><span class="tag">本頁推導</span>Eq. 10 的最小解不是對 π 的單純平均，而是以 $z$ 為條件的後驗加權平均：$u_V(z\mid s,\tau)=\sum_a\pi(a\mid s)p_Q(z\mid s,a,\tau)u_Q(z\mid s,a,\tau)/\sum_a\pi(a\mid s)p_Q(z\mid s,a,\tau)$。例如兩個動作各占一半，若在某個 $z$ 處動作 1 的 Q flow 密度是動作 2 的三倍，則該處 V 速度是 0.75 倍動作 1 的速度加 0.25 倍動作 2 的速度。</p>
+    <p>Eq. 10、11 都要用到真實速度 $u_V,u_Q$，而真實速度未知。作者的做法是讓學到的 $v_V$、$v_Q$ 互為目標，交替最小化，更新一方時固定另一方；這類似 Fitted Q-Evaluation，也就是用上一輪的估計當回歸目標反覆擬合。實作時再把獎勵乘 $(1-\gamma)$，讓無限期的折扣回報落在固定尺度（Sec. 6.3 顯示有幫助）。得到兩個實用損失：Eq. 12 在同一個 $z^\tau\sim p_Q$ 上讓 $v_V(z^\tau\mid s,\tau)$ 回歸 $v_Q(z^\tau\mid s,a,\tau)$，動作 $a\sim\pi$，沒有獎勵與 ε；Eq. 13 是 Eq. 11 換上 $v_V$ 並縮放獎勵。</p>
+  </div>
+  <div class="eq eq-w"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 12，可水平捲動">$$\mathcal L(v_V)=\mathbb E_{a\sim\pi(a\mid s),\ \tau\sim\mathrm{Unif}([0,1]),\ z^\tau\sim p_Q(z^\tau\mid s,a,\tau)}\Big[\big(v_V(z^\tau\mid s,\tau)-v_Q(z^\tau\mid s,a,\tau)\big)^2\Big]$$</div><span class="eq-n">Eq. 12</span></div>
+  <div class="eq eq-nr"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 12，可水平捲動">$$\begin{aligned}\mathcal L(v_V)=\ &amp;\mathbb E\Big[\big(v_V(z^\tau\mid s,\tau)-v_Q(z^\tau\mid s,a,\tau)\big)^2\Big]\\&amp;a\sim\pi(a\mid s),\ z^\tau\sim p_Q(z^\tau\mid s,a,\tau)\end{aligned}$$</div><span class="eq-n">Eq. 12</span></div>
+  <div class="eq eq-w"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 13，可水平捲動">$$\mathcal L(v_Q)=\mathbb E_{s',\tau,\epsilon,\ z^\tau\sim p_V(z^\tau\mid s',\tau)}\Big[\Big(v_Q\big(\tau(1-\gamma)r+\gamma z^\tau+(1-\tau)\sqrt{1-\gamma^2}\,\epsilon\mid s,a,\tau\big)-\big((1-\gamma)r+\gamma v_V(z^\tau\mid s',\tau)-\sqrt{1-\gamma^2}\,\epsilon\big)\Big)^2\Big]$$</div><span class="eq-n">Eq. 13</span></div>
+  <div class="eq eq-nr"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 13，可水平捲動">$$\begin{aligned}\mathcal L(v_Q)=\mathbb E\Big[\Big(&amp;v_Q\big(\tau(1-\gamma)r+\gamma z^\tau+(1-\tau)\sqrt{1-\gamma^2}\,\epsilon\mid s,a,\tau\big)\\&amp;-\big((1-\gamma)r+\gamma v_V(z^\tau\mid s',\tau)-\sqrt{1-\gamma^2}\,\epsilon\big)\Big)^2\Big]\end{aligned}$$</div><span class="eq-n">Eq. 13</span></div>
+  <div class="prose">
+    <p>兩點提醒。第一，取樣 $z^\tau\sim p_Q$ 需要把 flow 從 0 積分到 τ，所以 Value Forcing 不像標準 CFM 那樣不需模擬（simulation-free）；論文沒有說這裡用幾步 Euler。第二，這一步沒有收斂證明，第 05 章的 contraction 只適用於理想算子。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 12 讓什麼回歸到什麼？真實速度未知時怎麼辦？實作多了哪個縮放？</p>
+    <p class="a">在同一個 $z^\tau\sim p_Q$ 上讓 $v_V(z^\tau\mid s,\tau)$ 回歸 $v_Q(z^\tau\mid s,a,\tau)$（$a\sim\pi$，沒有獎勵與 ε）；以 $v_V$、$v_Q$ 互為目標交替最小化（類比 Fitted Q-Evaluation）；獎勵乘 $(1-\gamma)$。</p>
+  </div></details>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="algos" data-toc="08" data-tt="VF 與 IVF">
+  <div class="ch-num">08 · VF 與 IVF</div>
+  <h2>VF 抽樣挑選動作，IVF 改用資料動作加權</h2>
+  <div class="prose">
+    <p>純量估計由速度積分而得：$Q(s,a)\triangleq\mathbb E_{z^0\sim\mathcal N(0,1)}[\int_0^1v_Q(z^\tau\mid s,a,\tau)\,d\tau]$，$V(s)$ 同理，實作上以 $M$ 個回報樣本平均（Sec. 5）。</p>
+    <p><b>VF</b>（explicit 方法）像一般的 actor-critic：先學一個 flow 行為複製（behavioral cloning, BC）策略 $\pi_\beta(a\mid s)$（用 Eq. 3 擬合資料動作），再以抽樣挑選（rejection sampling，引 Chen et al. 2023）改進策略：從 $\pi_\beta$ 抽 $K$ 個候選動作，取 Q 最大者（Eq. 14）。這個策略 π 也用來抽 Eq. 12 的動作。</p>
+  </div>
+  <div class="eq eq-w"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 14，可水平捲動">$$\pi(a\mid s)\overset{d}{=}\arg\max_{a_1,\dots,a_K:\ a_i\sim\pi_\beta(a\mid s)}Q(s,a_i)$$</div><span class="eq-n">Eq. 14</span></div>
+  <div class="eq eq-nr"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 14，可水平捲動">$$\pi(a\mid s)\overset{d}{=}\arg\max_{i}Q(s,a_i)$$</div><span class="eq-n">Eq. 14</span></div>
+  <p class="note eq-nr" style="max-width:700px">（$a_1,\dots,a_K$ 皆由 $\pi_\beta(a\mid s)$ 抽出）</p>
+  <div class="prose">
+    <p><b>IVF</b>（implicit 方法）不學 actor，只用資料中的動作。它沿用 expectile 的想法。先看一個數字例子（第 09 章 C4 的設定）：某個狀態下資料中有四個動作，Q 值 −3、−2、−1.2、−0.5，出現比例 0.4、0.3、0.2、0.1。expectile 參數 μ = 0.5 時，V 是這四個 Q 值的平均 −2.09；μ 越大，V 越靠近最大的 Q（−0.5）。做法是對 Q ≥ V 的動作給權重 μ、其餘給 1 − μ（Eq. 15，μ ∈ [0.5, 1)），再把權重乘在 V 速度的殘差平方上，動作取自資料（Eq. 16）。權重由<b>純量</b> Q、V 決定。</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 15，可水平捲動">$$w_\mu(s,a)\triangleq\mu\,\mathbb 1\big(Q(s,a)\ge V(s)\big)+(1-\mu)\,\mathbb 1\big(Q(s,a)&lt;V(s)\big)$$</div><span class="eq-n">Eq. 15</span></div>
+  <div class="eq eq-w"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 16，可水平捲動">$$\mathcal L_\mu(v_V)=\mathbb E_{a\sim\mathcal D,\ \tau\sim\mathrm{Unif}([0,1]),\ z^\tau\sim p_Q(z^\tau\mid s,a,\tau)}\Big[w_\mu(s,a)\big(v_V(z^\tau\mid s,\tau)-v_Q(z^\tau\mid s,a,\tau)\big)^2\Big]$$</div><span class="eq-n">Eq. 16</span></div>
+  <div class="eq eq-nr"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 16，可水平捲動">$$\begin{aligned}\mathcal L_\mu(v_V)=\mathbb E_{a\sim\mathcal D}\Big[&amp;w_\mu(s,a)\\&amp;\cdot\big(v_V(z^\tau\mid s,\tau)-v_Q(z^\tau\mid s,a,\tau)\big)^2\Big]\end{aligned}$$</div><span class="eq-n">Eq. 16</span></div>
+  <div class="prose">
+    <p>Alg. 1 把兩者寫在一起。目標網路（target network）是線上網路參數的指數移動平均（EMA）副本，只用來算目標，讓目標不隨每次更新跳動。</p>
+  </div>
+  <div class="algo" role="table" aria-label="Alg. 1 與逐行說明">
+    <div class="row hd" role="row"><div role="columnheader">Alg. 1（原文）</div><div class="ex-h" role="columnheader">說明</div></div>
+    <div class="row" role="row"><code>1: Initialize v_V^θ, v_Q^ψ, v_β^ξ; target ψ_tgt ← ψ</code><div class="ex">初始化 V 速度、Q 速度、BC 策略速度三個網路，以及 Q 速度的目標參數（論文記為 ψ 加上橫線）。V 沒有目標網路。</div></div>
+    <div class="row" role="row"><code>3: (s,a,r,s') ~ D, τ ~ Unif([0,1])</code><div class="ex">從資料抽一筆轉移與一個 noise level。</div></div>
+    <div class="row" role="row"><code>4: a_π ~ rejection sampling (Eq. 14), z^τ ~ p_Q^{ψ_tgt}(z^τ | s, a_π, τ)</code><div class="ex">VF：用抽樣挑選得到策略動作，再用目標 Q flow 產生第 τ 層的點。</div></div>
+    <div class="row" role="row"><code>5: Δθ ← ∇θ L(v_V) (Eq. 12)</code><div class="ex">VF：更新 V 速度。</div></div>
+    <div class="row" role="row"><code>6: compute w_μ(s,a) (Eq. 15), z^τ ~ p_Q^{ψ_tgt}(z^τ | s, a, τ)</code><div class="ex">IVF：用純量 Q、V 算權重，動作是資料中的 a。</div></div>
+    <div class="row" role="row"><code>7: Δθ ← ∇θ L_μ(v_V^θ) (Eq. 16)</code><div class="ex">IVF：以加權損失更新 V 速度。</div></div>
+    <div class="row" role="row"><code>8: z^τ ~ p_V^θ(z^τ | s', τ), ε ~ N(0,1)</code><div class="ex">用線上 V flow 在下一狀態產生點，並抽 ε。</div></div>
+    <div class="row" role="row"><code>9: Δψ ← ∇ψ L(v_Q) (Eq. 13)</code><div class="ex">更新 Q 速度。</div></div>
+    <div class="row" role="row"><code>10: Δξ ← ∇ξ L(v_β^ξ) (Eq. 3)</code><div class="ex">更新 flow BC 策略。</div></div>
+    <div class="row" role="row"><code>11: ψ_tgt ← EMA of ψ</code><div class="ex">目標參數取 ψ 的 EMA（更新率 0.005，Table 6）。</div></div>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">VF 如何選動作？IVF 的權重由什麼決定？</p>
+    <p class="a">VF：從 flow BC 策略抽 K 個動作取 Q 最大者（Eq. 14）；IVF：$w_\mu$ 由純量 Q、V 決定（Eq. 15），只用資料動作。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="value-forcing-vf-ivf-algorithms.html">VF 與 IVF：Value Forcing 的 actor-critic 與 implicit 兩種實例</a></p>
+</section>
+
+<!-- S9 ============================================================ -->
+<section class="ch" id="ivf-theory" data-toc="09" data-tt="IVF 理論">
+  <div class="ch-num">09 · IVF 理論</div>
+  <h2>IVF 的 V 是 Q 的 expectile，但只能在 Q 與 V 的純量上加權</h2>
+  <div class="prose">
+    <p>隨機變數 $X$ 的 μ-expectile 是不對稱平方損失 $\mathbb E[\lvert\mu-\mathbb 1(X-m&lt;0)\rvert(X-m)^2]$ 的最小解 $m$：μ = 0.5 時就是平均，μ → 1 時趨近支撐內的最大值。App. A.2 分析 IVF，前提是：類似 Fitted Q 迭代、每一輪都精確最小化、迭代次數 $k\to\infty$ 時收斂到一個自洽的不動點（Eq. 22、23 是假設，不是結論），且分析時獎勵不乘 $1-\gamma$。</p>
+    <p>關鍵是隱式策略（Eq. 24）：$\pi^\mu(a\mid s)=\pi_\beta(a\mid s)w_\mu(s,a)/\mathbb E_{\pi_\beta}[w_\mu(s,a)]$。因為 $w_\mu\in[1-\mu,\mu]$ 且 μ ≥ 0.5，它是合法的機率。權重只依賴 $(s,a)$，所以 Eq. 16 等於「以 $\pi^\mu$ 抽動作的未加權 V 損失」乘上一個只依賴狀態的常數。套 Lemma 1 後，不動點滿足策略 $\pi^\mu$ 的 flow Bellman 方程；取期望得 $V(s)=\mathbb E_{a\sim\pi^\mu}[Q(s,a)]$、$Q(s,a)=r+\gamma\mathbb E[V(s')]$；再引 Hansen-Estruch et al. 2023 的 Theorem 4.1，結論是 V 是 Q 的 expectile。μ → 1 時引 IQL 的 Theorem 3：$\lim_{\mu\to1}V_\mu(s)=\max_{a:\pi_\beta(a\mid s)&gt;0}Q^\star_\beta(s,a)$，即資料支撐內的最佳值。</p>
+    <p><span class="tag">本頁解讀</span>A.2 還隱含兩個前提：取期望時用了 $\mathbb E[\int_0^1v\,d\tau]=\mathbb E[\phi(z^0\mid1)]$，這需要 $\mathbb E[z^0]=0$；「唯一不動點」只在給定 $\pi^\mu_\infty$ 時成立，而 $\pi^\mu_\infty$ 本身依賴解，自洽不動點的存在與唯一性沒有證明。<span class="tag">本頁推導</span>為什麼是 expectile：$V=\mathbb E_\beta[wQ]/\mathbb E_\beta[w]$ 等價於 $\mathbb E_\beta[w_\mu(Q-V)]=0$，這正是 expectile 回歸的一階條件。</p>
+    <p>為什麼不直接對速度殘差做 expectile？App. D.5 指出，那樣做在 μ → 1 時得到逐點的 $\max_av_Q(z^\tau\mid s,a,\tau)$，積分後 $\mathbb E_{z^0}[\int_0^1\max_av_Q\,d\tau]$ 不等於 $\max_a\mathbb E_{z^0}[\int_0^1v_Q\,d\tau]=\max_aQ(s,a)$，因為不同的速度場產生不同的軌跡。<span class="tag">本頁推導</span>在一維、各動作共用同一個 $z^0$ 時，max 速度場的路徑不低於每個動作自己的路徑（ODE 比較定理），所以左邊 ≥ 右邊；論文只寫「≠」。</p>
+    <p>C4 的設定（推定）：(a) 上一章的四個資料動作；μ = 0.9 時 V 約為 −1.30，隱式策略把機率移向 Q ≥ V 的兩個動作，且 V 等於 Q 在隱式策略下的期望。(b) 兩個動作的 Q 回報為高斯，速度用第 06 章的閉式；預設下 max 速度場的終點平均比 $\max_aQ$ 高約 0.28，兩個分佈寬度相同時差距為 0。</p>
+  </div>
+
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>IVF 的 expectile 權重與「對速度取 max」的偏差</h3><span class="pill-toy">玩具：不是論文實驗</span><span class="tag">推定</span></div>
+    <p class="plate-lead">(a) 調 μ，看 V、權重與隱式策略；(b) 調兩個動作的 Q 回報分佈，看逐點取 max 的 V flow 終點平均與 max Q 的差距。</p>
+    <div class="pg two">
+      <div class="fig" id="c4-f1"><svg role="img" aria-label="隱式策略"></svg></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c4-mu">expectile μ<output id="c4-muo">0.900</output></label><input id="c4-mu" type="range" min="0.5" max="0.999" step="0.001" value="0.9"></div>
+        <div class="ctl-row chips"><button class="chip" type="button" data-mu="0.5" aria-pressed="false">0.5</button><button class="chip" type="button" data-mu="0.7" aria-pressed="false">0.7</button><button class="chip" type="button" data-mu="0.9" aria-pressed="true">0.9</button><button class="chip" type="button" data-mu="0.99" aria-pressed="false">0.99</button></div>
+        <p class="readout" id="c4a-ro"></p>
+      </div>
+    </div>
+    <div class="pg two" style="margin-top:20px">
+      <div class="fig" id="c4-f2"><svg role="img" aria-label="max 速度場的路徑"></svg></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c4-m1">動作 1 回報平均 m₁<output id="c4-m1o">−2.0</output></label><input id="c4-m1" type="range" min="-4" max="0" step="0.1" value="-2"></div>
+        <div class="rng"><label class="lbl" for="c4-s1">動作 1 回報標準差 s₁<output id="c4-s1o">0.30</output></label><input id="c4-s1" type="range" min="0.05" max="2" step="0.05" value="0.3"></div>
+        <div class="rng"><label class="lbl" for="c4-m2">動作 2 回報平均 m₂<output id="c4-m2o">−2.2</output></label><input id="c4-m2" type="range" min="-4" max="0" step="0.1" value="-2.2"></div>
+        <div class="rng"><label class="lbl" for="c4-s2">動作 2 回報標準差 s₂<output id="c4-s2o">1.20</output></label><input id="c4-s2" type="range" min="0.05" max="2" step="0.05" value="1.2"></div>
+        <p class="readout" id="c4b-ro"></p>
+      </div>
+    </div>
+    <div class="legend"><span class="lg ok">動作 1 路徑</span><span class="lg cl">動作 2 路徑</span><span class="lg acc">逐點取 max 的路徑（圓點）</span></div>
+    <p class="plate-f">≥ 只在一維、共用 z⁰ 時成立（本頁推導）；論文只寫 ≠。這只說明 D.5 的不等式，不是 Fig. 4 成功率差異的解釋。(b) 用 101 個起點分位數與 400 步 Euler 積分。</p>
+    <p class="sr" aria-live="polite" id="c4-live"></p>
+  </div>
+  <div class="prose">
+    <p>小結：在精確最佳化與收斂到自洽不動點的假設下，IVF 的 V 是 Q 的 expectile，μ → 1 時趨近資料支撐內的最佳值；逐點對速度取 expectile，μ → 1 時給出 $\max_av_Q$，積分後不等於 $\max_aQ$，所以 IVF 把權重放在純量 Q、V 上。頁面末的 A.2 筆誤：p.18 的 Q 損失最小解式子把 $v_V$ 的引數與取樣條件寫成 $\tau r+\gamma z^\tau+\dots$ 與 $(s,a)$，對照 Eq. 11、21 應為 $z^\tau$ 與 $s'$；本頁以 Eq. 11、21 為準。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">A.2 的結論與假設？為何不對速度殘差做 expectile？</p>
+    <p class="a">在精確最佳化與收斂到自洽不動點的假設下，V 是 Q 的 expectile，μ → 1 時趨近資料支撐內的最佳值；逐點 expectile 在 μ → 1 給出 $\max_av_Q$，積分後不等於 $\max_aQ$（論文只寫 ≠；C4 的玩具中一維共用起點時偏高，本頁推導）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="expectile-regression-value-learning.html">Expectile regression 與 value learning</a>、<a href="iql-lineage-overview.html">IQL 的研究脈絡總覽</a></p>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="impl" data-toc="10" data-tt="實作設定">
+  <div class="ch-num">10 · 實作設定</div>
+  <h2>實作設定與論文未說明的細節</h2>
+  <div class="tscroll" style="max-width:700px"><table>
+    <caption>本章名詞</caption>
+    <thead><tr><th>名詞</th><th>本頁的定義</th></tr></thead><tbody>
+    <tr><td>EMA</td><td>指數移動平均：目標參數 ← 0.995 × 目標參數 + 0.005 × 線上參數</td></tr>
+    <tr><td>ensemble／twin</td><td>同時訓練兩個網路成員（仿 Fujimoto et al. 2018 的 twin Q）</td></tr>
+    <tr><td>action chunk</td><td>策略一次輸出並執行 H 步動作</td></tr>
+    <tr><td>Tweedie's formula</td><td>論文對一步估計 $Q\approx z^0+v_Q(z^0\mid s,a,0)$ 的稱呼</td></tr>
+    <tr><td>classifier-free guidance</td><td>同一個網路以「有條件輸入」與「無條件輸入」兩種方式使用；IVF 借來讓一個網路兼任 V 速度與 Q 速度</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>共同設定（Table 6）：Adam、學習率 $3\times10^{-4}$、500K 梯度步、batch 1024；OGBench 用 4 層寬 1024 的 MLP，OCBench 用殘差 MLP；GELU、LayerNorm；noise level 以 16 維正弦嵌入、從 $\mathrm{Unif}([0,1])$ 抽；目標網路更新率 0.005；γ = 0.999（OGBench）／0.9999（OCBench）；action chunk 長度 H = 5；候選動作 K = 16；BC flow 積分 10 步（VF 訓練時 4 步）；return flow 積分 10 步。</p>
+    <p>VF 專屬（D.3）：V、Q 速度各為兩成員 ensemble；訓練時 M = 1，用一步估計 $Q(s,a)\approx z^0+v_Q(z^0\mid s,a,0)$；評估時 M = 16、10 步積分，候選動作共用起始雜訊以降低變異；VF 不調參。IVF 專屬：一個網路同時當 V、Q 速度（兩成員），μ 從 {0.7, 0.8, 0.9} 調，固定 M = 16。<span class="tag">本頁解讀</span>Table 6 的「return flow 積分 10 步」對應評估與其他方法；VF 訓練用一步估計、評估用 10 步與 M = 16，論文沒有說明兩者差異的影響。</p>
+    <p><span class="tag">本頁推導</span>一步估計為何合理：對獨立耦合、線性內插，真實速度在 τ = 0 滿足 $u(z^0\mid0)=\mathbb E[Z^1]-z^0$，所以 $z^0+u(z^0\mid0)=Q$ 對任何 $z^0$ 都成立（C3 在 τ = 0 顯示斜率 −1）。這只在速度學得準時成立。</p>
+    <p>調參協定：每個 domain 只用 task 2、4 與完整資料調，再套用到 5 個任務與所有資料量（D.3）。論文未說明的項目：Table 6 沒有 M 這一列；子集 softmax 抽樣的溫度；取樣 $z^\tau$ 到任意 τ 用幾步；twin 兩個成員如何合併；IVF 共用網路時動作如何遮蔽；action chunk 內 γ 與獎勵如何處理；基線是否也做獎勵縮放。</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table>
+    <caption>Table 7 的 domain 設定（IVF 的 μ 與回報範圍）</caption>
+    <thead><tr><th>Domain</th><th class="num">IVF μ</th><th class="num">$[r_{\min},r_{\max}]$</th></tr></thead><tbody>
+    <tr><td>cube-triple</td><td class="num">0.9</td><td class="num">[−3, 0]</td></tr>
+    <tr><td>cube-quadruple</td><td class="num">0.8</td><td class="num">[−4, 0]</td></tr>
+    <tr><td>puzzle-4x4</td><td class="num">0.9</td><td class="num">[−16, 0]</td></tr>
+    <tr><td>humanoidmaze-giant</td><td class="num">0.8</td><td class="num">[−1, 0]</td></tr>
+    <tr><td>OCBench（全部）</td><td class="num">0.9</td><td class="num">[−1, 0]</td></tr>
+    </tbody></table></div>
+  <div class="warn"><b>常見錯誤</b>：(1)(2) Eq. 11 的兩個抄寫陷阱（本頁假設，見第 06 章）；(3) VF 的 V 損失用策略動作，IVF 用資料動作；(4) 漏掉獎勵乘 $(1-\gamma)$；(5) Q 速度以 $(s,a)$ 為條件、V 速度在 Q 損失中以 $s'$ 為條件；(6) 取樣 $z^\tau$ 需要積分 flow，不是內插。</div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">γ、K、H、VF 訓練與評估時的 M 與積分步數？一步估計式？</p>
+    <p class="a">γ = 0.999（OGBench）／0.9999（OCBench）；K = 16；H = 5；VF 訓練 M = 1、一步估計 $Q\approx z^0+v_Q(z^0\mid s,a,0)$，評估 M = 16、10 步、候選共用起始雜訊；IVF 固定 M = 16。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="flow-policies-offline-rl-value-learning.html">Flow 策略與離線 RL 的價值學習</a></p>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="estimation" data-toc="11" data-tt="回報估計">
+  <div class="ch-num">11 · 回報估計</div>
+  <h2>在 4 個狀態上，VF 的回報分佈比先前 flow 方法準</h2>
+  <div class="prose">
+    <p>兩個名詞。SARSA：bootstrap 時用資料中實際的下一個動作，所以評估的是收集資料的策略。Oracle：直接以 Eq. 3 擬合同一批軌跡的實際折扣回報，不做 bootstrap，代表 bootstrapping 以外的誤差（函數近似、最佳化、有限樣本等）。</p>
+    <p>流程（Sec. 6.1、D.4）：每個 OGBench domain 取一個狀態，執行固定的起始 action chunk，再依資料收集策略收集 1000 條訓練軌跡與 1000 條評估軌跡。各方法以 SARSA 在訓練軌跡上訓練 100K 步，抽 5000 個回報樣本，與 1000 個評估回報計算 1-Wasserstein 距離。</p>
+    <p>結果（Fig. 2）：VF 在 4 個狀態都低於 FlowCritic、Value Flows、PCBF 三個先前方法。相對 PCBF，VF 的平均 1-Wasserstein 距離在 puzzle-4x4 降低 81%（22 對 118），在 humanoidmaze-giant 降低 89%（13 對 122）；只在 cube-triple 與 puzzle-4x4 接近 Oracle（115 對 92、22 對 20）。cube-quadruple 上 VF 179 對 Oracle 57，與 PCBF 184 接近；humanoidmaze-giant 上 VF 13 低於 Oracle 25，所以 Oracle 不是下界。圖說稱先前方法偏移並集中成窄峰；Fig. 7 的路徑圖顯示 VF 在 τ ≈ 0.25 就展開路徑，基線在 τ ≈ 0.9 才集中。</p>
+    <p>這個實驗能說明的是：在這 4 個狀態上，VF 的回報分佈較接近評估回報。不能說明的是：只有 4 個狀態；沒有任何消融單獨拿掉高斯修正項，所以不能證明修正項是改善的原因（論文對 Value Flows 的用語是 “offering an explanation”）。<span class="tag">本頁解讀</span>Fig. 2 的回報軸（約 −800 到 −200）是未縮放的回報單位，而訓練時獎勵乘了 $(1-\gamma)$；論文沒有說明換算。</p>
+  </div>
+  <figure class="plate" id="f2">
+    <div class="plate-h"><span class="id">F2</span><h3>Fig. 2：平均 1-Wasserstein 距離（越低越好）</h3></div>
+    <p class="plate-lead">各圖刻度不同。數字讀自 Fig. 2 長條上的標示（mean ± 標準差）。</p>
+    <div class="fig2" id="f2-fig"></div>
+    <figcaption class="plate-f">Oracle 為虛線外框；VF 為實心；三個先前方法以不同填紋並在下方標名稱。</figcaption>
+  </figure>
+  <div class="tscroll"><table class="mid">
+    <caption>Fig. 6：implicit 方法的平均 1-Wasserstein 距離（數字讀自長條標示）</caption>
+    <thead><tr><th>Domain</th><th class="num">Oracle</th><th class="num">IVF</th><th class="num">Implicit C51</th><th class="num">Implicit IQN</th><th class="num">DIVL</th></tr></thead><tbody>
+    <tr><td>cube-triple</td><td class="num">92±13</td><td class="num b">116±16</td><td class="num">299±15</td><td class="num">251±13</td><td class="num">287±13</td></tr>
+    <tr><td>cube-quadruple</td><td class="num">57±6</td><td class="num b">174±6</td><td class="num">497±10</td><td class="num">233±7</td><td class="num">290±7</td></tr>
+    <tr><td>puzzle-4x4</td><td class="num">20±5</td><td class="num b">18±4</td><td class="num">279±4</td><td class="num">141±6</td><td class="num">128±6</td></tr>
+    <tr><td>humanoidmaze-giant</td><td class="num">25±3</td><td class="num b">13±2</td><td class="num">205±3</td><td class="num">88±2</td><td class="num">255±3</td></tr>
+    </tbody></table></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Fig. 2 中 VF 與 PCBF、Oracle 的比較？這個實驗能說明什麼、不能說明什麼？</p>
+    <p class="a">VF 在 4 個狀態都低於三個先前方法；相對 PCBF 下降 81%（puzzle-4x4）與 89%（humanoidmaze-giant）；只在 cube-triple（115 對 92）與 puzzle-4x4（22 對 20）接近 Oracle；只有 4 個狀態、沒有單獨拿掉高斯修正項的消融，不能證明修正項是改善的原因。</p>
+  </div></details>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="success" data-toc="12" data-tt="成功率">
+  <div class="ch-num">12 · 成功率</div>
+  <h2>在 10%、25% 資料下，VF 與 IVF 的總平均高於同類基線</h2>
+  <div class="prose">
+    <p>OGBench 有 4 個 domain、各 5 個任務；完整資料是 100M transitions，子集取 10%、25%、50%，以每條軌跡的平均獎勵為分數、用 softmax 不放回抽樣（D.1，溫度未說明），所以子集偏向高獎勵軌跡。10% 仍約 10M transitions。OCBench 有 6 個任務，取 25% 與 100%。全部 4 個種子；OGBench 每次評估每任務 10 個 episode，OCBench 500 個。基線分兩組：explicit（Floq、FlowCritic、Value Flows、PCBF、C51、IQN、QC）與 implicit（DIVL、Implicit C51、Implicit IQN、Implicit QC）。C51 用 51 個原子的類別分佈；IQN 是 Implicit Quantile Networks；QC（Q-chunking）對 action chunk 學純量 critic；Implicit C51、Implicit IQN 是作者自建的 implicit 版本；Implicit QC 是 IQL 式的純量 Q、V 加抽樣挑選。</p>
+    <p>10% 資料下，VF 總平均 48 對最佳 explicit 基線 43（QC），IVF 43 對最佳 implicit 基線 27（Implicit IQN）。100% 資料下，VF 57 對 52（C51、QC），IVF 65 對 66（Implicit C51），IVF 略低。VF 對最佳 explicit 基線的差距在 10%、25%、50%、100% 依序是 +5、+6、+2、+5，不隨資料量單調變化；IVF 對最佳 implicit 基線的差距是 +16、+15、+8、−1，隨資料變少而擴大。正文說 VF「barely performs worse as the dataset size decreases」，對應的總平均是 57、53、54、48。</p>
+  </div>
+  <div class="tscroll"><table class="wide">
+    <caption>OGBench 20 個任務的總平均成功率（%，Table 2–5，mean ± std；粗體為本文方法，底線為同類最佳基線）</caption>
+    <thead><tr><th>資料量</th><th class="num">Floq</th><th class="num">FlowCritic</th><th class="num">Value Flows</th><th class="num">PCBF</th><th class="num">C51</th><th class="num">IQN</th><th class="num">QC</th><th class="num">VF</th><th class="num">DIVL</th><th class="num">Impl. C51</th><th class="num">Impl. IQN</th><th class="num">Impl. QC</th><th class="num">IVF</th></tr></thead><tbody>
+    <tr><td>10%</td><td class="num">13±2</td><td class="num">34±3</td><td class="num">36±2</td><td class="num">29±2</td><td class="num">39±4</td><td class="num">39±4</td><td class="num u">43±2</td><td class="num b">48±3</td><td class="num">14±2</td><td class="num">26±3</td><td class="num u">27±4</td><td class="num">25±3</td><td class="num b">43±3</td></tr>
+    <tr><td>25%</td><td class="num">19±2</td><td class="num">34±4</td><td class="num">47±3</td><td class="num">26±3</td><td class="num">47±3</td><td class="num u">48±3</td><td class="num">44±3</td><td class="num b">54±2</td><td class="num">15±2</td><td class="num">39±4</td><td class="num u">46±2</td><td class="num">38±3</td><td class="num b">61±4</td></tr>
+    <tr><td>50%</td><td class="num">19±3</td><td class="num">32±2</td><td class="num">46±4</td><td class="num">23±2</td><td class="num u">51±5</td><td class="num">50±6</td><td class="num">45±3</td><td class="num b">53±2</td><td class="num">15±2</td><td class="num u">58±2</td><td class="num">57±2</td><td class="num">51±4</td><td class="num b">66±3</td></tr>
+    <tr><td>100%</td><td class="num">16±3</td><td class="num">31±4</td><td class="num">48±3</td><td class="num">23±2</td><td class="num u">52±5</td><td class="num">48±5</td><td class="num u">52±3</td><td class="num b">57±5</td><td class="num">18±3</td><td class="num u">66±3</td><td class="num">61±2</td><td class="num">62±4</td><td class="num b">65±5</td></tr>
+    </tbody></table></div>
+  <div class="tscroll"><table class="mid">
+    <caption>OCBench 6 個任務的總平均成功率（%，Table 3、5）</caption>
+    <thead><tr><th>資料量</th><th class="num">Value Flows</th><th class="num">C51</th><th class="num">QC</th><th class="num">VF</th><th class="num">Impl. C51</th><th class="num">Impl. QC</th><th class="num">IVF</th></tr></thead><tbody>
+    <tr><td>25%</td><td class="num u">60±3</td><td class="num">58±3</td><td class="num">45±5</td><td class="num b">67±2</td><td class="num">51±3</td><td class="num u">57±3</td><td class="num b">58±2</td></tr>
+    <tr><td>100%</td><td class="num">85±2</td><td class="num u">91±2</td><td class="num">62±5</td><td class="num b">92±1</td><td class="num u">86±2</td><td class="num">80±1</td><td class="num b">91±1</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>讀表時要注意幾個例外。humanoidmaze-giant 上所有 explicit 方法接近 0（VF 的 domain 平均依資料量為 0、0、0、1），只有 implicit 方法有成績（IVF 40、50、49、55）。puzzle-4x4 的完整資料下 IVF 82±11，Implicit C51 100±0。OCBench 上 VF 在 25% 與 100% 都是 explicit 中最高（67±2、92±1），IVF 在 100% 是 implicit 中最高（91±1），25% 與 Implicit QC 相當（58±2 對 57±3）。單一任務只有 10 episode × 4 種子，數字粒度粗。</p>
+    <p>消融（Sec. 6.3、App. B.2；cube-triple 與 puzzle-4x4 的 task 2、4，取最後三次評估平均）：只學 $v_Q$、不用 V 速度，與 VF 相近；把抽樣挑選換成一步 actor，論文原句是「reduces success rates by 44%」，沒有說明是相對下降還是百分點。IVF 以純量優勢決定權重，遠優於對速度殘差做 expectile 或用分位數權重。拿掉 reward scaling，VF 的平均成功率約從 86% 降到 11%，IVF 從 76% 降到 11%（Fig. 5）；這是 4 個任務、最後三次評估的平均，與 Table 5 的最終評估協定不同（Table 5 同 4 個任務 VF 平均 93.5、IVF 77），所以 86% 不能與 Table 5 的數字直接比較。flow 積分步數（1 到 20）與 M 都沒有顯著影響，1 步也相近（Fig. 8）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">10% 與 100% 資料下 VF、IVF 與同類最佳基線的總平均？拿掉 reward scaling 後成功率變成多少？Fig. 4 的 one-step actor 結果怎麼引用？</p>
+    <p class="a">10%：VF 48 對 43（QC），IVF 43 對 27（Implicit IQN）；100%：VF 57 對 52，IVF 65 對 66（Implicit C51）；VF 的差距不隨資料量單調變化，IVF 的差距隨資料變少而擴大；拿掉 reward scaling：VF 約 86% → 11%、IVF 76% → 11%；one-step actor 只能照原句「reduces success rates by 44%」引用，論文沒說明是相對或百分點。</p>
+  </div></details>
+</section>
+
+<!-- S13 =========================================================== -->
+<section class="ch" id="history" data-toc="13" data-tt="研究脈絡">
+  <div class="ch-num">13 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>分布式 RL 先以類別分佈（C51）、分位數回歸（QR-DQN）與隱式分位數網路（IQN）表示回報分佈；flow matching 提供另一種表示方式。以 flow 表示價值的方法（TD-Flow、floq、DFC、FlowCritic、FlowIQN）多半只在終點施加 Bellman 目標；Value Flows 與 PCBF 嘗試在路徑上施加一致性；Value Forcing 以加了高斯修正的 flow Bellman 算子在每個 noise level 對齊邊際分佈。IQL 與 IDQL 是 IVF 的 expectile 加權與抽樣挑選的背景。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S14 =========================================================== -->
+<section class="ch" id="next" data-toc="14" data-tt="限制與延伸">
+  <div class="ch-num">14 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>作者在結論寫明：IVF 的理論分析假設精確最佳化與收斂到自洽不動點，神經網路下的收斂保證仍是開放問題；延伸到 online 學習與真實機器人是未來工作（Sec. 7）。本頁另外整理五點：(1) 沒有拿掉高斯修正項的消融；(2) 回報估計只在 4 個狀態上比較；(3) contraction 是固定策略下的理想算子；(4) 子集抽樣偏向高獎勵軌跡；(5) 單任務的成功率粒度粗（10 episode × 4 種子）。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="value-forcing-lineage-hub.html">Value Forcing 的研究脈絡總覽：從 distributional RL 到每個 noise level 的 Bellman 一致性</a><span>總覽</span></div></li>
+    <li><div><a href="rl-mdp-q-learning-basics.html">MDP、Q 函數與 Bellman backup：value-based RL 的基本記號</a><span>基本記號</span></div></li>
+    <li><div><a href="offline-rl-distribution-shift.html">Offline RL 的分布偏移與 OOD 動作造成的 Q 值高估</a><span>Offline RL</span></div></li>
+    <li><div><a href="distributional-rl-return-distributions.html">Distributional RL：回報分布與分布式 Bellman 方程</a><span>分布式 RL</span></div></li>
+    <li><div><a href="flow-matching-velocity-target.html">Flow matching 的速度目標</a><span>Flow matching</span></div></li>
+    <li><div><a href="flow-based-return-critics.html">以 flow matching 表示價值與回報分布的 critic：TD-Flow、floq、DFC、FlowCritic、FlowIQN</a><span>終點監督的 flow critic</span></div></li>
+    <li><div><a href="flow-bellman-operator-all-noise-levels.html">Flow Bellman operator：在所有 noise level 施加 Bellman 一致性</a><span>本論文的核心</span></div></li>
+    <li><div><a href="value-forcing-vf-ivf-algorithms.html">VF 與 IVF：Value Forcing 的 actor-critic 與 implicit 兩種實例</a><span>本論文的演算法</span></div></li>
+    <li><div><a href="expectile-regression-value-learning.html">Expectile regression 與 value learning</a><span>IVF 的背景</span></div></li>
+    <li><div><a href="iql-lineage-overview.html">IQL 的研究脈絡總覽</a><span>IVF 的背景</span></div></li>
+    <li><div><a href="flow-policies-offline-rl-value-learning.html">Flow 策略與離線 RL 的價值學習：FQL、Flow Actor-Critic、Q-chunking 與 OGBench</a><span>策略與基準</span></div></li>
+    <li><div><a href="diffusion-policy-class.html">擴散策略類別</a><span>策略類別</span></div></li>
+  </ol>
+  <p class="read">原文：<a href="https://arxiv.org/abs/2611.02160">arXiv:2611.02160</a>、<a href="https://chongyi-zheng.github.io/value-forcing">專案頁</a>、<a href="https://github.com/chongyi-zheng/value-forcing">程式碼</a></p>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Chongyi Zheng, Zhiyuan Zhou, Qiyang Li, Benjamin Eysenbach, Sergey Levine. Value Forcing: Aligning Return Distributions at All Noise Levels. 2026. <a href="https://arxiv.org/abs/2611.02160">arXiv:2611.02160</a>.</p>
+  <p>本頁的方程式與數字取自論文 v1；標示「本頁推導」的內容為本頁自行推導，「推定」為本頁為了玩具元件自選的數值，「本頁解讀」為本頁對論文的解讀，三者都不是論文結論。標「玩具」的互動元件不是論文實驗，數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>

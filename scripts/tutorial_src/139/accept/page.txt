@@ -1,0 +1,706 @@
+Value Forcing 回報分佈
+
+跳到內容
+
+ No. 139
+ Value Forcing：在每個 noise level 對齊回報分佈
+
+00 摘要01 分布式 RL02 Flow matching03 先前方法04 Flow Bellman 方程05 唯一不動點06 Q 損失07 V 損失08 VF 與 IVF09 IVF 理論10 實作設定11 回報估計12 成功率13 研究脈絡14 限制與延伸
+
+00摘要
+01分布式 RL
+02Flow matching
+03先前方法
+04Flow Bellman 方程
+05唯一不動點
+06Q 損失
+07V 損失
+08VF 與 IVF
+09IVF 理論
+10實作設定
+11回報估計
+12成功率
+13研究脈絡
+14限制與延伸
+
+ No. 139 · 互動教學 · arXiv 2611.02160 · 2026
+
+ Value Forcing：在每個 noise level 對齊回報分佈
+
+ 回報（return）是之後所有獎勵的折扣和。Flow matching 是一種生成模型：它學一個速度場，把 τ = 0 的高斯分佈逐步轉換成 τ = 1 的資料分佈，τ 稱為 noise level。Value Forcing 用它表示回報分佈，並在每個 τ 都要求 Bellman 一致性，方法是在 Bellman 方程中加一項高斯修正。論文據此提出兩個演算法：VF（explicit：另外有策略，從候選動作中挑 Q 最大者）與 IVF（implicit：不學策略，只用資料動作加權學 V）。
+
+ Chongyi Zheng、Zhiyuan Zhou、Qiyang Li、Benjamin Eysenbach、Sergey Levine（2026）〈Value Forcing: Aligning Return Distributions at All Noise Levels〉
+
+τ 0τ 0.5τ 1N(0,1) 雜訊
+每一層都施加 Bellman 一致性
+回報分佈
+
+ 01 · 問題γ 是折扣因子，N $N$ 是獨立標準高斯。乾淨的 Bellman 方程 Z=r+γZ′ $Z=r+\gamma Z'$ 在 τ = 0 不成立：兩側都應是標準高斯，但 γZ′ $\gamma Z'$ 的變異數只有 γ2 $\gamma^2$ 。Value Forcing 補上 (1−τ)1−γ2 N $(1-\tau)\sqrt{1-\gamma^2}\,N$ ​N。
+
+ 02 · 理論對每個 noise level，新算子都是係數 γ 的 contraction（每套用一次，兩個分佈的距離至少縮小為 γ 倍），因此每一層都有唯一不動點（Remark 1）。
+
+ 03 · 結果VF 是本文的 explicit 版本，IVF 是 implicit 版本。20 個 OGBench 任務、10% 資料：VF 總平均成功率 48%，最佳 explicit 基線 43%；IVF 43%，最佳 implicit 基線 27%（Table 2）。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+ 程式碼 ↗
+
+ 01 · 分布式 RL
+
+ 分布式 RL 把整個回報分佈當成 TD 目標
+
+ 強化學習的問題寫成無限期馬可夫決策過程 M=(S,A,p,r,ρ,γ) $\mathcal M=(\mathcal S,\mathcal A,p,r,\rho,\gamma)$ ：代理人在狀態 s $s$ 選動作 a $a$ ，得到確定且有界的獎勵 r(s,a)∈[rmin⁡,rmax⁡] $r(s,a)\in[r_{\min},r_{\max}]$ ​,rmax​]，環境依轉移分佈 p(s′∣s,a) $p(s'\mid s,a)$ ∣s,a) 進到下一個狀態 s′ $s'$ ；ρ $\rho$ 是初始狀態分佈，γ∈[0,1) $\gamma\in[0,1)$ 是折扣因子（Sec. 3）。t $t$ 表示 RL 的時間步。策略 π(a∣s) $\pi(a\mid s)$ 決定每個狀態下選哪個動作。本文處理 offline RL：只有一個由行為策略（behavior policy）πβ $\pi_\beta$ ​ 收集的固定資料集 D={(s,a,r,s′)} $\mathcal D=\{(s,a,r,s')\}$ )}，目標是學一個最大化 Eπ[∑tγtr(st,at)] $\mathbb E_\pi[\sum_t\gamma^tr(s_t,a_t)]$ ​[∑t​γtr(st​,at​)] 的策略。
+
+ 回報隨機變數定義為 Zπ(s,a)=∑t≥0γtr(St,At) $Z^\pi(s,a)=\sum_{t\ge0}\gamma^tr(S_t,A_t)$ (s,a)=∑t≥0​γtr(St​,At​)，其中 (St,At) $(S_t,A_t)$ ​,At​) 是第 t $t$ 步的狀態與動作隨機變數；它的期望是 Q 函數 Qπ(s,a)=E[Zπ(s,a)] $Q^\pi(s,a)=\mathbb E[Z^\pi(s,a)]$ (s,a)=E[Zπ(s,a)]。時間差分（temporal difference, TD）學習用「一步獎勵加上自己對下一步的估計」當回歸目標。作者的出發點是：每筆轉移只提供一個即時獎勵，沒有真實的期望回報，所以監督是有限而間接的；TD 用自己的估計當目標，可能有偏，資料少時沒有修正的機會（Sec. 1）。
+
+ 分布式 RL（distributional RL）改學整個回報分佈，而不只學期望。論文的例子：一個動作以相同機率得到 −1 與 +1，另一個動作恆得 0，兩者期望相同，分佈不同；學會區分它們可以更有效地使用資料（Sec. 1）。回報分佈滿足分布式 Bellman 方程（Eq. 1）：
+
+ Zπ(s,a)=dTπZπ(s,a)=r(s,a)+γZπ(S′,A′) $Z^\pi(s,a)\overset{d}{=}\mathcal T^\pi Z^\pi(s,a)=r(s,a)+\gamma Z^\pi(S',A')$ (s,a)=dTπZπ(s,a)=r(s,a)+γZπ(S′,A′)
+Eq. 1
+
+ 這裡的 =d $\overset d=$ d 表示分佈相等：左右兩邊的隨機變數分佈相同，不是逐點相等。(S′,A′) $(S',A')$ ,A′) 是下一步的狀態與動作隨機變數，Tπ $\mathcal T^\pi$ 稱為分布式 Bellman 算子。它在 max-Wasserstein 距離下是 γ-contraction（Bellemare et al. 2017，本文引用、不重證），所以有唯一不動點，就是 Zπ $Z^\pi$ ；對 Eq. 1 取期望，回到一般 Q 函數的 Bellman 方程（Sec. 3）。
+
+ 兩個分佈之間的 p $p$ -Wasserstein 距離 Wp $W_p$ ​ 衡量「把一個分佈搬成另一個至少要移動多遠」。回報是一維的，所以有分位數公式（App. A.1 的 Eq. 17）：Wp(Z1,Z2)=(∫01∣FZ1−1(u)−FZ2−1(u)∣p du)1/p $W_p(Z_1,Z_2)=\big(\int_0^1|F^{-1}_{Z_1}(u)-F^{-1}_{Z_2}(u)|^p\,du\big)^{1/p}$ ​(Z1​,Z2​)=(∫01​∣FZ1​−1​(u)−FZ2​−1​(u)∣pdu)1/p，F−1 $F^{-1}$ 是分位數函數。對兩組等量、等權的樣本，這就是把兩組樣本各自排序後逐一配對、取差的平均（p=1 $p=1$ 時）。Wpsup⁡ $W_p^{\sup}$ sup​ 是對所有 (s,a) $(s,a)$ 取 Wp $W_p$ ​ 的上確界。一個算子若使任意兩個輸入的距離至少縮小為 γ 倍，稱為 γ-contraction；Banach 不動點定理保證這樣的算子在完備的度量空間中有唯一不動點，反覆套用會收斂到它。
+
+ 符號表
+
+ 符號意義章節
+
+ s,a,r,s′ $s,a,r,s'$ ；γ $\gamma$ 狀態、動作、確定性有界獎勵、下一狀態；折扣因子01
+
+ t $t$ ；π $\pi$ 、πβ $\pi_\beta$ ​RL 時間步；策略、行為策略01
+
+ Zπ(s,a) $Z^\pi(s,a)$ (s,a)、Qπ $Q^\pi$ 回報隨機變數；其期望01
+
+ =d $\overset d=$ d；Wp $W_p$ ​、Wpsup⁡ $W_p^{\sup}$ sup​分佈相等；Wasserstein 距離與其上確界01
+
+ τ $\tau$ flow 的 noise level，0 = 高斯雜訊，1 = 回報02
+
+ x0,x1,xτ $x^0,x^1,x^\tau$ ,x1,xτ；u,v,ϕ $u,v,\phi$ 雜訊、目標樣本、內插；真實速度、參數化速度、flow 路徑02
+
+ Zπ(s,a,τ) $Z^\pi(s,a,\tau)$ (s,a,τ)；N,ϵ $N,\epsilon$ 第 τ 層 noisy return；獨立標準高斯（ε 是損失中的取樣值）04
+
+ G $G$ 不動點閉式中的獨立標準高斯（本頁記號）05
+
+ m′,σ′ $m',\sigma'$ ,σ′玩具中下一狀態乾淨回報的平均與標準差05、06
+
+ ZV,ZQ $Z_V,Z_Q$ ​,ZQ​；ϕV,ϕQ $\phi_V,\phi_Q$ ​,ϕQ​；uV,uQ $u_V,u_Q$ ​,uQ​；vV,vQ $v_V,v_Q$ ​,vQ​V／Q 回報、flow、真實速度、參數化速度06、07
+
+ K $K$ 、M $M$ 候選動作數；估計 Q、V 的回報樣本數08
+
+ μ $\mu$ 、wμ $w_\mu$ ​、πμ $\pi^\mu$ expectile；Eq. 15 的權重；隱式策略08、09
+
+ 延伸閱讀：MDP、Q 函數與 Bellman backup、Offline RL 的分布偏移、Distributional RL：回報分布與分布式 Bellman 方程
+
+ 02 · Flow matching
+
+ Flow matching 用速度場把高斯分佈逐步轉換成回報分佈
+
+ Flow matching 用一個依 noise level τ∈[0,1] $\tau\in[0,1]$ 而變的速度場 u(xτ∣τ) $u(x^\tau\mid\tau)$ ∣τ) 定義一條路徑：從 τ=0 $\tau=0$ 的雜訊 x0 $x^0$ 出發，解常微分方程（Eq. 2）到 τ=1 $\tau=1$ 。本頁的 τ 一律指 noise level；後面 IVF 用到的 expectile 參數記為 μ。
+
+ ddτϕ(x0∣τ)=u(ϕ(x0∣τ)∣τ),ϕ(x0∣0)=x0 $\frac{d}{d\tau}\phi(x^0\mid\tau)=u\big(\phi(x^0\mid\tau)\mid\tau\big),\qquad \phi(x^0\mid0)=x^0$ d​ϕ(x0∣τ)=u(ϕ(x0∣τ)∣τ),ϕ(x0∣0)=x0
+Eq. 2
+
+ 數值上，Euler 積分把 [0,1] $[0,1]$ 切成幾步，每一步把目前位置加上「速度 × 步長」。訓練時取雜訊 x0∼N(0,I) $x^0\sim\mathcal N(0,I)$ ∼N(0,I)、目標分佈的樣本 x1 $x^1$ 、τ∼Unif[0,1] $\tau\sim\mathrm{Unif}[0,1]$ ，令 xτ=(1−τ)x0+τx1 $x^\tau=(1-\tau)x^0+\tau x^1$ =(1−τ)x0+τx1（線性內插），最小化條件 flow matching（CFM）損失（Eq. 3）：回歸輸入是 xτ $x^\tau$ ，目標是 x1−x0 $x^1-x^0$ −x0。
+
+ E[∥v(xτ∣τ)−(x1−x0)∥22] $\mathbb E\Big[\big\|v(x^\tau\mid\tau)-(x^1-x^0)\big\|_2^2\Big]$ ​v(xτ∣τ)−(x1−x0)​22​]
+Eq. 3
+
+ 兩個名詞後面會一直用到。耦合（coupling）是兩個隨機變數的一個聯合分佈，且它的兩個單變數分佈是指定的那兩個：Eq. 3 讓 x0 $x^0$ 與 x1 $x^1$ 獨立抽樣，這是一種耦合（獨立耦合）；後面的 PCBF 讓兩條路徑用同一個 x0 $x^0$ ，是另一種耦合。邊際（marginal）是聯合分佈中單一變數的分佈，例如 xτ $x^\tau$ 單獨的分佈 p(xτ∣τ) $p(x^\tau\mid\tau)$ ∣τ)，稱為第 τ 層的邊際。
+
+ Lemma 1（非正式，引 Liu et al. 2022 Sec. 2.3、3.3）把這件事一般化：設隨機過程 X(τ) $X(\tau)$ 連接 X(0)=X0 $X(0)=X^0$ 與 X(1)=X1 $X(1)=X^1$ ，且給定一組隨機變數 X $\mathcal X$ 後 X(τ) $X(\tau)$ 是 τ 的確定函數。則以 u(x∣τ)≜EX[ddτX(τ)∣X(τ)=x] $u(x\mid\tau)\triangleq\mathbb E_{\mathcal X}[\tfrac{d}{d\tau}X(\tau)\mid X(\tau)=x]$ ​[dτd​X(τ)∣X(τ)=x] 定義的速度場生成 X(τ) $X(\tau)$ 的邊際密度路徑 p(xτ∣τ) $p(x^\tau\mid\tau)$ ∣τ)；而且可以用參數化速度 v $v$ 最小化 Eq. 4 來擬合 u $u$ 。取 X=(X0,X1) $\mathcal X=(X^0,X^1)$ ,X1)、X(τ)=(1−τ)X0+τX1 $X(\tau)=(1-\tau)X^0+\tau X^1$ +τX1 就回到 Eq. 3。
+
+ EX, τ∼Unif([0,1])[∥v(xτ∣τ)−ddτX(τ)∥2] $\mathbb E_{\mathcal X,\ \tau\sim\mathrm{Unif}([0,1])}\Big[\big\|v(x^\tau\mid\tau)-\tfrac{d}{d\tau}X(\tau)\big\|^2\Big]$ ​[​v(xτ∣τ)−dτd​X(τ)​2]
+Eq. 4
+
+ 所以 Lemma 1 說了兩件事：以「過程導數的條件期望」定義的速度會生成該過程的邊際分佈；而對 ddτX $\tfrac{d}{d\tau}X$ d​X 做平方誤差回歸就能學到這個速度，因為平方誤差的最小解是條件期望。回歸目標本身可以很吵，條件平均才是速度。這是全文唯一的工具：之後每個損失都是「定義一個過程 → 對 τ 微分 → 套 Lemma 1」。另外，一維的 flow 路徑不會交叉，因此保持分位數：雜訊的第 q 分位數會被送到目標的第 q 分位數（論文 D.5 引 Liu et al. 2022 Lemma 3.9 與 Bansal et al. 2026 Lemma 7）。
+
+ 延伸閱讀：Flow matching 的速度目標
+
+ 03 · 先前方法
+
+ 先前方法只在部分 noise level 施加正確的一致性
+
+ 用 flow matching 表示回報分佈時，可以要求 Bellman 一致性的地方不只 τ = 1。作者把先前方法依「在哪個 noise level 施加一致性」分成三類（Sec. 1–2，App. D.2，Table 1）。
+
+ 先看 τ = 0 為什麼特別。所有 flow 在 τ = 0 的分佈都是初始雜訊，也就是標準高斯；所以 Z(s,a,0) $Z(s,a,0)$ 與 Z(S′,A′,0) $Z(S',A',0)$ ,A′,0) 都是 N(0,1) $\mathcal N(0,1)$ 。但 γZ(S′,A′,0) $\gamma Z(S',A',0)$ ,A′,0) 的變異數是 γ2<1 $\gamma^2<1$ <1，因此 r+γZ(S′,A′,0) $r+\gamma Z(S',A',0)$ ,A′,0) 不可能是標準高斯：乾淨的 Bellman 方程在 τ = 0 無法成立。
+
+ 只在終點：FlowCritic 以下一步的乾淨回報樣本 z1 $z^1$ 組成 TD 目標 y=r+γz1 $y=r+\gamma z^1$ ，再用 Eq. 3 擬合（D.2 的 Eq. 25），所以只在終點 τ = 1 施加 Bellman 一致性，不在中間層施加。DFC、Dual-Flow RL 同屬這一類；FlowIQN 另外用分位數對齊的耦合。
+
+ 每一層用乾淨方程：Value Flows（以及 EVOR）直接以速度場當 TD 目標，在所有 noise level「天真地」（naïvely）套用乾淨的 Bellman 方程；論文稱這在 τ = 0 給出不正確的監督。
+
+ 沿耦合路徑：PCBF 讓兩條 flow 路徑共用同一個起點雜訊 z0 $z^0$ ，沿這對耦合路徑套用 Bellman 算子；論文指出，因為耦合，邊際路徑本身缺乏 Bellman 一致性。
+
+ F1三類方法施加 Bellman 一致性的位置
+
+ 實心圓：施加 Bellman 一致性的位置；×：論文稱不正確的位置（τ = 0）。PCBF 沿共用起點雜訊的耦合路徑施加，邊際不一致，不畫在此圖。
+
+ Table 1 摘錄（✓／✗ 照抄；註記 †、‡、§ 見下）
+ 方法完整回報分佈初始層為高斯中間層 Bellman終點 Bellman
+
+ Floq✗✗✗✓
+
+ FlowCritic✓✓✗✓
+
+ FlowIQN✓✗✗✓
+
+ Value Flows✓✗†✓✓
+
+ EVOR✓✗✗‡✓
+
+ PCBF✓✓✗§✓
+
+ VF／IVF✓✓✓✓
+
+ † Value Flows 在中間層的邊際上施加 Bellman 方程，但不會在初始層恢復高斯。‡ EVOR 直接用回報速度組成 TD 目標。§ PCBF 以共用的初始雜訊耦合兩條路徑，而不是要求每個中間邊際滿足 Bellman 方程。FlowIQN、EVOR 不在實驗中。
+
+ PCBF 的恆等式（App. D.2）
+
+ 令 z0∼N(0,1) $z^0\sim\mathcal N(0,1)$ ∼N(0,1)，z′ $z'$ 是下一步以同一個 z0 $z^0$ 經目標 flow 生成的乾淨回報，z~τ=(1−τ)z0+τz′ $\tilde z^\tau=(1-\tau)z^0+\tau z'$ τ=(1−τ)z0+τz′。PCBF 的第二條內插路徑可寫成 zτ=(1−τ)z0+τ(r+γz′)=τr+γz~τ+(1−τ)(1−γ)z0 $z^\tau=(1-\tau)z^0+\tau(r+\gamma z')=\tau r+\gamma\tilde z^\tau+(1-\tau)(1-\gamma)z^0$ =(1−τ)z0+τ(r+γz′)=τr+γz~τ+(1−τ)(1−γ)z0。它用同一個 z0 $z^0$ 、係數 1−γ $1-\gamma$ ；Value Forcing 用獨立的高斯、係數 1−γ2 $\sqrt{1-\gamma^2}$ ​。兩者在 τ = 0 都保持單位高斯（PCBF：γz0+(1−γ)z0=z0 $\gamma z^0+(1-\gamma)z^0=z^0$ +(1−γ)z0=z0）。
+
+ 延伸閱讀：以 flow matching 表示價值與回報分布的 critic、Flow Bellman operator：在所有 noise level 施加 Bellman 一致性
+
+ 04 · Flow Bellman 方程
+
+ Flow Bellman 方程多一項高斯修正
+
+ 作者先定義第 τ 層的 noisy return 隨機變數 Zπ(s,a,τ) $Z^\pi(s,a,\tau)$ (s,a,τ)，且 Zπ(s,a,1)=dZπ(s,a) $Z^\pi(s,a,1)\overset d=Z^\pi(s,a)$ (s,a,1)=dZπ(s,a)；再提出依 τ 而定的 flow Bellman 算子 Tτπ $\mathcal T^\pi_\tau$ π​，它滿足 flow Bellman 方程（Eq. 5）：
+
+ Zπ(s,a,τ)=dTτπZπ(s,a,τ)=τr(s,a)+γZπ(S′,A′,τ)+(1−τ)1−γ2 N $Z^\pi(s,a,\tau)\overset{d}{=}\mathcal T^\pi_\tau Z^\pi(s,a,\tau)=\tau r(s,a)+\gamma Z^\pi(S',A',\tau)+(1-\tau)\sqrt{1-\gamma^2}\,N$ (s,a,τ)=dTτπ​Zπ(s,a,τ)=τr(s,a)+γZπ(S′,A′,τ)+(1−τ)1−γ2​N
+Eq. 5
+
+ Zπ(s,a,τ)=d τr(s,a)+γZπ(S′,A′,τ)+(1−τ)1−γ2 N $\begin{aligned}Z^\pi(s,a,\tau)\overset{d}{=}\ &\tau r(s,a)+\gamma Z^\pi(S',A',\tau)\\&+(1-\tau)\sqrt{1-\gamma^2}\,N\end{aligned}$ (s,a,τ)=d ​τr(s,a)+γZπ(S′,A′,τ)+(1−τ)1−γ2​N​
+Eq. 5
+
+ 其中 N∼N(0,1) $N\sim\mathcal N(0,1)$ ，與初始雜訊分佈獨立。論文對這項高斯修正的說明是：它「accounts for the variance in the discounted return at the next time step」。兩端檢查（Sec. 4.1）：τ = 0 時方程變成 Zπ(s,a,0)=dγZπ(S′,A′,0)+1−γ2N $Z^\pi(s,a,0)\overset d=\gamma Z^\pi(S',A',0)+\sqrt{1-\gamma^2}N$ (s,a,0)=dγZπ(S′,A′,0)+1−γ2​N，兩側都是標準高斯（初始雜訊），γN′ $\gamma N'$ 的變異數只有 γ2 $\gamma^2$ ，加上 1−γ2N $\sqrt{1-\gamma^2}N$ ​N 後變異數 γ2+(1−γ2)=1 $\gamma^2+(1-\gamma^2)=1$ +(1−γ2)=1，才回到 1；所以修正項不可少，省略它（如 Value Flows）會得到錯誤的方程。τ = 1 時修正項消失，回到 Eq. 1。
+
+ 本頁推導這個式子可以由線性內插反推。令 Z(τ)=(1−τ)Z0+τZ1 $Z(\tau)=(1-\tau)Z^0+\tau Z^1$ +τZ1，終點滿足 Eq. 1 Z1=r+γZ1′ $Z^1=r+\gamma Z^{1\prime}$ =r+γZ1′，起點雜訊滿足 Z0=dγZ0′+1−γ2N $Z^0\overset d=\gamma Z^{0\prime}+\sqrt{1-\gamma^2}N$ =dγZ0′+1−γ2​N（三者皆標準高斯、N $N$ 獨立）。代入得 Z(τ)=τr+γ[(1−τ)Z0′+τZ1′]+(1−τ)1−γ2N=τr+γZ′(τ)+(1−τ)1−γ2N $Z(\tau)=\tau r+\gamma\big[(1-\tau)Z^{0\prime}+\tau Z^{1\prime}\big]+(1-\tau)\sqrt{1-\gamma^2}N=\tau r+\gamma Z'(\tau)+(1-\tau)\sqrt{1-\gamma^2}N$ +τZ1′]+(1−τ)1−γ2​N=τr+γZ′(τ)+(1−τ)1−γ2​N，就是 Eq. 5。
+
+ 單步修正係數 1−γ2 $\sqrt{1-\gamma^2}$ ​ 在論文的設定下很小。γ = 0.999（OGBench）時 1−γ2=0.0447 $\sqrt{1-\gamma^2}=0.0447$ ​=0.0447，γ = 0.9999（OCBench）時為 0.0141本頁推導；有效視界約 1/(1−γ) $1/(1-\gamma)$ 步，許多小修正累積起來才構成整個單位高斯。論文的腳註 1 說，若改用 Unif([0,1]) $\mathrm{Unif}([0,1])$ 當初始雜訊，會得到不同的修正項；論文沒有給出式子。
+
+ 單步修正係數的量級（本頁推導）
+ γ1−γ2 $\sqrt{1-\gamma^2}$ ​1/(1−γ) $1/(1-\gamma)$ 
+
+ 0.9（本頁元件預設）0.435910
+
+ 0.990.1411100
+
+ 0.999（OGBench）0.04471000
+
+ 0.9999（OCBench）0.014110000
+
+ 下一章會看到：加不加修正，兩個算子的不動點在 τ < 1 不同，越靠近 τ = 1 差越小，τ = 1 重合。
+
+ 05 · 唯一不動點
+
+ 每個 noise level 都有唯一不動點
+
+ Remark 1（正式版為 App. A.1 的 Proposition 1）：給定策略 π、γ∈[0,1) $\gamma\in[0,1)$ 、noise level τ∈[0,1] $\tau\in[0,1]$ 與 p∈[1,∞) $p\in[1,\infty)$ ，對任兩個回報隨機變數 Z1,Z2∈Z $Z_1,Z_2\in\mathcal Z$ ​,Z2​∈Z，
+
+ Wpsup⁡(TτπZ1,TτπZ2)≤γ Wpsup⁡(Z1,Z2),Wpsup⁡(Z1,Z2)≜sup⁡s,aWp(Z1(s,a,τ),Z2(s,a,τ)) $W_p^{\sup}(\mathcal T^\pi_\tau Z_1,\mathcal T^\pi_\tau Z_2)\le\gamma\,W_p^{\sup}(Z_1,Z_2),\qquad W_p^{\sup}(Z_1,Z_2)\triangleq\sup_{s,a}W_p\big(Z_1(s,a,\tau),Z_2(s,a,\tau)\big)$ sup​(Tτπ​Z1​,Tτπ​Z2​)≤γWpsup​(Z1​,Z2​),Wpsup​(Z1​,Z2​)≜s,asup​Wp​(Z1​(s,a,τ),Z2​(s,a,τ))
+Eq. 6
+
+ 係數是 γ。由 Banach 不動點定理，flow Bellman 算子在每個 noise level 都有唯一不動點，反覆套用 Tτπ $\mathcal T^\pi_\tau$ π​ 會收斂到它（Sec. 4.1）。證明（下方展開）用同一個均勻變數的分位數耦合與同一個 N $N$ ：兩邊的 τr $\tau r$ 與高斯項完全相同而相消，只剩 γ(C1−C2) $\gamma(C_1-C_2)$ ​−C2​)，所以係數與 τ 無關。
+
+ 這個結論的前提要說清楚：固定策略 π（這是 policy evaluation 的算子）、固定 τ、γ < 1、p∈[1,∞) $p\in[1,\infty)$ 、回報屬於一致有界動差的集合 Z $\mathcal Z$ （Sec. 3），而且回報是一維的才有分位數公式；Banach 定理還需要 (Z,Wpsup⁡) $(\mathcal Z,W_p^{\sup})$ sup​) 是完備的度量空間，論文沒有驗證。這些都是對理想算子的敘述，不是對神經網路訓練的收斂保證。
+
+ App. A.1 的證明，四步
+
+ 1. 固定 (s,a) $(s,a)$ 。取 U∼Unif[0,1] $U\sim\mathrm{Unif}[0,1]$ 與 (S′,A′) $(S',A')$ ,A′) 獨立，令 Ci=FZi−1(U∣S′,A′,τ) $C_i=F^{-1}_{Z_i}(U\mid S',A',\tau)$ ​=FZi​−1​(U∣S′,A′,τ)。因為 P(F−1(U)≤y)=P(U≤F(y))=F(y) $P(F^{-1}(U)\le y)=P(U\le F(y))=F(y)$ (U)≤y)=P(U≤F(y))=F(y)，Ci=dZi(S′,A′,τ) $C_i\overset d=Z_i(S',A',\tau)$ ​=dZi​(S′,A′,τ)，所以 (C1,C2) $(C_1,C_2)$ ​,C2​) 是一個耦合。
+
+ 2. 這個耦合恰好給出一維的分位數公式 Eq. 17：Wp(Z1,Z2)=(EU∣C1−C2∣p)1/p $W_p(Z_1,Z_2)=(\mathbb E_U|C_1-C_2|^p)^{1/p}$ ​(Z1​,Z2​)=(EU​∣C1​−C2​∣p)1/p。
+
+ 3. 令 Ti=τr+γCi+(1−τ)1−γ2N $T_i=\tau r+\gamma C_i+(1-\tau)\sqrt{1-\gamma^2}N$ ​=τr+γCi​+(1−τ)1−γ2​N，兩者共用 (S′,A′,U,N) $(S',A',U,N)$ ,A′,U,N)；Ti=dTτZi $T_i\overset d=\mathcal T_\tau Z_i$ ​=dTτ​Zi​，所以 (T1,T2) $(T_1,T_2)$ ​,T2​) 是 TτZ1 $\mathcal T_\tau Z_1$ ​Z1​ 與 TτZ2 $\mathcal T_\tau Z_2$ ​Z2​ 的耦合。
+
+ 4. Wp $W_p$ ​ 是對所有耦合取下確界，所以 Wp(TτZ1,TτZ2)≤(E∣T1−T2∣p)1/p=γ(E∣C1−C2∣p)1/p=γ(ES′,A′[Wp(⋅)p])1/p≤γWpsup⁡(Z1,Z2) $W_p(\mathcal T_\tau Z_1,\mathcal T_\tau Z_2)\le(\mathbb E|T_1-T_2|^p)^{1/p}=\gamma(\mathbb E|C_1-C_2|^p)^{1/p}=\gamma(\mathbb E_{S',A'}[W_p(\cdot)^p])^{1/p}\le\gamma W_p^{\sup}(Z_1,Z_2)$ ​(Tτ​Z1​,Tτ​Z2​)≤(E∣T1​−T2​∣p)1/p=γ(E∣C1​−C2​∣p)1/p=γ(ES′,A′​[Wp​(⋅)p])1/p≤γWpsup​(Z1​,Z2​)。對 (s,a) $(s,a)$ 取上確界即得 Eq. 6。
+
+ 本頁推導不動點長什麼樣？把 Eq. 5 沿軌跡展開，每一步用一個新的獨立 Nt $N_t$ ​：Zπ(s,a,τ)=dτ∑tγtrt+(1−τ)1−γ2∑tγtNt $Z^\pi(s,a,\tau)\overset d=\tau\sum_t\gamma^tr_t+(1-\tau)\sqrt{1-\gamma^2}\sum_t\gamma^tN_t$ (s,a,τ)=dτ∑t​γtrt​+(1−τ)1−γ2​∑t​γtNt​。∑tγtNt $\sum_t\gamma^tN_t$ ​γtNt​ 是變異數 ∑tγ2t=1/(1−γ2) $\sum_t\gamma^{2t}=1/(1-\gamma^2)$ ​γ2t=1/(1−γ2) 的高斯，所以第二項就是 (1−τ)G $(1-\tau)G$ ，G $G$ 是與回報獨立的標準高斯（本頁記號）。結論：
+
+ Zπ(s,a,τ)=dτ Zπ(s,a)+(1−τ) G,G∼N(0,1) $Z^\pi(s,a,\tau)\overset{d}{=}\tau\,Z^\pi(s,a)+(1-\tau)\,G,\qquad G\sim\mathcal N(0,1)$ (s,a,τ)=dτZπ(s,a)+(1−τ)G,G∼N(0,1)
+本頁推導
+
+ 這正是 Eq. 3 獨立耦合、線性內插的邊際路徑；平均 τQπ $\tau Q^\pi$ ，變異數 τ2VarZπ+(1−τ)2 $\tau^2\mathrm{Var}Z^\pi+(1-\tau)^2$ VarZπ+(1−τ)2。條件是每一步的 N $N$ 與未來全部獨立、γ < 1。
+
+ 本頁推導對照組稱為「乾淨算子（本頁模型）」：若在每個 τ 都把 r+γZ′(τ) $r+\gamma Z'(\tau)$ (τ) 當成作用在邊際分佈上的算子，它就是原本的 Tπ $\mathcal T^\pi$ ，在每個 τ 的不動點都是 Zπ $Z^\pi$ 本身，與「τ = 0 必須是標準高斯」矛盾。兩個算子都是 γ-contraction，差別在收斂到哪裡：兩者在 τ < 1 不同、越靠近 τ = 1 越接近、τ = 1 重合。這是頁面的模型，不是 Value Flows 實際學到的分佈：Value Flows 的 DCFM 目標是目標網路的速度、沒有 γ 係數（App. D.2），而且任何 flow 在 τ = 0 的邊際依構造就是輸入高斯。論文自己的說法只到「VF 修正了 Value Flows 在 τ = 0 不一致的監督，offering an explanation」（Sec. 6.1）。
+
+ 下面兩個玩具元件只用來看這兩個算子的差別，不是重現論文實驗。C1 看「一次 backup」：假設下一步已經是正確分佈，算一次右邊。下一狀態的乾淨回報設為 N(m′,σ′2) $\mathcal N(m',\sigma'^2)$ ,σ′2)（m′ $m'$ 、σ′ $\sigma'$ 為推定值），依上面的閉式，它在 τ 的正確分佈是 τZ′+(1−τ)G $\tau Z'+(1-\tau)G$ +(1−τ)G。兩高斯之間的 2-Wasserstein 距離有閉式 W2=Δμ2+Δσ2 $W_2=\sqrt{\Delta\mu^2+\Delta\sigma^2}$ ​=Δμ2+Δσ2​。結果本頁推導：修正版恰好等於正確分佈；乾淨算子的平均差 (1−τ)r $(1-\tau)r$ 、變異數差 (1−τ)2(1−γ2) $(1-\tau)^2(1-\gamma^2)$ (1−γ2)，在 τ = 0 最大、τ = 1 消失。
+
+ C1一次 backup 在每個 τ 的差別
+玩具：不是論文實驗推定
+
+ 比較三個分佈：正確分佈、修正版 τr+γZ′(τ)+(1−τ)1−γ2N $\tau r+\gamma Z'(\tau)+(1-\tau)\sqrt{1-\gamma^2}N$ (τ)+(1−τ)1−γ2​N，與乾淨算子（本頁模型）r+γZ′(τ) $r+\gamma Z'(\tau)$ (τ)。預設 γ = 0.9 讓差別看得見；論文 γ = 0.999 時單步係數只有 0.0447（見上一章的量級表）。
+
+ 折扣因子 γ0.900
+
+ γ = 0.90.990.9990.9999
+
+ noise level τ0.50
+
+ 獎勵 r−1.0
+
+ 下一狀態回報平均 m′−2.0
+
+ 下一狀態回報標準差 σ′0.50
+
+ 獎勵乘 (1−γ)（論文的實作）
+
+ 正確 平均 −1.4000，標準差 0.5483
+修正版 平均 −1.4000，標準差 0.5483
+乾淨算子（本頁模型） 平均 −1.9000，標準差 0.5031
+W₂ = 0.5020　√(1−γ²) = 0.4359　1/(1−γ) = 10
+
+ 正確分佈修正版（圓點）乾淨算子，本頁模型（三角）
+
+ 這是把乾淨方程當成對每層邊際分佈的算子所得的模型，不是 Value Flows 實際學到的分佈。m′、σ′ 不隨勾選改變，視為讀者自選的單位；τ = 0 的 W₂ 只依 r 與 γ（平均差 r、標準差 1 對 γ），與 m′、σ′ 無關，所以勾選只用來看 τ = 0 的單步差距在論文設定下有多小。數值由本頁以閉式即時計算本頁推導。
+
+ γ = 0.900，τ = 0.50，W₂ = 0.5020
+
+ 預設下（γ = 0.9、τ = 0.5、r = −1）乾淨算子的平均比正確分佈低 0.5，距離約 0.50；τ = 0 時正確分佈是 N(0,1)，乾淨算子給出平均 −1、標準差 0.9。勾選獎勵縮放且 γ = 0.999 時，τ = 0 的單步距離只剩約 0.001。單步差距可以很小，但下一個元件顯示，反覆套用之後兩個算子停在不同的地方。
+
+ C2 用一個兩個狀態-動作對（對 1、對 2）的玩具：策略固定，所以每個對的下一個對只依轉移機率決定；獎勵 0 與 −1，轉移機率 [[0.7, 0.3], [0.4, 0.6]]（推定）。每個對的分佈用 400 個等權「原子」表示（粒子表示）。每次迭代對每個原子套用一次算子，得到 800 個加權原子，再取分位數投影回 400 個。兩條序列從不同的起點 A、B 出發，共用同一組（下一對、原子、雜訊）——這正是 A.1 證明裡的耦合，所以每步的距離比值不會超過 γ。
+
+ C2兩個算子都會收斂，但收斂到不同地方
+玩具：不是論文實驗推定
+
+ 反覆套用修正版與乾淨算子（本頁模型）。看三件事：兩個起點之間的距離每步至少乘以 γ；修正版收斂到平均 τQ、標準差 √(τ²Var Z + (1−τ)²)；乾淨算子在每個 τ 都收斂到 Z 本身。
+
+ 折扣因子 γ0.90
+
+ noise level τ0.00
+
+ 顯示第 k 次迭代60
+
+ 對 1對 2播放
+
+ 完成
+
+ 對 1，第 60 次迭代
+修正版　平均 −0.0237，標準差 0.9998（精確 0.0000，1.0000）
+乾淨算子（本頁模型）　平均 −3.6924，標準差 1.3262（精確 −3.6986，1.3255）
+修正版與 τZ+(1−τ)G 參考樣本的 W₁ = 0.0528
+最後一步比值 0.899879；1…k 的最大比值 0.899927 ≤ γ = 0.90
+
+ 修正版（實心／圓點）乾淨算子，本頁模型（外框／三角）參考：N(0,1) 或 5·γ^k
+
+ 這是把乾淨方程當成對每層邊際分佈的算子所得的模型，不是 Value Flows 實際學到的分佈。預設 γ = 0.9 是為了在 80 次內看到收斂，論文用 0.999。粒子數有限，讀數與精確值相差約 0.01–0.05：來自 400 個原子、有限的雜訊樣本與投影。比值以投影前的混合分佈計算。
+
+ 第 60 次迭代：修正版平均 −0.02、標準差 1.00；乾淨算子平均 −3.69
+
+ 預設（γ = 0.9、τ = 0、第 60 次迭代、對 1）下，修正版收斂到平均約 0、標準差約 1 的分佈，也就是標準高斯；乾淨算子收斂到平均約 −3.7、標準差約 1.3，也就是乾淨回報 Zπ $Z^\pi$ 本身。兩個算子每步的距離比值都不超過 γ = 0.9。把 τ 拉到 1，兩者重合；τ = 0.5 時修正版的平均約為乾淨版的一半，乾淨版不隨 τ 改變。
+
+ 06 · Q 損失
+
+ Q 損失：把 flow Bellman 方程變成回歸
+
+ 有了每層都有唯一不動點的算子，下一步是設計能實際訓練的損失（Sec. 4.2）。先把 Eq. 5 拆成狀態價值 V 與動作價值 Q 兩部分：ZVπ(s,τ) $Z^\pi_V(s,\tau)$ π​(s,τ) 是 V 回報，ZQπ(s,a,τ) $Z^\pi_Q(s,a,\tau)$ π​(s,a,τ) 是 Q 回報，A $A$ 是目前步的動作隨機變數（Eq. 7）。
+
+ ZVπ(s,τ)=dZQπ(s,A,τ),ZQπ(s,a,τ)=dτr(s,a)+γZVπ(S′,τ)+(1−τ)1−γ2 N $Z^\pi_V(s,\tau)\overset{d}{=}Z^\pi_Q(s,A,\tau),\qquad Z^\pi_Q(s,a,\tau)\overset{d}{=}\tau r(s,a)+\gamma Z^\pi_V(S',\tau)+(1-\tau)\sqrt{1-\gamma^2}\,N$ π​(s,τ)=dZQπ​(s,A,τ),ZQπ​(s,a,τ)=dτr(s,a)+γZVπ​(S′,τ)+(1−τ)1−γ2​N
+Eq. 7
+
+ ZVπ(s,τ)=dZQπ(s,A,τ)ZQπ(s,a,τ)=dτr(s,a)+γZVπ(S′,τ)+(1−τ)1−γ2 N $\begin{aligned}Z^\pi_V(s,\tau)&\overset{d}{=}Z^\pi_Q(s,A,\tau)\\Z^\pi_Q(s,a,\tau)&\overset{d}{=}\tau r(s,a)+\gamma Z^\pi_V(S',\tau)\\&\quad+(1-\tau)\sqrt{1-\gamma^2}\,N\end{aligned}$ π​(s,τ)ZQπ​(s,a,τ)​=dZQπ​(s,A,τ)=dτr(s,a)+γZVπ​(S′,τ)+(1−τ)1−γ2​N​
+Eq. 7
+
+ 作者用兩條 flow ϕVπ $\phi^\pi_V$ π​、ϕQπ $\phi^\pi_Q$ π​ 把獨立的標準高斯 NV $N_V$ ​、NQ $N_Q$ ​ 轉換成這兩個分佈（Eq. 8、9）；ϕV,ϕQ $\phi_V,\phi_Q$ ​,ϕQ​ 分別解速度為 uV,uQ $u_V,u_Q$ ​,uQ​ 的 Eq. 2。等號都是分佈相等，不是同一顆粒子的軌跡相等。
+
+ ϕVπ(NV∣s,τ)=dϕQπ(NQ∣s,A,τ),ϕQπ(NQ∣s,a,τ)=dτr(s,a)+γϕVπ(NV∣S′,τ)+(1−τ)1−γ2 N $\phi^\pi_V(N_V\mid s,\tau)\overset{d}{=}\phi^\pi_Q(N_Q\mid s,A,\tau),\qquad \phi^\pi_Q(N_Q\mid s,a,\tau)\overset{d}{=}\tau r(s,a)+\gamma\phi^\pi_V(N_V\mid S',\tau)+(1-\tau)\sqrt{1-\gamma^2}\,N$ π​(NV​∣s,τ)=dϕQπ​(NQ​∣s,A,τ),ϕQπ​(NQ​∣s,a,τ)=dτr(s,a)+γϕVπ​(NV​∣S′,τ)+(1−τ)1−γ2​N
+Eq. 8–9
+
+ ϕVπ(NV∣s,τ)=dϕQπ(NQ∣s,A,τ)ϕQπ(NQ∣s,a,τ)=dτr+γϕVπ(NV∣S′,τ)+(1−τ)1−γ2 N $\begin{aligned}\phi^\pi_V(N_V\mid s,\tau)&\overset{d}{=}\phi^\pi_Q(N_Q\mid s,A,\tau)\\\phi^\pi_Q(N_Q\mid s,a,\tau)&\overset{d}{=}\tau r+\gamma\phi^\pi_V(N_V\mid S',\tau)\\&\quad+(1-\tau)\sqrt{1-\gamma^2}\,N\end{aligned}$ π​(NV​∣s,τ)ϕQπ​(NQ​∣s,a,τ)​=dϕQπ​(NQ​∣s,A,τ)=dτr+γϕVπ​(NV​∣S′,τ)+(1−τ)1−γ2​N​
+Eq. 8–9
+
+ Q 部分套 Lemma 1。Eq. 9 的右邊由隨機變數 XQ={NV,N,S′} $\mathcal X_Q=\{N_V,N,S'\}$ ​={NV​,N,S′} 決定，所以定義過程 XQ(s,a,τ)≜τr(s,a)+γϕV(NV∣S′,τ)+(1−τ)1−γ2N $X_Q(s,a,\tau)\triangleq\tau r(s,a)+\gamma\phi_V(N_V\mid S',\tau)+(1-\tau)\sqrt{1-\gamma^2}N$ ​(s,a,τ)≜τr(s,a)+γϕV​(NV​∣S′,τ)+(1−τ)1−γ2​N。給定 XQ $\mathcal X_Q$ ​，它是 τ 的確定函數。對 τ 微分，用 ddτϕV=uV $\tfrac{d}{d\tau}\phi_V=u_V$ d​ϕV​=uV​：ddτXQ=r(s,a)+γuV(ϕV(NV∣S′,τ)∣S′,τ)−1−γ2N $\tfrac{d}{d\tau}X_Q=r(s,a)+\gamma u_V(\phi_V(N_V\mid S',\tau)\mid S',\tau)-\sqrt{1-\gamma^2}N$ d​XQ​=r(s,a)+γuV​(ϕV​(NV​∣S′,τ)∣S′,τ)−1−γ2​N。依 Lemma 1，在輸入點 XQ $X_Q$ ​ 上讓參數化 Q 速度 vQ $v_Q$ ​ 回歸這個導數，就得到 Eq. 11：
+
+ Es′,τ, z0,ϵ∼iidN(0,1), zτ=ϕVπ(z0∣s′,τ)[(vQ(τr+γzτ+(1−τ)1−γ2 ϵ∣s,a,τ)−(r+γuVπ(zτ∣s′,τ)−1−γ2 ϵ))2] $\mathbb E_{s',\tau,\ z^0,\epsilon\overset{iid}\sim\mathcal N(0,1),\ z^\tau=\phi^\pi_V(z^0\mid s',\tau)}\Big[\Big(v_Q\big(\tau r+\gamma z^\tau+(1-\tau)\sqrt{1-\gamma^2}\,\epsilon\mid s,a,\tau\big)-\big(r+\gamma u^\pi_V(z^\tau\mid s',\tau)-\sqrt{1-\gamma^2}\,\epsilon\big)\Big)^2\Big]$ ,τ, z0,ϵ∼iidN(0,1), zτ=ϕVπ​(z0∣s′,τ)​[(vQ​(τr+γzτ+(1−τ)1−γ2​ϵ∣s,a,τ)−(r+γuVπ​(zτ∣s′,τ)−1−γ2​ϵ))2]
+Eq. 11
+
+ E[(vQ(τr+γzτ+(1−τ)1−γ2 ϵ∣s,a,τ)−(r+γuVπ(zτ∣s′,τ)−1−γ2 ϵ))2] $\begin{aligned}\mathbb E\Big[\Big(&v_Q\big(\tau r+\gamma z^\tau+(1-\tau)\sqrt{1-\gamma^2}\,\epsilon\mid s,a,\tau\big)\\&-\big(r+\gamma u^\pi_V(z^\tau\mid s',\tau)-\sqrt{1-\gamma^2}\,\epsilon\big)\Big)^2\Big]\end{aligned}$ ​vQ​(τr+γzτ+(1−τ)1−γ2​ϵ∣s,a,τ)−(r+γuVπ​(zτ∣s′,τ)−1−γ2​ϵ))2]​
+Eq. 11
+
+ Eq. 11 的回歸輸入點是 τr+γzτ+(1−τ)1−γ2ϵ $\tau r+\gamma z^\tau+(1-\tau)\sqrt{1-\gamma^2}\epsilon$ +(1−τ)1−γ2​ϵ，在目前的 (s,a) $(s,a)$ 求值；目標是 r+γuV(zτ∣s′,τ)−1−γ2ϵ $r+\gamma u_V(z^\tau\mid s',\tau)-\sqrt{1-\gamma^2}\epsilon$ ​(zτ∣s′,τ)−1−γ2​ϵ，其中 zτ $z^\tau$ 是下一狀態 V flow 上第 τ 層的點。輸入點與目標用同一個 ε，但符號相反；輸入點中的 r $r$ 乘了 τ，目標中的 r $r$ 沒有。
+
+ C3 用一個高斯玩具驗證 Lemma 1 在這裡的意思（推定）：下一狀態的乾淨 V 回報設為 N(m′,σ′2) $\mathcal N(m',\sigma'^2)$ ,σ′2)。一維高斯 flow 是仿射映射，V flow 的路徑為 zτ=τm′+σV(τ)z0 $z^\tau=\tau m'+\sigma_V(\tau)z^0$ =τm′+σV​(τ)z0，σV2(τ)=τ2σ′2+(1−τ)2 $\sigma_V^2(\tau)=\tau^2\sigma'^2+(1-\tau)^2$ 2​(τ)=τ2σ′2+(1−τ)2。本頁推導對獨立耦合、線性內插到 N(m,s2) $\mathcal N(m,s^2)$ ) 的路徑，真實速度是 u(z∣τ)=m+k(τ)(z−τm) $u(z\mid\tau)=m+k(\tau)(z-\tau m)$ ，k=(τs2−(1−τ))/(τ2s2+(1−τ)2) $k=(\tau s^2-(1-\tau))/(\tau^2s^2+(1-\tau)^2)$ −(1−τ))/(τ2s2+(1−τ)2)。Q 的乾淨回報因此是 N(r+γm′,γ2σ′2) $\mathcal N(r+\gamma m',\gamma^2\sigma'^2)$ ,γ2σ′2)，uQ $u_Q$ ​ 也有閉式。每個 (z0,ϵ) $(z^0,\epsilon)$ ,ϵ) 給出一個（輸入點, 目標）資料點；因為兩者都是 (z0,ϵ) $(z^0,\epsilon)$ ,ϵ) 的線性函數，以輸入點為條件的目標平均有閉式。
+
+ C3Q 損失的回歸目標：雜訊很大，條件平均恰好是速度
+玩具：不是論文實驗推定
+
+ 左：下一狀態的 V flow 路徑。右：300 組 (z0,ϵ) $(z^0,\epsilon)$ ,ϵ) 產生的回歸資料。正確版的條件平均（虛線）與 Q 回報的真實速度 uQ $u_Q$ ​（實線）重合；切換到兩種抄寫錯誤，虛線就離開實線。
+
+ 折扣因子 γ0.900
+
+ noise level τ0.500
+
+ 獎勵 r−1.0
+
+ 下一狀態回報平均 m′−2.0
+
+ 下一狀態回報標準差 σ′0.60
+
+ 選取樣本的起點 z⁰1.00
+
+ 選取樣本的 ε−1.00
+
+ 正確（Eq. 11）抄寫錯誤（本頁假設）：目標用 +ε抄寫錯誤（本頁假設）：目標的 r 乘 τ
+
+ 選取樣本　z（τ 層）= −0.4169，u_V = −2.5488，輸入點 x = −1.0932，目標 y = −2.8580，u_Q(x) = −3.1366
+條件平均　斜率 −1.0969，截距 −4.3357
+u_Q　斜率 −1.0969，截距 −4.3357
+300 點最小平方線　斜率 −1.0736，截距 −4.3024
+在 x = E[x] 處：條件平均 − u_Q = 0.0000
+
+ u_Q：Q 回報的真實速度目標的條件平均300 點的最小平方線
+
+ τ 上限 0.999，避開 τ = 1 的退化。散點、路徑與讀數由本頁以閉式即時計算本頁推導；300 組樣本由固定種子產生。
+
+ 條件平均斜率 −1.0969，u_Q 斜率 −1.0969
+
+ 正確模式下，目標的條件平均與 uQ $u_Q$ ​ 完全重合：回歸目標本身散得很開，但以輸入點為條件取平均，恰好是 Q 回報的真實速度，這就是 Lemma 1。τ = 0 時 uQ $u_Q$ ​ 的斜率是 −1、截距是 r+γm′ $r+\gamma m'$ ，也就是 z0+u(z0∣0) $z^0+u(z^0\mid0)$ +u(z0∣0) 對任何 z0 $z^0$ 都等於 Q，第 10 章的一步估計用到這點。兩種抄寫錯誤都會讓條件平均離開 uQ $u_Q$ ​：「目標用 +ε」改變斜率，「目標的 r 乘 τ」把截距平移 −(1−τ)r $-(1-\tau)r$ 。γ 接近 1 時，「+ε」造成的斜率偏差在這個玩具中變小；這只是條件平均的偏差，不是訓練結果，偏差小也不代表無害。
+
+ 抄寫時易犯的三個錯誤（本頁假設，不是論文或實作中觀察到的錯誤）：(1) 輸入點是 +(1−τ)1−γ2ϵ $+(1-\tau)\sqrt{1-\gamma^2}\epsilon$ ​ϵ、目標是 −1−γ2ϵ $-\sqrt{1-\gamma^2}\epsilon$ ​ϵ，同一個 ε；(2) 輸入點中的 r $r$ 乘 τ，目標中的 r $r$ 不乘；(3) uV $u_V$ ​ 在未變換的 zτ $z^\tau$ 、下一狀態 s′ $s'$ 求值，vQ $v_Q$ ​ 在變換後的點、目前的 (s,a) $(s,a)$ 求值。
+
+ 07 · V 損失
+
+ V 損失與實用的交替訓練
+
+ V 部分同樣套 Lemma 1。Eq. 8 的右邊由 XV={NQ,A} $\mathcal X_V=\{N_Q,A\}$ ​={NQ​,A} 決定：動作 A $A$ 也是隨機變數，所以 V 的分佈是對動作混合後的 Q 分佈。定義 XV(s,τ)≜ϕQ(NQ∣s,A,τ) $X_V(s,\tau)\triangleq\phi_Q(N_Q\mid s,A,\tau)$ ​(s,τ)≜ϕQ​(NQ​∣s,A,τ)，對 τ 微分得 uQ(ϕQ(NQ∣s,A,τ)∣s,A,τ) $u_Q(\phi_Q(N_Q\mid s,A,\tau)\mid s,A,\tau)$ ​(ϕQ​(NQ​∣s,A,τ)∣s,A,τ)。於是 Eq. 10 讓 V 速度在同一個點 zτ $z^\tau$ 上回歸 Q 速度，沒有獎勵，也沒有 ε：
+
+ Ea∼π(a∣s), τ∼Unif([0,1]), z0∼N(0,1), zτ=ϕQπ(z0∣s,a,τ)[(vV(zτ∣s,τ)−uQπ(zτ∣s,a,τ))2] $\mathbb E_{a\sim\pi(a\mid s),\ \tau\sim\mathrm{Unif}([0,1]),\ z^0\sim\mathcal N(0,1),\ z^\tau=\phi^\pi_Q(z^0\mid s,a,\tau)}\Big[\big(v_V(z^\tau\mid s,\tau)-u^\pi_Q(z^\tau\mid s,a,\tau)\big)^2\Big]$ ∼N(0,1), zτ=ϕQπ​(z0∣s,a,τ)​[(vV​(zτ∣s,τ)−uQπ​(zτ∣s,a,τ))2]
+Eq. 10
+
+ E[(vV(zτ∣s,τ)−uQπ(zτ∣s,a,τ))2]a∼π(a∣s), zτ=ϕQπ(z0∣s,a,τ) $\begin{aligned}&\mathbb E\Big[\big(v_V(z^\tau\mid s,\tau)-u^\pi_Q(z^\tau\mid s,a,\tau)\big)^2\Big]\\&a\sim\pi(a\mid s),\ z^\tau=\phi^\pi_Q(z^0\mid s,a,\tau)\end{aligned}$ ​E[(vV​(zτ∣s,τ)−uQπ​(zτ∣s,a,τ))2]a∼π(a∣s), zτ=ϕQπ​(z0∣s,a,τ)​
+Eq. 10
+
+ 本頁推導Eq. 10 的最小解不是對 π 的單純平均，而是以 z $z$ 為條件的後驗加權平均：uV(z∣s,τ)=∑aπ(a∣s)pQ(z∣s,a,τ)uQ(z∣s,a,τ)/∑aπ(a∣s)pQ(z∣s,a,τ) $u_V(z\mid s,\tau)=\sum_a\pi(a\mid s)p_Q(z\mid s,a,\tau)u_Q(z\mid s,a,\tau)/\sum_a\pi(a\mid s)p_Q(z\mid s,a,\tau)$ ​(z∣s,τ)=∑a​π(a∣s)pQ​(z∣s,a,τ)uQ​(z∣s,a,τ)/∑a​π(a∣s)pQ​(z∣s,a,τ)。例如兩個動作各占一半，若在某個 z $z$ 處動作 1 的 Q flow 密度是動作 2 的三倍，則該處 V 速度是 0.75 倍動作 1 的速度加 0.25 倍動作 2 的速度。
+
+ Eq. 10、11 都要用到真實速度 uV,uQ $u_V,u_Q$ ​,uQ​，而真實速度未知。作者的做法是讓學到的 vV $v_V$ ​、vQ $v_Q$ ​ 互為目標，交替最小化，更新一方時固定另一方；這類似 Fitted Q-Evaluation，也就是用上一輪的估計當回歸目標反覆擬合。實作時再把獎勵乘 (1−γ) $(1-\gamma)$ ，讓無限期的折扣回報落在固定尺度（Sec. 6.3 顯示有幫助）。得到兩個實用損失：Eq. 12 在同一個 zτ∼pQ $z^\tau\sim p_Q$ ∼pQ​ 上讓 vV(zτ∣s,τ) $v_V(z^\tau\mid s,\tau)$ ​(zτ∣s,τ) 回歸 vQ(zτ∣s,a,τ) $v_Q(z^\tau\mid s,a,\tau)$ ​(zτ∣s,a,τ)，動作 a∼π $a\sim\pi$ ，沒有獎勵與 ε；Eq. 13 是 Eq. 11 換上 vV $v_V$ ​ 並縮放獎勵。
+
+ L(vV)=Ea∼π(a∣s), τ∼Unif([0,1]), zτ∼pQ(zτ∣s,a,τ)[(vV(zτ∣s,τ)−vQ(zτ∣s,a,τ))2] $\mathcal L(v_V)=\mathbb E_{a\sim\pi(a\mid s),\ \tau\sim\mathrm{Unif}([0,1]),\ z^\tau\sim p_Q(z^\tau\mid s,a,\tau)}\Big[\big(v_V(z^\tau\mid s,\tau)-v_Q(z^\tau\mid s,a,\tau)\big)^2\Big]$ ​)=Ea∼π(a∣s), τ∼Unif([0,1]), zτ∼pQ​(zτ∣s,a,τ)​[(vV​(zτ∣s,τ)−vQ​(zτ∣s,a,τ))2]
+Eq. 12
+
+ L(vV)= E[(vV(zτ∣s,τ)−vQ(zτ∣s,a,τ))2]a∼π(a∣s), zτ∼pQ(zτ∣s,a,τ) $\begin{aligned}\mathcal L(v_V)=\ &\mathbb E\Big[\big(v_V(z^\tau\mid s,\tau)-v_Q(z^\tau\mid s,a,\tau)\big)^2\Big]\\&a\sim\pi(a\mid s),\ z^\tau\sim p_Q(z^\tau\mid s,a,\tau)\end{aligned}$ ​)= ​E[(vV​(zτ∣s,τ)−vQ​(zτ∣s,a,τ))2]a∼π(a∣s), zτ∼pQ​(zτ∣s,a,τ)​
+Eq. 12
+
+ L(vQ)=Es′,τ,ϵ, zτ∼pV(zτ∣s′,τ)[(vQ(τ(1−γ)r+γzτ+(1−τ)1−γ2 ϵ∣s,a,τ)−((1−γ)r+γvV(zτ∣s′,τ)−1−γ2 ϵ))2] $\mathcal L(v_Q)=\mathbb E_{s',\tau,\epsilon,\ z^\tau\sim p_V(z^\tau\mid s',\tau)}\Big[\Big(v_Q\big(\tau(1-\gamma)r+\gamma z^\tau+(1-\tau)\sqrt{1-\gamma^2}\,\epsilon\mid s,a,\tau\big)-\big((1-\gamma)r+\gamma v_V(z^\tau\mid s',\tau)-\sqrt{1-\gamma^2}\,\epsilon\big)\Big)^2\Big]$ ​)=Es′,τ,ϵ, zτ∼pV​(zτ∣s′,τ)​[(vQ​(τ(1−γ)r+γzτ+(1−τ)1−γ2​ϵ∣s,a,τ)−((1−γ)r+γvV​(zτ∣s′,τ)−1−γ2​ϵ))2]
+Eq. 13
+
+ L(vQ)=E[(vQ(τ(1−γ)r+γzτ+(1−τ)1−γ2 ϵ∣s,a,τ)−((1−γ)r+γvV(zτ∣s′,τ)−1−γ2 ϵ))2] $\begin{aligned}\mathcal L(v_Q)=\mathbb E\Big[\Big(&v_Q\big(\tau(1-\gamma)r+\gamma z^\tau+(1-\tau)\sqrt{1-\gamma^2}\,\epsilon\mid s,a,\tau\big)\\&-\big((1-\gamma)r+\gamma v_V(z^\tau\mid s',\tau)-\sqrt{1-\gamma^2}\,\epsilon\big)\Big)^2\Big]\end{aligned}$ ​)=E[(​vQ​(τ(1−γ)r+γzτ+(1−τ)1−γ2​ϵ∣s,a,τ)−((1−γ)r+γvV​(zτ∣s′,τ)−1−γ2​ϵ))2]​
+Eq. 13
+
+ 兩點提醒。第一，取樣 zτ∼pQ $z^\tau\sim p_Q$ ∼pQ​ 需要把 flow 從 0 積分到 τ，所以 Value Forcing 不像標準 CFM 那樣不需模擬（simulation-free）；論文沒有說這裡用幾步 Euler。第二，這一步沒有收斂證明，第 05 章的 contraction 只適用於理想算子。
+
+ 08 · VF 與 IVF
+
+ VF 抽樣挑選動作，IVF 改用資料動作加權
+
+ 純量估計由速度積分而得：Q(s,a)≜Ez0∼N(0,1)[∫01vQ(zτ∣s,a,τ) dτ] $Q(s,a)\triangleq\mathbb E_{z^0\sim\mathcal N(0,1)}[\int_0^1v_Q(z^\tau\mid s,a,\tau)\,d\tau]$ ∼N(0,1)​[∫01​vQ​(zτ∣s,a,τ)dτ]，V(s) $V(s)$ 同理，實作上以 M $M$ 個回報樣本平均（Sec. 5）。
+
+ VF（explicit 方法）像一般的 actor-critic：先學一個 flow 行為複製（behavioral cloning, BC）策略 πβ(a∣s) $\pi_\beta(a\mid s)$ ​(a∣s)（用 Eq. 3 擬合資料動作），再以抽樣挑選（rejection sampling，引 Chen et al. 2023）改進策略：從 πβ $\pi_\beta$ ​ 抽 K $K$ 個候選動作，取 Q 最大者（Eq. 14）。這個策略 π 也用來抽 Eq. 12 的動作。
+
+ π(a∣s)=darg⁡max⁡a1,…,aK: ai∼πβ(a∣s)Q(s,ai) $\pi(a\mid s)\overset{d}{=}\arg\max_{a_1,\dots,a_K:\ a_i\sim\pi_\beta(a\mid s)}Q(s,a_i)$ darga1​,…,aK​: ai​∼πβ​(a∣s)max​Q(s,ai​)
+Eq. 14
+
+ π(a∣s)=darg⁡max⁡iQ(s,ai) $\pi(a\mid s)\overset{d}{=}\arg\max_{i}Q(s,a_i)$ dargimax​Q(s,ai​)
+Eq. 14
+
+ （a1,…,aK $a_1,\dots,a_K$ ​,…,aK​ 皆由 πβ(a∣s) $\pi_\beta(a\mid s)$ ​(a∣s) 抽出）
+
+ IVF（implicit 方法）不學 actor，只用資料中的動作。它沿用 expectile 的想法。先看一個數字例子（第 09 章 C4 的設定）：某個狀態下資料中有四個動作，Q 值 −3、−2、−1.2、−0.5，出現比例 0.4、0.3、0.2、0.1。expectile 參數 μ = 0.5 時，V 是這四個 Q 值的平均 −2.09；μ 越大，V 越靠近最大的 Q（−0.5）。做法是對 Q ≥ V 的動作給權重 μ、其餘給 1 − μ（Eq. 15，μ ∈ [0.5, 1)），再把權重乘在 V 速度的殘差平方上，動作取自資料（Eq. 16）。權重由純量 Q、V 決定。
+
+ wμ(s,a)≜μ 1(Q(s,a)≥V(s))+(1−μ) 1(Q(s,a)<V(s)) $w_\mu(s,a)\triangleq\mu\,\mathbb 1\big(Q(s,a)\ge V(s)\big)+(1-\mu)\,\mathbb 1\big(Q(s,a)<V(s)\big)$ ​(s,a)≜μ1(Q(s,a)≥V(s))+(1−μ)1(Q(s,a)<V(s))
+Eq. 15
+
+ Lμ(vV)=Ea∼D, τ∼Unif([0,1]), zτ∼pQ(zτ∣s,a,τ)[wμ(s,a)(vV(zτ∣s,τ)−vQ(zτ∣s,a,τ))2] $\mathcal L_\mu(v_V)=\mathbb E_{a\sim\mathcal D,\ \tau\sim\mathrm{Unif}([0,1]),\ z^\tau\sim p_Q(z^\tau\mid s,a,\tau)}\Big[w_\mu(s,a)\big(v_V(z^\tau\mid s,\tau)-v_Q(z^\tau\mid s,a,\tau)\big)^2\Big]$ ​(vV​)=Ea∼D, τ∼Unif([0,1]), zτ∼pQ​(zτ∣s,a,τ)​[wμ​(s,a)(vV​(zτ∣s,τ)−vQ​(zτ∣s,a,τ))2]
+Eq. 16
+
+ Lμ(vV)=Ea∼D[wμ(s,a)⋅(vV(zτ∣s,τ)−vQ(zτ∣s,a,τ))2] $\begin{aligned}\mathcal L_\mu(v_V)=\mathbb E_{a\sim\mathcal D}\Big[&w_\mu(s,a)\\&\cdot\big(v_V(z^\tau\mid s,\tau)-v_Q(z^\tau\mid s,a,\tau)\big)^2\Big]\end{aligned}$ ​(vV​)=Ea∼D​[​wμ​(s,a)⋅(vV​(zτ∣s,τ)−vQ​(zτ∣s,a,τ))2]​
+Eq. 16
+
+ Alg. 1 把兩者寫在一起。目標網路（target network）是線上網路參數的指數移動平均（EMA）副本，只用來算目標，讓目標不隨每次更新跳動。
+
+ Alg. 1（原文）
+說明
+
+ 1: Initialize v_V^θ, v_Q^ψ, v_β^ξ; target ψ_tgt ← ψ初始化 V 速度、Q 速度、BC 策略速度三個網路，以及 Q 速度的目標參數（論文記為 ψ 加上橫線）。V 沒有目標網路。
+
+ 3: (s,a,r,s') ~ D, τ ~ Unif([0,1])從資料抽一筆轉移與一個 noise level。
+
+ 4: a_π ~ rejection sampling (Eq. 14), z^τ ~ p_Q^{ψ_tgt}(z^τ | s, a_π, τ)VF：用抽樣挑選得到策略動作，再用目標 Q flow 產生第 τ 層的點。
+
+ 5: Δθ ← ∇θ L(v_V) (Eq. 12)VF：更新 V 速度。
+
+ 6: compute w_μ(s,a) (Eq. 15), z^τ ~ p_Q^{ψ_tgt}(z^τ | s, a, τ)IVF：用純量 Q、V 算權重，動作是資料中的 a。
+
+ 7: Δθ ← ∇θ L_μ(v_V^θ) (Eq. 16)IVF：以加權損失更新 V 速度。
+
+ 8: z^τ ~ p_V^θ(z^τ | s', τ), ε ~ N(0,1)用線上 V flow 在下一狀態產生點，並抽 ε。
+
+ 9: Δψ ← ∇ψ L(v_Q) (Eq. 13)更新 Q 速度。
+
+ 10: Δξ ← ∇ξ L(v_β^ξ) (Eq. 3)更新 flow BC 策略。
+
+ 11: ψ_tgt ← EMA of ψ目標參數取 ψ 的 EMA（更新率 0.005，Table 6）。
+
+ 延伸閱讀：VF 與 IVF：Value Forcing 的 actor-critic 與 implicit 兩種實例
+
+ 09 · IVF 理論
+
+ IVF 的 V 是 Q 的 expectile，但只能在 Q 與 V 的純量上加權
+
+ 隨機變數 X $X$ 的 μ-expectile 是不對稱平方損失 E[∣μ−1(X−m<0)∣(X−m)2] $\mathbb E[\lvert\mu-\mathbb 1(X-m<0)\rvert(X-m)^2]$ ] 的最小解 m $m$ ：μ = 0.5 時就是平均，μ → 1 時趨近支撐內的最大值。App. A.2 分析 IVF，前提是：類似 Fitted Q 迭代、每一輪都精確最小化、迭代次數 k→∞ $k\to\infty$ 時收斂到一個自洽的不動點（Eq. 22、23 是假設，不是結論），且分析時獎勵不乘 1−γ $1-\gamma$ 。
+
+ 關鍵是隱式策略（Eq. 24）：πμ(a∣s)=πβ(a∣s)wμ(s,a)/Eπβ[wμ(s,a)] $\pi^\mu(a\mid s)=\pi_\beta(a\mid s)w_\mu(s,a)/\mathbb E_{\pi_\beta}[w_\mu(s,a)]$ (a∣s)=πβ​(a∣s)wμ​(s,a)/Eπβ​​[wμ​(s,a)]。因為 wμ∈[1−μ,μ] $w_\mu\in[1-\mu,\mu]$ ​∈[1−μ,μ] 且 μ ≥ 0.5，它是合法的機率。權重只依賴 (s,a) $(s,a)$ ，所以 Eq. 16 等於「以 πμ $\pi^\mu$ 抽動作的未加權 V 損失」乘上一個只依賴狀態的常數。套 Lemma 1 後，不動點滿足策略 πμ $\pi^\mu$ 的 flow Bellman 方程；取期望得 V(s)=Ea∼πμ[Q(s,a)] $V(s)=\mathbb E_{a\sim\pi^\mu}[Q(s,a)]$ ​[Q(s,a)]、Q(s,a)=r+γE[V(s′)] $Q(s,a)=r+\gamma\mathbb E[V(s')]$ )]；再引 Hansen-Estruch et al. 2023 的 Theorem 4.1，結論是 V 是 Q 的 expectile。μ → 1 時引 IQL 的 Theorem 3：lim⁡μ→1Vμ(s)=max⁡a:πβ(a∣s)>0Qβ⋆(s,a) $\lim_{\mu\to1}V_\mu(s)=\max_{a:\pi_\beta(a\mid s)>0}Q^\star_\beta(s,a)$ ​Vμ​(s)=maxa:πβ​(a∣s)>0​Qβ⋆​(s,a)，即資料支撐內的最佳值。
+
+ 本頁解讀A.2 還隱含兩個前提：取期望時用了 E[∫01v dτ]=E[ϕ(z0∣1)] $\mathbb E[\int_0^1v\,d\tau]=\mathbb E[\phi(z^0\mid1)]$ 1​vdτ]=E[ϕ(z0∣1)]，這需要 E[z0]=0 $\mathbb E[z^0]=0$ ]=0；「唯一不動點」只在給定 π∞μ $\pi^\mu_\infty$ μ​ 時成立，而 π∞μ $\pi^\mu_\infty$ μ​ 本身依賴解，自洽不動點的存在與唯一性沒有證明。本頁推導為什麼是 expectile：V=Eβ[wQ]/Eβ[w] $V=\mathbb E_\beta[wQ]/\mathbb E_\beta[w]$ ​[wQ]/Eβ​[w] 等價於 Eβ[wμ(Q−V)]=0 $\mathbb E_\beta[w_\mu(Q-V)]=0$ ​[wμ​(Q−V)]=0，這正是 expectile 回歸的一階條件。
+
+ 為什麼不直接對速度殘差做 expectile？App. D.5 指出，那樣做在 μ → 1 時得到逐點的 max⁡avQ(zτ∣s,a,τ) $\max_av_Q(z^\tau\mid s,a,\tau)$ ​vQ​(zτ∣s,a,τ)，積分後 Ez0[∫01max⁡avQ dτ] $\mathbb E_{z^0}[\int_0^1\max_av_Q\,d\tau]$ ​[∫01​maxa​vQ​dτ] 不等於 max⁡aEz0[∫01vQ dτ]=max⁡aQ(s,a) $\max_a\mathbb E_{z^0}[\int_0^1v_Q\,d\tau]=\max_aQ(s,a)$ ​Ez0​[∫01​vQ​dτ]=maxa​Q(s,a)，因為不同的速度場產生不同的軌跡。本頁推導在一維、各動作共用同一個 z0 $z^0$ 時，max 速度場的路徑不低於每個動作自己的路徑（ODE 比較定理），所以左邊 ≥ 右邊；論文只寫「≠」。
+
+ C4 的設定（推定）：(a) 上一章的四個資料動作；μ = 0.9 時 V 約為 −1.30，隱式策略把機率移向 Q ≥ V 的兩個動作，且 V 等於 Q 在隱式策略下的期望。(b) 兩個動作的 Q 回報為高斯，速度用第 06 章的閉式；預設下 max 速度場的終點平均比 max⁡aQ $\max_aQ$ ​Q 高約 0.28，兩個分佈寬度相同時差距為 0。
+
+ C4IVF 的 expectile 權重與「對速度取 max」的偏差
+玩具：不是論文實驗推定
+
+ (a) 調 μ，看 V、權重與隱式策略；(b) 調兩個動作的 Q 回報分佈，看逐點取 max 的 V flow 終點平均與 max Q 的差距。
+
+ expectile μ0.900
+
+ 0.50.70.90.99
+
+ μ = 0.900（圖中外框：π_β，實心：π^μ）
+V（μ-expectile）= −1.2971
+E_{π^μ}[Q] = −1.2971
+平均（μ = 0.5）= −2.0900；資料內最大 = −0.5
+π^μ = 0.1176、0.0882、0.5294、0.2647
+
+ 動作 1 回報平均 m₁−2.0
+
+ 動作 1 回報標準差 s₁0.30
+
+ 動作 2 回報平均 m₂−2.2
+
+ 動作 2 回報標準差 s₂1.20
+
+ max_a Q = −2.0000
+逐點取 max 的終點平均 = −1.7213
+差距 = 0.2787
+各動作自己的終點平均 = −2.0000、−2.2000
+
+ 動作 1 路徑動作 2 路徑逐點取 max 的路徑（圓點）
+
+ ≥ 只在一維、共用 z⁰ 時成立（本頁推導）；論文只寫 ≠。這只說明 D.5 的不等式，不是 Fig. 4 成功率差異的解釋。(b) 用 101 個起點分位數與 400 步 Euler 積分。
+
+ μ = 0.900，V = −1.2971
+
+ 小結：在精確最佳化與收斂到自洽不動點的假設下，IVF 的 V 是 Q 的 expectile，μ → 1 時趨近資料支撐內的最佳值；逐點對速度取 expectile，μ → 1 時給出 max⁡avQ $\max_av_Q$ ​vQ​，積分後不等於 max⁡aQ $\max_aQ$ ​Q，所以 IVF 把權重放在純量 Q、V 上。另外，A.2 有一處筆誤：p.18 的 Q 損失最小解式子把 vV $v_V$ ​ 的引數與取樣條件寫成 τr+γzτ+… $\tau r+\gamma z^\tau+\dots$ +… 與 (s,a) $(s,a)$ ，對照 Eq. 11、21 應為 zτ $z^\tau$ 與 s′ $s'$ ；本頁以 Eq. 11、21 為準。
+
+ 延伸閱讀：Expectile regression 與 value learning、IQL 的研究脈絡總覽
+
+ 10 · 實作設定
+
+ 實作設定與論文未說明的細節
+
+ 本章名詞
+ 名詞本頁的定義
+
+ EMA指數移動平均：目標參數 ← 0.995 × 目標參數 + 0.005 × 線上參數
+
+ ensemble／twin同時訓練兩個網路成員（仿 Fujimoto et al. 2018 的 twin Q）
+
+ action chunk策略一次輸出並執行 H 步動作
+
+ Tweedie's formula論文對一步估計 Q≈z0+vQ(z0∣s,a,0) $Q\approx z^0+v_Q(z^0\mid s,a,0)$ +vQ​(z0∣s,a,0) 的稱呼
+
+ classifier-free guidance同一個網路以「有條件輸入」與「無條件輸入」兩種方式使用；IVF 借來讓一個網路兼任 V 速度與 Q 速度
+
+ 共同設定（Table 6）：Adam、學習率 3×10−4 $3\times10^{-4}$ 、500K 梯度步、batch 1024；OGBench 用 4 層寬 1024 的 MLP，OCBench 用殘差 MLP；GELU、LayerNorm；noise level 以 16 維正弦嵌入、從 Unif([0,1]) $\mathrm{Unif}([0,1])$ 抽；目標網路更新率 0.005；γ = 0.999（OGBench）／0.9999（OCBench）；action chunk 長度 H = 5；候選動作 K = 16；BC flow 積分 10 步（VF 訓練時 4 步）；return flow 積分 10 步。
+
+ VF 專屬（D.3）：V、Q 速度各為兩成員 ensemble；訓練時 M = 1，用一步估計 Q(s,a)≈z0+vQ(z0∣s,a,0) $Q(s,a)\approx z^0+v_Q(z^0\mid s,a,0)$ +vQ​(z0∣s,a,0)；評估時 M = 16、10 步積分，候選動作共用起始雜訊以降低變異；VF 不調參。IVF 專屬：一個網路同時當 V、Q 速度（兩成員），μ 從 {0.7, 0.8, 0.9} 調，固定 M = 16。本頁解讀Table 6 的「return flow 積分 10 步」對應評估與其他方法；VF 訓練用一步估計、評估用 10 步與 M = 16，論文沒有說明兩者差異的影響。
+
+ 本頁推導一步估計為何合理：對獨立耦合、線性內插，真實速度在 τ = 0 滿足 u(z0∣0)=E[Z1]−z0 $u(z^0\mid0)=\mathbb E[Z^1]-z^0$ ∣0)=E[Z1]−z0，所以 z0+u(z0∣0)=Q $z^0+u(z^0\mid0)=Q$ +u(z0∣0)=Q 對任何 z0 $z^0$ 都成立（C3 在 τ = 0 顯示斜率 −1）。這只在速度學得準時成立。
+
+ 調參協定：每個 domain 只用 task 2、4 與完整資料調，再套用到 5 個任務與所有資料量（D.3）。論文未說明的項目：Table 6 沒有 M 這一列；子集 softmax 抽樣的溫度；取樣 zτ $z^\tau$ 到任意 τ 用幾步；twin 兩個成員如何合併；IVF 共用網路時動作如何遮蔽；action chunk 內 γ 與獎勵如何處理；基線是否也做獎勵縮放。
+
+ Table 7 的 domain 設定（IVF 的 μ 與回報範圍）
+ DomainIVF μ[rmin⁡,rmax⁡] $[r_{\min},r_{\max}]$ ​,rmax​]
+
+ cube-triple0.9[−3, 0]
+
+ cube-quadruple0.8[−4, 0]
+
+ puzzle-4x40.9[−16, 0]
+
+ humanoidmaze-giant0.8[−1, 0]
+
+ OCBench（全部）0.9[−1, 0]
+
+ 常見錯誤：(1)(2) Eq. 11 的兩個抄寫陷阱（本頁假設，見第 06 章）；(3) VF 的 V 損失用策略動作，IVF 用資料動作；(4) 漏掉獎勵乘 (1−γ) $(1-\gamma)$ ；(5) Q 速度以 (s,a) $(s,a)$ 為條件、V 速度在 Q 損失中以 s′ $s'$ 為條件；(6) 取樣 zτ $z^\tau$ 需要積分 flow，不是內插。
+
+ 延伸閱讀：Flow 策略與離線 RL 的價值學習
+
+ 11 · 回報估計
+
+ 在 4 個狀態上，VF 的回報分佈比先前 flow 方法準
+
+ 兩個名詞。SARSA：bootstrap 時用資料中實際的下一個動作，所以評估的是收集資料的策略。Oracle：直接以 Eq. 3 擬合同一批軌跡的實際折扣回報，不做 bootstrap，代表 bootstrapping 以外的誤差（函數近似、最佳化、有限樣本等）。
+
+ 流程（Sec. 6.1、D.4）：每個 OGBench domain 取一個狀態，執行固定的起始 action chunk，再依資料收集策略收集 1000 條訓練軌跡與 1000 條評估軌跡。各方法以 SARSA 在訓練軌跡上訓練 100K 步，抽 5000 個回報樣本，與 1000 個評估回報計算 1-Wasserstein 距離。
+
+ 結果（Fig. 2）：VF 在 4 個狀態都低於 FlowCritic、Value Flows、PCBF 三個先前方法。相對 PCBF，VF 的平均 1-Wasserstein 距離在 puzzle-4x4 降低 81%（22 對 118），在 humanoidmaze-giant 降低 89%（13 對 122）；只在 cube-triple 與 puzzle-4x4 接近 Oracle（115 對 92、22 對 20）。cube-quadruple 上 VF 179 對 Oracle 57，與 PCBF 184 接近；humanoidmaze-giant 上 VF 13 低於 Oracle 25，所以 Oracle 不是下界。圖說稱先前方法偏移並集中成窄峰；Fig. 7 的路徑圖顯示 VF 在 τ ≈ 0.25 就展開路徑，基線在 τ ≈ 0.9 才集中。
+
+ 這個實驗能說明的是：在這 4 個狀態上，VF 的回報分佈較接近評估回報。不能說明的是：只有 4 個狀態；沒有任何消融單獨拿掉高斯修正項，所以不能證明修正項是改善的原因（論文對 Value Flows 的用語是 “offering an explanation”）。本頁解讀Fig. 2 的回報軸（約 −800 到 −200）是未縮放的回報單位，而訓練時獎勵乘了 (1−γ) $(1-\gamma)$ ；論文沒有說明換算。
+
+ F2Fig. 2：平均 1-Wasserstein 距離（越低越好）
+
+ 各圖刻度不同。數字讀自 Fig. 2 長條上的標示（mean ± 標準差）。
+
+ Oracle 為虛線外框；VF 為實心；三個先前方法以不同填紋並在下方標名稱。
+
+ Fig. 6：implicit 方法的平均 1-Wasserstein 距離（數字讀自長條標示）
+ DomainOracleIVFImplicit C51Implicit IQNDIVL
+
+ cube-triple92±13116±16299±15251±13287±13
+
+ cube-quadruple57±6174±6497±10233±7290±7
+
+ puzzle-4x420±518±4279±4141±6128±6
+
+ humanoidmaze-giant25±313±2205±388±2255±3
+
+ 12 · 成功率
+
+ 在 10%、25% 資料下，VF 與 IVF 的總平均高於同類基線
+
+ OGBench 有 4 個 domain、各 5 個任務；完整資料是 100M transitions，子集取 10%、25%、50%，以每條軌跡的平均獎勵為分數、用 softmax 不放回抽樣（D.1，溫度未說明），所以子集偏向高獎勵軌跡。10% 仍約 10M transitions。OCBench 有 6 個任務，取 25% 與 100%。全部 4 個種子；OGBench 每次評估每任務 10 個 episode，OCBench 500 個。基線分兩組：explicit（Floq、FlowCritic、Value Flows、PCBF、C51、IQN、QC）與 implicit（DIVL、Implicit C51、Implicit IQN、Implicit QC）。C51 用 51 個原子的類別分佈；IQN 是 Implicit Quantile Networks；QC（Q-chunking）對 action chunk 學純量 critic；Implicit C51、Implicit IQN 是作者自建的 implicit 版本；Implicit QC 是 IQL 式的純量 Q、V 加抽樣挑選。
+
+ 10% 資料下，VF 總平均 48 對最佳 explicit 基線 43（QC），IVF 43 對最佳 implicit 基線 27（Implicit IQN）。100% 資料下，VF 57 對 52（C51、QC），IVF 65 對 66（Implicit C51），IVF 略低。VF 對最佳 explicit 基線的差距在 10%、25%、50%、100% 依序是 +5、+6、+2、+5，不隨資料量單調變化；IVF 對最佳 implicit 基線的差距是 +16、+15、+8、−1，隨資料變少而擴大。正文說 VF「barely performs worse as the dataset size decreases」，對應的總平均是 57、53、54、48。
+
+ OGBench 20 個任務的總平均成功率（%，Table 2–5，mean ± std；粗體為本文方法，底線為同類最佳基線）
+ 資料量FloqFlowCriticValue FlowsPCBFC51IQNQCVFDIVLImpl. C51Impl. IQNImpl. QCIVF
+
+ 10%13±234±336±229±239±439±443±248±314±226±327±425±343±3
+
+ 25%19±234±447±326±347±348±344±354±215±239±446±238±361±4
+
+ 50%19±332±246±423±251±550±645±353±215±258±257±251±466±3
+
+ 100%16±331±448±323±252±548±552±357±518±366±361±262±465±5
+
+ OCBench 6 個任務的總平均成功率（%，Table 3、5）
+ 資料量Value FlowsC51QCVFImpl. C51Impl. QCIVF
+
+ 25%60±358±345±567±251±357±358±2
+
+ 100%85±291±262±592±186±280±191±1
+
+ 讀表時要注意幾個例外。humanoidmaze-giant 上所有 explicit 方法接近 0（VF 的 domain 平均依資料量為 0、0、0、1），只有 implicit 方法有成績（IVF 40、50、49、55）。puzzle-4x4 的完整資料下 IVF 82±11，Implicit C51 100±0。OCBench 上 VF 在 25% 與 100% 都是 explicit 中最高（67±2、92±1），IVF 在 100% 是 implicit 中最高（91±1），25% 與 Implicit QC 相當（58±2 對 57±3）。單一任務只有 10 episode × 4 種子，數字粒度粗。
+
+ 消融（Sec. 6.3、App. B.2；cube-triple 與 puzzle-4x4 的 task 2、4，取最後三次評估平均）：只學 vQ $v_Q$ ​、不用 V 速度，與 VF 相近；把抽樣挑選換成一步 actor，論文原句是「reduces success rates by 44%」，沒有說明是相對下降還是百分點。IVF 以純量優勢決定權重，遠優於對速度殘差做 expectile 或用分位數權重。拿掉 reward scaling，VF 的平均成功率約從 86% 降到 11%，IVF 從 76% 降到 11%（Fig. 5）；這是 4 個任務、最後三次評估的平均，與 Table 5 的最終評估協定不同（Table 5 同 4 個任務 VF 平均 93.5、IVF 77），所以 86% 不能與 Table 5 的數字直接比較。flow 積分步數（1 到 20）與 M 都沒有顯著影響，1 步也相近（Fig. 8）。
+
+ 13 · 研究脈絡
+
+ 研究脈絡
+
+ 分布式 RL 先以類別分佈（C51）、分位數回歸（QR-DQN）與隱式分位數網路（IQN）表示回報分佈；flow matching 提供另一種表示方式。以 flow 表示價值的方法（TD-Flow、floq、DFC、FlowCritic、FlowIQN）多半只在終點施加 Bellman 目標；Value Flows 與 PCBF 嘗試在路徑上施加一致性；Value Forcing 以加了高斯修正的 flow Bellman 算子在每個 noise level 對齊邊際分佈。IQL 與 IDQL 是 IVF 的 expectile 加權與抽樣挑選的背景。每張卡片連到對應的研究筆記。
+
+ 分布式 RLFlow matching以 flow 表示價值（終點目標）路徑上的 Bellman 一致性隱式價值學習與抽樣挑選本文
+
+ 2017分布式 RLA Distributional Perspective on Reinforcement Learning
+Bellemare et al.
+提出以 Bellman 方程學習價值分布（C51）
+arXiv ↗筆記
+2017分布式 RLDistributional Reinforcement Learning with Quantile Regression
+Dabney et al.
+以分位數回歸表示回報分布
+arXiv ↗筆記
+2018分布式 RLImplicit Quantile Networks for Distributional Reinforcement Learning
+Dabney et al.
+對隨機分位數位置學習分位數函數
+arXiv ↗筆記
+2021隱式價值學習與抽樣挑選Offline Reinforcement Learning with Implicit Q-Learning
+Kostrikov et al.
+expectile 回歸的 in-sample 價值學習，IVF 的背景
+arXiv ↗筆記
+2022Flow matchingFlow Matching for Generative Modeling
+Lipman et al.
+flow matching 目標
+arXiv ↗筆記
+2022Flow matchingFlow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow
+Liu et al.
+rectified flow，速度場與隨機過程微分的關係（Lemma 1）
+arXiv ↗筆記
+2023隱式價值學習與抽樣挑選IDQL: Implicit Q-Learning as an Actor-Critic Method with Diffusion Policies
+Hansen-Estruch et al.
+以擴散策略搭配 IQL；抽樣再挑選的策略抽取
+arXiv ↗筆記
+2025以 flow 表示價值（終點目標）Temporal Difference Flows
+Farebrother et al.
+機率路徑上的 Bellman 方程與 flow matching
+arXiv ↗筆記
+2025以 flow 表示價值（終點目標）floq: Training Critics via Flow-Matching for Scaling Compute in Value-Based RL
+Agrawalla et al.
+以 flow matching 訓練純量 Q 函數
+arXiv ↗筆記
+2025以 flow 表示價值（終點目標）Unleashing Flow Policies with Distributional Critics
+Chen et al.
+DFC：flow matching 建模回報分布，終點 Bellman 目標
+arXiv ↗筆記
+2025以 flow 表示價值（終點目標）FlowCritic: Bridging Value Estimation with Flow Matching in Reinforcement Learning
+Zhong et al.
+以 flow matching 建模價值分布
+arXiv ↗筆記
+2025路徑上的 Bellman 一致性Value Flows
+Dong et al.
+以速度場作為 TD 目標，各 noise level 套用乾淨 Bellman 方程
+arXiv ↗筆記
+2026路徑上的 Bellman 一致性Path-Coupled Bellman Flows for Distributional Reinforcement Learning
+Xu et al.
+以共同噪聲耦合 flow 路徑
+arXiv ↗筆記
+2026以 flow 表示價值（終點目標）Quantile-Coupled Flow Matching for Distributional Reinforcement Learning
+Groom et al.
+FlowIQN：以單調傳輸耦合對齊 Bellman 目標
+arXiv ↗筆記
+2026本文Value Forcing: Aligning Return Distributions at All Noise Levels
+Zheng et al.
+flow Bellman operator，在每個 noise level 施加 Bellman 一致性
+arXiv ↗筆記
+
+ 14 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 作者在結論寫明：IVF 的理論分析假設精確最佳化與收斂到自洽不動點，神經網路下的收斂保證仍是開放問題；延伸到 online 學習與真實機器人是未來工作（Sec. 7）。本頁另外整理五點：(1) 沒有拿掉高斯修正項的消融；(2) 回報估計只在 4 個狀態上比較；(3) contraction 是固定策略下的理想算子；(4) 子集抽樣偏向高獎勵軌跡；(5) 單任務的成功率粒度粗（10 episode × 4 種子）。
+
+ 研究筆記（依閱讀順序）
+
+ Value Forcing 的研究脈絡總覽：從 distributional RL 到每個 noise level 的 Bellman 一致性總覽
+
+ MDP、Q 函數與 Bellman backup：value-based RL 的基本記號基本記號
+
+ Offline RL 的分布偏移與 OOD 動作造成的 Q 值高估Offline RL
+
+ Distributional RL：回報分布與分布式 Bellman 方程分布式 RL
+
+ Flow matching 的速度目標Flow matching
+
+ 以 flow matching 表示價值與回報分布的 critic：TD-Flow、floq、DFC、FlowCritic、FlowIQN終點監督的 flow critic
+
+ Flow Bellman operator：在所有 noise level 施加 Bellman 一致性本論文的核心
+
+ VF 與 IVF：Value Forcing 的 actor-critic 與 implicit 兩種實例本論文的演算法
+
+ Expectile regression 與 value learningIVF 的背景
+
+ IQL 的研究脈絡總覽IVF 的背景
+
+ Flow 策略與離線 RL 的價值學習：FQL、Flow Actor-Critic、Q-chunking 與 OGBench策略與基準
+
+ 擴散策略類別策略類別
+
+ 原文：arXiv:2611.02160、專案頁、程式碼
+
+ Chongyi Zheng, Zhiyuan Zhou, Qiyang Li, Benjamin Eysenbach, Sergey Levine. Value Forcing: Aligning Return Distributions at All Noise Levels. 2026. arXiv:2611.02160.
+
+ 本頁的方程式與數字取自論文 v1；標示「本頁推導」的內容為本頁自行推導，「推定」為本頁為了玩具元件自選的數值，「本頁解讀」為本頁對論文的解讀，三者都不是論文結論。標「玩具」的互動元件不是論文實驗，數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記
