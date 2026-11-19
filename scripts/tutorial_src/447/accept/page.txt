@@ -1,0 +1,575 @@
+Diffuser 擴散規劃
+
+跳到內容
+
+ No. 447
+ Diffuser：以擴散模型取樣完成軌跡規劃
+
+00 摘要01 問題02 擴散模型03 軌跡陣列04 訓練與玩具05 擾動分布06 補全07 引導取樣08 執行與暖啟動09 四個性質10 實驗11 實作12 研究脈絡13 限制與延伸
+
+00摘要
+01問題
+02擴散模型
+03軌跡陣列
+04訓練與玩具
+05擾動分布
+06補全
+07引導取樣
+08執行與暖啟動
+09四個性質
+10實驗
+11實作
+12研究脈絡
+13限制與延伸
+
+ No. 447 · 互動教學 · arXiv 2205.09991 · ICML 2022
+
+ Diffuser：以擴散模型取樣完成軌跡規劃
+
+ Diffuser 對整條軌跡建模，規劃等於從加上擾動的模型中取樣。
+
+ Michael Janner、Yilun Du、Joshua B. Tenenbaum、Sergey Levine（2022）〈Planning with Diffusion for Flexible Behavior Synthesis〉
+
+ 軌跡陣列示意：每一欄是一個規劃時間步，列是狀態的維度（本頁玩具只有平面座標 x、y）。
+
+ 01 · 一次產生整條計畫Diffuser 一次產生一整條計畫：狀態與動作排成二維陣列，從純噪聲逐步去噪。
+
+ 02 · 換擾動函數就換任務同一個模型換一個擾動函數 h 就能做不同任務：固定起點與終點是補全，最大化報酬是用報酬梯度引導。
+
+ 03 · 長時程任務在 Maze2D 長時程任務中平均分數 119.5，最佳 model-free 基準 IQL 為 47.0。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · 問題
+
+ 學到的動態模型的預測誤差會被最佳化器利用
+
+ 強化學習（reinforcement learning, RL）把決策寫成馬可夫決策過程：代理人在每個時間步 t $t$ 處於狀態 st $s_t$ ​，選擇動作 at $a_t$ ​，得到報酬 r(st,at) $r(s_t,a_t)$ ​,at​)，環境依動態 st+1=f(st,at) $s_{t+1}=f(s_t,a_t)$ ​=f(st​,at​) 轉移到下一個狀態。軌跡最佳化（trajectory optimization）是一類搜尋一串動作、使目標最大的演算法；它要解的問題是（Sec. 2.1）
+
+ a0:T∗=arg⁡max⁡a0:TJ(s0,a0:T)=arg⁡max⁡a0:T∑t=0Tr(st,at) $a^*_{0:T}=\arg\max_{a_{0:T}}\mathcal J(s_0,a_{0:T})=\arg\max_{a_{0:T}}\sum_{t=0}^{T}r(s_t,a_t)$ ∗​=arga0:T​max​J(s0​,a0:T​)=arga0:T​max​t=0∑T​r(st​,at​)
+Sec. 2.1
+
+ 其中 T $T$ 是規劃視界（planning horizon），τ=(s0,a0,s1,a1,…,sT,aT) $\tau=(s_0,a_0,s_1,a_1,\dots,s_T,a_T)$ ​,a0​,s1​,a1​,…,sT​,aT​) 是狀態與動作交錯的軌跡，J(τ) $\mathcal J(\tau)$ 是這條軌跡的目標值。解這個問題需要知道動態 f $f$ 。
+
+ 基於模型的強化學習（model-based RL）的常見做法是：先用監督式學習得到一個近似的動態模型 f^ $\hat f$ ​，再把它交給經典的軌跡最佳化器。作者指出這個組合很少照描述運作：強力的最佳化器會利用學到模型的誤差，產生的計畫更像對抗樣本（adversarial example，即輸入被調整到讓模型輸出錯誤值的例子），而不是最佳軌跡（Sec. 1）。最佳化器找到的是「模型誤以為報酬很高」的動作序列。因此當代 model-based 方法多半改用 model-free 方法的價值函數與策略梯度，或只用不需要梯度的簡單最佳化器（例如隨機射擊、交叉熵法）。
+
+ 本文的設定是離線的：只用既有資料集訓練，不與環境互動收集新資料（Sec. 5.3）。
+
+ 延伸閱讀：MDP、Q 函數與 Bellman backup、Offline RL 的分布偏移、學習式動態模型與軌跡最佳化的分工
+
+ 02 · 擴散模型
+
+ 擴散模型以逐步去噪產生資料
+
+ 擴散機率模型（diffusion probabilistic model）把產生資料寫成反覆去噪的過程 pθ(τi−1∣τi) $p_\theta(\tau^{i-1}\mid\tau^i)$ ​(τi−1∣τi)。它是前向擴散過程 q(τi∣τi−1) $q(\tau^i\mid\tau^{i-1})$ ∣τi−1) 的反向；前向過程逐步加入噪聲，破壞資料的結構（Sec. 2.2）。模型給出的資料分布是
+
+ pθ(τ0)=∫p(τN)∏i=1Npθ(τi−1∣τi) dτ1:N,pθ(τi−1∣τi)=N(τi−1∣μθ(τi,i),Σi) $p_\theta(\tau^0)=\int p(\tau^N)\prod_{i=1}^{N}p_\theta(\tau^{i-1}\mid\tau^i)\,d\tau^{1:N},\qquad p_\theta(\tau^{i-1}\mid\tau^i)=\mathcal N\big(\tau^{i-1}\mid\mu_\theta(\tau^i,i),\Sigma^i\big)$ ​(τ0)=∫p(τN)i=1∏N​pθ​(τi−1∣τi)dτ1:N,pθ​(τi−1∣τi)=N(τi−1∣μθ​(τi,i),Σi)
+Sec. 2.2
+
+ p(τN) $p(\tau^N)$ ) 是標準高斯，τ0 $\tau^0$ 是無噪資料，N $N$ 是擴散總步數。反向轉移是平均為 μθ $\mu_\theta$ ​、共變異數為固定 Σi $\Sigma^i$ 的高斯；參數 θ $\theta$ 以最小化負對數似然的變分上界訓練。
+
+ 兩種時間。本文同時有擴散過程的時間與規劃問題的時間。上標 i $i$ 是擴散步，下標 t $t$ 是規劃時間步。例如 st0 $s^0_t$ 0​ 是無噪軌跡中第 t $t$ 個狀態；τsti $\tau^i_{s_t}$ ​i​、τati $\tau^i_{a_t}$ ​i​ 是擴散步 i $i$ 的軌跡中第 t $t$ 個狀態與動作。沒有歧義時省略無噪量的上標：τ=τ0 $\tau=\tau^0$ ，即無噪軌跡（Sec. 2.2 Notation）。
+
+ 排程。論文的反向共變異數依 cosine 排程（Nichol & Dhariwal 2021）。排程以三個量描述：βi $\beta_i$ ​ 是第 i $i$ 步加入的噪聲比例，αˉi $\bar\alpha_i$ i​ 是經過 i $i$ 步後保留的資料比例，β~i $\tilde\beta_i$ ​i​ 是反向步使用的變異數：
+
+ f(i)=cos⁡2 ⁣(i/N+0.0081.008⋅π2),βi=min⁡ ⁣(1−f(i)f(i−1), 0.999),αˉ0=1,  αˉi=∏j≤i(1−βj),β~i=βi 1−αˉi−11−αˉi $f(i)=\cos^2\!\Big(\frac{i/N+0.008}{1.008}\cdot\frac{\pi}{2}\Big),\quad \beta_i=\min\!\Big(1-\frac{f(i)}{f(i-1)},\,0.999\Big),\quad \bar\alpha_0=1,\ \ \bar\alpha_i=\prod_{j\le i}(1-\beta_j),\quad \tilde\beta_i=\beta_i\,\frac{1-\bar\alpha_{i-1}}{1-\bar\alpha_i}$ (1.008i/N+0.008​⋅2π​),βi​=min(1−f(i−1)f(i)​,0.999),αˉ0​=1,  αˉi​=j≤i∏​(1−βj​),β~​i​=βi​1−αˉi​1−αˉi−1​​
+cosine 排程
+
+ 有了排程，可以寫出兩個後面會用到的 DDPM 標準式（Ho et al. 2020；論文引用但沒有寫出）。第一個是閉式加噪：
+
+ q(τi∣τ0)=N(αˉi τ0, (1−αˉi)I),τi=αˉi τ0+1−αˉi ϵ,  ϵ∼N(0,I) $q(\tau^i\mid\tau^0)=\mathcal N\big(\sqrt{\bar\alpha_i}\,\tau^0,\,(1-\bar\alpha_i)I\big),\qquad \tau^i=\sqrt{\bar\alpha_i}\,\tau^0+\sqrt{1-\bar\alpha_i}\,\epsilon,\ \ \epsilon\sim\mathcal N(0,I)$ ∣τ0)=N(αˉi​​τ0,(1−αˉi​)I),τi=αˉi​​τ0+1−αˉi​​ϵ,  ϵ∼N(0,I)
+DDPM
+
+ 這個式子讓我們可以從無噪軌跡一步跳到任何擴散步 i $i$ ，不必逐步加噪。第 08 章的暖啟動就是用它：把上一個計畫當作 τ0 $\tau^0$ ，取 i=k $i=k$ 。第二個是由預測噪聲 ϵθ $\epsilon_\theta$ ​ 求反向平均：
+
+ μ=11−βi(τi−βi1−αˉi ϵθ(τi,i)) $\mu=\frac{1}{\sqrt{1-\beta_i}}\Big(\tau^i-\frac{\beta_i}{\sqrt{1-\bar\alpha_i}}\,\epsilon_\theta(\tau^i,i)\Big)$ ​​1​(τi−1−αˉi​​βi​​ϵθ​(τi,i))
+DDPM
+
+ 符號表
+
+ 符號意義
+
+ st,at $s_t,a_t$ ​,at​第 t $t$ 個規劃時間步的狀態、動作
+
+ T $T$ 、H $H$ 規劃視界；本頁玩具以 H $H$ 表示軌跡陣列的欄數
+
+ r $r$ 、J $\mathcal J$ 單步報酬、軌跡目標 ∑tr(st,at) $\sum_t r(s_t,a_t)$ ​r(st​,at​)
+
+ i $i$ 、N $N$ 擴散步（上標）、擴散總步數
+
+ τsti $\tau^i_{s_t}$ ​i​、τati $\tau^i_{a_t}$ ​i​擴散步 i $i$ 的軌跡中第 t $t$ 個狀態、動作；τ=τ0 $\tau=\tau^0$ 
+
+ βi,αˉi,β~i $\beta_i,\bar\alpha_i,\tilde\beta_i$ ​,αˉi​,β~​i​排程（本章定義）；元件讀數中 β~i $\tilde\beta_i$ ​i​ 寫成 βtᵢ
+
+ μθ,Σi,ϵθ $\mu_\theta,\Sigma^i,\epsilon_\theta$ ​,Σi,ϵθ​反向平均、反向共變異數、預測的噪聲
+
+ h $h$ 、p~θ $\tilde p_\theta$ ​θ​擾動函數、擾動分布（第 05 章）
+
+ Ot $\mathcal O_t$ ​、Jϕ $\mathcal J_\phi$ ​、α $\alpha$ 最佳性變數、報酬預測器、引導尺度（第 07 章）
+
+ ct $c_t$ ​第 t $t$ 步的狀態限制值（第 06 章）
+
+ 延伸閱讀：ε-prediction 與 DDPM、score-based 模型、DDPM 的訓練與取樣流程
+
+ 03 · 軌跡陣列
+
+ Diffuser 把整條軌跡當成一張二維陣列去噪
+
+ Diffuser 是一個對軌跡建模的擴散模型 pθ(τ) $p_\theta(\tau)$ ​(τ)，而且模型是為規劃設計的：控制器的效果和狀態預測的品質一樣重要。所以狀態與動作一起預測，動作只是狀態之外的額外維度。Diffuser 的輸入與輸出是一張二維陣列，每一欄是一個規劃時間步（Sec. 3.1）：
+
+ τ=[s0s1⋯sTa0a1⋯aT] $\tau=\begin{bmatrix}s_0&s_1&\cdots&s_T\\ a_0&a_1&\cdots&a_T\end{bmatrix}$ ​a0​​s1​a1​​⋯⋯​sT​aT​​]
+Eq. 2
+
+ 不依時間順序自迴歸。考慮目標條件推論 p(s1∣s0,sT) $p(s_1\mid s_0,s_T)$ ​∣s0​,sT​)：下一個狀態 s1 $s_1$ ​ 同時依賴過去的 s0 $s_0$ ​ 與未來的 sT $s_T$ ​。動態預測是因果的，現在由過去決定；決策與控制可以是反因果的（anti-causal），現在的決策取決於未來（Sec. 3.1；腳註 1 指出一般 RL 中這來自「未來最佳」的假設，例如 log⁡p(at∣st,Ot:T) $\log p(a_t\mid s_t,\mathcal O_{t:T})$ ​∣st​,Ot:T​)）。因為不能用時間順序的自迴歸，Diffuser 同時預測計畫的所有時間步。
+
+ 時間局部性。論文 Fig. 2 畫出單一時間卷積的依賴關係：一個輸出只看到鄰近的過去與未來時間步。所以每個去噪步只能依軌跡的局部一致性做預測，也就是只修正相鄰時間步之間的不一致；把許多去噪步組合起來後，局部一致性可以推動整條計畫的全局連貫（Sec. 3.1）。
+
+ 架構。作者列出三個要求：整條軌跡要非自迴歸地預測；每個去噪步要時間局部；表示要沿規劃時間的方向「等變」（把輸入沿時間平移，輸出也跟著平移），沿狀態與動作特徵的方向則不需要。滿足這三點的是一維時間卷積：作者用重複的時間卷積殘差區塊組成類似 U-Net 的結構，把影像擴散模型的二維空間卷積換成一維時間卷積（Fig. A1）。因為模型是全卷積的，計畫的視界由輸入陣列的大小決定，而不是由架構決定，規劃時可以改變（Sec. 3.1）。
+
+ App. C 的架構細節
+
+ U-Net 有 6 個重複的殘差區塊。每個區塊有兩個時間卷積，各自接 group normalization（把通道分組做正規化），區塊最後接 Mish 非線性。擴散步的嵌入由單一全連接層產生，加到每個區塊第一個時間卷積的激活上（App. C 第 1 點）。
+
+ 延伸閱讀：軌跡層級擴散規劃（Diffuser）
+
+ 04 · 訓練與玩具
+
+ 訓練目標，以及本頁用來示範的玩具
+
+ Diffuser 以網路 ϵθ(τi,i) $\epsilon_\theta(\tau^i,i)$ ​(τi,i) 預測加入的噪聲，反向平均 μθ $\mu_\theta$ ​ 再由第 02 章的式子閉式求得。訓練用簡化的目標（Sec. 3.1）：
+
+ L(θ)=Ei,ϵ,τ0[∥ϵ−ϵθ(τi,i)∥2],i∼U{1,2,…,N},  ϵ∼N(0,I) $\mathcal L(\theta)=\mathbb E_{i,\epsilon,\tau^0}\Big[\big\|\epsilon-\epsilon_\theta(\tau^i,i)\big\|^2\Big],\qquad i\sim\mathcal U\{1,2,\dots,N\},\ \ \epsilon\sim\mathcal N(0,I)$ ​[​ϵ−ϵθ​(τi,i)​2],i∼U{1,2,…,N},  ϵ∼N(0,I)
+Sec. 3.1
+
+ τi $\tau^i$ 是把 τ0 $\tau^0$ 以噪聲 ϵ $\epsilon$ 破壞後的軌跡；反向共變異數 Σi $\Sigma^i$ 依第 02 章的 cosine 排程。App. C 寫明運動控制任務用 N=20 $N=20$ 個擴散步，積木堆疊用 N=100 $N=100$ ；並且預測噪聲 ϵ $\epsilon$ 或預測無噪資料 τ0 $\tau^0$ ，控制表現沒有顯著差別（App. C 第 6、9 點）。擴散步數太少時，取樣分布與資料分布的差距變大；下面的玩具中可以看到步數太少時樣本過度集中。
+
+ 本頁的玩具。瀏覽器裡無法訓練 Diffuser。本頁改用一個答案已知的分布代替訓練好的網路：一個平面上平滑軌跡的高斯分布。對這個分布，最好的噪聲預測可以直接算出，所以可以把它當成訓練完美的 ϵθ $\epsilon_\theta$ ​，並且能算出精確的條件分布來比較。玩具只規劃狀態 st=(xt,yt) $s_t=(x_t,y_t)$ ​=(xt​,yt​)，不含動作列（點質量的動作可取 at=st+1−st $a_t=s_{t+1}-s_t$ ​=st+1​−st​）。反向共變異數取 Σi=β~iI $\Sigma^i=\tilde\beta_iI$ =β~​i​I推定：論文只寫 Σi $\Sigma^i$ 依 cosine 排程，沒有寫用 βi $\beta_i$ ​ 還是 β~i $\tilde\beta_i$ ​i​。玩具的去噪器在高噪聲時看到整條軌跡，不示範上一章的時間局部性。
+
+ 玩具的數學（本頁推導）
+
+ 兩個座標各自獨立，x0:H−1∼N(0,Q−1) $x_{0:H-1}\sim\mathcal N(0,Q^{-1})$ ​∼N(0,Q−1)，Q=aI+bL2 $Q=aI+bL^2$ ，a=0.01 $a=0.01$ 、b=400 $b=400$ 推定；L $L$ 是 Neumann 邊界的二階差分矩陣。L $L$ 的特徵向量是 DCT-II 基底 ϕk(t)=ckcos⁡ ⁣(πk(t+12)/H) $\phi_k(t)=c_k\cos\!\big(\pi k(t+\tfrac12)/H\big)$ ​(t)=ck​cos(πk(t+21​)/H)，所以 Q $Q$ 的模式變異數為 λk=1/(a+b (4sin⁡2πk2H)2) $\lambda_k=1/\big(a+b\,(4\sin^2\tfrac{\pi k}{2H})^2\big)$ ​=1/(a+b(4sin22Hπk​)2)。在 DCT 係數上，最好的噪聲預測是高斯條件期望 ϵ^k=1−αˉi τ^k/(αˉiλk+1−αˉi) $\hat\epsilon_k=\sqrt{1-\bar\alpha_i}\,\hat\tau_k/(\bar\alpha_i\lambda_k+1-\bar\alpha_i)$ k​=1−αˉi​​τ^k​/(αˉi​λk​+1−αˉi​)本頁推導。
+
+ C1從噪聲到計畫：反向去噪鏈
+
+ 拖動「擴散步 i」從 N 到 0，看整條計畫如何同時成形；換 N 與 H 後重新取樣。
+
+ t = 0（圓形）t = H − 1（方形）目前的規劃時間步 t
+
+ 擴散步數 N
+5102050100
+
+ 欄數 H
+163264128
+
+ 擴散步 i 0
+
+ 規劃時間步 t 0
+
+ 播放重新抽樣
+
+ 擴散步 i = 0（共 N = 20）
+τⁱ 在 t = 0：(1.110, 2.296)
+變異數比 = 0.5958
+
+ 排程數值
+i = 0：無噪計畫（ᾱ₀ = 1）
+
+ 擴散步 0，變異數比 0.596
+
+ 讀數由本頁的高斯軌跡玩具依第 04 章的公式即時計算，不是論文的模型。變異數比 = 取樣分布總變異數 ÷ 資料總變異數本頁推導：無條件鏈在每個 DCT 模式上是獨立的一維線性遞迴。
+
+ 可以觀察到三件事。第一，i=N $i=N$ 時是無結構的噪聲；i $i$ 減小時整條計畫同時變平滑，不是從左到右逐欄產生。第二，換 H $H$ 後同一套公式產生不同長度的計畫；這示範的是公式對任意 H $H$ 都有定義，不是同一組網路權重。論文中對應的機制是全卷積架構（Sec. 3.1、Fig. 3c）。第三，本頁玩具中，N=5 $N=5$ 時變異數比約 0.15，N=100 $N=100$ 時約 0.89：步數太少時樣本過度集中（這是 βt 的選擇與有限步數造成的玩具結果）。
+
+ 05 · 擾動分布
+
+ 規劃等於從擾動分布取樣
+
+ 作者把盡量多的規劃流程併入生成模型，使規劃與取樣幾乎相同。擴散模型逐步去噪的過程容易加上條件：從擾動分布取樣（Sec. 3）
+
+ p~θ(τ)∝pθ(τ) h(τ) $\tilde p_\theta(\tau)\propto p_\theta(\tau)\,h(\tau)$ ​θ​(τ)∝pθ​(τ)h(τ)
+Eq. 1
+
+ 擾動函數 h(τ) $h(\tau)$ 可以放先前的觀測（例如觀測歷史）、想要的結果（例如要抵達的目標）、或一般的待最佳化函數（例如報酬或成本）。在 p~θ $\tilde p_\theta$ ​θ​ 中推論相當於第 01 章軌跡最佳化的機率版本：軌跡要在 pθ $p_\theta$ ​ 下物理上合理，也要在 h $h$ 下高報酬或滿足限制。動態資訊在 pθ $p_\theta$ ​，任務資訊在 h $h$ ，兩者分開，所以換任務只換 h $h$ ，同一個擴散模型可以重用於同一環境的多個任務（Sec. 3）。
+
+ 這個設計呼應作者對模型的要求（Sec. 1）：模型是為規劃而設計的，所以動作分布和狀態動態一樣重要、長時程準確度比單步誤差重要；模型應該與報酬函數無關，才能重用於多個任務；計畫（而不只是預測）應該隨經驗變好，並避免射擊式規劃的短視失敗。
+
+ 接下來兩章是兩種 h $h$ 。第 06 章的 h $h$ 是限制（固定起點與終點），第 07 章的 h $h$ 是報酬。論文的順序是先報酬（Sec. 3.2）後限制（Sec. 3.3）；本頁先講較簡單的限制。
+
+ 06 · 補全
+
+ 固定起點與終點的規劃是補全問題
+
+ 有些規劃問題比較適合寫成限制滿足，而不是報酬最大化：目標是產生任何一條滿足限制的可行軌跡，例如終點在目標位置。依 Eq. 2 的二維陣列表示，這是影像補全（inpainting）問題：狀態與動作的限制就像影像中已經觀測到的像素，其餘位置要由擴散模型以與限制一致的方式填入（Sec. 3.3）。擾動函數對觀測值是 Dirac delta，其他地方是常數。若 ct $c_t$ ​ 是第 t $t$ 步的狀態限制：
+
+ h(τ)=δct(s0,a0,…,sT,aT)={+∞ct=st0otherwise $h(\tau)=\delta_{c_t}(s_0,a_0,\dots,s_T,a_T)=\begin{cases}+\infty&c_t=s_t\\0&\text{otherwise}\end{cases}$ ​​(s0​,a0​,…,sT​,aT​)={+∞0​ct​=st​otherwise​
+Sec. 3.3
+
+ +∞ $+\infty$ 是記號上的寫法，表示「只允許 st=ct $s_t=c_t$ ​=ct​」，不是實際的密度值。動作限制的定義相同。實作方式是：從無擾動的反向過程 τi−1∼pθ(τi−1∣τi) $\tau^{i-1}\sim p_\theta(\tau^{i-1}\mid\tau^i)$ ∼pθ​(τi−1∣τi) 取樣，並在每個擴散步之後把被限制位置的取樣值換成 ct $c_t$ ​（論文寫成對所有 i∈{0,1,…,N} $i\in\{0,1,\dots,N\}$ ）。
+
+ 報酬最大化的問題也需要補全，因為所有計畫都必須從目前狀態開始。這就是 Alg. 1 第 10 行（演算法全文在第 07 章）：
+
+ τi−1s₀ ← s：限制計畫的第一個狀態等於目前觀測到的狀態 s $s$ 。
+
+ 在本頁的玩具中，精確的條件分布可以由一組線性方程求得，所以能和替換法比較本頁推導。下圖固定起點 A=(−1.2,−0.8) $A=(-1.2,-0.8)$ 與終點 B $B$ 。
+
+ C2補全：固定起點與終點
+
+ 粗實線是替換法的平均計畫，粗虛線是精確條件平均。移動終點 B，或增加擴散步數 N。
+
+ 替換法（平均）精確條件平均樣本起點 A終點 B
+
+ 欄數 H
+3264128
+
+ 擴散步數 N
+520100
+
+ 終點 Bx 1.2
+
+ 終點 By 0.8
+
+ 顯示 6 個樣本
+ 顯示精確條件平均
+ 重新抽樣
+
+ rms（替換法 − 精確）= 0.2455
+端點跳躍：替換法 0.1676（1.49 倍單步）
+　　　　　精確 0.0068
+先驗單步長度 = 0.1128
+限制誤差 = 0e+0
+
+ 端點跳躍 0.168，均方根差 0.246
+
+ 讀數由本頁的高斯軌跡玩具即時計算，不是論文的模型。「替換法（平均）」是把所有噪聲設為 0 跑一次的結果；鏈的每一步都是仿射函數，所以它等於樣本的期望值本頁推導。
+
+ 替換法不是精確的條件取樣：被限制的值只能經由之後的去噪步傳到其他時間步本頁推導。因此，在本頁玩具中，替換法的計畫平均在端點附近有跳躍，內部被拉向先驗平均（原點）；擴散步數增加時差距縮小。
+
+ 本頁玩具的數字如下。每個樣本都精確通過 A $A$ 與 B $B$ 。H=64 $H=64$ 、N=20 $N=20$ 時，替換法平均的端點跳躍是 0.168，約為先驗典型單步長度 0.113 的 1.5 倍，精確平均只有 0.007。在 N≤100 $N\le100$ 的範圍內，N $N$ 從 5 增加到 100，均方根差從 0.439 降到 0.173，跳躍從 0.599 降到 0.073，沒有看到歸零。H=128 $H=128$ 時替換法平均的內部幾乎停在原點：限制資訊沿時間傳得不夠遠。這些是玩具的結果；論文的 Diffuser 以真實資料訓練，Maze2D 的分數見第 10 章。
+
+ 07 · 引導取樣
+
+ 最大化報酬是用報酬梯度引導取樣
+
+ 要用 Diffuser 解 RL 問題，需要引入報酬。作者借用控制即推論（control-as-inference，Levine 2018）的圖模型：令 Ot $\mathcal O_t$ ​ 是表示第 t $t$ 步「最佳」的二元隨機變數，p(Ot=1)=exp⁡(r(st,at)) $p(\mathcal O_t=1)=\exp(r(s_t,a_t))$ ​=1)=exp(r(st​,at​))。在 Eq. 1 中取 h(τ)=p(O1:T∣τ) $h(\tau)=p(\mathcal O_{1:T}\mid\tau)$ ​∣τ)，就能從最佳軌跡的集合取樣（Sec. 3.2）：
+
+ p~θ(τ)=p(τ∣O1:T=1)∝p(τ) p(O1:T=1∣τ) $\tilde p_\theta(\tau)=p(\tau\mid\mathcal O_{1:T}=1)\propto p(\tau)\,p(\mathcal O_{1:T}=1\mid\tau)$ ​θ​(τ)=p(τ∣O1:T​=1)∝p(τ)p(O1:T​=1∣τ)
+Sec. 3.2
+
+ RL 問題於是換成了條件取樣問題。精確取樣不可行；但當 p(O1:T∣τi) $p(\mathcal O_{1:T}\mid\tau^i)$ ​∣τi) 足夠平滑時，反向轉移可以近似為高斯（Sohl-Dickstein et al. 2015）：
+
+ pθ(τi−1∣τi,O1:T)≈N(τi−1; μ+Σg, Σ), $p_\theta(\tau^{i-1}\mid\tau^i,\mathcal O_{1:T})\approx\mathcal N(\tau^{i-1};\,\mu+\Sigma g,\,\Sigma),$ ​(τi−1∣τi,O1:T​)≈N(τi−1;μ+Σg,Σ),
+Eq. 3
+
+ g=∇τlog⁡p(O1:T∣τ)∣τ=μ=∑t=0T∇st,atr(st,at)∣(st,at)=μt=∇J(μ) $g=\nabla_\tau\log p(\mathcal O_{1:T}\mid\tau)\big|_{\tau=\mu}=\sum_{t=0}^{T}\nabla_{s_t,a_t}r(s_t,a_t)\big|_{(s_t,a_t)=\mu_t}=\nabla\mathcal J(\mu)$ ​logp(O1:T​∣τ)​τ=μ​=t=0∑T​∇st​,at​​r(st​,at​)​(st​,at​)=μt​​=∇J(μ)
+Eq. 3
+
+ μ,Σ $\mu,\Sigma$ 是原本反向轉移 pθ(τi−1∣τi) $p_\theta(\tau^{i-1}\mid\tau^i)$ ​(τi−1∣τi) 的參數。也就是說，報酬透過 p(Ot=1)=exp⁡(r) $p(\mathcal O_t=1)=\exp(r)$ ​=1)=exp(r) 進入取樣：反向平均沿報酬梯度移動 Σg $\Sigma g$ ，g=∇J(μ) $g=\nabla\mathcal J(\mu)$ 。這個關係把影像生成用的分類器引導取樣（Dhariwal & Nichol 2021）直接轉到 RL。
+
+ 從 Eq. 3 到 g=∇J(μ) $g=\nabla\mathcal J(\mu)$ 用到三個論文沒有寫出的條件本頁推導：(1) 給定 τ $\tau$ 時各 Ot $\mathcal O_t$ ​ 彼此獨立，所以 log⁡p(O1:T=1∣τ)=∑tr(st,at) $\log p(\mathcal O_{1:T}=1\mid\tau)=\sum_t r(s_t,a_t)$ ​=1∣τ)=∑t​r(st​,at​)；(2) exp⁡(r) $\exp(r)$ 要是機率，所以 r≤0 $r\le0$ ，把報酬平移不改變 g $g$ ，縮放則會改變 g $g$ ；(3) p(O∣τi)≈p(O∣μ) $p(\mathcal O\mid\tau^i)\approx p(\mathcal O\mid\mu)$ )≈p(O∣μ)，也就是把帶噪的 τi $\tau^i$ 換成反向平均 μ $\mu$ ，並把雜訊層級的似然換成乾淨軌跡的報酬，這是另一個近似。論文 O $\mathcal O$ 的下標是 1:T $1{:}T$ ，求和卻是 t=0..T $t=0..T$ ，本頁照錄。
+
+ 實作上，作者先在所有可用軌跡的狀態與動作上訓練 pθ(τ) $p_\theta(\tau)$ ​(τ)，再另外訓練一個模型 Jϕ $\mathcal J_\phi$ ​，以帶噪軌跡樣本 τi $\tau^i$ 為輸入預測累積報酬（論文沒有寫明預測的是 τi $\tau^i$ 本身還是對應 τ0 $\tau^0$ 的報酬）。用帶噪樣本當輸入，正是讓條件 (3) 的近似較不嚴重的做法。Jϕ $\mathcal J_\phi$ ​ 的梯度依 Eq. 3 修改反向平均；取樣出的軌跡只執行第一個動作，然後在滾動視界控制迴圈中重新規劃（Sec. 3.2）。
+
+ Alg. 1 Guided Diffusion Planning
+這一行做什麼
+
+ 1: Require Diffuser μθ, guide J, scale α, covariances Σⁱ需要訓練好的 Diffuser、報酬預測器、引導尺度與反向共變異數。
+
+ 2: while not done do滾動視界迴圈：每個環境步規劃一次。
+
+ 3: Observe state s; initialize plan τᴺ ~ N(0, I)觀測目前狀態，從純噪聲開始。
+
+ 4: for i = N, ..., 1 do逐步去噪。
+
+ 6: μ ← μθ(τⁱ)反向轉移的平均（第 02 章的式子）。
+
+ 8: τⁱ⁻¹ ~ N(μ + αΣ∇J(μ), Σⁱ)以報酬梯度移動平均，再加噪聲取樣（Eq. 3 加上尺度 α）。
+
+ 10: τⁱ⁻¹ₛ₀ ← s補全：計畫的第一個狀態固定為目前狀態（第 06 章）。
+
+ 11: Execute first action of plan τ⁰ₐ₀只執行第一個動作，然後回到第 2 行。
+
+ Alg. 1 比 Eq. 3 多一個引導尺度 α $\alpha$ 。論文的目標 p(τ)exp⁡(J) $p(\tau)\exp(\mathcal J)$ 對應 α=1 $\alpha=1$ ；把 α $\alpha$ 讀成「從 p(τ)exp⁡(αJ) $p(\tau)\exp(\alpha\mathcal J)$ 取樣」是分類器引導的常見讀法，下圖的精確參考採用這個讀法，這是本頁的詮釋。增大 α $\alpha$ 時計畫被更強地拉向高報酬區。論文對所有任務用 α=0.1 $\alpha=0.1$ ，只有 hopper-medium-expert 用 0.0001；許多任務可以縮短視界，但引導尺度也要降低，例如 halfcheetah 視界 4 時用 0.001（App. C 第 5、7 點）。α $\alpha$ 的數值與 Jϕ $\mathcal J_\phi$ ​ 的尺度綁在一起，不能跨模型比較。
+
+ 下圖的玩具用報酬 r(st)=−12∥st−c∥2 $r(s_t)=-\tfrac12\|s_t-c\|^2$ ​)=−21​∥st​−c∥2（≤0 $\le0$ ），起點 s=(−1.2,−0.8) $s=(-1.2,-0.8)$ 每步補全。它不訓練 Jϕ $\mathcal J_\phi$ ​，改用兩種可以閉式計算的引導：「雜訊層級似然」把條件 (3) 處理掉，直接對 log⁡E[exp⁡(αJ(τ0))∣τi−1] $\log\mathbb E[\exp(\alpha\mathcal J(\tau^0))\mid\tau^{i-1}]$ ))∣τi−1] 求梯度本頁推導；「乾淨 J(μ)」則在 μ $\mu$ 處直接用真實報酬，g=−α(μ−c) $g=-\alpha(\mu-c)$ 。兩者都以 μ+β~ig $\mu+\tilde\beta_i g$ ​i​g 更新。
+
+ C3引導取樣：用報酬梯度推動計畫
+
+ 菱形是報酬最高的位置 c。調整引導尺度 α，切換兩種引導梯度。
+
+ 引導（平均）精確 p(τ)exp(αJ) 平均樣本起點 s目標 c
+
+ 引導梯度
+雜訊層級似然乾淨 J(μ)
+
+ 引導尺度 α（對數刻度）0.100
+
+ 預設 0.1。α 的數值與 J 的尺度綁在一起，不能和論文的 0.1 直接比較。
+
+ 目標 cx 1.0
+
+ 目標 cy 1.0
+
+ 欄數 H
+3264
+
+ 擴散步數 N
+20100
+
+ 顯示 6 個樣本
+ 顯示精確傾斜分布平均
+ 重新抽樣
+
+ α = 0.100
+終點（引導）(0.8862, 0.8785)
+終點（精確）(1.0789, 1.0467)
+rms = 0.4808
+J（引導）= -13.095　J（精確）= -34.138
+
+ α 0.100，終點 x 0.886
+
+ 讀數由本頁的高斯軌跡玩具即時計算，不是論文的模型。J 在平均路徑上計算：J = −½ Σₜ ‖mₜ − c‖²（對 x、y 加總）。雜訊層級似然在 DCT 上是對角的閉式本頁推導。
+
+ 在本頁玩具中可以觀察到：α=0.001 $\alpha=0.001$ 時幾乎沒有引導。雜訊層級似然模式下，α $\alpha$ 增大時終點穩定地接近 c $c$ （H=32 $H=32$ 、N=20 $N=20$ ：α=0.1 $\alpha=0.1$ 時 0.886，α=1 $\alpha=1$ 時 0.988，α=100 $\alpha=100$ 時 0.9997），即使 α=100 $\alpha=100$ 也不發散。切換到乾淨 J 模式，α=1 $\alpha=1$ 時終點越過 c $c$ 到 1.826，α≥101.2≈15.8 $\alpha\ge10^{1.2}\approx15.8$ ≈15.8 時發散。
+
+ αβ~i>2 $\alpha\tilde\beta_i>2$ ​i​>2 是引導項在單一步放大與 c $c$ 距離的必要條件本頁推導：若 J=−12∑t∥st−c∥2 $\mathcal J=-\tfrac12\sum_t\|s_t-c\|^2$ 1​∑t​∥st​−c∥2，引導項把 μ−c $\mu-c$ 乘上 (1−αβ~i) $(1-\alpha\tilde\beta_i)$ ​i​)。但是否發散取決於所有步驟累積的增益（包含去噪本身的收縮）：乾淨 J 模式、N=20 $N=20$ 時，α=10 $\alpha=10$ 有 7 步 αβ~i>2 $\alpha\tilde\beta_i>2$ ​i​>2 卻沒有發散，α=101.2 $\alpha=10^{1.2}$ 有 10 步並在第 13 步發散。越過目標與發散來自「在 μ $\mu$ 處用乾淨報酬」的簡化，是玩具現象，不代表 Diffuser 的性質。兩種模式下，引導後的平均與精確平均之間都有差距，反映 Eq. 3 是近似：引導後的平均不一定等於 p(τ)exp⁡(αJ) $p(\tau)\exp(\alpha\mathcal J)$ 的平均。
+
+ 延伸閱讀：控制即推論：把獎勵最大化改寫為條件取樣、擴散模型的分類器引導與餘弦排程、貝氏逆問題與 guidance
+
+ 08 · 執行與暖啟動
+
+ 計畫的執行方式與暖啟動
+
+ 計畫的執行方式有兩種。運動控制實驗依 Alg. 1：只執行計畫的第一個動作，然後在新的狀態重新規劃，這是滾動視界控制（receding-horizon control）。Maze2D 則把取樣出的計畫當作開迴路計畫執行（Sec. 5.1）。（Sec. 5.4 一方面說「execute plans open loop」，一方面又說每個執行步都要重新產生計畫；原文在這裡不一致，本頁照錄。）
+
+ Diffuser 的限制之一是計畫需要迭代產生，速度慢；若每一步都重新規劃，每一步都要跑完整的去噪鏈。暖啟動（warm-start）重用上一個計畫：先對上一個計畫跑少數幾步前向擴散，再從這個部分加噪的軌跡跑相同步數的去噪，得到更新的計畫（Sec. 5.4）。前向 k $k$ 步可以用第 02 章的閉式加噪一步完成本頁推導：
+
+ τk=αˉk τprev+1−αˉk ϵ,再由 i=k 去噪到 0 $\tau^k=\sqrt{\bar\alpha_k}\,\tau_{\text{prev}}+\sqrt{1-\bar\alpha_k}\,\epsilon,\qquad\text{再由 } i=k \text{ 去噪到 } 0$ =αˉk​​τprev​+1−αˉk​​ϵ,再由 i=k 去噪到 0
+q(τᵏ|τ⁰)
+
+ 冷啟動純噪聲 τᴺ去噪 N 步計畫
+
+ 暖啟動上一個計畫前向 k 步部分加噪 τᵏ去噪 k 步新計畫
+
+ 論文 Fig. 7（Walker2d Medium-Expert）把每次重新產生計畫的去噪步數從 2 變到 100：只用十分之一的擴散步數時，只要以前一個時間步的計畫初始化，表現只小幅下降（Sec. 5.4）。論文沒有說明上一個計畫是否要先平移一欄（因為已經執行了一步），本頁不補充。
+
+ 09 · 四個性質
+
+ 擴散規劃器有四個性質
+
+ 作者討論四個與標準動態模型不同、或在非自迴歸軌跡預測中少見的性質（Sec. 4，Fig. 3）。
+
+ 學到的長時程規劃。單步模型通常當作真實動態 f $f$ 的替代品，不綁定任何特定的規劃演算法。Diffuser 的規劃幾乎等於取樣，差別只有擾動函數 h $h$ 的引導；所以 Diffuser 作為長時程預測器的效果直接轉成長時程規劃的效果。作者在稀疏報酬的目標抵達設定中展示，Diffuser 能產生可行軌跡，而射擊式方法在這類設定中困難（Fig. 3a）。
+
+ 時間組合性。單步模型常以馬可夫性質為理由，組合資料分布內的轉移，推廣到分布外的軌跡。Diffuser 以反覆改善局部一致性產生全局連貫的軌跡（第 03 章），所以也能把熟悉的子序列以新的方式拼接：只用直線軌跡訓練，能產生在交點組合而成的 V 形軌跡（Fig. 3b）。
+
+ 可變長度計畫。模型沿視界方向全卷積，所以視界由初始噪聲 τN∼N(0,I) $\tau^N\sim\mathcal N(0,I)$ ∼N(0,I) 的大小決定，而不是由架構決定（Fig. 3c）。第 04 章的 C1 可以換 H $H$ ，但那裡示範的是玩具公式對任意 H $H$ 都有定義。
+
+ 任務組合性。Diffuser 同時含有環境動態與行為的資訊，但與報酬函數無關。模型是可能未來的先驗，所以可以用相對輕量的擾動函數 h $h$ （甚至多個擾動的組合）引導，規劃訓練時沒見過的報酬（Fig. 3d；第 05 章）。
+
+ 10 · 實驗
+
+ 實驗：長時程、測試時彈性與離線 RL
+
+ 長時程多任務規劃（Sec. 5.1）。Maze2D 環境在抵達目標位置時給報酬 1，其他位置沒有報酬塑形；可能要數百步才抵達目標，即使最好的 model-free 演算法也難以做好信用分配。Diffuser 以補全條件化起點與目標，把取樣出的軌跡當作開迴路計畫。訓練資料是無方向的（在隨機選取的位置之間來回導航），評估是單任務（目標固定）；Multi2D 在每個 episode 開始時重新抽目標，Diffuser 不需重新訓練，只換條件目標。
+
+ Table 1：Maze2D／Multi2D 的正規化分數
+ 環境MPPICQLIQLDiffuser
+
+ Maze2D U-Maze33.25.747.4113.9 ± 3.1
+
+ Maze2D Medium10.25.034.9121.5 ± 2.7
+
+ Maze2D Large5.112.558.6123.0 ± 6.4
+
+ 單任務平均16.27.747.0119.5
+
+ Multi2D U-Maze41.2–24.8128.9 ± 1.8
+
+ Multi2D Medium15.4–12.1127.2 ± 3.4
+
+ Multi2D Large8.0–13.9132.1 ± 5.8
+
+ 多任務平均21.5–16.9129.4
+
+ Diffuser 在 Maze2D 單任務平均 119.5、Multi2D 多任務平均 129.4；最強的 model-free 基準 IQL 分別是 47.0 與 16.9，改成多任務後大幅下降。分數超過 100 表示優於參考的專家策略。MPPI 使用真實動態，單任務平均仍只有 16.2；作者認為這說明即使沒有預測誤差，長時程規劃本身也困難。多任務 IQL 以 hindsight experience relabeling 改成目標條件（App. A.1）。
+
+ 測試時彈性（Sec. 5.2）。積木堆疊有三種設定：無條件堆疊（越高越好）、條件堆疊（指定順序）、重新排列（匹配參考積木在新排列中的位置）。所有方法都用 PDDLStream 產生的 10000 條示範軌跡訓練，每次成功放置得到報酬 1。只用一個訓練好的 Diffuser，在不同設定間只換 h $h$ ：無條件堆疊直接從 pθ $p_\theta$ ​ 取樣；條件堆疊與重新排列組合兩個 h $h$ ，一個讓最終狀態符合目標配置，一個在堆疊動作中強制手臂與積木接觸（App. B）。Diffuser 平均 54.4，CQL 8.1，BCQ 0.0；100 為完美執行，0 為隨機策略。
+
+ Table 3：積木堆疊
+ 環境BCQCQLDiffuser
+
+ 無條件堆疊0.024.458.7 ± 2.5
+
+ 條件堆疊0.00.045.6 ± 3.1
+
+ 重新排列0.00.058.9 ± 3.4
+
+ 平均0.08.154.4
+
+ 離線 RL（Sec. 5.3）。D4RL 運動控制基準中，Diffuser 以第 07 章的引導取樣朝高報酬區移動，以第 06 章的補全條件化目前狀態；Jϕ $\mathcal J_\phi$ ​ 與擴散模型用同一批軌跡訓練。Diffuser 平均 77.5，與 CQL 77.6、IQL 77.0 相近；TT 78.9、DT 74.7、MOReL 72.9、BC 51.9、MBOP 47.8、MOPO 42.1（150 個規劃種子的平均與標準誤）。作者的描述是：優於 model-based 的 MOReL、MBOP 與回報條件的 DT，但遜於專為單任務設計的最佳離線方法。Medium-Expert 三列 Diffuser 為 88.9、103.3、106.9；較弱的列包括 Medium-Replay HalfCheetah 37.7（低於 CQL 45.5、TT 41.9、MOPO 53.1）與 Medium-Replay Walker2d 70.6（低於 TT 82.6）。論文依 Kostrikov et al. (2022) 把每列 ≥ 0.95 · 最大值的分數加粗。
+
+ 作者也試過把 Diffuser 當成動態模型放進 MPPI 這類傳統軌跡最佳化器，表現不比隨機好；作者認為 Diffuser 的效果來自建模與規劃的耦合，而不是開迴路預測的準確度（Sec. 5.3）。
+
+ Table 2 全表
+Table 2 全表：D4RL 運動控制的正規化分數（粗體為該列 ≥ 0.95 · 最大值，依論文的規則）資料集環境BCCQLIQLDTTTMOPOMOReLMBOPDiffuser
+Medium-ExpertHalfCheetah55.291.686.786.895.063.353.3105.988.9 ± 0.3
+Medium-ExpertHopper52.5105.491.5107.6110.023.7108.755.1103.3 ± 1.3
+Medium-ExpertWalker2d107.5108.8109.6108.1101.944.695.670.2106.9 ± 0.2
+MediumHalfCheetah42.644.047.442.646.942.342.144.642.8 ± 0.3
+MediumHopper52.958.566.367.661.128.095.448.874.3 ± 1.4
+MediumWalker2d75.372.578.374.079.017.877.841.079.6 ± 0.55
+Medium-ReplayHalfCheetah36.645.544.236.641.953.140.242.337.7 ± 0.5
+Medium-ReplayHopper18.195.094.782.791.567.593.612.493.6 ± 0.4
+Medium-ReplayWalker2d26.077.273.966.682.639.049.89.770.6 ± 1.6
+平均51.977.677.074.778.942.172.947.877.5
+
+ 延伸閱讀：本論文使用的離線 RL 基準與比較方法、以序列模型處理離線 RL；站內：IQL 與 D4RL 評估、批次約束與策略約束方法、RL 中的 Transformer
+
+ 11 · 實作
+
+ 實作設定與常見錯誤
+
+ App. A、C 的實作設定
+ 項目值（App. C 項次）
+
+ 架構U-Net，6 個殘差區塊；兩個時間卷積＋GN，Mish；擴散步嵌入以單一 FC 加到第一個卷積（1）
+
+ 最佳化Adam，學習率 4e−05，batch 32，500k 步（2）
+
+ 報酬預測器 JU-Net 前半段＋最後一層線性輸出純量（3）；折扣 0.997，γ > 0.99 時規劃對折扣不敏感（8）
+
+ 視界 T運動控制 32；積木堆疊 128；Maze2D／Multi2D U-Maze 128、Medium 265、Large 384（4）
+
+ 縮短視界可行，但引導尺度要降低，例如 halfcheetah 視界 4 時用 0.001（5）
+
+ 擴散步數 N運動控制 20，積木堆疊 100（6）；Maze2D 未寫明
+
+ 引導尺度 α0.1；hopper-medium-expert 0.0001（7）
+
+ 預測目標預測 ε 或 τ⁰ 對控制表現影響不大（9）
+
+ 基準調參IQL：temperature ∈ [3, 10]、expectile ∈ [0.65, 0.95]；BCQ：discount ∈ [0.9, 0.999]、tau ∈ [0.001, 0.01]；CQL 用預設值（App. A）
+
+ 常見錯誤
+
+ 混淆兩種時間：上標 i $i$ 是擴散步，下標 t $t$ 是規劃時間步（Sec. 2.2）。App. B 的接觸限制 hcontact(τ)=∑i=064−1⋅∥τci−1∥2 $h_{\text{contact}}(\tau)=\sum_{i=0}^{64}-1\cdot\|\tau^i_c-1\|^2$ ​(τ)=∑i=064​−1⋅∥τci​−1∥2 中，τi $\tau^i$ 的 i $i$ 指規劃時間步，與正文慣例不同；而且求和有 65 項，原文卻寫作用在前 64 個時間步。
+
+ 只在最後一步補全目前狀態：論文在每個擴散步後替換（Alg. 1 第 10 行、Sec. 3.3）。只在最後替換時，計畫仍然從 s $s$ 開始，但其餘欄是在沒有限制的情況下去噪的，起點與其餘計畫不連貫本頁推論。本頁玩具（C2 預設設定的平均計畫）中，只在最後替換時第 0 欄到第 1 欄的跳躍是 1.4422，每步都替換時是 0.1676。論文沒有描述這種失敗情形。
+
+ 把 α $\alpha$ 當成跨任務固定的常數：α $\alpha$ 依任務調整（0.1 與 0.0001），縮短視界時也要降低（App. C 第 5、7 點），而且數值和 Jϕ $\mathcal J_\phi$ ​ 的尺度綁在一起。
+
+ 忽略 Jϕ $\mathcal J_\phi$ ​ 的輸入：論文以帶噪樣本 τi $\tau^i$ 為 Jϕ $\mathcal J_\phi$ ​ 的輸入（Sec. 3.2）。C3 顯示，若改用乾淨 J $\mathcal J$ 在 μ $\mu$ 處求梯度，玩具中會出現越過目標與發散。
+
+ 把動作與狀態分開預測：Eq. 2 把動作當作額外維度一起去噪；執行的是計畫第一欄的動作 τa00 $\tau^0_{a_0}$ ​0​。
+
+ 每步從頭規劃太慢：用暖啟動（Sec. 5.4）。
+
+ 12 · 研究脈絡
+
+ 研究脈絡（由 notes/timeline.json 提供）
+
+ Diffuser 結合幾條脈絡：model-based RL 與 MPPI 這類軌跡最佳化器、把 RL 寫成推論的控制即推論、擴散模型與分類器引導，以及同期以序列模型處理離線 RL 的 Decision Transformer 與 Trajectory Transformer；評估則沿用 D4RL 與 CQL、IQL 等離線 RL 基準。每張卡片連到對應的研究筆記。
+
+ model-based RL 與軌跡最佳化控制即推論擴散模型與引導離線 RL 基準與資料序列模型式 RL本文
+
+ 2015擴散模型與引導Deep Unsupervised Learning using Nonequilibrium Thermodynamics
+Sohl-Dickstein et al.
+擴散機率模型的起點；本論文也以其說明引導近似與修補式條件。
+arXiv ↗筆記
+2015model-based RL 與軌跡最佳化Model predictive path integral control using covariance variable importance sampling
+Williams et al.
+MPPI；本論文的軌跡最佳化基準，使用真實動態。
+arXiv ↗筆記
+2017離線 RL 基準與資料Hindsight Experience Replay
+Andrychowicz et al.
+目標重標記；本論文用於改造 IQL 的多任務基準。
+arXiv ↗筆記
+2017model-based RL 與軌跡最佳化Neural Network Dynamics for Model-Based Deep Reinforcement Learning with Model-Free Fine-Tuning
+Nagabandi et al.
+以 random shooting 做線上規劃的學習模型方法。
+arXiv ↗筆記
+2018控制即推論Reinforcement Learning and Control as Probabilistic Inference: Tutorial and Review
+Levine
+最佳性變數的圖模型；把獎勵最大化改寫為條件取樣。
+arXiv ↗筆記
+2018model-based RL 與軌跡最佳化Deep Reinforcement Learning in a Handful of Trials using Probabilistic Dynamics Models
+Chua et al.
+以 cross-entropy method 規劃的 model-based RL。
+arXiv ↗筆記
+2020離線 RL 基準與資料D4RL: Datasets for Deep Data-Driven Reinforcement Learning
+Fu et al.
+Maze2D 與 locomotion 評估基準。
+arXiv ↗筆記
+2020離線 RL 基準與資料Conservative Q-Learning for Offline Reinforcement Learning
+Kumar et al.
+model-free 離線 RL 基準比較對象。
+arXiv ↗筆記
+2020擴散模型與引導Denoising Diffusion Probabilistic Models
+Ho, Jain, Abbeel
+Diffuser 採用的 ε 預測簡化目標。
+arXiv ↗筆記
+2021擴散模型與引導Improved Denoising Diffusion Probabilistic Models
+Nichol, Dhariwal
+餘弦排程，用於反向過程共變異數。
+arXiv ↗筆記
+2021擴散模型與引導Diffusion Models Beat GANs on Image Synthesis
+Dhariwal, Nichol
+分類器引導；本論文將其對應到回報引導。
+arXiv ↗筆記
+2021序列模型式 RLDecision Transformer: Reinforcement Learning via Sequence Modeling
+Chen et al.
+return-conditioning 基準（DT）。
+arXiv ↗筆記
+2021序列模型式 RLOffline Reinforcement Learning as One Big Sequence Modeling Problem
+Janner, Li, Levine
+Trajectory Transformer（TT），自迴歸軌跡模型基準。
+arXiv ↗筆記
+2021離線 RL 基準與資料Offline Reinforcement Learning with Implicit Q-Learning
+Kostrikov, Nair, Levine
+Maze2D 單任務最強 model-free 基準。
+arXiv ↗筆記
+2022本文Planning with Diffusion for Flexible Behavior Synthesis
+Janner, Du, Tenenbaum, Levine
+本論文：軌跡層級擴散模型，規劃等同於引導取樣。
+arXiv ↗筆記
+
+ 13 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 計畫需要迭代產生，速度慢（Sec. 5.4）；在單任務 D4RL 上，Diffuser 沒有超越專為單任務設計的離線方法（Sec. 5.3）。論文的結論（Sec. 7）是：用 Diffuser 規劃幾乎等於從它取樣，差別只在加上引導取樣的輔助擾動函數；這個規劃程序能處理稀疏報酬、不需重新訓練就能規劃新的報酬，並且能把分布內的子序列拼接成分布外的軌跡。作者認為結果指向一類新的、以擴散為基礎的深度 model-based RL 規劃程序。
+
+ 研究筆記（依閱讀順序）
+
+ Diffuser 研究脈絡總覽總覽
+
+ MDP、Q 函數與 Bellman backup：value-based RL 的基本記號RL 基礎
+
+ Offline RL 的分布偏移與 OOD 動作造成的 Q 值高估RL 基礎
+
+ 學習式動態模型與軌跡最佳化的分工模型＋規劃器
+
+ 控制即推論：把獎勵最大化改寫為條件取樣控制即推論
+
+ ε-prediction 與 DDPM、score-based 模型擴散基礎
+
+ DDPM 的訓練與取樣流程擴散基礎
+
+ 擴散模型的分類器引導與餘弦排程擴散基礎
+
+ 本論文使用的離線 RL 基準與比較方法基準與比較
+
+ 以序列模型處理離線 RL：Decision Transformer 與 Trajectory Transformer基準與比較
+
+ 軌跡層級擴散規劃（Diffuser）本論文方法
+
+ 貝氏逆問題、Plug-and-Play 先驗與 classifier-free guidance引導方法的延伸
+
+ Michael Janner, Yilun Du, Joshua B. Tenenbaum, Sergey Levine. Planning with Diffusion for Flexible Behavior Synthesis. ICML 2022. arXiv:2205.09991；程式碼與視覺化 diffusion-planning.github.io。
+
+ 本頁的方程式與數字取自論文 v2；標示「本頁推導」「本頁推論」的內容為本頁自行推導，「推定」為本頁選定的值，皆非論文結論。互動元件使用本頁的高斯軌跡玩具，數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記

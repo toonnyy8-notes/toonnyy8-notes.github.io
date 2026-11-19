@@ -1,0 +1,573 @@
+IQL 隱式 Q 學習
+
+跳到內容
+
+ No. 569
+ IQL：只用資料中的動作做 Q-learning
+
+00 摘要01 Offline RL02 SARSA03 Expectile04 另外學 V05 理論06 玩具迷宮07 策略抽取08 演算法09 D4RL 結果10 Online 微調11 研究脈絡12 取捨與延伸
+
+00摘要
+01Offline RL
+02SARSA
+03Expectile
+04另外學 V
+05理論
+06玩具迷宮
+07策略抽取
+08演算法
+09D4RL 結果
+10Online 微調
+11研究脈絡
+12取捨與延伸
+
+ No. 569 · 互動教學 · arXiv 2110.06169 · 2021
+
+ IQL：只用資料中的動作做 Q-learning
+
+ IQL 用非對稱平方損失估計資料動作的上 expectile，不查詢資料外的動作，也能做多步動態規劃。
+
+ Ilya Kostrikov、Ashvin Nair、Sergey Levine（2021）〈Offline Reinforcement Learning with Implicit Q-Learning〉
+
+τ 0.5τ 0.75τ 1SARSA（估計行為策略）
+locomotion 0.7
+Ant Maze 0.9
+資料內 Q-learning
+
+ τ 是 IQL 的 expectile 階數，第 03 章定義。
+
+ 01 · 問題標準 Q-learning 對下一個狀態的所有動作取最大值；offline 資料中沒有的動作，其 Q 值無法被資料修正，容易被高估。
+
+ 02 · 做法IQL 的 V 用非對稱平方損失擬合資料動作的 Q 值。τ = 0.5 時是平均（SARSA），τ 接近 1 時接近資料中最好動作的值。
+
+ 03 · 結果在 D4RL 的 Ant Maze 上，IQL 總分 378.0，CQL 303.6；在一張 GTX1080 上訓練 1M 步少於 20 分鐘。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+ 程式碼 ↗
+
+ 01 · Offline RL
+
+ Offline RL 只能使用固定資料集
+
+ 強化學習（reinforcement learning, RL）的問題寫成馬可夫決策過程（Markov decision process, MDP）(S,A,p0,p,r,γ) $(S,A,p_0,p,r,\gamma)$ ​,p,r,γ)：代理人在狀態 s $s$ 選動作 a $a$ ，得到獎勵 r(s,a) $r(s,a)$ ，環境依轉移機率 p(s′∣s,a) $p(s'\mid s,a)$ ∣s,a) 進到下一個狀態 s′ $s'$ 。策略（policy）π(a∣s) $\pi(a\mid s)$ 決定在每個狀態選哪個動作，目標是最大化折扣回報 Eπ[∑tγtr(st,at)] $\mathbb E_\pi[\sum_t\gamma^t r(s_t,a_t)]$ ​[∑t​γtr(st​,at​)]，γ∈[0,1) $\gamma\in[0,1)$ 是折扣因子（Sec. 3）。
+
+ 狀態-動作價值 Q(s,a) $Q(s,a)$ 是從 s $s$ 執行 a $a$ 、之後依策略行動得到的期望折扣回報；狀態價值 V(s) $V(s)$ 是從 s $s$ 出發的期望折扣回報。Offline RL 只用一個先前收集好的固定資料集 D $\mathcal D$ 學策略，資料由某個行為策略（behavior policy）πβ $\pi_\beta$ ​ 收集，訓練期間不能再與環境互動。
+
+ 多數 offline 方法沿用時間差分（temporal difference, TD）學習：讓 Qθ(s,a) $Q_\theta(s,a)$ ​(s,a) 逼近「目標」r+γmax⁡a′Q(s′,a′) $r+\gamma\max_{a'}Q(s',a')$ ​Q(s′,a′)。例如 r=1 $r=1$ 、γ=0.9 $\gamma=0.9$ 、下一個狀態的最大 Q 值為 5 時，目標是 1+0.9×5=5.5 $1+0.9\times5=5.5$ 。目標中的 Q 用 target network Qθ^ $Q_{\hat\theta}$ ​ 計算：θ^ $\hat\theta$ 是緩慢跟隨 θ $\theta$ 的參數複本（Polyak 平均），避免目標隨每次更新跳動。損失為（Sec. 3）：
+
+ LTD(θ)=E(s,a,s′)∼D[(r(s,a)+γmax⁡a′Qθ^(s′,a′)−Qθ(s,a))2] $L_{TD}(\theta)=\mathbb E_{(s,a,s')\sim\mathcal D}\Big[\big(r(s,a)+\gamma\max_{a'}Q_{\hat\theta}(s',a')-Q_\theta(s,a)\big)^2\Big]$ ​(θ)=E(s,a,s′)∼D​[(r(s,a)+γa′max​Qθ^​(s′,a′)−Qθ​(s,a))2]
+Eq. 1
+
+ LTD(θ)=ED[(r(s,a)+γmax⁡a′Qθ^(s′,a′)−Qθ(s,a))2] $\begin{aligned}L_{TD}(\theta)=\mathbb E_{\mathcal D}\Big[\big(&r(s,a)+\gamma\max_{a'}Q_{\hat\theta}(s',a')\\&-Q_\theta(s,a)\big)^2\Big]\end{aligned}$ ​(θ)=ED​[(​r(s,a)+γa′max​Qθ^​(s′,a′)−Qθ​(s,a))2]​
+Eq. 1
+
+ 策略定義為 π(s)=arg⁡max⁡aQθ(s,a) $\pi(s)=\arg\max_aQ_\theta(s,a)$ ​Qθ​(s,a)。問題出在 max⁡a′Qθ^(s′,a′) $\max_{a'}Q_{\hat\theta}(s',a')$ ​Qθ^​(s′,a′) 這一項：它會查詢資料中沒有出現的動作 a′ $a'$ 。論文的說法是，資料外的動作（out-of-distribution action, OOD）可能給出錯誤的 Qθ^(s′,a′) $Q_{\hat\theta}(s',a')$ ​(s′,a′)，而策略被定義成取估計 Q 的最大值，常導致高估（Sec. 3）。本頁解讀這些 (s′,a′) $(s',a')$ ,a′) 不在資料中，損失從不比較它們，錯誤因此不會被修正；取最大值時結果多半落在高估的值上。這個現象稱為分布偏移（distributional shift）。
+
+ 示意數值推定：六個動作的真實 Q 都是 1。資料中的三個動作有資料修正，估計為 1.05、0.95、1.0；資料外三個動作的估計誤差為 +1.5、−0.8、+0.4。對全部動作取最大值得到 2.5，落在誤差最大的那個動作上。
+
+ 先前方法以兩種方式處理：約束策略不要離行為策略太遠（BCQ、BEAR、BRAC、AWAC、TD3+BC），或把資料外動作的 Q 值壓低（CQL）。兩者都要在「策略能改進多少」與「誤估風險」之間權衡（Sec. 1）。IQL 問的是：能不能完全不查詢資料外動作的值？
+
+ 符號表
+
+ 符號意義章節
+
+ s,a,s′ $s,a,s'$ 狀態、動作、下一個狀態01
+
+ r(s,a) $r(s,a)$ 、γ $\gamma$ 獎勵、折扣因子01
+
+ p(s′∣s,a) $p(s'\mid s,a)$ ∣s,a)環境轉移（dynamics）01
+
+ π(a∣s) $\pi(a\mid s)$ 、πβ $\pi_\beta$ ​策略；收集資料的行為策略01
+
+ D $\mathcal D$ 固定資料集，元素為 (s,a,r,s′,a′) $(s,a,r,s',a')$ ,a′)01
+
+ Q(s,a) $Q(s,a)$ 、V(s) $V(s)$ 狀態-動作價值、狀態價值01
+
+ θ,θ^ $\theta,\hat\theta$ Q 網路參數、target network 參數01
+
+ Qπβ $Q^{\pi_\beta}$ ​行為策略的 Q 值（Eq. 2–3 的解）02
+
+ Aβ(s) $\mathcal A_\beta(s)$ ​(s)資料支撐內的動作 {a:πβ(a∣s)>0} $\{a:\pi_\beta(a\mid s)>0\}$ ​(a∣s)>0}02
+
+ μ(a∣s) $\mu(a\mid s)$ 資料中狀態 s $s$ 下動作 a $a$ 的比例；本頁解讀為與 πβ $\pi_\beta$ ​ 同一個分布03
+
+ τ $\tau$ 、L2τ $L_2^\tau$ τ​、mτ $m_\tau$ ​expectile 階數、非對稱平方損失、τ $\tau$ -expectile03
+
+ ψ $\psi$ 、ϕ $\phi$ V 網路參數、策略網路參數04、07
+
+ Eτ $\mathbb E^\tau$ 、Vτ,Qτ $V_\tau,Q_\tau$ ​,Qτ​expectile 運算；Eq. 5、6 的母體最佳解05
+
+ Q∗ $Q^*$ 、V∗ $V^*$ 資料支撐內的最佳 Q；V∗(s)=max⁡a∈Aβ(s)Q∗(s,a) $V^*(s)=\max_{a\in\mathcal A_\beta(s)}Q^*(s,a)$ (s)=maxa∈Aβ​(s)​Q∗(s,a)05
+
+ β $\beta$ 、A(s,a) $A(s,a)$ AWR 的反溫度；優勢 Q(s,a)−V(s) $Q(s,a)-V(s)$ 07
+
+ Q1,Q2 $Q^1,Q^2$ ,Q2、α $\alpha$ clipped double Q 的兩個 Q 網路；Polyak 係數 0.00508
+
+ 延伸閱讀：MDP、Q 函數與 Bellman backup、Offline RL 的分布偏移與 OOD 動作造成的 Q 值高估、Policy constraint 與 value regularization
+
+ 02 · SARSA
+
+ SARSA 只用資料動作，但只學到行為策略
+
+ 如果把 Eq. 1 的 max⁡a′ $\max_{a'}$ ​ 換成資料中實際出現的下一個動作 a′ $a'$ ，就得到 SARSA 形式的目標（Sec. 4）：
+
+ L(θ)=E(s,a,s′,a′)∼D[(r(s,a)+γQθ^(s′,a′)−Qθ(s,a))2] $L(\theta)=\mathbb E_{(s,a,s',a')\sim\mathcal D}\big[(r(s,a)+\gamma Q_{\hat\theta}(s',a')-Q_\theta(s,a))^2\big]$ ,a′)∼D​[(r(s,a)+γQθ^​(s′,a′)−Qθ​(s,a))2]
+Eq. 2
+
+ Eq. 2 的 a′ $a'$ 取自資料，因此不查詢資料外的動作。平方誤差（MSE）讓 Qθ $Q_\theta$ ​ 擬合目標的平均；容量無限、沒有取樣誤差時，最佳解滿足
+
+ Qθ∗(s,a)≈r(s,a)+γ Es′∼p(⋅∣s,a), a′∼πβ(⋅∣s′)[Qθ^(s′,a′)] $Q_{\theta^*}(s,a)\approx r(s,a)+\gamma\,\mathbb E_{s'\sim p(\cdot|s,a),\ a'\sim\pi_\beta(\cdot|s')}\big[Q_{\hat\theta}(s',a')\big]$ ​(s,a)≈r(s,a)+γEs′∼p(⋅∣s,a), a′∼πβ​(⋅∣s′)​[Qθ^​(s′,a′)]
+Eq. 3
+
+ 原文 Eq. 3 的下標寫作 a′∼πβ(⋅∣s) $a'\sim\pi_\beta(\cdot|s)$ ∼πβ​(⋅∣s)；依上下文應為 s′ $s'$ ，本頁照此修正。
+
+ Eq. 2 學到的是行為策略的 Qπβ $Q^{\pi_\beta}$ ​（Eq. 3）。Onestep RL（Brandfonbrener et al. 2021）與 AWR（Peng et al. 2019）這類單步方法（single-step method）先學 Qπβ $Q^{\pi_\beta}$ ​，再訓練策略最大化它，只做一次策略改進。它們在 D4RL 的 MuJoCo locomotion 任務上表現好，因為那些資料含有大量接近最佳的軌跡；在需要拼接（stitching）的任務上表現很差。拼接指把資料中不同的次佳軌跡片段接成一條從起點到終點的路徑；這需要把終點附近的價值沿著多個片段逐步往回傳，也就是多步動態規劃（Sec. 2、5.2）。
+
+ IQL 想學的目標是：在 s′ $s'$ 下只對資料支撐內的動作 Aβ(s′)={a′:πβ(a′∣s′)>0} $\mathcal A_\beta(s')=\{a':\pi_\beta(a'|s')>0\}$ ​(s′)={a′:πβ​(a′∣s′)>0} 取最大值（Sec. 4）。Eq. 4 與 Eq. 2 的差別就在這裡：Eq. 2 對資料動作取平均，Eq. 4 對資料支撐內的動作取最大值。
+
+ L(θ)=E(s,a,s′)∼D[(r(s,a)+γmax⁡a′∈A, πβ(a′∣s′)>0Qθ^(s′,a′)−Qθ(s,a))2] $L(\theta)=\mathbb E_{(s,a,s')\sim\mathcal D}\Big[\big(r(s,a)+\gamma\max_{a'\in A,\ \pi_\beta(a'|s')>0}Q_{\hat\theta}(s',a')-Q_\theta(s,a)\big)^2\Big]$ )∼D​[(r(s,a)+γa′∈A, πβ​(a′∣s′)>0max​Qθ^​(s′,a′)−Qθ​(s,a))2]
+Eq. 4
+
+ L(θ)=ED[(r(s,a)+γmax⁡a′∈Aβ(s′)Qθ^(s′,a′)−Qθ(s,a))2] $\begin{aligned}L(\theta)=\mathbb E_{\mathcal D}\Big[\big(&r(s,a)+\gamma\max_{a'\in\mathcal A_\beta(s')}Q_{\hat\theta}(s',a')\\&-Q_\theta(s,a)\big)^2\Big]\end{aligned}$ ​[(​r(s,a)+γa′∈Aβ​(s′)max​Qθ^​(s′,a′)−Qθ​(s,a))2]​
+Eq. 4
+
+ 難處在於：資料中每個 s′ $s'$ 通常只出現一個 a′ $a'$ ，無法直接對「支撐內的所有動作」取最大值。BCQ 用生成模型取樣候選動作，但生成模型仍可能產生資料外的動作（App. D）。IQL 改用 expectile regression 間接估計這個最大值。
+
+ 延伸閱讀：單步 offline RL 與序列建模：One-step RL、Decision Transformer
+
+ 03 · Expectile
+
+ Expectile 以非對稱平方損失逼近支撐內的最大值
+
+ 先固定一個狀態 s $s$ 。資料中這個狀態下出現過幾個動作，記 μ(a∣s) $\mu(a\mid s)$ 為動作 a $a$ 在資料中的比例本頁解讀（論文 Sec. 4.4 使用這個符號但沒有定義；本頁把它解讀為與行為策略 πβ $\pi_\beta$ ​ 同一個分布）。把「動作的 Q 值」看成隨機變數 X $X$ ：以機率 μ(a∣s) $\mu(a\mid s)$ 取值 Q(s,a) $Q(s,a)$ 。
+
+ 隨機變數 X $X$ 的 τ∈(0,1) $\tau\in(0,1)$ expectile 定義為非對稱最小平方問題的解（Sec. 4.1）：
+
+ mτ=arg⁡min⁡m Ex∼X[L2τ(x−m)],L2τ(u)=∣τ−1(u<0)∣ u2 $m_\tau=\arg\min_{m}\ \mathbb E_{x\sim X}\big[L_2^\tau(x-m)\big],\qquad L_2^\tau(u)=\lvert\tau-\mathbb 1(u<0)\rvert\,u^2$ ​=argmmin​ Ex∼X​[L2τ​(x−m)],L2τ​(u)=∣τ−1(u<0)∣u2
+Sec. 4.1
+
+ τ=0.5 $\tau=0.5$ 時 L20.5(u)=12u2 $L_2^{0.5}(u)=\tfrac12u^2$ 0.5​(u)=21​u2，就是 MSE，解為平均值。τ>0.5 $\tau>0.5$ 時，損失降低 x<mτ $x<m_\tau$ ​ 的權重、提高 x>mτ $x>m_\tau$ ​ 的權重（Fig. 1 左）。例如 τ=0.9 $\tau=0.9$ ：殘差 u=+0.5 $u=+0.5$ 的損失是 0.9×0.25=0.225 $0.9\times0.25=0.225$ ，u=−0.5 $u=-0.5$ 的損失是 0.1×0.25=0.025 $0.1\times0.25=0.025$ ，正殘差的權重 0.9、負殘差 0.1，比為 9。這個解也能寫成條件版本 arg⁡min⁡mτ(x)E[L2τ(y−mτ(x))] $\arg\min_{m_\tau(x)}\mathbb E[L_2^\tau(y-m_\tau(x))]$ ​(x)​E[L2τ​(y−mτ​(x))]，用隨機梯度下降最佳化，梯度不偏（Sec. 4.1）。
+
+ expectile 與 quantile regression（非對稱 ℓ1 $\ell_1$ ​ 損失）相關。作者選 expectile 的理由是：只需要修改 RL 已經在用的 MSE，而且實驗上比 quantile 略好（註腳 2）。對標準常態分布，m0.1=−0.8616 $m_{0.1}=-0.8616$ ​=−0.8616、m0.9=0.8616 $m_{0.9}=0.8616$ ​=0.8616、m0.99=1.7174 $m_{0.99}=1.7174$ ​=1.7174本頁推導，對應 Fig. 1 中圖的幾條線。
+
+ 本頁推導對 m $m$ 微分並令其為 0，得到一階條件 τ E[(X−m)+]=(1−τ) E[(m−X)+] $\tau\,\mathbb E[(X-m)_+]=(1-\tau)\,\mathbb E[(m-X)_+]$ ​]=(1−τ)E[(m−X)+​]。這等於說 mτ $m_\tau$ ​ 是一個加權平均：x≥mτ $x\ge m_\tau$ ​ 的值權重 τ $\tau$ ，x<mτ $x<m_\tau$ ​ 的值權重 1−τ $1-\tau$ 。兩個推論：mτ $m_\tau$ ​ 一定落在支撐的最小值與最大值之間；比例為 0 的值（資料中沒有的動作）完全不影響 mτ $m_\tau$ ​。隨著 τ $\tau$ 增大，mτ $m_\tau$ ​ 單調上升，τ→1 $\tau\to1$ 時趨近支撐內的最大值（第 05 章的 Lemma 1）。
+
+ 下面的元件以一個狀態為例：五個資料動作的 Q 值為 1、2、3、4、8，比例 μ 為 0.30、0.30、0.20、0.15、0.05；另有一個資料中沒有的動作 a6 $a_6$ ​，Q 網路對它的外插值是 12。這個分布的 expectile 在 τ = 0.5 時為 2.5（平均），τ = 0.9 時為 4.0714，τ = 0.99 時為 7.0678，τ→1 時趨近資料內的最大值 8。a6 $a_6$ ​ 的比例為 0，不改變任何 expectile；對所有動作取最大值（Eq. 1 的做法）則會得到 12。
+
+ C1Expectile 探索器
+
+ 調整 τ 與五個資料動作的 Q 值、比例 μ，觀察 mτ 如何從平均移向資料內的最大值，以及資料中沒有的 a₆ 為何不影響結果。
+
+ expectile 階數 τ0.900
+
+ τ = 0.5τ = 0.9τ = 0.99τ = 1（取最大值）
+
+ 動作Q 值比例 μ
+
+ a10.30
+a20.30
+a30.20
+a40.15
+a50.05
+
+ 讓 a₆ 出現在資料中（μ = 0.01）
+ 回到預設
+
+ τ = 0.900
+mτ = 4.0714
+平均（τ = 0.5）= 2.5000
+資料內最大 = 8
+𝓛(mτ) = 1.12929
+
+ μ 在計算時正規化為和 1。上圖：長條長度為 μ，實線為 mτ，虛線為平均，點線為資料內最大值與對所有動作取的最大值。左下：目前 τ（實線）與 τ = 0.5（虛線）的 L₂τ(u)。右下：橫軸刻度為 −log₁₀(1−τ)。讀數由本頁依 Sec. 4.1 的定義以閉式解即時計算本頁推導（加權平均形式）。
+
+ 延伸閱讀：Expectile regression 與 value learning
+
+ 04 · 另外學 V
+
+ 另外學一個 V，避免把偶然轉移到高回報狀態的樣本當成動作的價值
+
+ 最直接的做法是把 Eq. 2 的平方換成 L2τ $L_2^\tau$ τ​，本頁稱為「單一損失」（Sec. 4.2）：
+
+ L(θ)=E(s,a,s′,a′)∼D[L2τ(r(s,a)+γQθ^(s′,a′)−Qθ(s,a))] $L(\theta)=\mathbb E_{(s,a,s',a')\sim\mathcal D}\big[L_2^\tau(r(s,a)+\gamma Q_{\hat\theta}(s',a')-Q_\theta(s,a))\big]$ ,a′)∼D​[L2τ​(r(s,a)+γQθ^​(s′,a′)−Qθ​(s,a))]
+Sec. 4.2
+
+ 它的缺點是：目標值的隨機性不只來自動作 a′ $a'$ ，也來自環境轉移 s′∼p(⋅∣s,a) $s'\sim p(\cdot\mid s,a)$ ∼p(⋅∣s,a)。一個大的目標值可能只是偶然轉移到高回報狀態的樣本（原文稱 “lucky” sample），並不代表存在一個能穩定達到該值的動作（Sec. 4.2）。作者因此把學習拆成兩個損失，另外用一個 V 網路 Vψ $V_\psi$ ​（參數 ψ $\psi$ ）：
+
+ LV(ψ)=E(s,a)∼D[L2τ(Qθ^(s,a)−Vψ(s))] $L_V(\psi)=\mathbb E_{(s,a)\sim\mathcal D}\big[L_2^\tau\big(Q_{\hat\theta}(s,a)-V_\psi(s)\big)\big]$ ​(ψ)=E(s,a)∼D​[L2τ​(Qθ^​(s,a)−Vψ​(s))]
+Eq. 5
+
+ LQ(θ)=E(s,a,s′)∼D[(r(s,a)+γVψ(s′)−Qθ(s,a))2] $L_Q(\theta)=\mathbb E_{(s,a,s')\sim\mathcal D}\big[\big(r(s,a)+\gamma V_\psi(s')-Q_\theta(s,a)\big)^2\big]$ ​(θ)=E(s,a,s′)∼D​[(r(s,a)+γVψ​(s′)−Qθ​(s,a))2]
+Eq. 6
+
+ Eq. 5 的 L2τ(Qθ^(s,a)−Vψ(s)) $L_2^\tau(Q_{\hat\theta}(s,a)-V_\psi(s))$ τ​(Qθ^​(s,a)−Vψ​(s)) 只對資料中的動作取 expectile，Q 用 target network Qθ^ $Q_{\hat\theta}$ ​；此時 Q 已經對轉移取過平均，所以 expectile 只反映動作之間的差異。Eq. 6 的 (r+γVψ(s′)−Qθ)2 $(r+\gamma V_\psi(s')-Q_\theta)^2$ ​(s′)−Qθ​)2 用 MSE，把轉移的隨機性平均掉；Vψ(s′) $V_\psi(s')$ ​(s′) 不用 target。兩式都不需要顯式策略，也只用資料中的 (s,a) $(s,a)$ 與 s′ $s'$ （Sec. 4.2）。
+
+ 下面的單狀態例子本頁推導呈現兩者的差別。狀態 s $s$ 有兩個資料動作：a1 $a_1$ ​ 的回報固定為 5；a2 $a_2$ ​ 以機率 p $p$ 轉移到回報 10 的狀態，否則到回報 0 的狀態；資料中 a2 $a_2$ ​ 的比例為 q $q$ 。單一損失對每個 (s,a) $(s,a)$ 各擬合一個 Q，所以它的 Q(a2) $Q(a_2)$ ​) 是 {10:p, 0:1−p} $\{10:p,\ 0:1-p\}$ 的 τ-expectile，τ→1 時對任何 p>0 $p>0$ 都趨近 10；IQL 的 Eq. 6 用 MSE，Q(a2)=10p $Q(a_2)=10p$ ​)=10p。兩者的狀態值都用 Eq. 5 的方式對動作取 expectile。預設 p=0.3 $p=0.3$ 、q=0.5 $q=0.5$ 、τ = 0.9 時，單一損失的 Q(a2)=7.9412 $Q(a_2)=7.9412$ ​)=7.9412（IQL 為 10p=3 $10p=3$ ），狀態值在單一損失下為 7.6471，在 IQL 下為 4.8000，而資料中最好動作的期望值是 5。τ→1 時單一損失的狀態值趨近 10，IQL 趨近 5。轉移是確定性的（p=0 $p=0$ 或 1 $1$ ）時兩者相同。
+
+ C2單一損失與 Eq. 5–6 的差別
+
+ 回報直接當作 r + γV(s′) 的值，只看一步推定。拖動 τ 觀察兩種狀態值如何分開。
+
+ a₂ 到高回報狀態的機率 p0.30
+
+ 資料中 a₂ 的比例 q0.50
+
+ expectile 階數 τ0.900
+
+ Q(a₂)：單一損失 7.9412，IQL 3.0000
+V：單一損失 7.6471，IQL 4.8000
+資料中最好動作的期望值 = 5
+單一損失 V − 參考值 = 2.6471
+
+ 單一損失（三角）IQL（Eq. 5–6，圓點）資料中最好動作的期望值（第 05 章 Theorem 3 的極限）
+
+ 單一損失：Q(a₂) = expectile{10: p, 0: 1−p}，V = expectile{5: 1−q, Q(a₂): q}。IQL：Q(a₂) = 10p，V = expectile{5: 1−q, 10p: q}。讀數由本頁依 Eq. 5–6 即時計算本頁推導。
+
+ 05 · 理論
+
+ τ 從 0.5 到 1 連接 SARSA 與 Q-learning
+
+ 記 Ex∼Xτ[x] $\mathbb E^\tau_{x\sim X}[x]$ τ​[x] 為 X $X$ 的 τ-expectile（E0.5 $\mathbb E^{0.5}$ 即一般期望值）。Eq. 5、6 的最佳解 Vτ,Qτ $V_\tau,Q_\tau$ ​,Qτ​ 遞迴定義為（Sec. 4.4）：
+
+ Vτ(s)=Ea∼μ(⋅∣s)τ[Qτ(s,a)],Qτ(s,a)=r(s,a)+γ Es′∼p(⋅∣s,a)[Vτ(s′)] $V_\tau(s)=\mathbb E^\tau_{a\sim\mu(\cdot|s)}\big[Q_\tau(s,a)\big],\qquad Q_\tau(s,a)=r(s,a)+\gamma\,\mathbb E_{s'\sim p(\cdot|s,a)}\big[V_\tau(s')\big]$ ​(s)=Ea∼μ(⋅∣s)τ​[Qτ​(s,a)],Qτ​(s,a)=r(s,a)+γEs′∼p(⋅∣s,a)​[Vτ​(s′)]
+Sec. 4.4
+
+ 這裡的 μ $\mu$ 是資料中的動作分布（第 03 章；本頁解讀為 πβ $\pi_\beta$ ​）。論文依序證明四個結果：
+
+ Lemma 1：X $X$ 為有界隨機變數、支撐的上確界為 x∗ $x^*$ ，則 lim⁡τ→1mτ=x∗ $\lim_{\tau\to1}m_\tau=x^*$ ​mτ​=x∗。證明概要：expectile 隨 τ 單調不減，且以 x∗ $x^*$ 為上界。
+
+ Lemma 2：對所有 s $s$ ，τ1<τ2⇒Vτ1(s)≤Vτ2(s) $\tau_1<\tau_2\Rightarrow V_{\tau_1}(s)\le V_{\tau_2}(s)$ ​<τ2​⇒Vτ1​​(s)≤Vτ2​​(s)，即 τ 越大 Vτ $V_\tau$ ​ 越大（單調）。
+
+ Corollary 2.1：Vτ(s)≤max⁡a∈Aβ(s)Q∗(s,a) $V_\tau(s)\le\max_{a\in\mathcal A_\beta(s)}Q^*(s,a)$ ​(s)≤maxa∈Aβ​(s)​Q∗(s,a)，其中 Q∗(s,a)=r(s,a)+γ Es′[max⁡a′∈Aβ(s′)Q∗(s′,a′)] $Q^*(s,a)=r(s,a)+\gamma\,\mathbb E_{s'}[\max_{a'\in\mathcal A_\beta(s')}Q^*(s',a')]$ (s,a)=r(s,a)+γEs′​[maxa′∈Aβ​(s′)​Q∗(s′,a′)] 是限制在資料支撐內的最佳 Q。證明：凸組合不大於最大值。
+
+ Theorem 3：lim⁡τ→1Vτ(s)=max⁡a∈Aβ(s)Q∗(s,a) $\lim_{\tau\to1}V_\tau(s)=\max_{a\in\mathcal A_\beta(s)}Q^*(s,a)$ ​Vτ​(s)=maxa∈Aβ​(s)​Q∗(s,a)。
+
+ 本頁記 V∗(s)=max⁡a∈Aβ(s)Q∗(s,a) $V^*(s)=\max_{a\in\mathcal A_\beta(s)}Q^*(s,a)$ (s)=maxa∈Aβ​(s)​Q∗(s,a)，即資料支撐內的最佳狀態值（本頁記號；第 06 章沿用）。Theorem 3 因此可寫成 lim⁡τ→1Vτ=V∗ $\lim_{\tau\to1}V_\tau=V^*$ ​Vτ​=V∗。
+
+ 這些結果都針對 Vτ,Qτ $V_\tau,Q_\tau$ ​,Qτ​ 的母體最佳解，也就是論文所說的「在某些假設下」（Sec. 4.2）：無限容量、無取樣誤差（Sec. 4 對 Eq. 3 的敘述），Lemma 1 另需有界支撐，也就是獎勵有界。論文的 Theorem 3 證明只有一行（結合 Lemma 1 與 Corollary 2.1）。有限資料時結論不保證成立，第 06 章的元件會出現一個例子。
+
+ 本頁推導τ = 0.5 時 V(s)=Ea∼μ[Q(s,a)] $V(s)=\mathbb E_{a\sim\mu}[Q(s,a)]$ ​[Q(s,a)]，代入 Eq. 6 就是 Eq. 3，即 SARSA 估計 Qπβ $Q^{\pi_\beta}$ ​。τ→1 時 V $V$ 趨近資料支撐內的最大值，Eq. 6 變成 Eq. 4，即資料支撐內的 Q-learning。作者因此說這個方法涵蓋 SARSA（τ = 0.5）到 Q-learning（τ→1）的整個譜，並依 Theorem 3 把它命名為 implicit Q-learning（Sec. 4.4）。
+
+ τ 越接近 1，近似越好，但最佳化問題也越困難，所以作者把 τ 當成超參數（Sec. 4.4）。
+
+ Lemma 2 的證明展開（App. A.1）
+
+ 把 Vτ1(s) $V_{\tau_1}(s)$ ​​(s) 依遞迴展開一層：Vτ1(s)=Ea∼μτ1[r(s,a)+γEs′Vτ1(s′)] $V_{\tau_1}(s)=\mathbb E^{\tau_1}_{a\sim\mu}[r(s,a)+\gamma\mathbb E_{s'}V_{\tau_1}(s')]$ ​​(s)=Ea∼μτ1​​[r(s,a)+γEs′​Vτ1​​(s′)]。因為 expectile 隨 τ 單調，把外層的 Eτ1 $\mathbb E^{\tau_1}$ ​ 換成 Eτ2 $\mathbb E^{\tau_2}$ ​ 不會變小；再把內層的 Vτ1(s′) $V_{\tau_1}(s')$ ​​(s′) 展開、同樣替換，逐層重複。極限就是 Vτ2(s) $V_{\tau_2}(s)$ ​​(s)，所以 Vτ1(s)≤Vτ2(s) $V_{\tau_1}(s)\le V_{\tau_2}(s)$ ​​(s)≤Vτ2​​(s)。這個論證仿照 policy improvement 的證明（Sutton & Barto 2018）。
+
+ 06 · 玩具迷宮
+
+ 玩具迷宮顯示多步動態規劃的差異
+
+ 論文在 Sec. 5.1 用一個 u 形迷宮比較單步方法與 IQL：單一起點、單一終點；進入終點得獎勵 10，其餘為 0；以機率 0.25 轉移到隨機狀態，否則到指令的狀態；資料集為 1 條最佳軌跡加 99 條均勻隨機動作的軌跡；γ = 0.9；IQL 用 τ = 0.95。結果：單步方法（Onestep RL）的值離終點越遠衰減得越快、被雜訊主導（原文 “dominated by noise”），得到的策略很差；IQL 的值接近真正的最佳值（Fig. 2）。
+
+ 下面的元件是本頁的表格版重建，不是論文的程式。以下各項為本頁自選推定：迷宮形狀（7 × 8 格，36 個可走格）；「隨機狀態」解讀為「隨機方向的相鄰格」；軌跡最長 100 步；以資料計數得到的經驗模型取代神經網路。表格版直接對經驗模型解第 05 章的 Vτ,Qτ $V_\tau,Q_\tau$ ​,Qτ​ 遞迴：Q 由經驗轉移平均，V 對資料中出現的動作取 expectile。本頁推導expectile 對常數平移等變且單調，所以這個遞迴是 γ-壓縮，定點迭代會收斂（有限狀態、有界獎勵、固定的經驗模型；終點的值固定為 0）。資料中從未當過起始狀態的格子沒有外出資料，它的值固定為 0。
+
+ 元件還有兩個論文沒有的設定。近似誤差 σ：表格版沒有函數近似的誤差，本頁在策略抽取時把一個固定的高斯雜訊（標準差 σ）加到每個 Q 值上，代表神經網路的誤差。母體模式：不用有限資料，改用真實轉移機率與均勻行為策略（四個動作都在支撐內），此時第 05 章的結果精確成立。
+
+ C3玩具迷宮：τ 如何讓值函數做多步傳遞
+
+ 依序按三個步驟，或直接調整 τ 與 σ。每格印出值（兩位小數），箭頭為貪婪動作。
+
+ 1看 τ = 0.52看 τ = 0.953切換到母體、τ = 1
+
+ expectile 階數 τ0.95
+
+ 0.5（SARSA）0.70.90.951（取最大值）
+
+ 近似誤差 σ
+00.0010.010.030.1
+
+ 進階
+
+ 資料
+有限資料集母體
+
+ 顯示
+VτV*V* − Vτ
+
+ 顯示貪婪策略箭頭
+ 重新產生資料（seed + 1）回到 seed 1目前 seed = 1
+
+ 設定推定：機率 0.75 照指令方向，0.25 改為均勻隨機方向；撞牆留在原地；進入 G 得 10 並結束；γ = 0.9。資料集由 mulberry32(seed) 產生（1 條最佳軌跡 + 99 條隨機軌跡，最長 100 步）。σ 雜訊由 mulberry32(seed + 1000) 產生，只加在策略抽取。斜線格為沒有外出資料的狀態。本文中的數字以 seed 1 為準。讀數由本頁依 Sec. 4.4 的遞迴即時計算。
+
+ seed 1 的資料中，τ = 0.5 的起點值 V0.5 $V_{0.5}$ ​ 只有 0.0007，τ = 0.95 的起點值 V0.95 $V_{0.95}$ ​ 為 0.8136，最佳值 V∗ $V^*$ 為 1.1186。τ = 0.5 對應 SARSA，估計的是均勻隨機行為策略的值，離終點越遠衰減越快；τ = 0.95 時值沿著資料中的軌跡片段一路傳回起點，形狀接近 V∗ $V^*$ 。seed 1 到 5 的 V0.5 $V_{0.5}$ ​(起點) 都在 0.0004–0.0007，V0.95 $V_{0.95}$ ​(起點) 都在 0.70–0.84。這與 Fig. 2 的定性結論一致。
+
+ 策略的部分屬於本頁解讀。表格版沒有近似誤差：σ = 0 時，seed 1 中 τ = 0.5 與 τ = 0.9 的貪婪策略都達到最佳回報 1.119，因為貪婪策略只需要動作之間的大小順序。論文說單步方法的策略很差、值被雜訊主導，但沒有說原因是函數近似誤差。本頁用 σ 呈現一種可能的機制：σ 大於動作之間的 Q 差距時，貪婪動作由 σ 決定。σ = 0.01 時，τ = 0.5 的起點回報降到 0.051，τ = 0.9 仍為 1.119；seed 1–5 中 τ = 0.5 為 0.000–0.051、τ = 0.9 為 0.616–1.119。σ = 0 的策略結果依資料而定（seed 4 所有 τ 都是 0.616）。
+
+ 另一個觀察：有限資料集在 τ = 1 時的起點值為 1.2620，高於 V∗ $V^*$ = 1.1186。推測原因是經驗轉移的抽樣誤差被最大值選中；Corollary 2.1 的上界是對真實 MDP 的敘述。切換到母體模式後，τ = 1 的值精確等於 V∗ $V^*$ ，且起點值隨 τ 單調上升（Lemma 2、Theorem 3）。
+
+ 07 · 策略抽取
+
+ 策略以優勢加權的行為複製抽取
+
+ Eq. 5、6 學到近似最佳的 Q 與 V，但沒有顯式的策略，所以需要一個策略抽取步驟。為了同樣不查詢資料外的動作，作者用 advantage-weighted regression（AWR；Peters & Schaal 2007、Peng et al. 2019、Nair et al. 2020）訓練策略網路 πϕ $\pi_\phi$ ​（Sec. 4.3）：
+
+ Lπ(ϕ)=E(s,a)∼D[exp⁡(β(Qθ^(s,a)−Vψ(s)))log⁡πϕ(a∣s)] $L_\pi(\phi)=\mathbb E_{(s,a)\sim\mathcal D}\big[\exp\big(\beta(Q_{\hat\theta}(s,a)-V_\psi(s))\big)\log\pi_\phi(a|s)\big]$ ​(ϕ)=E(s,a)∼D​[exp(β(Qθ^​(s,a)−Vψ​(s)))logπϕ​(a∣s)]
+Eq. 7
+
+ Lπ(ϕ)=ED[exp⁡(β(Qθ^−Vψ))⋅log⁡πϕ(a∣s)] $\begin{aligned}L_\pi(\phi)=\mathbb E_{\mathcal D}\big[&\exp(\beta(Q_{\hat\theta}-V_\psi))\\&\cdot\log\pi_\phi(a|s)\big]\end{aligned}$ ​(ϕ)=ED​[​exp(β(Qθ^​−Vψ​))⋅logπϕ​(a∣s)]​
+Eq. 7
+
+ A(s,a)=Q(s,a)−V(s) $A(s,a)=Q(s,a)-V(s)$ 稱為優勢（advantage）。Eq. 7 是加權的行為複製（behavioral cloning）：對資料中的每個 (s,a) $(s,a)$ 最大化 log⁡πϕ(a∣s) $\log\pi_\phi(a|s)$ ​(a∣s)，權重為 exp⁡(βA) $\exp(\beta A)$ 。β∈[0,∞) $\beta\in[0,\infty)$ 是反溫度（inverse temperature）：β 小時權重接近相等，行為接近行為複製；β 大時權重集中在優勢最大的動作，趨向 Q 的最大值（Sec. 4.3）。
+
+ Eq. 7 只對資料中的 (s,a) $(s,a)$ 加權對數概似，不查詢資料外的動作。先前研究證明這個目標等於在分布約束下最大化 Q（Peters & Schaal 2007、Peng et al. 2019、Nair et al. 2020），因此策略抽取帶有一個隱含的約束（Sec. 1–2）。策略完全不影響值函數的訓練，所以策略抽取可以與 TD 學習同時進行，也可以在之後進行（Sec. 4.3）。實作上，指數化的優勢 exp⁡(βA) $\exp(\beta A)$ 截斷到 (−∞,100] $(-\infty,100]$ （App. B，沿用 Brandfonbrener et al.）。
+
+ 正負號注意：Eq. 7 是要最大化的加權對數概似，但 Alg. 1 寫成梯度下降 ϕ←ϕ−λπ∇ϕLπ $\phi\leftarrow\phi-\lambda_\pi\nabla_\phi L_\pi$ ​∇ϕ​Lπ​。實作時損失取 −E[⋯ ] $-\mathbb E[\cdots]$ 。
+
+ 本頁推導在同一個狀態內、Q 固定時，exp⁡(−βV(s)) $\exp(-\beta V(s))$ 是所有動作共用的常數，正規化後的策略不受影響；不截斷時，該狀態的策略與 V 無關。截斷後，V 決定哪些動作的權重被壓到 100。真實 IQL 中，τ 主要透過 TD 學習（Eq. 5–6）改變學到的 Q 與 V 而影響策略；下面的元件 Q 是固定的，不呈現這個效果。
+
+ C4AWR 策略抽取：β、截斷與隱含約束
+
+ 一維動作、單一狀態的示意推定。這裡的 Q 是固定的函數，所以 τ 只透過 V 與截斷影響結果；τ 對學到的 Q 的影響見 C3。
+
+ 反溫度 β3.0
+
+ Kitchen/Adroit：β 0.5、τ 0.7locomotion：β 3、τ 0.7Ant Maze：β 10、τ 0.9
+
+ expectile 階數 τ0.70
+
+ τ = 1
+
+ 截斷 exp(βA) ≤ 100
+ τ = 0.70，β = 3.0，截斷開
+V = 0.3541
+策略平均 ā = -0.0426　標準差 s = 0.1907
+有效樣本比例 = 0.5162
+被截斷的資料比例 = 0.0000
+
+ 資料量 nᵢ（空心）加權後 nᵢ·wᵢ（實心）與策略密度行為密度（β = 0）
+
+ 資料動作 a = −0.8, −0.75, …, 0.3（23 個），資料量 n ∝ exp(−(a+0.25)²/(2·0.25²))；Q(a) = 1 − (a − 0.6)²，最大值在資料外的 a = 0.6。長條各自正規化到最大值 1（左軸）；兩條密度共用右軸。被截斷的長條頂端有短橫線。策略為加權最大概似的高斯分布。讀數由本頁依 Eq. 7 即時計算。
+
+ 預設 τ = 0.7 下：β = 0 時策略平均為 −0.2500，即資料的平均；β = 3 時移到 −0.0426；Ant Maze 設定（β = 10、τ = 0.9）時為 0.1469。策略平均是資料動作的加權平均，永遠不超過資料中最大的動作 0.3，即使 Q 在資料外的 0.6 更大。截斷的作用在 β 大時最明顯：τ = 0.7、β = 30 時，不截斷的有效樣本比例只剩 0.0231，截斷後為 0.3237。
+
+ 延伸閱讀：Advantage-weighted regression 與策略抽取：AWR、AWAC、CRR
+
+ 08 · 演算法
+
+ 演算法總結與實作設定
+
+ IQL 分兩個階段（Alg. 1）。TD 學習階段每個梯度步依序更新 V 網路參數 ψ（Eq. 5）、Q 網路參數 θ（Eq. 6），再以 Polyak 平均更新 target 參數 θ̂（α = 0.005）；策略抽取階段更新策略參數 φ（Eq. 7）。兩個階段也可以同時進行，online 微調時就是同時進行（Sec. 4.3）。
+
+ Algorithm 1 · Implicit Q-learning
+說明
+
+ 初始化 ψ, θ, θ_targ, φθ_targ 即正文的 θ̂（target network）。
+
+ TD 學習（IQL）：每個梯度步只用資料中的 (s, a, r, s′)。
+
+ ψ ← ψ − λ_V ∇ψ L_V(ψ)Eq. 5；Q 取 min(Q¹_targ, Q²_targ)。
+
+ θ ← θ − λ_Q ∇θ L_Q(θ)Eq. 6；兩個 Q 網路各自擬合同一個目標 r + γV(s′)。
+
+ θ_targ ← (1 − α) θ_targ + α θPolyak 平均，α = 0.005。
+
+ 策略抽取（AWR）：每個梯度步可與 TD 學習同時或之後進行。
+
+ φ ← φ − λ_π ∇φ L_π(φ)Eq. 7（實作取負號）；A = min(Q¹_targ, Q²_targ) − V。
+
+ 學習率 λV、λQ、λπ：Adam，學習率 3⋅10−4 $3\cdot10^{-4}$ ；actor 的學習率用 cosine schedule（App. B）。
+
+ Clipped double Q-learning（Fujimoto et al. 2018）：IQL 維持兩個 Q 網路 Q1,Q2 $Q^1,Q^2$ ,Q2（各有自己的參數與 target），V 更新與策略更新時取兩者的最小值（Sec. 4.3）。兩個獨立的估計同時高估的機會較小，取最小值是抑制第 01 章所說的高估的一般做法（取最小值的理由為本頁補充，論文只寫用法）。
+
+ 超參數（App. B–C）：Ant Maze 用 τ = 0.9、β = 10，獎勵減 1；MuJoCo locomotion 用 τ = 0.7、β = 3，獎勵除以資料集中最佳與最差軌跡回報的差；Kitchen 與 Adroit 用 τ = 0.7、β = 0.5，策略網路加 dropout 0.1。
+
+ 實作設定（App. B–C）
+ 項目值
+
+ Ant Mazeτ = 0.9，β = 10.0；獎勵減 1
+
+ MuJoCo locomotionτ = 0.7，β = 3.0；獎勵除以資料集中最佳與最差軌跡回報的差
+
+ Kitchen、Adroitτ = 0.7，β = 0.5；策略網路 dropout 0.1
+
+ 微調（僅 dexterous manipulation 設定）τ = 0.8，β = 3.0；offline 25000 步 原文有歧義；探索用高斯噪聲 σ = 0.03。Ant Maze 微調的 τ、β 論文未另外給出
+
+ 微調流程offline 1M 梯度步 → online 1M 環境步，每個環境步 1 次梯度更新，其他設定不變
+
+ 網路所有網路皆為 2 層 MLP、256 隱藏單元、ReLU
+
+ 最佳化Adam，學習率 3·10⁻⁴；actor 學習率用 cosine schedule
+
+ 策略高斯分布，標準差與狀態無關
+
+ target 更新soft update，α = 0.005
+
+ 優勢截斷exp(βA) 截斷到 (−∞, 100]
+
+ 評估locomotion：10 條評估軌跡 × 10 個 seed；Ant Maze：100 條評估軌跡
+
+ 框架JAX + Flax
+
+ 「offline 25000 步」：App. C 先寫 dexterous manipulation 用 25000 步 offline 訓練，下一段又說 AWAC 因過擬合而改用 25000 步。這個數字可以讀成 IQL 與 AWAC 共用，也可以讀成只描述 AWAC；論文沒有說清楚。
+
+ 常見錯誤
+
+ 在 TD 目標中用策略產生的動作，或對所有動作取 max：IQL 的 Eq. 5、6 只用資料中的 (s,a) $(s,a)$ 與 s′ $s'$ 。
+
+ 把 expectile 直接套在 TD 目標上（單一損失）：會把偶然轉移到高回報狀態的結果當成動作的價值（Sec. 4.2）。
+
+ Eq. 7 的正負號：要最大化加權對數概似，實作損失取負號。
+
+ 忘記截斷 exp⁡(βA) $\exp(\beta A)$ ：App. B 截斷到 100；不截斷時大 β 會讓少數樣本主導（C4 的有效樣本比例）。
+
+ 把 τ 設成接近 1：Theorem 3 說 τ→1 近似越好，但作者指出最佳化較難（Sec. 4.4），實際用 0.7–0.9；τ 越大不一定越好。
+
+ Ant Maze 的獎勵要減 1，locomotion 的獎勵要正規化（App. B）。
+
+ 延伸閱讀：IQL 演算法、超參數與 D4RL 評估
+
+ 09 · D4RL 結果
+
+ IQL 在需要拼接的 Ant Maze 上領先
+
+ 作者在 D4RL 基準上比較兩類方法：多步動態規劃（CQL、TD3+BC、AWAC）與單步方法（Onestep RL、Decision Transformer，簡稱 DT），另列行為複製 BC 與只用最好 10% 資料的 10%BC。locomotion 資料含有大量接近最佳的軌跡；Ant Maze 的 medium、large 資料幾乎沒有接近最佳的軌跡，需要拼接（Sec. 5.2）。
+
+ Ant Maze 總分 IQL 378.0，CQL 303.6；locomotion 總分 IQL 692.4，CQL 698.5，兩者相近；全部總分 IQL 1070.4，CQL 1002.1（Table 1）。訓練時間 IQL 20 分鐘，CQL 80 分鐘；80 分鐘是作者以 JAX 重寫的 CQL，原始實作 1M 次更新超過 4 小時，IQL 約比重寫版快 4 倍（Sec. 5.2）。作者寫「所有方法都使用 “-v2” 環境」以求公平，因此 CQL 的分數高於其他論文的報告值（Sec. 5.2）；Table 1 的 Ant Maze 列仍標為 “-v0”，本頁照錄。
+
+ Table 1 總分（D4RL 正規化分數）
+ 總分BC10%BCDTAWACOnestep RLTD3+BCCQLIQL
+
+ locomotion-v2466.7666.2672.6450.7684.6677.4698.5692.4
+
+ antmaze-v0100.2134.2112.2107.7125.3163.8303.6378.0
+
+ total566.9800.4784.8558.4809.9841.21002.11070.4
+
+ runtime10m10m960m20m≈20m20m80m20m
+
+ Table 1 的 Ant Maze 各資料集
+ 資料集Onestep RLCQLIQL
+
+ umaze64.374.087.5
+
+ umaze-diverse60.784.062.2
+
+ medium-play0.361.271.2
+
+ medium-diverse0.053.770.0
+
+ large-play0.015.839.6
+
+ large-diverse0.014.947.5
+
+ 單步方法在 medium 與 large Ant Maze 上接近 0，這是第 02 章與第 06 章所說的拼接問題。Fig. 3 有四格（antmaze-medium／large × play／diverse），比較 τ = 0.9、0.7、0.5：τ = 0.9 的回報遠高於較小的 τ，0.7 與 0.5 在這些資料集上都很低。作者的結論是：需要拼接的任務必須用較大的 expectile（Sec. 5.2）。論文沒有給出曲線的數據，本頁不重繪。
+
+ Kitchen 總分 IQL 159.8（BC 154.5、CQL 144.6），Adroit 總分 118.1（BC 104.5、CQL 93.6），加總 1348.3（CQL 1240.3、BC 825.9）（Table 1、Table 3）。作者認為 Adroit 與 Kitchen 鑑別力較低，多數 RL 方法與模仿學習相近（Sec. 5.2）。
+
+ 10 · Online 微調
+
+ Offline 初始化之後可以繼續 online 微調
+
+ 微調流程：先做 1M 梯度步的 offline 訓練，再一邊與環境互動、把新資料加進 replay buffer，一邊訓練 1M 個環境步，每個環境步做 1 次梯度更新；其他設定不變（App. C）。比較對象是為 online 微調設計的 AWAC，以及前一節表現最好的先前方法 CQL；資料為 Ant Maze 與三個 dexterous manipulation 任務（Sec. 5.3）。
+
+ 總分 IQL 從 408.2 升到 597.7，CQL 從 182.8 升到 241.0，AWAC 從 154.4 升到 211.4（Table 2）。作者給兩個理由：IQL 的 offline 表現強，提供好的初始化；IQL 的策略抽取是加權行為複製，先前研究顯示這類策略抽取有利於 online 改進（Nair et al. 2020）（Sec. 5.3）。例外是 pen-binary-v0，AWAC 從 44.6 升到 70.3，高於 IQL 的 37.4 到 60.7。
+
+ Table 2 總分（offline → online 1M 步）
+ 總分AWACCQLIQL
+
+ antmaze-v0107.7 → 108.3151.5 → 231.1370.1 → 473.7
+
+ hand-v0（pen、door、relocate binary）46.7 → 103.131.5 → 9.938.1 → 124.0
+
+ total154.4 → 211.4182.8 → 241.0408.2 → 597.7
+
+ CQL 的 offline 總分 182.8 照原文印出；其兩列相加為 151.5 + 31.5 = 183.0。CQL 的微調數字是作者以原始實作重跑的結果，作者重現的 offline 表現較差，尤其在 medium、large Ant Maze（App. C），所以 Table 2 的 CQL offline 起點（antmaze 151.5）不能與 Table 1 的 303.6 比較。Table 2 的 IQL offline 起點也與 Table 1 不同（例如 antmaze-umaze 86.7 對 87.5），論文未說明。
+
+ 11 · 研究脈絡
+
+ 研究脈絡
+
+ Offline RL 先以約束策略（BCQ、BEAR、BRAC、TD3+BC）或正則化 Q 值（CQL）處理資料外的動作；另一條路線用加權回歸抽取策略（AWR、AWAC、CRR）；單步方法（Onestep RL、DT）完全避開對資料外動作的估值，但放棄了多步動態規劃。分布式 RL 用 quantile regression 估計價值的分布，是 expectile 方法的相關工作。IQL 把 expectile 用在「動作造成的變化」上，同時保有多步動態規劃與只用資料動作兩項特性。每張卡片連到對應的研究筆記。
+
+ 策略約束與值正則化加權回歸單步與序列建模分布式 RL基準與元件本文
+
+ 2018基準與元件Addressing Function Approximation Error in Actor-Critic Methods
+Fujimoto et al.
+TD3；IQL 沿用其 clipped double Q-learning
+arXiv ↗筆記
+2018分布式 RLImplicit Quantile Networks for Distributional Reinforcement Learning
+Dabney et al.
+以 quantile regression 估計價值分布
+arXiv ↗筆記
+2018策略約束與值正則化Off-Policy Deep Reinforcement Learning without Exploration
+Fujimoto et al.
+BCQ；以明確模型約束策略
+arXiv ↗筆記
+2019策略約束與值正則化Stabilizing Off-Policy Q-Learning via Bootstrapping Error Reduction
+Kumar et al.
+BEAR；約束策略避免 bootstrapping error
+arXiv ↗筆記
+2019加權回歸Advantage-Weighted Regression
+Peng et al.
+IQL 策略抽取所用的加權回歸
+arXiv ↗筆記
+2019策略約束與值正則化Behavior Regularized Offline Reinforcement Learning
+Wu et al.
+BRAC；行為正則化
+arXiv ↗筆記
+2020基準與元件D4RL: Datasets for Deep Data-Driven Reinforcement Learning
+Fu et al.
+評估基準
+arXiv ↗筆記
+2020策略約束與值正則化Conservative Q-Learning for Offline Reinforcement Learning
+Kumar et al.
+正則化 Q 函數；主要比較對象
+arXiv ↗筆記
+2020加權回歸AWAC
+Nair et al.
+線上微調設定與 AWR 式策略抽取
+arXiv ↗筆記
+2020加權回歸Critic Regularized Regression
+Wang et al.
+隱含散度約束的加權回歸
+arXiv ↗筆記
+2021單步與序列建模Offline RL Without Off-Policy Evaluation
+Brandfonbrener et al.
+單步 policy improvement
+arXiv ↗筆記
+2021單步與序列建模Decision Transformer
+Chen et al.
+序列建模，不用價值函數
+arXiv ↗筆記
+2021策略約束與值正則化A Minimalist Approach to Offline Reinforcement Learning
+Fujimoto & Gu
+TD3+BC
+arXiv ↗筆記
+2021本文Offline Reinforcement Learning with Implicit Q-Learning
+Kostrikov et al.
+本論文：expectile 的 in-sample 價值學習
+arXiv ↗筆記
+
+ 12 · 取捨與延伸
+
+ 論文中提到的取捨與延伸閱讀
+
+ 論文沒有獨立的限制章節。文中明寫的取捨有：τ 越接近 1 最佳化越難（Sec. 4.4）；連續動作仍需要在最後抽取一個 actor（App. D）；單步與多步方法難以直接比較（Table 1 註）；Kitchen、Adroit 的鑑別力低（Sec. 5.2）；CQL 的 offline 結果作者無法重現到原論文的水準（App. C）。
+
+ 研究筆記（依閱讀順序）
+
+ IQL 的研究脈絡總覽：從 policy constraint 與 value regularization 到 in-sample 的 expectile 學習總覽
+
+ MDP、Q 函數與 Bellman backup：value-based RL 的基本記號No. 568 的筆記
+
+ Offline RL 的分布偏移與 OOD 動作造成的 Q 值高估No. 568 的筆記
+
+ Offline RL 的 policy constraint 與 value regularization：BCQ、BEAR、BRAC、CQL、TD3+BC先前方法
+
+ Advantage-weighted regression 與策略抽取：AWR、AWAC、CRR策略抽取
+
+ 單步 offline RL 與序列建模：One-step RL、Decision Transformer單步方法
+
+ Expectile regression 與 value learning：以非對稱 L2 損失近似資料支撐內的最大值本論文的核心工具
+
+ IQL 演算法、超參數與 D4RL 評估本論文的方法與實驗
+
+ Ilya Kostrikov, Ashvin Nair, Sergey Levine. Offline Reinforcement Learning with Implicit Q-Learning. 2021. arXiv:2110.06169.
+
+ 本頁的方程式與數字取自論文 v1；標示「本頁推導」的內容為本頁自行推導，「推定」為本頁為了玩具元件自選的數值，「本頁解讀」為本頁對論文的解讀，三者都不是論文結論。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記

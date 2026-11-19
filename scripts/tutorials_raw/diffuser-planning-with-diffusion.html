@@ -1,0 +1,1149 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diffuser 擴散規劃</title>
+<meta name="description" content="圖解 Janner、Du、Tenenbaum、Levine 的 ICML 2022 論文 Diffuser：把整條軌跡當成二維陣列以擴散模型去噪，以補全與報酬引導完成規劃，並用高斯軌跡玩具即時示範。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+
+/* ---- No. 447 additions ---- */
+:root{--c-ref:var(--c-par)}
+details.more{max-width:760px;margin:16px 0 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.more>summary{cursor:pointer;list-style:none;padding:12px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px;color:var(--ink-2)}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.more[open]>summary::before{transform:rotate(45deg)}
+details.more>.tscroll{margin:0 12px 12px}
+details.more.mini{margin:0;border-radius:10px}
+details.more.mini>summary{font-size:13px;padding:8px 14px}
+details.more.mini .readout{margin:0 8px 8px}
+.lg.sq::before{width:9px;height:9px;border:2px solid var(--ink);border-radius:1px}
+.lg.ring::before{width:12px;height:12px;border:2px solid var(--accent);border-radius:50%}
+.lg.dia::before{width:9px;height:9px;border:2px solid var(--ink);transform:rotate(45deg)}
+.lg.cref::before{border-top:3px dashed var(--c-ref)}
+.lg.samp::before{border-top:1.5px solid var(--ink-2)}
+.quote{padding:10px 16px;border:1px solid var(--line);background:var(--surface);border-radius:10px}
+.note.small{font-size:13px;margin:-6px 0 0;line-height:1.55}
+.hero-strip{max-width:520px;margin:8px 0 0}
+.hero-strip .cap{font-size:13px;color:var(--ink-3)}
+svg .samp{stroke:var(--ink-2);stroke-width:1.2;fill:none;opacity:.7}
+svg .cref{stroke:var(--c-ref);stroke-width:3;fill:none;stroke-dasharray:7 5}
+svg .plan{stroke:var(--accent);stroke-width:3;fill:none}
+svg .plan0{stroke:var(--ink-2);stroke-width:1.6;fill:none}
+svg .mk{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .mk-acc{fill:none;stroke:var(--accent);stroke-width:2.5}
+svg .cell{stroke:var(--line);stroke-width:.5}
+svg .cur-col{fill:none;stroke:var(--ink);stroke-width:2}
+svg .frame{fill:none;stroke:var(--line)}
+svg .warn{font:500 14px var(--f-body);fill:var(--accent)}
+.warm{max-width:760px;margin:12px 0 24px;display:flex;flex-direction:column;gap:12px;padding:18px 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+.lane{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lane-h{font:500 12px/1 var(--f-mono);color:var(--ink-3);width:4.5em}
+.nd{padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);font-size:14px;line-height:1.3}
+.nd.acc{border-color:var(--accent);background:var(--accent-soft)}
+.ar{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-2)}
+.ar::before{content:"";width:22px;border-top:2px solid var(--ink-2)}
+.ar::after{content:"";width:0;height:0;border-left:6px solid var(--ink-2);border-top:4px solid transparent;border-bottom:4px solid transparent;margin-left:-6px}
+.ar.dash::before{border-top-style:dashed}
+.plate .readout{white-space:pre-line}
+@media (max-width:599px){.lane-h{width:100%}}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 447</span>
+  <span class="ttl">Diffuser：以擴散模型取樣完成軌跡規劃</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 447</b> · 互動教學 · arXiv 2205.09991 · ICML 2022</div>
+  <h1><span class="lat">Diffuser</span>：以擴散模型取樣完成軌跡規劃</h1>
+  <p class="dek">Diffuser 對整條軌跡建模，規劃等於從加上擾動的模型中取樣。</p>
+  <p class="byline">Michael Janner、Yilun Du、Joshua B. Tenenbaum、Sergey Levine（2022）〈Planning with Diffusion for Flexible Behavior Synthesis〉</p>
+  <div class="hero-strip"><div class="fig" id="hero-strip"><svg role="img" aria-label="軌跡陣列示意：2 列（x、y 座標）乘 16 欄（規劃時間步），每格顏色表示數值"></svg></div>
+    <p class="cap">軌跡陣列示意：每一欄是一個規劃時間步，列是狀態的維度（本頁玩具只有平面座標 x、y）。</p></div>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 一次產生整條計畫</span><p>Diffuser 一次產生一整條計畫：狀態與動作排成二維陣列，從純噪聲逐步去噪。</p></div>
+    <div class="fact"><span class="n">02 · 換擾動函數就換任務</span><p>同一個模型換一個擾動函數 h 就能做不同任務：固定起點與終點是補全，最大化報酬是用報酬梯度引導。</p></div>
+    <div class="fact"><span class="n">03 · 長時程任務</span><p>在 Maze2D 長時程任務中平均分數 119.5，最佳 model-free 基準 IQL 為 47.0。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2205.09991">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-447">在關聯圖中查看</a>
+    <a class="btn" href="traj-diffusion-lineage-hub.html">研究筆記總覽</a>
+  </div>
+</section>
+
+<!-- S1 ============================================================ -->
+<section class="ch" id="problem" data-toc="01" data-tt="問題">
+  <div class="ch-num">01 · 問題</div>
+  <h2>學到的動態模型的預測誤差會被最佳化器利用</h2>
+  <div class="prose">
+    <p>強化學習（reinforcement learning, RL）把決策寫成馬可夫決策過程：代理人在每個時間步 $t$ 處於狀態 $s_t$，選擇動作 $a_t$，得到報酬 $r(s_t,a_t)$，環境依動態 $s_{t+1}=f(s_t,a_t)$ 轉移到下一個狀態。軌跡最佳化（trajectory optimization）是一類搜尋一串動作、使目標最大的演算法；它要解的問題是（Sec. 2.1）</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$a^*_{0:T}=\arg\max_{a_{0:T}}\mathcal J(s_0,a_{0:T})=\arg\max_{a_{0:T}}\sum_{t=0}^{T}r(s_t,a_t)$$</div><span class="eq-n">Sec. 2.1</span></div>
+  <div class="prose">
+    <p>其中 $T$ 是規劃視界（planning horizon），$\tau=(s_0,a_0,s_1,a_1,\dots,s_T,a_T)$ 是狀態與動作交錯的軌跡，$\mathcal J(\tau)$ 是這條軌跡的目標值。解這個問題需要知道動態 $f$。</p>
+    <p>基於模型的強化學習（model-based RL）的常見做法是：先用監督式學習得到一個近似的動態模型 $\hat f$，再把它交給經典的軌跡最佳化器。作者指出這個組合很少照描述運作：強力的最佳化器會利用學到模型的誤差，產生的計畫更像對抗樣本（adversarial example，即輸入被調整到讓模型輸出錯誤值的例子），而不是最佳軌跡（Sec. 1）。最佳化器找到的是「模型誤以為報酬很高」的動作序列。因此當代 model-based 方法多半改用 model-free 方法的價值函數與策略梯度，或只用不需要梯度的簡單最佳化器（例如隨機射擊、交叉熵法）。</p>
+    <p>本文的設定是離線的：只用既有資料集訓練，不與環境互動收集新資料（Sec. 5.3）。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="rl-mdp-q-learning-basics.html">MDP、Q 函數與 Bellman backup</a>、<a href="offline-rl-distribution-shift.html">Offline RL 的分布偏移</a>、<a href="model-based-planning-abstraction-barrier.html">學習式動態模型與軌跡最佳化的分工</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">「學動態模型＋經典軌跡最佳化器」為什麼常失敗？</p>
+    <p class="a">最佳化器會利用學到模型的誤差，計畫更像對抗樣本而不是最佳軌跡（Sec. 1）。</p>
+  </div></details>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="diffusion" data-toc="02" data-tt="擴散模型">
+  <div class="ch-num">02 · 擴散模型</div>
+  <h2>擴散模型以逐步去噪產生資料</h2>
+  <div class="prose">
+    <p>擴散機率模型（diffusion probabilistic model）把產生資料寫成反覆去噪的過程 $p_\theta(\tau^{i-1}\mid\tau^i)$。它是前向擴散過程 $q(\tau^i\mid\tau^{i-1})$ 的反向；前向過程逐步加入噪聲，破壞資料的結構（Sec. 2.2）。模型給出的資料分布是</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$p_\theta(\tau^0)=\int p(\tau^N)\prod_{i=1}^{N}p_\theta(\tau^{i-1}\mid\tau^i)\,d\tau^{1:N},\qquad p_\theta(\tau^{i-1}\mid\tau^i)=\mathcal N\big(\tau^{i-1}\mid\mu_\theta(\tau^i,i),\Sigma^i\big)$$</div><span class="eq-n">Sec. 2.2</span></div>
+  <div class="prose">
+    <p>$p(\tau^N)$ 是標準高斯，$\tau^0$ 是無噪資料，$N$ 是擴散總步數。反向轉移是平均為 $\mu_\theta$、共變異數為固定 $\Sigma^i$ 的高斯；參數 $\theta$ 以最小化負對數似然的變分上界訓練。</p>
+    <p><b>兩種時間。</b>本文同時有擴散過程的時間與規劃問題的時間。上標 $i$ 是擴散步，下標 $t$ 是規劃時間步。例如 $s^0_t$ 是無噪軌跡中第 $t$ 個狀態；$\tau^i_{s_t}$、$\tau^i_{a_t}$ 是擴散步 $i$ 的軌跡中第 $t$ 個狀態與動作。沒有歧義時省略無噪量的上標：$\tau=\tau^0$，即無噪軌跡（Sec. 2.2 Notation）。</p>
+    <p><b>排程。</b>論文的反向共變異數依 cosine 排程（Nichol &amp; Dhariwal 2021）。排程以三個量描述：$\beta_i$ 是第 $i$ 步加入的噪聲比例，$\bar\alpha_i$ 是經過 $i$ 步後保留的資料比例，$\tilde\beta_i$ 是反向步使用的變異數：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$f(i)=\cos^2\!\Big(\frac{i/N+0.008}{1.008}\cdot\frac{\pi}{2}\Big),\quad \beta_i=\min\!\Big(1-\frac{f(i)}{f(i-1)},\,0.999\Big),\quad \bar\alpha_0=1,\ \ \bar\alpha_i=\prod_{j\le i}(1-\beta_j),\quad \tilde\beta_i=\beta_i\,\frac{1-\bar\alpha_{i-1}}{1-\bar\alpha_i}$$</div><span class="eq-n">cosine 排程</span></div>
+  <div class="prose">
+    <p>有了排程，可以寫出兩個後面會用到的 DDPM 標準式（Ho et al. 2020；論文引用但沒有寫出）。第一個是閉式加噪：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$q(\tau^i\mid\tau^0)=\mathcal N\big(\sqrt{\bar\alpha_i}\,\tau^0,\,(1-\bar\alpha_i)I\big),\qquad \tau^i=\sqrt{\bar\alpha_i}\,\tau^0+\sqrt{1-\bar\alpha_i}\,\epsilon,\ \ \epsilon\sim\mathcal N(0,I)$$</div><span class="eq-n">DDPM</span></div>
+  <div class="prose">
+    <p>這個式子讓我們可以從無噪軌跡一步跳到任何擴散步 $i$，不必逐步加噪。第 08 章的暖啟動就是用它：把上一個計畫當作 $\tau^0$，取 $i=k$。第二個是由預測噪聲 $\epsilon_\theta$ 求反向平均：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mu=\frac{1}{\sqrt{1-\beta_i}}\Big(\tau^i-\frac{\beta_i}{\sqrt{1-\bar\alpha_i}}\,\epsilon_\theta(\tau^i,i)\Big)$$</div><span class="eq-n">DDPM</span></div>
+  <details class="more"><summary>符號表</summary><div class="tscroll"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$s_t,a_t$</td><td>第 $t$ 個規劃時間步的狀態、動作</td></tr>
+    <tr><td>$T$、$H$</td><td>規劃視界；本頁玩具以 $H$ 表示軌跡陣列的欄數</td></tr>
+    <tr><td>$r$、$\mathcal J$</td><td>單步報酬、軌跡目標 $\sum_t r(s_t,a_t)$</td></tr>
+    <tr><td>$i$、$N$</td><td>擴散步（上標）、擴散總步數</td></tr>
+    <tr><td>$\tau^i_{s_t}$、$\tau^i_{a_t}$</td><td>擴散步 $i$ 的軌跡中第 $t$ 個狀態、動作；$\tau=\tau^0$</td></tr>
+    <tr><td>$\beta_i,\bar\alpha_i,\tilde\beta_i$</td><td>排程（本章定義）；元件讀數中 $\tilde\beta_i$ 寫成 βtᵢ</td></tr>
+    <tr><td>$\mu_\theta,\Sigma^i,\epsilon_\theta$</td><td>反向平均、反向共變異數、預測的噪聲</td></tr>
+    <tr><td>$h$、$\tilde p_\theta$</td><td>擾動函數、擾動分布（第 05 章）</td></tr>
+    <tr><td>$\mathcal O_t$、$\mathcal J_\phi$、$\alpha$</td><td>最佳性變數、報酬預測器、引導尺度（第 07 章）</td></tr>
+    <tr><td>$c_t$</td><td>第 $t$ 步的狀態限制值（第 06 章）</td></tr>
+    </tbody></table></div></details>
+  <p class="read">延伸閱讀：<a href="eps-prediction-ddpm-score.html">ε-prediction 與 DDPM、score-based 模型</a>、<a href="ddpm-training-and-sampling-recap.html">DDPM 的訓練與取樣流程</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$\tau^i_{s_t}$ 的 $i$ 與 $t$ 各指什麼？$\tau$ 不帶上標時指什麼？</p>
+    <p class="a">$i$ 是擴散步、$t$ 是規劃時間步；$\tau=\tau^0$，即無噪軌跡（Sec. 2.2）。</p>
+  </div></details>
+</section>
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="trajectory" data-toc="03" data-tt="軌跡陣列">
+  <div class="ch-num">03 · 軌跡陣列</div>
+  <h2>Diffuser 把整條軌跡當成一張二維陣列去噪</h2>
+  <div class="prose">
+    <p>Diffuser 是一個對軌跡建模的擴散模型 $p_\theta(\tau)$，而且模型是為規劃設計的：控制器的效果和狀態預測的品質一樣重要。所以狀態與動作一起預測，動作只是狀態之外的額外維度。Diffuser 的輸入與輸出是一張二維陣列，每一欄是一個規劃時間步（Sec. 3.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\tau=\begin{bmatrix}s_0&amp;s_1&amp;\cdots&amp;s_T\\ a_0&amp;a_1&amp;\cdots&amp;a_T\end{bmatrix}$$</div><span class="eq-n">Eq. 2</span></div>
+  <div class="prose">
+    <p><b>不依時間順序自迴歸。</b>考慮目標條件推論 $p(s_1\mid s_0,s_T)$：下一個狀態 $s_1$ 同時依賴過去的 $s_0$ 與未來的 $s_T$。動態預測是因果的，現在由過去決定；決策與控制可以是反因果的（anti-causal），現在的決策取決於未來（Sec. 3.1；腳註 1 指出一般 RL 中這來自「未來最佳」的假設，例如 $\log p(a_t\mid s_t,\mathcal O_{t:T})$）。因為不能用時間順序的自迴歸，Diffuser 同時預測計畫的所有時間步。</p>
+    <p><b>時間局部性。</b>論文 Fig. 2 畫出單一時間卷積的依賴關係：一個輸出只看到鄰近的過去與未來時間步。所以每個去噪步只能依軌跡的局部一致性做預測，也就是只修正相鄰時間步之間的不一致；把許多去噪步組合起來後，局部一致性可以推動整條計畫的全局連貫（Sec. 3.1）。</p>
+    <p><b>架構。</b>作者列出三個要求：整條軌跡要非自迴歸地預測；每個去噪步要時間局部；表示要沿規劃時間的方向「等變」（把輸入沿時間平移，輸出也跟著平移），沿狀態與動作特徵的方向則不需要。滿足這三點的是一維時間卷積：作者用重複的時間卷積殘差區塊組成類似 U-Net 的結構，把影像擴散模型的二維空間卷積換成一維時間卷積（Fig. A1）。因為模型是全卷積的，計畫的視界由輸入陣列的大小決定，而不是由架構決定，規劃時可以改變（Sec. 3.1）。</p>
+  </div>
+  <details class="more"><summary>App. C 的架構細節</summary><div class="prose" style="padding:0 20px 8px">
+    <p>U-Net 有 6 個重複的殘差區塊。每個區塊有兩個時間卷積，各自接 group normalization（把通道分組做正規化），區塊最後接 Mish 非線性。擴散步的嵌入由單一全連接層產生，加到每個區塊第一個時間卷積的激活上（App. C 第 1 點）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="trajectory-diffusion-planning.html">軌跡層級擴散規劃（Diffuser）</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Diffuser 的輸入輸出是什麼形狀？為什麼用一維時間卷積？</p>
+    <p class="a">二維陣列，每欄一個規劃時間步，列為狀態與動作維度（Eq. 2）；要沿時間等變、沿特徵不等變，且全卷積使視界由輸入大小決定（Sec. 3.1）。</p>
+    <p class="q">為什麼不能依時間順序逐步預測？單一去噪步只看局部，如何得到全局連貫？</p>
+    <p class="a">決策可以是反因果的，例如 $p(s_1\mid s_0,s_T)$ 依賴未來狀態；每步只強化局部一致性，組合許多去噪步後局部一致性推動全局連貫（Sec. 3.1、Fig. 2）。</p>
+  </div></details>
+</section>
+
+<!-- S3b =========================================================== -->
+<section class="ch" id="toy" data-toc="04" data-tt="訓練與玩具">
+  <div class="ch-num">04 · 訓練與玩具</div>
+  <h2>訓練目標，以及本頁用來示範的玩具</h2>
+  <div class="prose">
+    <p>Diffuser 以網路 $\epsilon_\theta(\tau^i,i)$ 預測加入的噪聲，反向平均 $\mu_\theta$ 再由第 02 章的式子閉式求得。訓練用簡化的目標（Sec. 3.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathcal L(\theta)=\mathbb E_{i,\epsilon,\tau^0}\Big[\big\|\epsilon-\epsilon_\theta(\tau^i,i)\big\|^2\Big],\qquad i\sim\mathcal U\{1,2,\dots,N\},\ \ \epsilon\sim\mathcal N(0,I)$$</div><span class="eq-n">Sec. 3.1</span></div>
+  <div class="prose">
+    <p>$\tau^i$ 是把 $\tau^0$ 以噪聲 $\epsilon$ 破壞後的軌跡；反向共變異數 $\Sigma^i$ 依第 02 章的 cosine 排程。App. C 寫明運動控制任務用 $N=20$ 個擴散步，積木堆疊用 $N=100$；並且預測噪聲 $\epsilon$ 或預測無噪資料 $\tau^0$，控制表現沒有顯著差別（App. C 第 6、9 點）。擴散步數太少時，取樣分布與資料分布的差距變大；下面的玩具中可以看到步數太少時樣本過度集中。</p>
+    <p><b>本頁的玩具。</b>瀏覽器裡無法訓練 Diffuser。本頁改用一個答案已知的分布代替訓練好的網路：一個平面上平滑軌跡的高斯分布。對這個分布，最好的噪聲預測可以直接算出，所以可以把它當成訓練完美的 $\epsilon_\theta$，並且能算出精確的條件分布來比較。玩具只規劃狀態 $s_t=(x_t,y_t)$，不含動作列（點質量的動作可取 $a_t=s_{t+1}-s_t$）。反向共變異數取 $\Sigma^i=\tilde\beta_iI$<span class="tag">推定</span>：論文只寫 $\Sigma^i$ 依 cosine 排程，沒有寫用 $\beta_i$ 還是 $\tilde\beta_i$。玩具的去噪器在高噪聲時看到整條軌跡，不示範上一章的時間局部性。</p>
+  </div>
+  <details class="more"><summary>玩具的數學（本頁推導）</summary><div class="prose" style="padding:0 20px 8px">
+    <p>兩個座標各自獨立，$x_{0:H-1}\sim\mathcal N(0,Q^{-1})$，$Q=aI+bL^2$，$a=0.01$、$b=400$<span class="tag">推定</span>；$L$ 是 Neumann 邊界的二階差分矩陣。$L$ 的特徵向量是 DCT-II 基底 $\phi_k(t)=c_k\cos\!\big(\pi k(t+\tfrac12)/H\big)$，所以 $Q$ 的模式變異數為 $\lambda_k=1/\big(a+b\,(4\sin^2\tfrac{\pi k}{2H})^2\big)$。在 DCT 係數上，最好的噪聲預測是高斯條件期望 $\hat\epsilon_k=\sqrt{1-\bar\alpha_i}\,\hat\tau_k/(\bar\alpha_i\lambda_k+1-\bar\alpha_i)$<span class="tag">本頁推導</span>。</p>
+  </div></details>
+
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>從噪聲到計畫：反向去噪鏈</h3></div>
+    <p class="plate-lead">拖動「擴散步 i」從 N 到 0，看整條計畫如何同時成形；換 N 與 H 後重新取樣。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div id="c1-plane"><svg role="img" aria-label="平面上的計畫"></svg></div>
+        <div id="c1-strip"><svg role="img" aria-label="軌跡陣列條"></svg></div>
+        <div class="legend"><span class="lg pt">t = 0（圓形）</span><span class="lg sq">t = H − 1（方形）</span><span class="lg ring">目前的規劃時間步 t</span></div>
+      </div>
+      <div class="ctl">
+        <div><div class="lbl">擴散步數 N</div><div class="seg" id="c1-N" role="radiogroup" aria-label="擴散步數 N"></div></div>
+        <div><div class="lbl">欄數 H</div><div class="seg" id="c1-H" role="radiogroup" aria-label="欄數 H"></div></div>
+        <div class="rng"><label class="lbl" for="c1-i">擴散步 i <output id="c1-io"></output></label><input type="range" id="c1-i" min="0" max="20" step="1" value="0"></div>
+        <div class="rng"><label class="lbl" for="c1-t">規劃時間步 t <output id="c1-to"></output></label><input type="range" id="c1-t" min="0" max="63" step="1" value="0"></div>
+        <div class="ctl-row"><button class="small-btn pri" type="button" id="c1-play" aria-pressed="false">播放</button><button class="small-btn" type="button" id="c1-seed">重新抽樣</button></div>
+        <p class="readout" id="c1-read"></p>
+        <details class="more mini"><summary>排程數值</summary><p class="readout" id="c1-sched"></p></details>
+        <p class="sr" id="c1-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁的高斯軌跡玩具依第 04 章的公式即時計算，不是論文的模型。變異數比 = 取樣分布總變異數 ÷ 資料總變異數<span class="tag">本頁推導</span>：無條件鏈在每個 DCT 模式上是獨立的一維線性遞迴。</p>
+  </div>
+  <div class="prose">
+    <p>可以觀察到三件事。第一，$i=N$ 時是無結構的噪聲；$i$ 減小時整條計畫同時變平滑，不是從左到右逐欄產生。第二，換 $H$ 後同一套公式產生不同長度的計畫；這示範的是公式對任意 $H$ 都有定義，不是同一組網路權重。論文中對應的機制是全卷積架構（Sec. 3.1、Fig. 3c）。第三，本頁玩具中，$N=5$ 時變異數比約 0.15，$N=100$ 時約 0.89：步數太少時樣本過度集中（這是 βt 的選擇與有限步數造成的玩具結果）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Diffuser 的訓練損失是什麼？運動控制用幾個擴散步？步數太少時取樣會怎樣？</p>
+    <p class="a">$\mathbb E\|\epsilon-\epsilon_\theta(\tau^i,i)\|^2$，$i\sim\mathcal U\{1..N\}$，cosine 排程；$N=20$（積木 100）；預測 $\epsilon$ 或 $\tau^0$ 差別不大（Sec. 3.1、App. C）。步數太少時，取樣分布與資料分布的差距變大（本頁玩具：樣本過度集中）。</p>
+  </div></details>
+</section>
+
+<!-- S4 ============================================================ -->
+<section class="ch" id="perturb" data-toc="05" data-tt="擾動分布">
+  <div class="ch-num">05 · 擾動分布</div>
+  <h2>規劃等於從擾動分布取樣</h2>
+  <div class="prose">
+    <p>作者把盡量多的規劃流程併入生成模型，使規劃與取樣幾乎相同。擴散模型逐步去噪的過程容易加上條件：從擾動分布取樣（Sec. 3）</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\tilde p_\theta(\tau)\propto p_\theta(\tau)\,h(\tau)$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="prose">
+    <p>擾動函數 $h(\tau)$ 可以放先前的觀測（例如觀測歷史）、想要的結果（例如要抵達的目標）、或一般的待最佳化函數（例如報酬或成本）。在 $\tilde p_\theta$ 中推論相當於第 01 章軌跡最佳化的機率版本：軌跡要在 $p_\theta$ 下物理上合理，也要在 $h$ 下高報酬或滿足限制。動態資訊在 $p_\theta$，任務資訊在 $h$，兩者分開，所以換任務只換 $h$，同一個擴散模型可以重用於同一環境的多個任務（Sec. 3）。</p>
+    <p>這個設計呼應作者對模型的要求（Sec. 1）：模型是為規劃而設計的，所以動作分布和狀態動態一樣重要、長時程準確度比單步誤差重要；模型應該與報酬函數無關，才能重用於多個任務；計畫（而不只是預測）應該隨經驗變好，並避免射擊式規劃的短視失敗。</p>
+    <p>接下來兩章是兩種 $h$。第 06 章的 $h$ 是限制（固定起點與終點），第 07 章的 $h$ 是報酬。論文的順序是先報酬（Sec. 3.2）後限制（Sec. 3.3）；本頁先講較簡單的限制。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 1 是什麼？為什麼一個模型能用於多個任務？</p>
+    <p class="a">$\tilde p_\theta(\tau)\propto p_\theta(\tau)h(\tau)$；動態資訊在 $p_\theta$，任務資訊在 $h$，換任務只換 $h$（Sec. 3）。</p>
+  </div></details>
+</section>
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="inpaint" data-toc="06" data-tt="補全">
+  <div class="ch-num">06 · 補全</div>
+  <h2>固定起點與終點的規劃是補全問題</h2>
+  <div class="prose">
+    <p>有些規劃問題比較適合寫成限制滿足，而不是報酬最大化：目標是產生任何一條滿足限制的可行軌跡，例如終點在目標位置。依 Eq. 2 的二維陣列表示，這是影像補全（inpainting）問題：狀態與動作的限制就像影像中已經觀測到的像素，其餘位置要由擴散模型以與限制一致的方式填入（Sec. 3.3）。擾動函數對觀測值是 Dirac delta，其他地方是常數。若 $c_t$ 是第 $t$ 步的狀態限制：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$h(\tau)=\delta_{c_t}(s_0,a_0,\dots,s_T,a_T)=\begin{cases}+\infty&amp;c_t=s_t\\0&amp;\text{otherwise}\end{cases}$$</div><span class="eq-n">Sec. 3.3</span></div>
+  <div class="prose">
+    <p>$+\infty$ 是記號上的寫法，表示「只允許 $s_t=c_t$」，不是實際的密度值。動作限制的定義相同。實作方式是：從無擾動的反向過程 $\tau^{i-1}\sim p_\theta(\tau^{i-1}\mid\tau^i)$ 取樣，並在每個擴散步之後把被限制位置的取樣值換成 $c_t$（論文寫成對所有 $i\in\{0,1,\dots,N\}$）。</p>
+    <p>報酬最大化的問題也需要補全，因為所有計畫都必須從目前狀態開始。這就是 Alg. 1 第 10 行（演算法全文在第 07 章）：</p>
+    <p class="quote"><code>τ<sup>i−1</sup><sub>s₀</sub> ← s</code>：限制計畫的第一個狀態等於目前觀測到的狀態 $s$。</p>
+    <p>在本頁的玩具中，精確的條件分布可以由一組線性方程求得，所以能和替換法比較<span class="tag">本頁推導</span>。下圖固定起點 $A=(-1.2,-0.8)$ 與終點 $B$。</p>
+  </div>
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>補全：固定起點與終點</h3></div>
+    <p class="plate-lead">粗實線是替換法的平均計畫，粗虛線是精確條件平均。移動終點 B，或增加擴散步數 N。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div id="c2-plane"><svg role="img" aria-label="補全的計畫"></svg></div>
+        <div id="c2-xt"><svg role="img" aria-label="x 座標對規劃時間步"></svg></div>
+        <div class="legend"><span class="lg acc">替換法（平均）</span><span class="lg cref">精確條件平均</span><span class="lg samp">樣本</span><span class="lg pt">起點 A</span><span class="lg sq">終點 B</span></div>
+      </div>
+      <div class="ctl">
+        <div><div class="lbl">欄數 H</div><div class="seg" id="c2-H" role="radiogroup" aria-label="欄數 H"></div></div>
+        <div><div class="lbl">擴散步數 N</div><div class="seg" id="c2-N" role="radiogroup" aria-label="擴散步數 N"></div></div>
+        <div class="rng"><label class="lbl" for="c2-bx">終點 Bx <output id="c2-bxo"></output></label><input type="range" id="c2-bx" min="-2" max="2" step="0.1" value="1.2"></div>
+        <div class="rng"><label class="lbl" for="c2-by">終點 By <output id="c2-byo"></output></label><input type="range" id="c2-by" min="-2" max="2" step="0.1" value="0.8"></div>
+        <label class="chk"><input type="checkbox" id="c2-s" checked> 顯示 6 個樣本</label>
+        <label class="chk"><input type="checkbox" id="c2-e" checked> 顯示精確條件平均</label>
+        <div class="ctl-row"><button class="small-btn" type="button" id="c2-seed">重新抽樣</button></div>
+        <p class="readout" id="c2-read"></p>
+        <p class="sr" id="c2-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁的高斯軌跡玩具即時計算，不是論文的模型。「替換法（平均）」是把所有噪聲設為 0 跑一次的結果；鏈的每一步都是仿射函數，所以它等於樣本的期望值<span class="tag">本頁推導</span>。</p>
+  </div>
+  <div class="prose">
+    <p>替換法不是精確的條件取樣：被限制的值只能經由之後的去噪步傳到其他時間步<span class="tag">本頁推導</span>。因此，在本頁玩具中，替換法的計畫平均在端點附近有跳躍，內部被拉向先驗平均（原點）；擴散步數增加時差距縮小。</p>
+    <p>本頁玩具的數字如下。每個樣本都精確通過 $A$ 與 $B$。$H=64$、$N=20$ 時，替換法平均的端點跳躍是 0.168，約為先驗典型單步長度 0.113 的 1.5 倍，精確平均只有 0.007。在 $N\le100$ 的範圍內，$N$ 從 5 增加到 100，均方根差從 0.439 降到 0.173，跳躍從 0.599 降到 0.073，沒有看到歸零。$H=128$ 時替換法平均的內部幾乎停在原點：限制資訊沿時間傳得不夠遠。這些是玩具的結果；論文的 Diffuser 以真實資料訓練，Maze2D 的分數見第 10 章。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">目標條件規劃如何實作？報酬最大化為什麼也要補全？</p>
+    <p class="a">$h$ 對觀測值為 Dirac delta；每個擴散步後把被限制的位置換成 $c_t$；所有計畫都必須從目前狀態開始（Alg. 1 第 10 行）（Sec. 3.3）。</p>
+    <p class="q">替換法為什麼不是精確的條件取樣？在本頁玩具中看到什麼？</p>
+    <p class="a">被限制的值只能經由之後的去噪步傳到其他時間步；玩具中替換法的計畫平均在端點附近有跳躍、內部被拉向先驗平均，擴散步數增加時差距縮小（本頁推導）。</p>
+  </div></details>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="guide" data-toc="07" data-tt="引導取樣">
+  <div class="ch-num">07 · 引導取樣</div>
+  <h2>最大化報酬是用報酬梯度引導取樣</h2>
+  <div class="prose">
+    <p>要用 Diffuser 解 RL 問題，需要引入報酬。作者借用控制即推論（control-as-inference，Levine 2018）的圖模型：令 $\mathcal O_t$ 是表示第 $t$ 步「最佳」的二元隨機變數，$p(\mathcal O_t=1)=\exp(r(s_t,a_t))$。在 Eq. 1 中取 $h(\tau)=p(\mathcal O_{1:T}\mid\tau)$，就能從最佳軌跡的集合取樣（Sec. 3.2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\tilde p_\theta(\tau)=p(\tau\mid\mathcal O_{1:T}=1)\propto p(\tau)\,p(\mathcal O_{1:T}=1\mid\tau)$$</div><span class="eq-n">Sec. 3.2</span></div>
+  <div class="prose">
+    <p>RL 問題於是換成了條件取樣問題。精確取樣不可行；但當 $p(\mathcal O_{1:T}\mid\tau^i)$ 足夠平滑時，反向轉移可以近似為高斯（Sohl-Dickstein et al. 2015）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$p_\theta(\tau^{i-1}\mid\tau^i,\mathcal O_{1:T})\approx\mathcal N(\tau^{i-1};\,\mu+\Sigma g,\,\Sigma),$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="eq"><div class="eq-m">$$g=\nabla_\tau\log p(\mathcal O_{1:T}\mid\tau)\big|_{\tau=\mu}=\sum_{t=0}^{T}\nabla_{s_t,a_t}r(s_t,a_t)\big|_{(s_t,a_t)=\mu_t}=\nabla\mathcal J(\mu)$$</div><span class="eq-n">Eq. 3（續）</span></div>
+  <div class="prose">
+    <p>$\mu,\Sigma$ 是原本反向轉移 $p_\theta(\tau^{i-1}\mid\tau^i)$ 的參數。也就是說，報酬透過 $p(\mathcal O_t=1)=\exp(r)$ 進入取樣：反向平均沿報酬梯度移動 $\Sigma g$，$g=\nabla\mathcal J(\mu)$。這個關係把影像生成用的分類器引導取樣（Dhariwal &amp; Nichol 2021）直接轉到 RL。</p>
+    <p>從 Eq. 3 到 $g=\nabla\mathcal J(\mu)$ 用到三個論文沒有寫出的條件<span class="tag">本頁推導</span>：(1) 給定 $\tau$ 時各 $\mathcal O_t$ 彼此獨立，所以 $\log p(\mathcal O_{1:T}=1\mid\tau)=\sum_t r(s_t,a_t)$；(2) $\exp(r)$ 要是機率，所以 $r\le0$，把報酬平移不改變 $g$，縮放則會改變 $g$；(3) $p(\mathcal O\mid\tau^i)\approx p(\mathcal O\mid\mu)$，也就是把帶噪的 $\tau^i$ 換成反向平均 $\mu$，並把雜訊層級的似然換成乾淨軌跡的報酬，這是另一個近似。論文 $\mathcal O$ 的下標是 $1{:}T$，求和卻是 $t=0..T$，本頁照錄。</p>
+    <p>實作上，作者先在所有可用軌跡的狀態與動作上訓練 $p_\theta(\tau)$，再另外訓練一個模型 $\mathcal J_\phi$，以帶噪軌跡樣本 $\tau^i$ 為輸入預測累積報酬（論文沒有寫明預測的是 $\tau^i$ 本身還是對應 $\tau^0$ 的報酬）。用帶噪樣本當輸入，正是讓條件 (3) 的近似較不嚴重的做法。$\mathcal J_\phi$ 的梯度依 Eq. 3 修改反向平均；取樣出的軌跡只執行第一個動作，然後在滾動視界控制迴圈中重新規劃（Sec. 3.2）。</p>
+  </div>
+  <div class="algo" role="table" aria-label="Alg. 1 Guided Diffusion Planning 與說明">
+    <div class="row hd" role="row"><div role="columnheader">Alg. 1 Guided Diffusion Planning</div><div class="ex-h" role="columnheader">這一行做什麼</div></div>
+    <div class="row" role="row"><code>1: Require Diffuser μθ, guide J, scale α, covariances Σⁱ</code><div class="ex">需要訓練好的 Diffuser、報酬預測器、引導尺度與反向共變異數。</div></div>
+    <div class="row" role="row"><code>2: while not done do</code><div class="ex">滾動視界迴圈：每個環境步規劃一次。</div></div>
+    <div class="row" role="row"><code>3:   Observe state s; initialize plan τᴺ ~ N(0, I)</code><div class="ex">觀測目前狀態，從純噪聲開始。</div></div>
+    <div class="row" role="row"><code>4:   for i = N, ..., 1 do</code><div class="ex">逐步去噪。</div></div>
+    <div class="row" role="row"><code>6:     μ ← μθ(τⁱ)</code><div class="ex">反向轉移的平均（第 02 章的式子）。</div></div>
+    <div class="row" role="row"><code>8:     τⁱ⁻¹ ~ N(μ + αΣ∇J(μ), Σⁱ)</code><div class="ex">以報酬梯度移動平均，再加噪聲取樣（Eq. 3 加上尺度 α）。</div></div>
+    <div class="row" role="row"><code>10:    τⁱ⁻¹ₛ₀ ← s</code><div class="ex">補全：計畫的第一個狀態固定為目前狀態（第 06 章）。</div></div>
+    <div class="row" role="row"><code>11:  Execute first action of plan τ⁰ₐ₀</code><div class="ex">只執行第一個動作，然後回到第 2 行。</div></div>
+  </div>
+  <div class="prose">
+    <p>Alg. 1 比 Eq. 3 多一個引導尺度 $\alpha$。論文的目標 $p(\tau)\exp(\mathcal J)$ 對應 $\alpha=1$；把 $\alpha$ 讀成「從 $p(\tau)\exp(\alpha\mathcal J)$ 取樣」是分類器引導的常見讀法，下圖的精確參考採用這個讀法，這是本頁的詮釋。增大 $\alpha$ 時計畫被更強地拉向高報酬區。論文對所有任務用 $\alpha=0.1$，只有 hopper-medium-expert 用 0.0001；許多任務可以縮短視界，但引導尺度也要降低，例如 halfcheetah 視界 4 時用 0.001（App. C 第 5、7 點）。$\alpha$ 的數值與 $\mathcal J_\phi$ 的尺度綁在一起，不能跨模型比較。</p>
+    <p>下圖的玩具用報酬 $r(s_t)=-\tfrac12\|s_t-c\|^2$（$\le0$），起點 $s=(-1.2,-0.8)$ 每步補全。它不訓練 $\mathcal J_\phi$，改用兩種可以閉式計算的引導：「雜訊層級似然」把條件 (3) 處理掉，直接對 $\log\mathbb E[\exp(\alpha\mathcal J(\tau^0))\mid\tau^{i-1}]$ 求梯度<span class="tag">本頁推導</span>；「乾淨 J(μ)」則在 $\mu$ 處直接用真實報酬，$g=-\alpha(\mu-c)$。兩者都以 $\mu+\tilde\beta_i g$ 更新。</p>
+  </div>
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>引導取樣：用報酬梯度推動計畫</h3></div>
+    <p class="plate-lead">菱形是報酬最高的位置 c。調整引導尺度 α，切換兩種引導梯度。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div id="c3-plane"><svg role="img" aria-label="引導後的計畫"></svg></div>
+        <div id="c3-bar"><svg role="img" aria-label="兩條平均路徑的 J"></svg></div>
+        <div class="legend"><span class="lg acc">引導（平均）</span><span class="lg cref">精確 p(τ)exp(αJ) 平均</span><span class="lg samp">樣本</span><span class="lg pt">起點 s</span><span class="lg dia">目標 c</span></div>
+      </div>
+      <div class="ctl">
+        <div><div class="lbl">引導梯度</div><div class="seg" id="c3-mode" role="radiogroup" aria-label="引導梯度"></div></div>
+        <div class="rng"><label class="lbl" for="c3-la">引導尺度 α（對數刻度）<output id="c3-lao"></output></label><input type="range" id="c3-la" min="-30" max="20" step="1" value="-10"></div>
+        <p class="note small">預設 0.1。α 的數值與 J 的尺度綁在一起，不能和論文的 0.1 直接比較。</p>
+        <div class="rng"><label class="lbl" for="c3-cx">目標 cx <output id="c3-cxo"></output></label><input type="range" id="c3-cx" min="-2" max="2" step="0.1" value="1"></div>
+        <div class="rng"><label class="lbl" for="c3-cy">目標 cy <output id="c3-cyo"></output></label><input type="range" id="c3-cy" min="-2" max="2" step="0.1" value="1"></div>
+        <div><div class="lbl">欄數 H</div><div class="seg" id="c3-H" role="radiogroup" aria-label="欄數 H"></div></div>
+        <div><div class="lbl">擴散步數 N</div><div class="seg" id="c3-N" role="radiogroup" aria-label="擴散步數 N"></div></div>
+        <label class="chk"><input type="checkbox" id="c3-s" checked> 顯示 6 個樣本</label>
+        <label class="chk"><input type="checkbox" id="c3-e" checked> 顯示精確傾斜分布平均</label>
+        <div class="ctl-row"><button class="small-btn" type="button" id="c3-seed">重新抽樣</button></div>
+        <p class="readout" id="c3-read"></p>
+        <p class="sr" id="c3-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁的高斯軌跡玩具即時計算，不是論文的模型。J 在平均路徑上計算：J = −½ Σₜ ‖mₜ − c‖²（對 x、y 加總）。雜訊層級似然在 DCT 上是對角的閉式<span class="tag">本頁推導</span>。</p>
+  </div>
+  <div class="prose">
+    <p>在本頁玩具中可以觀察到：$\alpha=0.001$ 時幾乎沒有引導。雜訊層級似然模式下，$\alpha$ 增大時終點穩定地接近 $c$（$H=32$、$N=20$：$\alpha=0.1$ 時 0.886，$\alpha=1$ 時 0.988，$\alpha=100$ 時 0.9997），即使 $\alpha=100$ 也不發散。切換到乾淨 J 模式，$\alpha=1$ 時終點越過 $c$ 到 1.826，$\alpha\ge10^{1.2}\approx15.8$ 時發散。</p>
+    <p>$\alpha\tilde\beta_i&gt;2$ 是引導項在單一步放大與 $c$ 距離的必要條件<span class="tag">本頁推導</span>：若 $\mathcal J=-\tfrac12\sum_t\|s_t-c\|^2$，引導項把 $\mu-c$ 乘上 $(1-\alpha\tilde\beta_i)$。但是否發散取決於所有步驟累積的增益（包含去噪本身的收縮）：乾淨 J 模式、$N=20$ 時，$\alpha=10$ 有 7 步 $\alpha\tilde\beta_i&gt;2$ 卻沒有發散，$\alpha=10^{1.2}$ 有 10 步並在第 13 步發散。越過目標與發散來自「在 $\mu$ 處用乾淨報酬」的簡化，是玩具現象，不代表 Diffuser 的性質。兩種模式下，引導後的平均與精確平均之間都有差距，反映 Eq. 3 是近似：引導後的平均不一定等於 $p(\tau)\exp(\alpha\mathcal J)$ 的平均。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="control-as-inference-guided-sampling.html">控制即推論：把獎勵最大化改寫為條件取樣</a>、<a href="diffusion-classifier-guidance-background.html">擴散模型的分類器引導與餘弦排程</a>、<a href="score-geometry-inverse-problems-guidance.html">貝氏逆問題與 guidance</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">報酬如何進入取樣？Eq. 3 的平均是什麼？</p>
+    <p class="a">$p(\mathcal O_t=1)=\exp(r)$，$h=p(\mathcal O_{1:T}\mid\tau)$；反向轉移近似為 $\mathcal N(\mu+\Sigma g,\Sigma)$，$g=\nabla\mathcal J(\mu)$；Alg. 1 再乘引導尺度 $\alpha$，$\mathcal J_\phi$ 以帶噪軌跡訓練（Sec. 3.2）。</p>
+    <p class="q">增大 $\alpha$ 會怎樣？論文用什麼值？</p>
+    <p class="a">計畫被更強地拉向高報酬區。論文 $\alpha=0.1$，hopper-medium-expert 用 0.0001，縮短視界時也要降低（App. C）。Eq. 3 是近似；本頁玩具中，用乾淨 J 引導時 $\alpha$ 過大會越過目標甚至發散，改用雜訊層級似然就不會（本頁推導）。</p>
+  </div></details>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="loop" data-toc="08" data-tt="執行與暖啟動">
+  <div class="ch-num">08 · 執行與暖啟動</div>
+  <h2>計畫的執行方式與暖啟動</h2>
+  <div class="prose">
+    <p>計畫的執行方式有兩種。運動控制實驗依 Alg. 1：只執行計畫的第一個動作，然後在新的狀態重新規劃，這是滾動視界控制（receding-horizon control）。Maze2D 則把取樣出的計畫當作開迴路計畫執行（Sec. 5.1）。（Sec. 5.4 一方面說「execute plans open loop」，一方面又說每個執行步都要重新產生計畫；原文在這裡不一致，本頁照錄。）</p>
+    <p>Diffuser 的限制之一是計畫需要迭代產生，速度慢；若每一步都重新規劃，每一步都要跑完整的去噪鏈。暖啟動（warm-start）重用上一個計畫：先對上一個計畫跑少數幾步前向擴散，再從這個部分加噪的軌跡跑相同步數的去噪，得到更新的計畫（Sec. 5.4）。前向 $k$ 步可以用第 02 章的閉式加噪一步完成<span class="tag">本頁推導</span>：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\tau^k=\sqrt{\bar\alpha_k}\,\tau_{\text{prev}}+\sqrt{1-\bar\alpha_k}\,\epsilon,\qquad\text{再由 } i=k \text{ 去噪到 } 0$$</div><span class="eq-n">q(τᵏ|τ⁰)</span></div>
+  <div class="warm" id="s7-warm" role="img" aria-label="冷啟動：純噪聲經去噪 N 步得到計畫。暖啟動：上一個計畫經前向 k 步得到部分加噪的軌跡，再經去噪 k 步得到新計畫。">
+    <div class="lane"><span class="lane-h">冷啟動</span><span class="nd">純噪聲 τᴺ</span><span class="ar dash">去噪 N 步</span><span class="nd">計畫</span></div>
+    <div class="lane"><span class="lane-h">暖啟動</span><span class="nd">上一個計畫</span><span class="ar">前向 k 步</span><span class="nd">部分加噪 τᵏ</span><span class="ar">去噪 k 步</span><span class="nd acc">新計畫</span></div>
+  </div>
+  <div class="prose">
+    <p>論文 Fig. 7（Walker2d Medium-Expert）把每次重新產生計畫的去噪步數從 2 變到 100：只用十分之一的擴散步數時，只要以前一個時間步的計畫初始化，表現只小幅下降（Sec. 5.4）。論文沒有說明上一個計畫是否要先平移一欄（因為已經執行了一步），本頁不補充。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Diffuser 如何執行計畫？如何加速？</p>
+    <p class="a">運動控制依 Alg. 1：只執行計畫的第一個動作，然後重新規劃；Maze2D 把計畫當作開迴路計畫執行（Sec. 5.1）。暖啟動：對上一個計畫跑少數幾步前向擴散，再去噪相同步數（可用 $q(\tau^k\mid\tau^0)$ 一步加噪）；只用十分之一的步數時，表現只小幅下降（Sec. 5.4、Fig. 7）。</p>
+  </div></details>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="properties" data-toc="09" data-tt="四個性質">
+  <div class="ch-num">09 · 四個性質</div>
+  <h2>擴散規劃器有四個性質</h2>
+  <div class="prose">
+    <p>作者討論四個與標準動態模型不同、或在非自迴歸軌跡預測中少見的性質（Sec. 4，Fig. 3）。</p>
+    <p><b>學到的長時程規劃。</b>單步模型通常當作真實動態 $f$ 的替代品，不綁定任何特定的規劃演算法。Diffuser 的規劃幾乎等於取樣，差別只有擾動函數 $h$ 的引導；所以 Diffuser 作為長時程預測器的效果直接轉成長時程規劃的效果。作者在稀疏報酬的目標抵達設定中展示，Diffuser 能產生可行軌跡，而射擊式方法在這類設定中困難（Fig. 3a）。</p>
+    <p><b>時間組合性。</b>單步模型常以馬可夫性質為理由，組合資料分布內的轉移，推廣到分布外的軌跡。Diffuser 以反覆改善局部一致性產生全局連貫的軌跡（第 03 章），所以也能把熟悉的子序列以新的方式拼接：只用直線軌跡訓練，能產生在交點組合而成的 V 形軌跡（Fig. 3b）。</p>
+    <p><b>可變長度計畫。</b>模型沿視界方向全卷積，所以視界由初始噪聲 $\tau^N\sim\mathcal N(0,I)$ 的大小決定，而不是由架構決定（Fig. 3c）。第 04 章的 C1 可以換 $H$，但那裡示範的是玩具公式對任意 $H$ 都有定義。</p>
+    <p><b>任務組合性。</b>Diffuser 同時含有環境動態與行為的資訊，但與報酬函數無關。模型是可能未來的先驗，所以可以用相對輕量的擾動函數 $h$（甚至多個擾動的組合）引導，規劃訓練時沒見過的報酬（Fig. 3d；第 05 章）。</p>
+  </div>
+</section>
+
+<!-- S9 ============================================================ -->
+<section class="ch" id="results" data-toc="10" data-tt="實驗">
+  <div class="ch-num">10 · 實驗</div>
+  <h2>實驗：長時程、測試時彈性與離線 RL</h2>
+  <div class="prose">
+    <p><b>長時程多任務規劃（Sec. 5.1）。</b>Maze2D 環境在抵達目標位置時給報酬 1，其他位置沒有報酬塑形；可能要數百步才抵達目標，即使最好的 model-free 演算法也難以做好信用分配。Diffuser 以補全條件化起點與目標，把取樣出的軌跡當作開迴路計畫。訓練資料是無方向的（在隨機選取的位置之間來回導航），評估是單任務（目標固定）；Multi2D 在每個 episode 開始時重新抽目標，Diffuser 不需重新訓練，只換條件目標。</p>
+  </div>
+  <div class="tscroll"><table><caption>Table 1：Maze2D／Multi2D 的正規化分數</caption>
+    <thead><tr><th>環境</th><th class="num">MPPI</th><th class="num">CQL</th><th class="num">IQL</th><th class="num">Diffuser</th></tr></thead><tbody>
+    <tr><td>Maze2D U-Maze</td><td class="num">33.2</td><td class="num">5.7</td><td class="num">47.4</td><td class="num">113.9 ± 3.1</td></tr>
+    <tr><td>Maze2D Medium</td><td class="num">10.2</td><td class="num">5.0</td><td class="num">34.9</td><td class="num">121.5 ± 2.7</td></tr>
+    <tr><td>Maze2D Large</td><td class="num">5.1</td><td class="num">12.5</td><td class="num">58.6</td><td class="num">123.0 ± 6.4</td></tr>
+    <tr class="hl"><td>單任務平均</td><td class="num">16.2</td><td class="num">7.7</td><td class="num">47.0</td><td class="num">119.5</td></tr>
+    <tr><td>Multi2D U-Maze</td><td class="num">41.2</td><td class="num">–</td><td class="num">24.8</td><td class="num">128.9 ± 1.8</td></tr>
+    <tr><td>Multi2D Medium</td><td class="num">15.4</td><td class="num">–</td><td class="num">12.1</td><td class="num">127.2 ± 3.4</td></tr>
+    <tr><td>Multi2D Large</td><td class="num">8.0</td><td class="num">–</td><td class="num">13.9</td><td class="num">132.1 ± 5.8</td></tr>
+    <tr class="hl"><td>多任務平均</td><td class="num">21.5</td><td class="num">–</td><td class="num">16.9</td><td class="num">129.4</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>Diffuser 在 Maze2D 單任務平均 119.5、Multi2D 多任務平均 129.4；最強的 model-free 基準 IQL 分別是 47.0 與 16.9，改成多任務後大幅下降。分數超過 100 表示優於參考的專家策略。MPPI 使用真實動態，單任務平均仍只有 16.2；作者認為這說明即使沒有預測誤差，長時程規劃本身也困難。多任務 IQL 以 hindsight experience relabeling 改成目標條件（App. A.1）。</p>
+    <p><b>測試時彈性（Sec. 5.2）。</b>積木堆疊有三種設定：無條件堆疊（越高越好）、條件堆疊（指定順序）、重新排列（匹配參考積木在新排列中的位置）。所有方法都用 PDDLStream 產生的 10000 條示範軌跡訓練，每次成功放置得到報酬 1。只用一個訓練好的 Diffuser，在不同設定間只換 $h$：無條件堆疊直接從 $p_\theta$ 取樣；條件堆疊與重新排列組合兩個 $h$，一個讓最終狀態符合目標配置，一個在堆疊動作中強制手臂與積木接觸（App. B）。Diffuser 平均 54.4，CQL 8.1，BCQ 0.0；100 為完美執行，0 為隨機策略。</p>
+  </div>
+  <div class="tscroll"><table><caption>Table 3：積木堆疊</caption>
+    <thead><tr><th>環境</th><th class="num">BCQ</th><th class="num">CQL</th><th class="num">Diffuser</th></tr></thead><tbody>
+    <tr><td>無條件堆疊</td><td class="num">0.0</td><td class="num">24.4</td><td class="num">58.7 ± 2.5</td></tr>
+    <tr><td>條件堆疊</td><td class="num">0.0</td><td class="num">0.0</td><td class="num">45.6 ± 3.1</td></tr>
+    <tr><td>重新排列</td><td class="num">0.0</td><td class="num">0.0</td><td class="num">58.9 ± 3.4</td></tr>
+    <tr class="hl"><td>平均</td><td class="num">0.0</td><td class="num">8.1</td><td class="num">54.4</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p><b>離線 RL（Sec. 5.3）。</b>D4RL 運動控制基準中，Diffuser 以第 07 章的引導取樣朝高報酬區移動，以第 06 章的補全條件化目前狀態；$\mathcal J_\phi$ 與擴散模型用同一批軌跡訓練。Diffuser 平均 77.5，與 CQL 77.6、IQL 77.0 相近；TT 78.9、DT 74.7、MOReL 72.9、BC 51.9、MBOP 47.8、MOPO 42.1（150 個規劃種子的平均與標準誤）。作者的描述是：優於 model-based 的 MOReL、MBOP 與回報條件的 DT，但遜於專為單任務設計的最佳離線方法。Medium-Expert 三列 Diffuser 為 88.9、103.3、106.9；較弱的列包括 Medium-Replay HalfCheetah 37.7（低於 CQL 45.5、TT 41.9、MOPO 53.1）與 Medium-Replay Walker2d 70.6（低於 TT 82.6）。論文依 Kostrikov et al. (2022) 把每列 ≥ 0.95 · 最大值的分數加粗。</p>
+    <p>作者也試過把 Diffuser 當成動態模型放進 MPPI 這類傳統軌跡最佳化器，表現不比隨機好；作者認為 Diffuser 的效果來自建模與規劃的耦合，而不是開迴路預測的準確度（Sec. 5.3）。</p>
+  </div>
+  <details class="more"><summary>Table 2 全表</summary><div class="tscroll"><table><caption>Table 2 全表：D4RL 運動控制的正規化分數（粗體為該列 ≥ 0.95 · 最大值，依論文的規則）</caption><thead><tr><th>資料集</th><th>環境</th><th class="num">BC</th><th class="num">CQL</th><th class="num">IQL</th><th class="num">DT</th><th class="num">TT</th><th class="num">MOPO</th><th class="num">MOReL</th><th class="num">MBOP</th><th class="num">Diffuser</th></tr></thead><tbody><tr><td>Medium-Expert</td><td>HalfCheetah</td><td class="num">55.2</td><td class="num">91.6</td><td class="num">86.7</td><td class="num">86.8</td><td class="num">95.0</td><td class="num">63.3</td><td class="num">53.3</td><td class="num"><b>105.9</b></td><td class="num">88.9 ± 0.3</td></tr><tr><td>Medium-Expert</td><td>Hopper</td><td class="num">52.5</td><td class="num"><b>105.4</b></td><td class="num">91.5</td><td class="num"><b>107.6</b></td><td class="num"><b>110.0</b></td><td class="num">23.7</td><td class="num"><b>108.7</b></td><td class="num">55.1</td><td class="num">103.3 ± 1.3</td></tr><tr><td>Medium-Expert</td><td>Walker2d</td><td class="num"><b>107.5</b></td><td class="num"><b>108.8</b></td><td class="num"><b>109.6</b></td><td class="num"><b>108.1</b></td><td class="num">101.9</td><td class="num">44.6</td><td class="num">95.6</td><td class="num">70.2</td><td class="num"><b>106.9 ± 0.2</b></td></tr><tr><td>Medium</td><td>HalfCheetah</td><td class="num">42.6</td><td class="num">44.0</td><td class="num"><b>47.4</b></td><td class="num">42.6</td><td class="num"><b>46.9</b></td><td class="num">42.3</td><td class="num">42.1</td><td class="num">44.6</td><td class="num">42.8 ± 0.3</td></tr><tr><td>Medium</td><td>Hopper</td><td class="num">52.9</td><td class="num">58.5</td><td class="num">66.3</td><td class="num">67.6</td><td class="num">61.1</td><td class="num">28.0</td><td class="num"><b>95.4</b></td><td class="num">48.8</td><td class="num">74.3 ± 1.4</td></tr><tr><td>Medium</td><td>Walker2d</td><td class="num">75.3</td><td class="num">72.5</td><td class="num"><b>78.3</b></td><td class="num">74.0</td><td class="num"><b>79.0</b></td><td class="num">17.8</td><td class="num"><b>77.8</b></td><td class="num">41.0</td><td class="num"><b>79.6 ± 0.55</b></td></tr><tr><td>Medium-Replay</td><td>HalfCheetah</td><td class="num">36.6</td><td class="num">45.5</td><td class="num">44.2</td><td class="num">36.6</td><td class="num">41.9</td><td class="num"><b>53.1</b></td><td class="num">40.2</td><td class="num">42.3</td><td class="num">37.7 ± 0.5</td></tr><tr><td>Medium-Replay</td><td>Hopper</td><td class="num">18.1</td><td class="num"><b>95.0</b></td><td class="num"><b>94.7</b></td><td class="num">82.7</td><td class="num"><b>91.5</b></td><td class="num">67.5</td><td class="num"><b>93.6</b></td><td class="num">12.4</td><td class="num"><b>93.6 ± 0.4</b></td></tr><tr><td>Medium-Replay</td><td>Walker2d</td><td class="num">26.0</td><td class="num">77.2</td><td class="num">73.9</td><td class="num">66.6</td><td class="num"><b>82.6</b></td><td class="num">39.0</td><td class="num">49.8</td><td class="num">9.7</td><td class="num">70.6 ± 1.6</td></tr><tr class="hl"><td colspan="2">平均</td><td class="num">51.9</td><td class="num">77.6</td><td class="num">77.0</td><td class="num">74.7</td><td class="num">78.9</td><td class="num">42.1</td><td class="num">72.9</td><td class="num">47.8</td><td class="num">77.5</td></tr></tbody></table></div></details>
+  <p class="read">延伸閱讀：<a href="offline-rl-benchmarks-and-baselines.html">本論文使用的離線 RL 基準與比較方法</a>、<a href="sequence-modeling-offline-rl.html">以序列模型處理離線 RL</a>；站內：<a href="iql-algorithm-and-d4rl-evaluation.html">IQL 與 D4RL 評估</a>、<a href="batch-constrained-policy-constraint-methods.html">批次約束與策略約束方法</a>、<a href="dt-transformers-in-rl-and-trajectory-transformer.html">RL 中的 Transformer</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Maze2D、積木堆疊、D4RL 的平均分數與主要對照？</p>
+    <p class="a">Maze2D 單任務 119.5、多任務 129.4，IQL 47.0、16.9，MPPI（真實動態）16.2；積木 54.4 vs CQL 8.1；D4RL 77.5，與 CQL 77.6、IQL 77.0 相近；當作 MPPI 的動態模型則不比隨機好（Table 1–3、Sec. 5.3）。</p>
+  </div></details>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="impl" data-toc="11" data-tt="實作">
+  <div class="ch-num">11 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="tscroll"><table class="stack"><caption>App. A、C 的實作設定</caption>
+    <thead><tr><th>項目</th><th>值（App. C 項次）</th></tr></thead><tbody>
+    <tr><td data-h="項目">架構</td><td data-h="值">U-Net，6 個殘差區塊；兩個時間卷積＋GN，Mish；擴散步嵌入以單一 FC 加到第一個卷積（1）</td></tr>
+    <tr><td data-h="項目">最佳化</td><td data-h="值">Adam，學習率 4e−05，batch 32，500k 步（2）</td></tr>
+    <tr><td data-h="項目">報酬預測器 J</td><td data-h="值">U-Net 前半段＋最後一層線性輸出純量（3）；折扣 0.997，γ &gt; 0.99 時規劃對折扣不敏感（8）</td></tr>
+    <tr><td data-h="項目">視界 T</td><td data-h="值">運動控制 32；積木堆疊 128；Maze2D／Multi2D U-Maze 128、Medium 265、Large 384（4）</td></tr>
+    <tr><td data-h="項目">縮短視界</td><td data-h="值">可行，但引導尺度要降低，例如 halfcheetah 視界 4 時用 0.001（5）</td></tr>
+    <tr><td data-h="項目">擴散步數 N</td><td data-h="值">運動控制 20，積木堆疊 100（6）；Maze2D 未寫明</td></tr>
+    <tr><td data-h="項目">引導尺度 α</td><td data-h="值">0.1；hopper-medium-expert 0.0001（7）</td></tr>
+    <tr><td data-h="項目">預測目標</td><td data-h="值">預測 ε 或 τ⁰ 對控制表現影響不大（9）</td></tr>
+    <tr><td data-h="項目">基準調參</td><td data-h="值">IQL：temperature ∈ [3, 10]、expectile ∈ [0.65, 0.95]；BCQ：discount ∈ [0.9, 0.999]、tau ∈ [0.001, 0.01]；CQL 用預設值（App. A）</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <h3>常見錯誤</h3>
+    <ol>
+      <li>混淆兩種時間：上標 $i$ 是擴散步，下標 $t$ 是規劃時間步（Sec. 2.2）。App. B 的接觸限制 $h_{\text{contact}}(\tau)=\sum_{i=0}^{64}-1\cdot\|\tau^i_c-1\|^2$ 中，$\tau^i$ 的 $i$ 指規劃時間步，與正文慣例不同；而且求和有 65 項，原文卻寫作用在前 64 個時間步。</li>
+      <li>只在最後一步補全目前狀態：論文在每個擴散步後替換（Alg. 1 第 10 行、Sec. 3.3）。只在最後替換時，計畫仍然從 $s$ 開始，但其餘欄是在沒有限制的情況下去噪的，起點與其餘計畫不連貫<span class="tag">本頁推論</span>。本頁玩具（C2 預設設定的平均計畫）中，只在最後替換時第 0 欄到第 1 欄的跳躍是 1.4422，每步都替換時是 0.1676。論文沒有描述這種失敗情形。</li>
+      <li>把 $\alpha$ 當成跨任務固定的常數：$\alpha$ 依任務調整（0.1 與 0.0001），縮短視界時也要降低（App. C 第 5、7 點），而且數值和 $\mathcal J_\phi$ 的尺度綁在一起。</li>
+      <li>忽略 $\mathcal J_\phi$ 的輸入：論文以帶噪樣本 $\tau^i$ 為 $\mathcal J_\phi$ 的輸入（Sec. 3.2）。C3 顯示，若改用乾淨 $\mathcal J$ 在 $\mu$ 處求梯度，玩具中會出現越過目標與發散。</li>
+      <li>把動作與狀態分開預測：Eq. 2 把動作當作額外維度一起去噪；執行的是計畫第一欄的動作 $\tau^0_{a_0}$。</li>
+      <li>每步從頭規劃太慢：用暖啟動（Sec. 5.4）。</li>
+    </ol>
+  </div>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="history" data-toc="12" data-tt="研究脈絡">
+  <div class="ch-num">12 · 研究脈絡</div>
+  <h2>研究脈絡（由 notes/timeline.json 提供）</h2>
+  <div class="prose">
+    <p>Diffuser 結合幾條脈絡：model-based RL 與 MPPI 這類軌跡最佳化器、把 RL 寫成推論的控制即推論、擴散模型與分類器引導，以及同期以序列模型處理離線 RL 的 Decision Transformer 與 Trajectory Transformer；評估則沿用 D4RL 與 CQL、IQL 等離線 RL 基準。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="next" data-toc="13" data-tt="限制與延伸">
+  <div class="ch-num">13 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>計畫需要迭代產生，速度慢（Sec. 5.4）；在單任務 D4RL 上，Diffuser 沒有超越專為單任務設計的離線方法（Sec. 5.3）。論文的結論（Sec. 7）是：用 Diffuser 規劃幾乎等於從它取樣，差別只在加上引導取樣的輔助擾動函數；這個規劃程序能處理稀疏報酬、不需重新訓練就能規劃新的報酬，並且能把分布內的子序列拼接成分布外的軌跡。作者認為結果指向一類新的、以擴散為基礎的深度 model-based RL 規劃程序。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="traj-diffusion-lineage-hub.html">Diffuser 研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="rl-mdp-q-learning-basics.html">MDP、Q 函數與 Bellman backup：value-based RL 的基本記號</a><span>RL 基礎</span></div></li>
+    <li><div><a href="offline-rl-distribution-shift.html">Offline RL 的分布偏移與 OOD 動作造成的 Q 值高估</a><span>RL 基礎</span></div></li>
+    <li><div><a href="model-based-planning-abstraction-barrier.html">學習式動態模型與軌跡最佳化的分工</a><span>模型＋規劃器</span></div></li>
+    <li><div><a href="control-as-inference-guided-sampling.html">控制即推論：把獎勵最大化改寫為條件取樣</a><span>控制即推論</span></div></li>
+    <li><div><a href="eps-prediction-ddpm-score.html">ε-prediction 與 DDPM、score-based 模型</a><span>擴散基礎</span></div></li>
+    <li><div><a href="ddpm-training-and-sampling-recap.html">DDPM 的訓練與取樣流程</a><span>擴散基礎</span></div></li>
+    <li><div><a href="diffusion-classifier-guidance-background.html">擴散模型的分類器引導與餘弦排程</a><span>擴散基礎</span></div></li>
+    <li><div><a href="offline-rl-benchmarks-and-baselines.html">本論文使用的離線 RL 基準與比較方法</a><span>基準與比較</span></div></li>
+    <li><div><a href="sequence-modeling-offline-rl.html">以序列模型處理離線 RL：Decision Transformer 與 Trajectory Transformer</a><span>基準與比較</span></div></li>
+    <li><div><a href="trajectory-diffusion-planning.html">軌跡層級擴散規劃（Diffuser）</a><span>本論文方法</span></div></li>
+    <li><div><a href="score-geometry-inverse-problems-guidance.html">貝氏逆問題、Plug-and-Play 先驗與 classifier-free guidance</a><span>引導方法的延伸</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Michael Janner, Yilun Du, Joshua B. Tenenbaum, Sergey Levine. Planning with Diffusion for Flexible Behavior Synthesis. ICML 2022. <a href="https://arxiv.org/abs/2205.09991">arXiv:2205.09991</a>；程式碼與視覺化 <a href="https://diffusion-planning.github.io">diffusion-planning.github.io</a>。</p>
+  <p>本頁的方程式與數字取自論文 v2；標示「本頁推導」「本頁推論」的內容為本頁自行推導，「推定」為本頁選定的值，皆非論文結論。互動元件使用本頁的高斯軌跡玩具，數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2015, "title": "Deep Unsupervised Learning using Nonequilibrium Thermodynamics", "authors_short": "Sohl-Dickstein et al.", "arxiv": "1503.03585", "role": "擴散機率模型的起點；本論文也以其說明引導近似與修補式條件。", "source": "arXiv API; paper.txt §2.2, §3.2, §3.3"}, {"year": 2015, "title": "Model predictive path integral control using covariance variable importance sampling", "authors_short": "Williams et al.", "arxiv": "1509.01149", "role": "MPPI；本論文的軌跡最佳化基準，使用真實動態。", "source": "paper.txt reference list; §5.1"}, {"year": 2017, "title": "Neural Network Dynamics for Model-Based Deep Reinforcement Learning with Model-Free Fine-Tuning", "authors_short": "Nagabandi et al.", "arxiv": "1708.02596", "role": "以 random shooting 做線上規劃的學習模型方法。", "source": "arXiv API; paper.txt §1"}, {"year": 2017, "title": "Hindsight Experience Replay", "authors_short": "Andrychowicz et al.", "arxiv": "1707.01495", "role": "目標重標記；本論文用於改造 IQL 的多任務基準。", "source": "arXiv API; paper.txt §5.1, Appendix A"}, {"year": 2018, "title": "Deep Reinforcement Learning in a Handful of Trials using Probabilistic Dynamics Models", "authors_short": "Chua et al.", "arxiv": "1805.12114", "role": "以 cross-entropy method 規劃的 model-based RL。", "source": "arXiv API; paper.txt §1"}, {"year": 2018, "title": "Reinforcement Learning and Control as Probabilistic Inference: Tutorial and Review", "authors_short": "Levine", "arxiv": "1805.00909", "role": "最佳性變數的圖模型；把獎勵最大化改寫為條件取樣。", "source": "arXiv API; paper.txt §3.2"}, {"year": 2020, "title": "Denoising Diffusion Probabilistic Models", "authors_short": "Ho, Jain, Abbeel", "arxiv": "2006.11239", "role": "Diffuser 採用的 ε 預測簡化目標。", "source": "arXiv API; paper.txt §3.1"}, {"year": 2020, "title": "D4RL: Datasets for Deep Data-Driven Reinforcement Learning", "authors_short": "Fu et al.", "arxiv": "2004.07219", "role": "Maze2D 與 locomotion 評估基準。", "source": "arXiv API; paper.txt §5"}, {"year": 2020, "title": "Conservative Q-Learning for Offline Reinforcement Learning", "authors_short": "Kumar et al.", "arxiv": "2006.04779", "role": "model-free 離線 RL 基準比較對象。", "source": "arXiv API; paper.txt §5"}, {"year": 2021, "title": "Improved Denoising Diffusion Probabilistic Models", "authors_short": "Nichol, Dhariwal", "arxiv": "2102.09672", "role": "餘弦排程，用於反向過程共變異數。", "source": "arXiv API; paper.txt §3.1"}, {"year": 2021, "title": "Diffusion Models Beat GANs on Image Synthesis", "authors_short": "Dhariwal, Nichol", "arxiv": "2105.05233", "role": "分類器引導；本論文將其對應到回報引導。", "source": "arXiv API; paper.txt §3.2"}, {"year": 2021, "title": "Decision Transformer: Reinforcement Learning via Sequence Modeling", "authors_short": "Chen et al.", "arxiv": "2106.01345", "role": "return-conditioning 基準（DT）。", "source": "arXiv API; paper.txt §5.3"}, {"year": 2021, "title": "Offline Reinforcement Learning as One Big Sequence Modeling Problem", "authors_short": "Janner, Li, Levine", "arxiv": "2106.02039", "role": "Trajectory Transformer（TT），自迴歸軌跡模型基準。", "source": "arXiv API; paper.txt §5.3"}, {"year": 2021, "title": "Offline Reinforcement Learning with Implicit Q-Learning", "authors_short": "Kostrikov, Nair, Levine", "arxiv": "2110.06169", "role": "Maze2D 單任務最強 model-free 基準。", "source": "arXiv API; paper.txt §5.1"}, {"year": 2022, "title": "Planning with Diffusion for Flexible Behavior Synthesis", "authors_short": "Janner, Du, Tenenbaum, Levine", "arxiv": "2205.09991", "role": "本論文：軌跡層級擴散模型，規劃等同於引導取樣。", "source": "paper.txt"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+const f4=v=>(Math.abs(v)<5e-5?0:v).toFixed(4),f3=v=>(Math.abs(v)<5e-4?0:v).toFixed(3),f2=v=>(Math.abs(v)<.005?0:v).toFixed(2);
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+function frameSched(fn){let q=0;return(...a)=>{if(q)return;q=requestAnimationFrame(()=>{q=0;fn(...a)})}}
+
+/* ================= shared math (mirrors verify/core.py) ================= */
+const PRIOR={a:0.01,b:400};
+// mulberry32 (canonical): uint32 state -> uint32 output / 2^32 in [0,1)
+function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function gauss(r){const u1=r(),u2=r();return Math.sqrt(-2*Math.log(1-u1))*Math.cos(2*Math.PI*u2)}   // core.gauss
+const bCache=new Map(),lCache=new Map(),sCache=new Map();
+function basis(H){if(bCache.has(H))return bCache.get(H);const P=new Float64Array(H*H);   // core.basis, P[t*H+k]
+  for(let t=0;t<H;t++)for(let k=0;k<H;k++)P[t*H+k]=k===0?Math.sqrt(1/H):Math.sqrt(2/H)*Math.cos(Math.PI*k*(t+.5)/H);bCache.set(H,P);return P}
+function lam(H){if(lCache.has(H))return lCache.get(H);const l=new Float64Array(H);                  // core.lam
+  for(let k=0;k<H;k++){const nu=4*Math.sin(Math.PI*k/(2*H))**2;l[k]=1/(PRIOR.a+PRIOR.b*nu*nu)}lCache.set(H,l);return l}
+function qmat(H){const L=new Float64Array(H*H);                                                      // core.Qmat
+  for(let t=0;t<H;t++){L[t*H+t]=-2;if(t>0)L[t*H+t-1]=1;if(t<H-1)L[t*H+t+1]=1}L[0]=-1;L[H*H-1]=-1;
+  const Q=new Float64Array(H*H);for(let i=0;i<H;i++)for(let j=Math.max(0,i-2);j<=Math.min(H-1,i+2);j++){let s=0;for(let k=0;k<H;k++)s+=L[i*H+k]*L[k*H+j];Q[i*H+j]=PRIOR.b*s+(i===j?PRIOR.a:0)}return Q}
+function schedule(N){if(sCache.has(N))return sCache.get(N);const s=.008,f=i=>Math.cos((i/N+s)/(1+s)*Math.PI/2)**2;   // core.cosine_schedule
+  const beta=new Float64Array(N+1),abar=new Float64Array(N+1),bt=new Float64Array(N+1);abar[0]=1;
+  for(let i=1;i<=N;i++){beta[i]=Math.min(1-f(i)/f(i-1),.999);abar[i]=abar[i-1]*(1-beta[i])}
+  for(let i=1;i<=N;i++)bt[i]=beta[i]*(1-abar[i-1])/(1-abar[i]);const r={beta,abar,bt};sCache.set(N,r);return r}
+function toD(x,P,H){const o=new Float64Array(H);for(let t=0;t<H;t++){const v=x[t];if(v===0)continue;const row=t*H;for(let k=0;k<H;k++)o[k]+=v*P[row+k]}return o}
+function fromD(xh,P,H){const o=new Float64Array(H);for(let t=0;t<H;t++){let s=0;const row=t*H;for(let k=0;k<H;k++)s+=xh[k]*P[row+k];o[t]=s}return o}
+function draw(r,H){return[Float64Array.from({length:H},()=>gauss(r)),Float64Array.from({length:H},()=>gauss(r))]}   // x row first, then y
+function reverseStep(X,i,sch,H,guide,z){                                                               // core.reverse_step
+  const P=basis(H),l=lam(H),{beta,abar,bt}=sch,ab=abar[i],c1=Math.sqrt(1-ab),c2=beta[i]/c1,c3=1/Math.sqrt(1-beta[i]);
+  let mu=X.map(x=>{const xh=toD(x,P,H),eh=new Float64Array(H);for(let k=0;k<H;k++)eh[k]=c1*xh[k]/(ab*l[k]+1-ab);const e=fromD(eh,P,H),m=new Float64Array(H);for(let t=0;t<H;t++)m[t]=(x[t]-c2*e[t])*c3;return m});
+  if(guide){const g=guide(mu,i);for(let c=0;c<2;c++)for(let t=0;t<H;t++)mu[c][t]+=bt[i]*g[c][t]}
+  if(z&&i>1){const sd=Math.sqrt(bt[i]);for(let c=0;c<2;c++)for(let t=0;t<H;t++)mu[c][t]+=sd*z[c][t]}
+  return mu}
+function applyCond(X,cond){if(cond)for(const [t,c] of cond){X[0][t]=c[0];X[1][t]=c[1]}return X}
+// core.run_chain; noise=false -> procedure mean (tau^N = 0, z = 0). Stops at first step whose output is non-finite or > 1e6.
+function runChain({H,N,seed,cond,guide,noise=true,keep=false}){
+  const sch=schedule(N),r=noise?mulberry32(seed):null;
+  let X=applyCond(noise?draw(r,H):[new Float64Array(H),new Float64Array(H)],cond);const hist=keep?[X]:null;let divergedAt=null,peak=0;
+  for(let i=N;i>=1;i--){const z=(noise&&i>1)?draw(r,H):null;X=applyCond(reverseStep(X,i,sch,H,guide,z),cond);
+    let bad=false;for(let c=0;c<2;c++)for(let t=0;t<H;t++){const v=X[c][t];if(!(Math.abs(v)<=1e6)){bad=true}else if(Math.abs(v)>peak)peak=Math.abs(v)}
+    if(keep)hist.push(X);if(bad){divergedAt=i;break}}
+  return{X,hist,divergedAt,peak}}
+function makeGuide(mode,alpha,c,H,N){                                                                   // core.make_guide
+  if(mode==='clean')return mu=>mu.map((m,ci)=>m.map(v=>-alpha*(v-c[ci])));
+  const P=basis(H),l=lam(H),{abar}=schedule(N);
+  return(mu,i)=>{const ab=abar[i-1];return mu.map((m,ci)=>{const mh=toD(m,P,H),gh=new Float64Array(H);
+    for(let k=0;k<H;k++){const mk=Math.sqrt(ab)*l[k]/(ab*l[k]+1-ab),Sk=l[k]*(1-ab)/(ab*l[k]+1-ab),ch=k===0?c[ci]*Math.sqrt(H):0;gh[k]=mk*(-alpha*(mk*mh[k]-ch)/(1+alpha*Sk))}
+    return fromD(gh,P,H)})}}
+// core.exact_mean: argmin 1/2 x'(Q+extra I)x - lin.x with fixed entries; Cholesky; null on failure (a>0 makes Q positive definite)
+function exactMean(H,fixed,extra=0,lin2=[0,0],Qover){
+  const Q=Qover||qmat(H),ft=new Set(fixed.map(f=>f[0])),free=[];for(let t=0;t<H;t++)if(!ft.has(t))free.push(t);const n=free.length;
+  const A=new Float64Array(n*n);for(let a=0;a<n;a++)for(let b=0;b<n;b++)A[a*n+b]=Q[free[a]*H+free[b]]+(a===b?extra:0);
+  const Lc=new Float64Array(n*n);
+  for(let j=0;j<n;j++){let s=A[j*n+j];for(let k=0;k<j;k++)s-=Lc[j*n+k]**2;if(!(s>1e-12))return null;const d=Math.sqrt(s);Lc[j*n+j]=d;
+    for(let i=j+1;i<n;i++){let v=A[i*n+j];for(let k=0;k<j;k++)v-=Lc[i*n+k]*Lc[j*n+k];Lc[i*n+j]=v/d}}
+  const out=[new Float64Array(H),new Float64Array(H)];
+  for(let c=0;c<2;c++){const rhs=new Float64Array(n);for(let a=0;a<n;a++){let v=lin2[c];for(const [t,val] of fixed)v-=(Q[free[a]*H+t])*val[c];rhs[a]=v}
+    const y=new Float64Array(n);for(let i=0;i<n;i++){let v=rhs[i];for(let k=0;k<i;k++)v-=Lc[i*n+k]*y[k];y[i]=v/Lc[i*n+i]}
+    const x=new Float64Array(n);for(let i=n-1;i>=0;i--){let v=y[i];for(let k=i+1;k<n;k++)v-=Lc[k*n+i]*x[k];x[i]=v/Lc[i*n+i]}
+    for(let a=0;a<n;a++)out[c][free[a]]=x[a];for(const [t,val] of fixed)out[c][t]=val[c];
+    if(!out[c].every(Number.isFinite))return null}
+  return out}
+function varRatio(H,N){const l=lam(H),{beta,abar,bt}=schedule(N);let sv=0,sl=0;                       // core.var_ratio
+  for(let k=0;k<H;k++){let v=1;for(let i=N;i>=1;i--){const A=(1-beta[i]/(abar[i]*l[k]+1-abar[i]))/Math.sqrt(1-beta[i]);v=A*A*v+bt[i]}sv+=v;sl+=l[k]}return sv/sl}
+function stepSd(H){const P=basis(H),l=lam(H),C=(t,s)=>{let v=0;for(let k=0;k<H;k++)v+=l[k]*P[t*H+k]*P[s*H+k];return v};let s=0;
+  for(let t=0;t<H-1;t++)s+=C(t,t)+C(t+1,t+1)-2*C(t,t+1);return Math.sqrt(s/(H-1))}
+const rms=(A,B)=>{let s=0,n=0;for(let c=0;c<2;c++)for(let t=0;t<A[c].length;t++){s+=(A[c][t]-B[c][t])**2;n++}return Math.sqrt(s/n)};
+const Jof=(X,c)=>{let s=0;for(let t=0;t<X[0].length;t++)s+=(X[0][t]-c[0])**2+(X[1][t]-c[1])**2;return-.5*s};
+const jump=X=>Math.hypot(X[0][1]-X[0][0],X[1][1]-X[1][0]);
+const heavy=(H,N)=>H*N>4000;
+
+/* ================= drawing helpers ================= */
+function planeSVG(box,ar){const svg=$('svg',box),W=widthOf(box,240,460),H=Math.round(W*(ar||1));
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const X=lin(-4,4,8,W-8),Y=lin(-4,4,H-8,8),id='cp'+Math.random().toString(36).slice(2,8);
+  const defs=el('defs',null,svg),cp=el('clipPath',{id},defs);el('rect',{x:8,y:8,width:W-16,height:H-16},cp);
+  el('rect',{x:8,y:8,width:W-16,height:H-16,class:'frame'},svg);
+  [-2,0,2].forEach(v=>{el('line',{x1:X(v),x2:X(v),y1:8,y2:H-8,class:'grid'},svg);el('line',{x1:8,x2:W-8,y1:Y(v),y2:Y(v),class:'grid'},svg)});
+  tx(svg,X(2)+3,H-12,'2',{class:'tk'});tx(svg,X(-2)+3,H-12,'−2',{class:'tk'});tx(svg,12,Y(2)-3,'2',{class:'tk'});
+  const g=el('g',{'clip-path':`url(#${id})`},svg);return{svg,g,X,Y,W,H}}
+function pathOf(Xa,X,Y){const pts=[];for(let t=0;t<Xa[0].length;t++)pts.push([X(Xa[0][t]),Y(Xa[1][t])]);return lp(pts)}
+function markers(g,X,Y,start,end,target){
+  if(start)el('circle',{cx:X(start[0]),cy:Y(start[1]),r:6,class:'mk'},g);
+  if(end)el('rect',{x:X(end[0])-5.5,y:Y(end[1])-5.5,width:11,height:11,class:'mk'},g);
+  if(target){const x=X(target[0]),y=Y(target[1]);el('path',{d:`M${x} ${y-8}L${x+8} ${y}L${x} ${y+8}L${x-8} ${y}Z`,class:'mk'},g)}}
+function cellFill(v){const u=Math.max(-1,Math.min(1,v/3));const p=Math.round(Math.abs(u)*100);
+  return `color-mix(in oklab, var(${u<0?'--c-ref':'--accent'}) ${p}%, var(--surface-2))`}
+function strip(box,Xa,tSel,legend){const svg=$('svg',box),H=Xa[0].length,W=widthOf(box,240,460),ch=18,top=4,leg=legend?30:0,Ht=top+2*ch+leg+4;
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${Ht}`);svg.setAttribute('width',W);svg.setAttribute('height',Ht);
+  const x0=18,cw=(W-x0-2)/H;
+  for(let c=0;c<2;c++){tx(svg,2,top+c*ch+13,c?'y':'x',{class:'tk'});for(let t=0;t<H;t++)el('rect',{x:x0+t*cw,y:top+c*ch,width:cw,height:ch,class:'cell',style:'fill:'+cellFill(Xa[c][t])},svg)}
+  if(tSel!=null)el('rect',{x:x0+tSel*cw,y:top,width:Math.max(cw,2),height:2*ch,class:'cur-col'},svg);
+  if(legend){const ly=top+2*ch+10,lw=Math.min(180,W-x0-60);for(let j=0;j<24;j++)el('rect',{x:x0+j*lw/24,y:ly,width:lw/24+.5,height:8,style:'fill:'+cellFill(-3+6*(j+.5)/24)},svg);
+    tx(svg,x0,ly+22,'−3',{class:'tk'});tx(svg,x0+lw/2,ly+22,'0',{class:'tk','text-anchor':'middle'});tx(svg,x0+lw,ly+22,'3',{class:'tk','text-anchor':'end'});tx(svg,x0+lw+10,ly+9,'數值（截到 ±3）',{class:'tk'})}}
+function segInit(box,opts,cur,label,onPick){box.textContent='';opts.forEach(o=>{const b=document.createElement('button');b.type='button';b.setAttribute('role','radio');
+    b.textContent=label?label(o):String(o);b.dataset.v=String(o);box.appendChild(b)});
+  const sync=v=>$$('button',box).forEach(b=>{const on=b.dataset.v===String(v);b.setAttribute('aria-checked',String(on));b.setAttribute('aria-pressed',String(on));b.tabIndex=on?0:-1});sync(cur);
+  box.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const v=opts.find(o=>String(o)===b.dataset.v);sync(v);onPick(v)});
+  box.addEventListener('keydown',e=>{const bs=$$('button',box),i=bs.findIndex(b=>b.tabIndex===0);let j=i;if(e.key==='ArrowRight'||e.key==='ArrowDown')j=(i+1)%bs.length;else if(e.key==='ArrowLeft'||e.key==='ArrowUp')j=(i-1+bs.length)%bs.length;else return;e.preventDefault();bs[j].focus();bs[j].click()});
+  return sync}
+
+/* ================= Hero strip (static: C1 algorithm, seed 7, H = 16, N = 20) ================= */
+function renderHero(){strip($('#hero-strip'),runChain({H:16,N:20,seed:7}).X,null,false)}
+
+/* ================= C1 ================= */
+const c1={N:20,H:64,seed:1,i:0,t:0,playing:false,token:0,timer:0},c1cache=new Map();
+function c1compute(){const key=`${c1.N}|${c1.H}|${c1.seed}`;if(c1cache.has(key)){c1render();return}
+  const tok=++c1.token,{N,H,seed}=c1,sch=schedule(N),r=mulberry32(seed);let X=draw(r,H);const hist=[X];let i=N;
+  $('#c1-read').textContent='計算中…';
+  const slice=()=>{if(tok!==c1.token)return;for(let n=0;n<10&&i>=1;n++,i--){const z=i>1?draw(r,H):null;X=reverseStep(X,i,sch,H,null,z);hist.push(X)}
+    if(i>=1)setTimeout(slice,0);else{c1cache.set(key,{hist,vr:varRatio(H,N)});c1render()}};slice()}
+function c1render(){const d=c1cache.get(`${c1.N}|${c1.H}|${c1.seed}`);if(!d)return;const {N,H,i,t}=c1,X=d.hist[N-i],sch=schedule(N);
+  const p=planeSVG($('#c1-plane'));el('path',{d:pathOf(X,p.X,p.Y),class:i===0?'plan':'plan0'},p.g);
+  for(let k=0;k<H;k+=Math.max(1,Math.round(H/32)))el('circle',{cx:p.X(X[0][k]),cy:p.Y(X[1][k]),r:1.8,class:'ink-f'},p.g);
+  markers(p.g,p.X,p.Y,[X[0][0],X[1][0]],[X[0][H-1],X[1][H-1]]);el('circle',{cx:p.X(X[0][t]),cy:p.Y(X[1][t]),r:9,class:'mk-acc'},p.g);
+  strip($('#c1-strip'),X,t,true);
+  $('#c1-io').textContent=String(i);$('#c1-to').textContent=String(t);
+  $('#c1-read').textContent=`擴散步 i = ${i}（共 N = ${N}）\nτⁱ 在 t = ${t}：(${f3(X[0][t])}, ${f3(X[1][t])})\n變異數比 = ${f4(d.vr)}`;
+  $('#c1-sched').textContent=i>=1?`ᾱᵢ = ${sch.abar[i].toPrecision(6)}\nβᵢ = ${sch.beta[i].toFixed(6)}\nβtᵢ = ${sch.bt[i].toFixed(6)}`:'i = 0：無噪計畫（ᾱ₀ = 1）';
+  $('#c1-plane svg').setAttribute('aria-label',`擴散步 ${i} 的計畫，${H} 個規劃時間步`);
+  if(!c1.playing)announce('c1',`擴散步 ${i}，變異數比 ${f3(d.vr)}`)}
+function initC1(){const iS=$('#c1-i'),tS=$('#c1-t'),sched=frameSched(c1render);
+  const stop=()=>{c1.playing=false;clearTimeout(c1.timer);$('#c1-play').textContent='播放';$('#c1-play').setAttribute('aria-pressed','false')};
+  segInit($('#c1-N'),[5,10,20,50,100],20,null,v=>{stop();c1.N=v;c1.i=0;iS.max=v;iS.value=0;c1compute()});
+  segInit($('#c1-H'),[16,32,64,128],64,null,v=>{stop();c1.H=v;c1.t=Math.min(c1.t,v-1);tS.max=v-1;tS.value=c1.t;c1compute()});
+  iS.addEventListener('input',()=>{stop();c1.i=+iS.value;iS.setAttribute('aria-valuetext',`i = ${c1.i}`);sched()});
+  tS.addEventListener('input',()=>{c1.t=+tS.value;tS.setAttribute('aria-valuetext',`t = ${c1.t}`);sched()});
+  $('#c1-seed').addEventListener('click',()=>{stop();c1.seed++;c1compute()});
+  $('#c1-play').addEventListener('click',()=>{if(c1.playing){stop();c1render();return}
+    if(RM){c1.i=0;iS.value=0;c1render();return}
+    if(c1.i===0)c1.i=c1.N;c1.playing=true;$('#c1-play').textContent='暫停';$('#c1-play').setAttribute('aria-pressed','true');
+    const tick=()=>{if(!c1.playing)return;iS.value=c1.i;c1render();if(c1.i===0){stop();c1render();return}c1.i--;c1.timer=setTimeout(tick,120)};tick()});
+  c1compute()}
+
+/* ================= C2 ================= */
+const A0=[-1.2,-0.8];
+const c2={H:64,N:20,bx:1.2,by:.8,showS:true,showE:true,seed:1,samples:null,sKey:'',stok:0};
+function c2calc(){const {H,N,bx,by}=c2,cond=[[0,A0],[H-1,[bx,by]]];
+  return{cond,m:runChain({H,N,cond,noise:false}).X,ex:exactMean(H,cond),sd:stepSd(H)}}
+function c2samples(cond,done){const key=`${c2.H}|${c2.N}|${c2.bx}|${c2.by}|${c2.seed}`;if(c2.sKey===key&&c2.samples){done();return}
+  const tok=++c2.stok,out=[];let j=0;const step=()=>{if(tok!==c2.stok)return;out.push(runChain({H:c2.H,N:c2.N,seed:1000*c2.seed+j,cond}).X);j++;
+    if(j<6)setTimeout(step,0);else{c2.samples=out;c2.sKey=key;done()}};step()}
+function c2render(full){const r=c2calc(),{H,N}=c2,key=`${H}|${N}|${c2.bx}|${c2.by}|${c2.seed}`;
+  const draw2=()=>{const p=planeSVG($('#c2-plane'));
+    if(c2.showS&&c2.samples&&c2.sKey===key)c2.samples.forEach(S=>el('path',{d:pathOf(S,p.X,p.Y),class:'samp'},p.g));
+    if(c2.showE&&r.ex)el('path',{d:pathOf(r.ex,p.X,p.Y),class:'cref'},p.g);
+    el('path',{d:pathOf(r.m,p.X,p.Y),class:'plan'},p.g);markers(p.g,p.X,p.Y,A0,[c2.bx,c2.by]);
+    // x vs t
+    const box=$('#c2-xt'),svg=$('svg',box),W=widthOf(box,240,460),Hh=150;svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${Hh}`);svg.setAttribute('width',W);svg.setAttribute('height',Hh);
+    const X=lin(0,H-1,36,W-8),Y=lin(-2.5,2.5,Hh-24,8);[-2,0,2].forEach(v=>{el('line',{x1:36,x2:W-8,y1:Y(v),y2:Y(v),class:'grid'},svg);tx(svg,30,Y(v)+4,String(v).replace('-','−'),{class:'tk','text-anchor':'end'})});
+    tx(svg,(36+W)/2,Hh-4,'規劃時間步 t',{class:'al','text-anchor':'middle'});tx(svg,36,Hh-4,'0',{class:'tk'});tx(svg,W-8,Hh-4,String(H-1),{class:'tk','text-anchor':'end'});tx(svg,40,18,'x 座標',{class:'al'});
+    const g=el('g',null,svg),line=(row,cls)=>el('path',{d:lp(Array.from(row,(v,t)=>[X(t),Y(Math.max(-2.5,Math.min(2.5,v)))])),class:cls},g);
+    if(c2.showS&&c2.samples&&c2.sKey===key)c2.samples.forEach(S=>line(S[0],'samp'));if(c2.showE&&r.ex)line(r.ex[0],'cref');line(r.m[0],'plan');
+    const jm=jump(r.m),je=r.ex?jump(r.ex):NaN,cerr=Math.max(Math.abs(r.m[0][0]-A0[0]),Math.abs(r.m[1][H-1]-c2.by));
+    $('#c2-read').textContent=(r.ex?`rms（替換法 − 精確）= ${f4(rms(r.m,r.ex))}\n`:'精確參考無法計算\n')+`端點跳躍：替換法 ${f4(jm)}（${(jm/r.sd).toFixed(2)} 倍單步）\n　　　　　精確 ${r.ex?f4(je):'—'}\n先驗單步長度 = ${f4(r.sd)}\n限制誤差 = ${cerr.toExponential(0)}`;
+    $('#c2-plane svg').setAttribute('aria-label',`補全計畫：起點 (−1.2, −0.8)，終點 (${c2.bx}, ${c2.by})，端點跳躍 ${f3(jm)}`);
+    announce('c2',`端點跳躍 ${f3(jm)}，均方根差 ${r.ex?f3(rms(r.m,r.ex)):'無法計算'}`)};
+  draw2();if(c2.showS&&(full||!heavy(H,N)))c2samples(r.cond,draw2)}
+function initC2(){const sched=frameSched(()=>c2render(false));
+  segInit($('#c2-H'),[32,64,128],64,null,v=>{c2.H=v;c2render(true)});segInit($('#c2-N'),[5,20,100],20,null,v=>{c2.N=v;c2render(true)});
+  [['bx','#c2-bx','Bx'],['by','#c2-by','By']].forEach(([k,id,nm])=>{const s=$(id),o=$(id+'o');const upd=()=>{c2[k]=Math.round(+s.value*10)/10;o.textContent=c2[k].toFixed(1);s.setAttribute('aria-valuetext',`${nm} = ${c2[k].toFixed(1)}`)};upd();
+    s.addEventListener('input',()=>{upd();sched()});s.addEventListener('change',()=>{upd();c2render(true)})});
+  $('#c2-s').addEventListener('change',e=>{c2.showS=e.target.checked;c2render(true)});$('#c2-e').addEventListener('change',e=>{c2.showE=e.target.checked;c2render(true)});
+  $('#c2-seed').addEventListener('click',()=>{c2.seed++;c2render(true)});c2render(true)}
+
+/* ================= C3 ================= */
+const S0=[-1.2,-0.8];
+const c3={mode:'noisy',la:-10,cx:1,cy:1,H:32,N:20,showS:true,showE:true,seed:1,samples:null,sKey:'',stok:0,divergedAt:null,lastGood:null};
+const alphaOf=la=>10**(la/10);
+function c3calc(){const {mode,la,H,N}=c3,al=alphaOf(la),c=[c3.cx,c3.cy],cond=[[0,S0]],gd=makeGuide(mode,al,c,H,N);
+  const run=runChain({H,N,cond,guide:gd,noise:false}),ex=exactMean(H,cond,al,[al*c[0],al*c[1]]);
+  const bt=schedule(N).bt;let mx=0,cnt=0;for(let i=1;i<=N;i++){const v=al*bt[i];if(v>mx)mx=v;if(v>2)cnt++}
+  return{al,c,cond,gd,run,ex,mx,cnt}}
+function c3render(full){const r=c3calc(),{H,N,mode}=c3,key=`${mode}|${c3.la}|${c3.cx}|${c3.cy}|${H}|${N}|${c3.seed}`;c3.divergedAt=r.run.divergedAt;
+  const draw3=()=>{const p=planeSVG($('#c3-plane'));const div=r.run.divergedAt!=null;
+    if(!div){if(c3.showS&&c3.samples&&c3.sKey===key)c3.samples.forEach(S=>{if(S)el('path',{d:pathOf(S,p.X,p.Y),class:'samp'},p.g)});
+      if(c3.showE&&r.ex)el('path',{d:pathOf(r.ex,p.X,p.Y),class:'cref'},p.g);el('path',{d:pathOf(r.run.X,p.X,p.Y),class:'plan'},p.g)}
+    markers(p.g,p.X,p.Y,S0,null,r.c);
+    if(div){tx(p.svg,p.W/2,p.H/2-8,'發散',{class:'warn','text-anchor':'middle'});tx(p.svg,p.W/2,p.H/2+14,`第 ${r.run.divergedAt} 步的數值超過 10⁶`,{class:'al','text-anchor':'middle'})}
+    // J bars
+    const box=$('#c3-bar'),svg=$('svg',box),W=widthOf(box,240,460),Hh=70;svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${Hh}`);svg.setAttribute('width',W);svg.setAttribute('height',Hh);
+    const Jm=div?NaN:Jof(r.run.X,r.c),Je=r.ex?Jof(r.ex,r.c):NaN,mxJ=Math.max(1,Math.abs(isNaN(Jm)?0:Jm),Math.abs(isNaN(Je)?0:Je)),X=lin(0,mxJ,110,W-60);
+    [['引導平均',Jm,'acc-f'],['精確平均',Je,'par-f']].forEach(([nm,v,cls],k)=>{const y=8+k*30;tx(svg,4,y+14,nm+' J',{class:'al'});
+      if(isNaN(v)){tx(svg,110,y+14,'—',{class:'tk'});return}el('rect',{x:110,y,width:Math.max(1,X(Math.abs(v))-110),height:18,class:cls,opacity:k?.55:1},svg);tx(svg,X(Math.abs(v))+6,y+14,v.toFixed(3),{class:'labm'})});
+    let s;
+    if(div){s=`發散：第 ${r.run.divergedAt} 步的數值超過 10⁶。\nαβtᵢ > 2 時，引導項在那一步放大與目標的距離；\n是否發散取決於所有步驟累積的增益。\nαβtᵢ > 2 的步數 = ${r.cnt}`;
+      if(c3.lastGood){const g=c3.lastGood;s+=`\n\n上一個未發散的結果（α = ${g.alpha.toPrecision(3)}）：\n終點 (${f4(g.end[0])}, ${f4(g.end[1])})，J = ${g.J.toFixed(3)}`}}
+    else{const e=[r.run.X[0][H-1],r.run.X[1][H-1]];
+      s=`α = ${r.al.toPrecision(3)}\n終點（引導）(${f4(e[0])}, ${f4(e[1])})\n`+(r.ex?`終點（精確）(${f4(r.ex[0][H-1])}, ${f4(r.ex[1][H-1])})\nrms = ${f4(rms(r.run.X,r.ex))}\n`:'精確參考無法計算\n')+`J（引導）= ${Jm.toFixed(3)}　J（精確）= ${r.ex?Je.toFixed(3):'—'}`+
+        (mode==='clean'?`\nmax αβtᵢ = ${r.mx.toFixed(4)}；αβtᵢ > 2 的步數 = ${r.cnt}`:'');
+      c3.lastGood={alpha:r.al,mode,end:e,J:Jm}}
+    const rd=$('#c3-read');rd.textContent=s;rd.style.color='';
+    $('#c3-plane svg').setAttribute('aria-label',div?`引導發散，α = ${r.al.toPrecision(3)}`:`引導計畫，α = ${r.al.toPrecision(3)}，終點 x = ${f3(r.run.X[0][H-1])}`);
+    announce('c3',div?`發散，第 ${r.run.divergedAt} 步`:`α ${r.al.toPrecision(3)}，終點 x ${f3(r.run.X[0][H-1])}`)};
+  draw3();
+  if(c3.showS&&r.run.divergedAt==null&&(full||!heavy(H,N))){if(c3.sKey===key&&c3.samples)return;const tok=++c3.stok,out=[];let j=0;
+    const step=()=>{if(tok!==c3.stok)return;const rr=runChain({H,N,seed:1000*c3.seed+j,cond:r.cond,guide:r.gd});out.push(rr.divergedAt==null?rr.X:null);j++;
+      if(j<6)setTimeout(step,0);else{c3.samples=out;c3.sKey=key;draw3()}};step()}}
+function initC3(){const sched=frameSched(()=>c3render(false)),la=$('#c3-la');
+  segInit($('#c3-mode'),['noisy','clean'],'noisy',v=>v==='noisy'?'雜訊層級似然':'乾淨 J(μ)',v=>{c3.mode=v;c3render(true)});
+  segInit($('#c3-H'),[32,64],32,null,v=>{c3.H=v;c3render(true)});segInit($('#c3-N'),[20,100],20,null,v=>{c3.N=v;c3render(true)});
+  const updA=()=>{c3.la=Math.round(+la.value);const a=alphaOf(c3.la);$('#c3-lao').textContent=a.toPrecision(3);la.setAttribute('aria-valuetext',`α = ${a.toPrecision(3)}`)};updA();
+  la.addEventListener('input',()=>{updA();sched()});la.addEventListener('change',()=>{updA();c3render(true)});
+  [['cx','#c3-cx','cx'],['cy','#c3-cy','cy']].forEach(([k,id,nm])=>{const s=$(id),o=$(id+'o');const upd=()=>{c3[k]=Math.round(+s.value*10)/10;o.textContent=c3[k].toFixed(1);s.setAttribute('aria-valuetext',`${nm} = ${c3[k].toFixed(1)}`)};upd();
+    s.addEventListener('input',()=>{upd();sched()});s.addEventListener('change',()=>{upd();c3render(true)})});
+  $('#c3-s').addEventListener('change',e=>{c3.showS=e.target.checked;c3render(true)});$('#c3-e').addEventListener('change',e=>{c3.showE=e.target.checked;c3render(true)});
+  $('#c3-seed').addEventListener('click',()=>{c3.seed++;c3render(true)});c3render(true)}
+
+/* ================= timeline ================= */
+const TL_GROUP={'1509.01149':['mb','model-based-planning-abstraction-barrier'],'1708.02596':['mb','model-based-planning-abstraction-barrier'],'1805.12114':['mb','model-based-planning-abstraction-barrier'],
+ '1805.00909':['ci','control-as-inference-guided-sampling'],
+ '1503.03585':['df','diffusion-classifier-guidance-background'],'2006.11239':['df','diffusion-classifier-guidance-background'],'2102.09672':['df','diffusion-classifier-guidance-background'],'2105.05233':['df','diffusion-classifier-guidance-background'],
+ '1707.01495':['of','offline-rl-benchmarks-and-baselines'],'2004.07219':['of','offline-rl-benchmarks-and-baselines'],'2006.04779':['of','offline-rl-benchmarks-and-baselines'],'2110.06169':['of','offline-rl-benchmarks-and-baselines'],
+ '2106.01345':['sq','sequence-modeling-offline-rl'],'2106.02039':['sq','sequence-modeling-offline-rl'],'2205.09991':['me','trajectory-diffusion-planning']};
+const TL_NAME={mb:'model-based RL 與軌跡最佳化',ci:'控制即推論',df:'擴散模型與引導',of:'離線 RL 基準與資料',sq:'序列模型式 RL',me:'本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  data=data.slice().sort((a,b)=>(Number(a.year)||0)-(Number(b.year)||0)||String(a.arxiv).localeCompare(String(b.arxiv)));
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${g[1]?`<a href="${g[1]}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}});
+  return data}
+
+/* ================= toc, theme ================= */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+/* ================= self test (acceptance tables: design.md section 5) ================= */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t=1e-4)=>Math.abs(a-b)<=t+1e-12;
+  {const H=32,P=basis(H),l=lam(H),Q=qmat(H);let mx=0;for(let i=0;i<H;i++)for(let j=0;j<H;j++){let v=0;for(let k=0;k<H;k++)v+=P[i*H+k]*P[j*H+k]/l[k];mx=Math.max(mx,Math.abs(v-Q[i*H+j]))}ok(mx<1e-8,'diag H=32 err '+mx)}
+  [[64,0,100],[64,1,81.1591],[64,2,21.2319]].forEach(([H,k,v])=>ok(near(lam(H)[k],v),`lam H=${H} k=${k}`));
+  [[16,.0837],[32,.1092],[64,.1128],[128,.1122]].forEach(([H,v])=>ok(near(stepSd(H),v),'stepSd H='+H));
+  {const s=schedule(20);ok(near(s.abar[1],.992007,1e-6)&&near(s.abar[10],.493844,1e-6)&&near(s.bt[20],.992952,1e-6)&&near(s.bt[2],.00575,1e-6)&&near(s.beta[1],.007993,1e-6),'schedule N=20')}
+  [[5,.905134],[10,.974956],[20,.992952],[50,.998031],[100,.998758]].forEach(([N,v])=>ok(near(Math.max(...schedule(N).bt.slice(1)),v,1e-6),'max bt N='+N));
+  {const r=mulberry32(1);ok([.627073941,.002735721,.52744704].every(v=>near(r(),v,1e-9)),'mulberry32 seed 1')}
+  const VR={16:[.1157,.3153,.5621,.7835,.8836],32:[.1482,.3563,.5917,.8004,.893],64:[.1488,.3608,.5958,.8029,.8946],128:[.1546,.3687,.6014,.8061,.8963]};
+  for(const H in VR)[5,10,20,50,100].forEach((N,j)=>ok(near(varRatio(+H,N),VR[H][j]),`varRatio H=${H} N=${N}`));
+  {const {hist}=runChain({H:64,N:20,seed:1,keep:true});ok(near(hist[0][0][0],1.404339,1e-6)&&near(hist[0][0][1],1.215755,1e-6)&&near(hist[0][0][2],-.510377,1e-6)&&near(hist[0][1][0],-.791545,1e-6),'tauN seed1');
+    const C1T=[[20,.9467,1.4043,-.7915,-.2904,.1819],[10,1.118,1.3922,1.8816,1.0807,-2.2986],[5,1.1252,1.438,2.4804,-.0994,-1.5251],[1,1.1052,1.0863,2.1561,-.2034,-1.6909],[0,1.1062,1.1098,2.2962,-.2061,-1.5896]];
+    const z=[new Float64Array(64),new Float64Array(64)];C1T.forEach(([i,rm,a,b,c,d])=>{const X=hist[20-i];ok(near(rms(X,z),rm)&&near(X[0][0],a)&&near(X[1][0],b)&&near(X[0][63],c)&&near(X[1][63],d),'C1 chain i='+i)})}
+  const C2T=[[64,5,[1.2,.8],.4393,.5992,.0068,-.1113,-.0742,-.7141,-.4761],[64,20,[1.2,.8],.2455,.1676,.0068,-.3456,-.2304,-.7141,-.4761],[64,100,[1.2,.8],.1731,.0732,.0068,-.4449,-.2966,-.7141,-.4761],
+    [64,20,[1.5,-1],.3228,.1737,.0068,-.3518,-.1931,-.7064,-.5225],[32,20,[1.2,.8],.1949,.2167,.017,-.4818,-.3212,-.7768,-.5178],[128,20,[1.2,.8],.2162,.179,.0069,-.0329,-.0219,-.2333,-.1555],[128,100,[1.2,.8],.1655,.0836,.0069,-.0671,-.0447,-.2333,-.1555]];
+  C2T.forEach(([H,N,B,rm,jp,je,qx,qy,ex,ey])=>{const cond=[[0,A0],[H-1,B]],m=runChain({H,N,cond,noise:false}).X,e=exactMean(H,cond),q=H/4;
+    ok(e&&near(rms(m,e),rm)&&near(jump(m),jp)&&near(jump(e),je)&&near(m[0][q],qx)&&near(m[1][q],qy)&&near(e[0][q],ex)&&near(e[1][q],ey),`C2 H=${H} N=${N} B=${B}`)});
+  {const cond=[[0,A0],[63,[1.2,.8]]];const s0=runChain({H:64,N:20,seed:1000,cond}).X,s1=runChain({H:64,N:20,seed:1001,cond}).X;
+    ok(near(s0[0][1],-1.3286)&&near(s0[1][1],-.9428)&&near(jump(s0),.1922)&&near(s1[0][1],-1.8869)&&near(s1[1][1],.094)&&near(jump(s1),1.1274),'C2 samples');
+    const m=runChain({H:64,N:20,noise:false}).X;m[0][0]=A0[0];m[1][0]=A0[1];m[0][63]=1.2;m[1][63]=.8;ok(near(jump(m),1.4422),'final-only replacement jump')}
+  const c=[1,1],cond=[[0,S0]];
+  const C3C=[[32,20,.001,-.0592,-.402,.3213,-59.164,-87.876],[32,20,.01,.0717,.161,.2094,-50.465,-63.589],[32,20,.1,1.0997,1.0789,.5193,-12.341,-34.138],[32,20,1,1.8263,1.0067,.8933,-20.202,-19.377],
+    [32,20,10,1.2986,.9992,.3769,-7.621,-11.137],[64,20,.1,1.1637,.9035,.3996,-13.362,-34.799],[32,100,.1,1.5652,1.0789,.8173,-14.668,-34.138],[32,100,10,1.0546,.9992,.2086,-6.856,-11.137]];
+  const C3N=[[32,20,.001,-.0159,-.402,.3585,-56.231,-87.876],[32,20,.01,.3248,.161,.382,-36.001,-63.589],[32,20,.1,.8862,1.0789,.4808,-13.095,-34.138],[32,20,1,.9878,1.0067,.3727,-7.946,-19.377],[32,20,10,.9981,.9992,.2271,-6.049,-11.137],
+    [32,20,10**1.2,.9987,.9996,.2019,-5.787,-10.01],[32,20,100,.9997,.9999,.1152,-5.032,-6.717],[64,20,.1,.8557,.9035,.3475,-13.798,-34.799],[32,100,.1,.9419,1.0789,.496,-13.252,-34.138],[32,100,100,.9999,.9999,.0997,-5.256,-6.717]];
+  [['clean',C3C],['noisy',C3N]].forEach(([mode,T])=>T.forEach(([H,N,al,ep,ee,rm,jp,je])=>{const run=runChain({H,N,cond,guide:makeGuide(mode,al,c,H,N),noise:false}),e=exactMean(H,cond,al,[al,al]);
+    ok(run.divergedAt==null&&near(run.X[0][H-1],ep)&&near(e[0][H-1],ee)&&near(rms(run.X,e),rm)&&near(Jof(run.X,c),jp,1e-3)&&near(Jof(e,c),je,1e-3)&&(mode==='clean'||run.peak<=1.2+1e-9),`C3 ${mode} H=${H} N=${N} a=${al}`)}));
+  [[32,20,12,13],[32,20,13,14],[32,20,15,16],[32,20,20,17],[64,20,12,13],[64,20,13,15],[32,100,12,91],[32,100,15,95]].forEach(([H,N,la,st])=>{const al=alphaOf(la),run=runChain({H,N,cond,guide:makeGuide('clean',al,c,H,N),noise:false});ok(run.divergedAt===st,`diverge H=${H} N=${N} la=${la}: ${run.divergedAt}`)});
+  {const run=runChain({H:32,N:20,cond,guide:makeGuide('clean',alphaOf(11),c,32,20),noise:false});ok(run.divergedAt==null&&near(run.X[0][31],2.5664),'clean la=11 no divergence')}
+  {const bt=schedule(20).bt;let a=0,b=0;for(let i=1;i<=20;i++){if(10*bt[i]>2)a++;if(10**1.2*bt[i]>2)b++}ok(a===7&&b===10,'count alpha*bt>2')}
+  {const cc=[-1,1.5],m=runChain({H:32,N:20,cond,guide:makeGuide('clean',.1,cc,32,20),noise:false}).X,e=exactMean(32,cond,.1,[-.1,.15]);ok(near(m[0][31],-1.1934)&&near(m[1][31],1.6886)&&near(e[0][31],-.8857)&&near(e[1][31],1.5379)&&near(rms(m,e),.5426),'C3 c=(-1,1.5)')}
+  {const s=runChain({H:32,N:20,seed:1000,cond,guide:makeGuide('clean',.1,c,32,20)}).X;ok(near(s[0][31],2.5324)&&near(s[1][31],1.2526)&&near(Jof(s,c),-21.78,1e-3),'C3 clean sample');
+   const n0=runChain({H:32,N:20,seed:1000,cond,guide:makeGuide('noisy',.1,c,32,20)}).X,n1=runChain({H:32,N:20,seed:1001,cond,guide:makeGuide('noisy',.1,c,32,20)}).X;
+   ok(near(n0[0][31],1.6999)&&near(n0[1][31],1.171)&&near(Jof(n0,c),-17.225,1e-3)&&near(n1[0][31],2.3413)&&near(n1[1][31],1.6619)&&near(Jof(n1,c),-33.54,1e-3),'C3 noisy samples')}
+  {const Q=qmat(8);Q[3*8+3]=-1;ok(exactMean(8,[[0,[0,0]]],0,[0,0],Q)===null,'exactMean failure path')}
+  {const w=$('#s7-warm');ok(!!w&&['前向 k 步','去噪 k 步','去噪 N 步'].every(s=>w.textContent.includes(s)),'S7 diagram labels')}
+  {const sv=[c3.la,c3.mode];c3.mode='clean';c3.la=12;c3render(true);ok(c3.divergedAt===13,'C3 widget diverges at la=12 (clean)');c3.la=-10;c3render(true);ok(c3.divergedAt===null,'C3 widget recovers');[c3.la,c3.mode]=sv;c3render(true)}
+  {const tl=JSON.parse($('#timeline-data').textContent);ok(tl.length===15&&tl.every(e=>TL_GROUP[e.arxiv]),'timeline groups')}
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ================= boot ================= */
+initTheme();initToc();renderHero();initC1();initC2();initC3();renderTimeline();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{renderHero();c1render();c2render(false);c3render(false)})});
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false})}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath()});
+if(/[?&]test\b/.test(location.search))selfTest();
+})();
+</script>
+</body>
+</html>

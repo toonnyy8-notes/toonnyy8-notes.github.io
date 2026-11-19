@@ -1,0 +1,463 @@
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<pattern id="pt-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="var(--surface)"/><line x1="0" y1="0" x2="0" y2="6" stroke="var(--c-par)" stroke-width="2.5"/></pattern>
+<pattern id="pt-dots" width="5" height="5" patternUnits="userSpaceOnUse"><rect width="5" height="5" fill="var(--surface)"/><circle cx="2.5" cy="2.5" r="1.3" fill="var(--ink-2)"/></pattern>
+<pattern id="pt-horiz" width="6" height="5" patternUnits="userSpaceOnUse"><rect width="6" height="5" fill="var(--surface)"/><line x1="0" y1="2.5" x2="6" y2="2.5" stroke="var(--c-perp)" stroke-width="1.6"/></pattern>
+<pattern id="pt-cross" width="6" height="6" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="var(--surface)"/><path d="M0 0L6 6M6 0L0 6" stroke="var(--ink-3)" stroke-width="1.2"/></pattern>
+</defs></svg>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 570</span>
+  <span class="ttl">TD3+BC：極簡的離線強化學習</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 570</b> · 互動教學 · arXiv 2106.06860 · NeurIPS 2021</div>
+  <h1><span class="lat">TD3+BC</span>：在 <span class="lat">TD3</span> 上加一項行為複製的離線強化學習</h1>
+  <p class="dek">這篇論文在一個既有的強化學習演算法上只加一項模仿資料動作的損失，再把狀態正規化，就達到當時最佳方法的表現，訓練時間少於一半。</p>
+  <p class="byline">Scott Fujimoto、Shixiang Shane Gu（2021）〈A Minimalist Approach to Offline Reinforcement Learning〉</p>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 問題</span><p>離線強化學習只能從一個固定的資料集學習。對資料中沒有出現的動作，學到的價值估計常常過高。</p></div>
+    <div class="fact"><span class="n">02 · 方法</span><p>這篇論文在策略的訓練目標中加一項：策略輸出的動作與資料中動作之差的平方。這一項使策略輸出接近資料中的動作。</p></div>
+    <div class="fact"><span class="n">03 · 結果</span><p>在 15 個標準測試資料集上，這個方法的總分與當時最好的方法相當（979.3 對 974.6），訓練時間是 39 分鐘對 2 小時 8 分（後者為作者以 PyTorch 重寫的版本）。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2106.06860">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-570">在關聯圖中查看</a>
+    <a class="btn" href="td3bc-lineage-overview.html">研究筆記總覽</a>
+    <a class="btn" href="https://github.com/sfujim/TD3_BC">程式碼 ↗</a>
+  </div>
+</section>
+
+<!-- S1 -->
+<section class="ch" id="offline" data-toc="01" data-tt="離線 RL">
+  <div class="ch-num">01 · 離線 RL</div>
+  <h2>離線 RL 只能使用固定的資料集</h2>
+  <div class="prose">
+    <p>強化學習（reinforcement learning, RL）處理依序做決策的問題。問題以馬可夫決策過程（MDP）$(\mathcal S,\mathcal A,R,p,\gamma)$ 描述：狀態空間 $\mathcal S$、動作空間 $\mathcal A$、獎勵函數 $R$、轉移 $p$ 與折扣因子 $\gamma$（Sec. 3）。策略 $\pi$ 決定在每個狀態採取的動作；本文的策略是確定性的，即 $\pi:\mathcal S\to\mathcal A$。目標是最大化期望折扣報酬 $\mathbb E_\pi[\sum_t\gamma^tr_{t+1}]$。價值函數</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$Q^\pi(s,a)=\mathbb E_\pi\Big[\sum_{t=0}^{\infty}\gamma^t r_{t+1}\,\Big|\,s_0=s,a_0=a\Big]$$</div><span class="eq-n">Sec. 3</span></div>
+  <div class="prose">
+    <p>表示在狀態 $s$ 採取動作 $a$、之後依 $\pi$ 行動時的期望折扣報酬。</p>
+    <p>一般的 RL 是線上的：代理人（agent）一邊與環境互動、一邊收集資料並更新策略。<b>離線 RL（offline RL）只從一個大小固定、由任意且可能未知的過程收集的資料集學習，不能再與環境互動</b>（Sec. 1、3；論文寫明它在歷史上稱為 batch RL）。資料集 $\mathcal D$ 的元素是轉移 $(s,a,r,s')$，收集它的策略稱為行為策略（behavior policy）。<b>好處是不需要承擔與環境互動的成本與風險，可以使用既有的紀錄</b>，例如人類操作者的資料；在機器人或醫療等收集資料昂貴、有風險的應用中特別有用（Sec. 1）。</p>
+  </div>
+  <figure class="fig" style="max-width:700px;margin:8px 0 24px">
+    <svg viewBox="0 0 640 200" role="img" aria-label="上列：線上 RL，代理人與環境之間有雙向箭頭。下列：離線 RL，固定資料集單向箭頭指向代理人，與環境之間沒有連線。">
+      <text class="al" x="8" y="26">線上</text>
+      <rect class="pbox" x="90" y="10" width="140" height="44" rx="10"/><text class="lab" x="160" y="37" text-anchor="middle">代理人</text>
+      <rect class="pbox" x="410" y="10" width="140" height="44" rx="10"/><text class="lab" x="480" y="37" text-anchor="middle">環境</text>
+      <line class="ink" x1="232" y1="24" x2="400" y2="24"/><path class="ink-f" d="M408 24l-9-5v10z"/><text class="tk" x="320" y="16" text-anchor="middle">動作</text>
+      <line class="ink" x1="408" y1="42" x2="240" y2="42"/><path class="ink-f" d="M232 42l9-5v10z"/><text class="tk" x="320" y="62" text-anchor="middle">狀態、獎勵</text>
+      <text class="al" x="8" y="146">離線</text>
+      <rect class="pbox acc-b" x="90" y="128" width="140" height="44" rx="10"/><text class="lab" x="160" y="155" text-anchor="middle">固定資料集</text>
+      <rect class="pbox" x="410" y="128" width="140" height="44" rx="10"/><text class="lab" x="480" y="155" text-anchor="middle">代理人</text>
+      <line class="ink" x1="232" y1="150" x2="400" y2="150"/><path class="ink-f" d="M408 150l-9-5v10z"/><text class="tk" x="320" y="142" text-anchor="middle">只讀取</text>
+      <text class="tk" x="320" y="190" text-anchor="middle">訓練期間不與環境互動</text>
+    </svg>
+  </figure>
+  <div class="prose">
+    <p>另一種從資料學策略的方法是行為複製（behavior cloning, BC）：以監督學習直接模仿資料集中的動作。BC 不使用獎勵，所以它的表現高度依賴收集資料的策略（Sec. 3）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">離線 RL 與一般 RL 的差別？好處是什麼？</p>
+    <p class="a">只從固定、由未知過程收集的資料集學習，不能與環境互動；不需要承擔與環境互動的成本與風險，可用既有紀錄（Sec. 1、3）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="rl-mdp-q-learning-basics.html">MDP 與 Q-learning 基礎</a>、<a href="offline-rl-distribution-shift.html">離線 RL 與分布偏移</a></p>
+</section>
+
+<!-- S2 -->
+<section class="ch" id="td3" data-toc="02" data-tt="TD3">
+  <div class="ch-num">02 · TD3</div>
+  <h2>TD3 用 critic 的估計更新確定性策略</h2>
+  <div class="prose">
+    <p>TD3（Fujimoto et al., 2018）是一種 actor-critic 演算法：critic 是估計 $Q$ 的網路，actor 是策略網路 $\pi$。以下 TD3 的細節是本文引用但沒有寫出的背景 <span class="tag">背景（論文外）</span>。</p>
+    <p><b>critic 的訓練。</b>對資料中的一筆 $(s,a,r,s')$，讓 $Q(s,a)$ 接近時序差分（temporal difference, TD）目標 $y=r+\gamma Q'(s',\pi'(s'))$：這一步的獎勵，加上下一個狀態的折扣價值。$Q'$、$\pi'$ 是目標網路，即參數緩慢追隨 $Q$、$\pi$ 的副本，用來讓目標值穩定。用自己的估計當訓練目標，稱為自舉（bootstrapping）。</p>
+    <p><b>actor 的訓練。</b>actor 以確定性策略梯度（Silver et al., 2014）更新：調整策略，使 critic 對策略所選動作給出的值變大（Sec. 1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\pi=\arg\max_\pi\ \mathbb E_{(s,a)\sim\mathcal D}\big[Q(s,\pi(s))\big]$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="prose">
+    <p><b>TD3 的三個設計</b> <span class="tag">背景（論文外）</span>：</p>
+    <ol>
+      <li><b>clipped double-Q 目標</b>：訓練兩個 critic $Q_1,Q_2$，目標取兩者中較小的值 $y=r+\gamma\min_{j=1,2}Q'_j(s',\tilde a)$，以抑制高估。</li>
+      <li><b>目標策略平滑</b>：目標動作 $\tilde a=\mathrm{clip}\big(\pi'(s')+\mathrm{clip}(\xi,-0.5,0.5),-1,1\big)$，$\xi\sim\mathcal N(0,0.2^2)$，即噪聲 0.2、截斷 ±0.5。</li>
+      <li><b>延遲更新</b>：每 2 次 critic 更新，做 1 次 actor 與目標網路的更新。</li>
+    </ol>
+    <p>這三個設計對應論文 Table 4 的 policy noise 0.2、policy noise clipping (−0.5, 0.5) 與 policy update frequency 2。TD3+BC 沒有修改 TD3 的任何超參數（Table 4 圖說）。</p>
+  </div>
+  <details class="adv"><summary>進階：離線時 critic 的目標也會用到資料外的動作 · 本頁推導</summary><div class="qa">
+    <p>critic 目標中的 $\tilde a$ 來自目標策略 $\pi'$，不是資料中的下一個動作。若 $\pi$ 偏離資料，目標值就要評估資料外的動作，估計誤差會經由自舉傳遞到其他狀態。第 05 章的修改只改 actor；當 actor 的輸出被拉向資料動作時，$\pi'(s')$ 也傾向靠近資料。但這只發生在資料中出現過的狀態 $s'$，而且依賴網路的泛化，沒有保證。<span class="tag">本頁推導</span></p>
+  </div></details>
+  <details class="sym"><summary>符號表（第 01–02 章）</summary><div class="qa"><ul>
+    <li>$(\mathcal S,\mathcal A,R,p,\gamma)$：MDP；$\pi$：確定性策略；$Q^\pi(s,a)$：期望折扣報酬。</li>
+    <li>$\mathcal D$：固定資料集，元素 $(s,a,r,s')$，由行為策略收集。</li>
+    <li>$Q$、$Q_1,Q_2$：critic；$Q'$、$\pi'$：目標網路。</li>
+  </ul></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">TD3 的 actor 最大化什麼？TD3 有哪三個設計？</p>
+    <p class="a">$\mathbb E[Q(s,\pi(s))]$（Eq. 1）；clipped double-Q 目標（兩個 critic 取較小者）、目標策略平滑（噪聲 0.2、截斷 ±0.5）、延遲更新（每 2 次 critic 更新做 1 次 actor 更新）（背景，Table 4）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="ddpg-td3-actor-critic.html">DDPG 到 TD3：連續動作的 actor-critic</a></p>
+</section>
+
+<!-- S3 -->
+<section class="ch" id="extrap" data-toc="03" data-tt="外插誤差">
+  <div class="ch-num">03 · 外插誤差</div>
+  <h2>外插誤差使策略選到資料中沒有的動作</h2>
+  <div class="prose">
+    <p>多數 off-policy 演算法（例如 TD3）可以直接用在離線設定，但表現差。原因是<b>外插誤差（extrapolation error）：策略評估時，對資料集中沒有的狀態–動作對估計不準；最大化估計值的策略更新又會選到這些被高估的分布外（out-of-distribution, OOD）動作</b>，結果表現差（Sec. 1、3，引用 Fujimoto et al., 2019b）。簡單地說，與行為策略差異夠大的策略，很難用這份資料評估。</p>
+    <p>既有的解法都讓學到的策略靠近資料的產生過程（行為策略），只是「靠近」的實作不同，名稱也不同：batch-constrained、KL-control、behavior-regularized、policy constraint（Sec. 1）。</p>
+    <p>下面用一個玩具示意這個現象 <span class="tag">推定</span>。玩具只有一個狀態、一步就結束，所以 $Q$ 就是期望獎勵；動作 $a$ 是 $[-1,1]$ 中的一個數。$q(a)$ 是真實的期望報酬；行為策略的動作集中在 $-0.3$ 附近，共 40 筆，$\bar a$ 是它們的平均；$\hat Q$ 是只用這 40 筆資料擬合的二次曲線，扮演 critic。玩具的高估來自曲線在資料範圍外的外推，不是論文所說經由自舉累積的誤差，所以它只作示意。</p>
+  </div>
+  <div class="plate" id="c1a">
+    <div class="plate-h"><span class="id">C1</span><h3>只最大化擬合的 Q</h3></div>
+    <p class="plate-lead">擬合值只在資料範圍內可靠。只最大化擬合值時，選到的動作落在哪裡？</p>
+    <div class="pg side">
+      <div class="fig"><div class="c1-main"><svg role="img" aria-label="玩具的擬合值與真實值"></svg></div></div>
+      <div class="ctl">
+        <button class="small-btn" type="button" data-act="seed">重新抽樣</button>
+
+      </div>
+    </div>
+    <div class="tscroll rt wide"><table><caption>讀數（seed <span class="c1-seed">7</span>）</caption>
+          <thead><tr><th></th><th class="num">資料平均</th><th class="num">只最大化擬合值</th></tr></thead>
+          <tbody>
+            <tr><th>$a$</th><td class="num" data-r="a0"></td><td class="num" data-r="a1"></td></tr>
+            <tr><th>$\hat Q(a)$</th><td class="num" data-r="h0"></td><td class="num" data-r="h1"></td></tr>
+            <tr><th>$q(a)$</th><td class="num" data-r="q0"></td><td class="num" data-r="q1"></td></tr>
+            <tr><th>$\hat Q-q$</th><td class="num" data-r="e0"></td><td class="num" data-r="e1"></td></tr>
+          </tbody></table></div>
+    <div class="legend"><span class="lg par">擬合的 Q（只用資料）</span><span class="lg ref">真實值</span><span class="lg sqm">資料平均動作</span><span class="lg trim">只最大化擬合值</span></div>
+    <p class="plate-f">讀數由本頁即時計算。玩具為單一狀態、一步、二次多項式 critic，常數為推定，只作示意。</p>
+    <p class="sr" aria-live="polite" id="c1a-live"></p>
+  </div>
+  <div class="prose">
+    <p>在預設資料（seed 7）中，擬合值在資料範圍 $[-0.829,0.254]$ 內貼近真實值，範圍外往上彎。只最大化擬合值會選 $a=1$：擬合值 7.18，真實值只有 4.03，比直接使用資料平均動作 $\bar a=-0.268$ 的真實值 4.30 還低。換 seed 時細節會改變，但只最大化擬合值時常選到資料範圍外的動作。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼 off-policy 演算法直接用於離線設定表現差？</p>
+    <p class="a">外插誤差：對資料集中沒有的狀態–動作對估計不準，最大化估計值的策略更新會選到被高估的 OOD 動作（Sec. 1、3）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="batch-constrained-policy-constraint-methods.html">批次約束與策略約束方法：BCQ、BEAR、BRAC 與其後續</a></p>
+</section>
+
+<!-- S4 -->
+<section class="ch" id="complex" data-toc="04" data-tt="既有方法">
+  <div class="ch-num">04 · 既有方法</div>
+  <h2>既有方法加入許多實作調整</h2>
+  <div class="prose">
+    <p>多數離線 RL 方法建立在 TD3 或 SAC（另一種 actor-critic 演算法）上，但除了論文提出的演算法改動，還加入架構、學習率、預訓練等「非演算法」的實作修改（Sec. 4）。作者以 CQL（Kumar et al., 2020）與 Fisher-BRC（Kostrikov et al., 2021）為例整理成 Table 1。† 表示增加超參數，‡ 表示增加計算成本。</p>
+  </div>
+  <div class="tscroll" style="max-width:860px"><table>
+    <caption>Table 1：對底層演算法的修改（括號內為本頁的白話說明）</caption>
+    <thead><tr><th></th><th>CQL</th><th>Fisher-BRC</th><th>TD3+BC</th></tr></thead><tbody>
+    <tr><th>演算法調整</th><td>對 critic 加正則項†（critic 損失上的額外懲罰）；以取樣近似 logsumexp‡（需要對多個取樣動作計算 Q 的平滑最大值）</td><td>訓練生成模型†‡（另外訓練一個模仿資料動作分布的網路）；critic 換成 offset 函數、對 offset 函數加梯度懲罰†（改寫 critic 的方式）</td><td>加一項†（第 05 章）</td></tr>
+    <tr><th>實作調整</th><td>架構†‡（網路層數）；actor 學習率†；預訓練 actor；移除 SAC 熵項（SAC 為鼓勵隨機動作而加的項）；評估時取樣動作取最大‡</td><td>架構†‡；獎勵加成†；移除 SAC 熵項</td><td>狀態正規化（第 07 章）</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>具體來說，<b>CQL 的實作調整包括修改架構、修改 actor 學習率、預訓練 actor（只用模仿學習訓練一段時間）、移除 SAC 熵項，以及評估時從策略取樣一組動作取最大者；Fisher-BRC 的實作調整包括修改架構、對每筆轉移加常數獎勵加成，以及移除 SAC 熵項</b>（Sec. 4、Table 1）。對應的超參數：CQL 預訓練 40e3 步、取樣動作 10 個、actor 學習率 3e-5、隱藏層 3 層（Table 5）；Fisher-BRC 生成模型 5 個高斯成分、梯度懲罰 0.1、獎勵加成 5、隱藏層 3 層（Table 6）。</p>
+    <p>Fig. 1 顯示<b>拿掉這些實作調整後，兩個方法在許多任務上大幅退步</b>。線上 RL 可以用一些實驗驗證這類修改；離線 RL 不能與環境互動，驗證本身就不容易。兩篇論文都沒有提到訓練／驗證切分，作者「只能假設這些修改是針對評估資料集（D4RL）調整的」。作者強調，這不是指出既有方法有根本缺陷，而是主張應偏好對底層演算法做最少的調整（Sec. 4）。另一個動機是計算成本：CQL 的 logsumexp 與 Fisher-BRC 的生成模型都增加訓練時間，第 10 章給出數字。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">CQL 與 Fisher-BRC 各列出哪些實作調整？拿掉後如何？</p>
+    <p class="a">CQL：架構、actor 學習率、預訓練 actor、移除 SAC 熵項、評估時取樣取最大；Fisher-BRC：架構、獎勵加成、移除 SAC 熵項；拿掉後許多任務大幅退步（Table 1、Fig. 1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="rl-implementation-details-reproducibility.html">深度 RL 的實作細節與可重現性</a></p>
+</section>
+
+<!-- S5 -->
+<section class="ch" id="bc" data-toc="05" data-tt="加入 BC 項">
+  <div class="ch-num">05 · 加入 BC 項</div>
+  <h2>TD3+BC 在策略更新中加入行為複製項</h2>
+  <div class="prose">
+    <p>作者的看法是：最小化 KL 散度等做法都合理，「但沒有根本的論證說明哪一種散度或距離比另一種更好」，所以選最簡單的一種，盡量少改底層演算法（Sec. 5）。TD3+BC 只改 TD3 的 actor 目標：</p>
+  </div>
+  <div class="diff" aria-label="TD3 與 TD3+BC 的 actor 目標">
+    <div class="d-row"><span class="d-k">TD3</span><span class="d-m">$\pi=\arg\max_\pi\ \mathbb E_{(s,a)\sim\mathcal D}\big[Q(s,\pi(s))\big]$</span></div>
+    <div class="d-row new"><span class="d-k">TD3+BC</span><span class="d-m">$\pi=\arg\max_\pi\ \mathbb E_{(s,a)\sim\mathcal D}\big[\lambda Q(s,\pi(s))-(\pi(s)-a)^2\big]$</span></div>
+  </div>
+  <div class="eq"><div class="eq-m">$$\pi=\arg\max_\pi\ \mathbb E_{(s,a)\sim\mathcal D}\Big[\lambda Q(s,\pi(s))-\big(\pi(s)-a\big)^2\Big]$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="prose">
+    <p>新增的 $-(\pi(s)-a)^2$ 就是行為複製項（Sec. 1 的 Eq. 2 與 Eq. 3 相同）。只多一個超參數 $\lambda$ 控制正則強度，論文稱「只需修改一行程式碼」（Sec. 1）。$\lambda$ 的實際值由另一個數 $\alpha$ 決定：<b>$\lambda$ 等於 $\alpha$ 除以 $Q$ 的平均絕對值 $\overline{|Q|}$，$\alpha=2.5$</b>，理由在第 06 章說明。</p>
+    <p>BC 項的作用可以直接算出來 <span class="tag">本頁推導</span>：對固定的 $s$，若資料中該狀態的動作平均為 $\bar a$、變異數為 $v$，則 $\mathbb E_a[(\pi-a)^2]=(\pi-\bar a)^2+v$。所以 BC 項使策略輸出接近資料動作的平均，偏離越遠懲罰越大（與距離平方成正比）。兩個極限：<b>$\lambda\to0$ 時只剩 BC 項，得到純 BC（$\pi\to\bar a$，資料動作平均）；$\lambda\to\infty$ 時 BC 項可忽略，回到 TD3 的 Eq. 1</b>。$v$ 是常數，不影響最大化的結果；但若資料是多個策略的混合（例如第 09 章的 medium-expert），$\bar a$ 可能落在兩群動作之間。</p>
+    <p>下面的元件在同一個玩具中加入 BC 項。玩具的目標是 $J(\pi)=\lambda\hat Q(\pi)-(\pi-\bar a)^2-v$，$\lambda=\alpha/\overline{|\hat Q|}$。</p>
+  </div>
+  <div class="plate" id="c1b">
+    <div class="plate-h"><span class="id">C1</span><h3>外插誤差與 BC 項的權衡</h3></div>
+    <p class="plate-lead">調整 α，觀察 TD3+BC 選的動作在資料平均與資料外之間移動，以及它的真實值如何變化。</p>
+    <div class="pg side">
+      <div class="fig"><div class="c1-main"><svg role="img" aria-label="玩具的擬合值、真實值與 TD3+BC 目標"></svg></div><div class="c1-sweep"><svg role="img" aria-label="真實值隨 α 的變化"></svg></div></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1-al">α<output id="c1-alo">2.5</output></label><input id="c1-al" type="range" min="0" max="10" step="0.1" value="2.5"></div>
+        <div class="seg" id="c1-chip" role="radiogroup" aria-label="α 的預設值"><button data-v="0">α = 0（純 BC）</button><button data-v="2.5">α = 2.5（論文）</button><button data-v="inf">只有 Q</button></div>
+        <button class="small-btn" type="button" data-act="seed">重新抽樣</button>
+
+      </div>
+    </div>
+    <div class="tscroll rt wide"><table><caption>讀數（seed <span class="c1-seed">7</span>，λ = <span data-r="lam"></span>）</caption>
+          <thead><tr><th></th><th class="num">資料平均</th><th class="num">只最大化擬合值</th><th class="num">TD3+BC</th></tr></thead>
+          <tbody>
+            <tr><th>$a$</th><td class="num" data-r="a0"></td><td class="num" data-r="a1"></td><td class="num acc" data-r="a2"></td></tr>
+            <tr><th>$\hat Q(a)$</th><td class="num" data-r="h0"></td><td class="num" data-r="h1"></td><td class="num" data-r="h2"></td></tr>
+            <tr><th>$q(a)$</th><td class="num" data-r="q0"></td><td class="num" data-r="q1"></td><td class="num acc" data-r="q2"></td></tr>
+            <tr><th>$\hat Q-q$</th><td class="num" data-r="e0"></td><td class="num" data-r="e1"></td><td class="num" data-r="e2"></td></tr>
+          </tbody></table></div>
+    <div class="legend"><span class="lg par">擬合的 Q</span><span class="lg ref">真實值</span><span class="lg acc">TD3+BC 目標（平移後）</span><span class="lg sqm">資料平均動作</span><span class="lg trim">只最大化擬合值</span><span class="lg circ">TD3+BC</span></div>
+    <p class="plate-f">讀數由本頁依 Eq. 3、Eq. 5 即時計算；玩具為單一狀態、一步、二次多項式 critic，常數為推定，只作示意。下圖的「到達動作上界」標出 TD3+BC 動作被截斷在 1 的 α。</p>
+    <p class="sr" aria-live="polite" id="c1b-live"></p>
+  </div>
+  <div class="prose">
+    <p>在預設的玩具中（seed 7，常數為推定），<b>只最大化擬合值選 $a=1$，擬合值 $\hat Q=7.18$ 但真實值 4.03；純 BC 選 $a=-0.268$，真實值 4.30；TD3+BC（α = 2.5）選 $a=0.381$，真實值 4.83</b>，同時勝過兩者。<b>效益隨 α 不單調：α = 2 時真實值 4.99，α = 3 時 4.25，已低於純 BC；α ≥ 3.4 時策略停在動作上界 1</b>。</p>
+    <p>停在 1 的原因 <span class="tag">本頁推導</span>：$\hat Q$ 是二次式，$J$ 的導數為 0 處給出內部最佳解 $\pi_{\rm int}=\bar a+\lambda c_1s_a/(2s_a^2-2\lambda c_2)$（$c_1,c_2$ 為擬合係數，$s_a$ 為資料動作的標準差）。$\alpha$ 增加時 $\pi_{\rm int}$ 連續右移，在 α ≈ 3.32 越過動作範圍的上界，之後策略被截斷在 1。$J$ 在 α 小於約 5.07 時一直是凹函數，所以策略的變化是連續的，只是被動作範圍截斷。這個玩具展示權衡的形狀；論文的 α 是用 Hopper 資料調出來的（第 09 章），不是由這個玩具決定。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 3 是什麼？$\lambda\to0$ 與 $\lambda\to\infty$ 各得到什麼？</p>
+    <p class="a">$\max_\pi\mathbb E[\lambda Q(s,\pi(s))-(\pi(s)-a)^2]$；$\lambda\to0$ 為純 BC（$\pi\to$ 資料動作平均），$\lambda\to\infty$ 為 TD3（Eq. 3、本頁推導）。</p>
+    <p class="q">C1 預設玩具（seed 7，推定常數）中，只最大化 $\hat Q$、純 BC、TD3+BC（α = 2.5）各選哪個動作？真實價值？效益隨 α 單調嗎？</p>
+    <p class="a">只最大化 $\hat Q$：$a=1$，$\hat Q=7.18$ 但真實 4.03；純 BC：$a=-0.268$，4.30；TD3+BC（α = 2.5）：$a=0.381$，4.83。不單調：α = 2 時 4.99，α = 3 時 4.25 已低於純 BC，α ≥ 3.4 時策略停在動作上界 1。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="rl-plus-behavior-cloning-prior-work.html">RL 與行為複製的結合</a>、<a href="advantage-weighted-bc-methods.html">優勢加權的行為複製：AWR、CRR、AWAC、BAIL</a></p>
+</section>
+
+<!-- S6 -->
+<section class="ch" id="lambda" data-toc="06" data-tt="λ 正規化">
+  <div class="ch-num">06 · λ 正規化</div>
+  <h2>λ 以 Q 的平均絕對值正規化</h2>
+  <div class="prose">
+    <p>$\lambda$ 終究只是一個超參數，但作者觀察到，RL（最大化 $Q$）與模仿（最小化 BC 項）之間的平衡對 $Q$ 的尺度很敏感。<b>若動作範圍是 $[-1,1]$，BC 項最多為 4，而 $Q$ 的範圍取決於獎勵的尺度</b>（Sec. 5）。「最多為 4」是指每個動作維度的差最多為 2、平方為 4 <span class="tag">本頁推導</span>；若把 BC 項寫成所有維度平方的總和，上限是 $4\cdot\dim\mathcal A$。官方程式碼用 <code>F.mse_loss(pi, action)</code>，對 batch 與動作維度取平均，上限因此是 4 <span class="tag">背景（論文外）</span>。所以作者把正規化放進 $\lambda$：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\lambda=\frac{\alpha}{\frac1N\sum_{(s_i,a_i)}|Q(s_i,a_i)|}$$</div><span class="eq-n">Eq. 5</span></div>
+  <div class="prose">
+    <p><b>$\lambda=\alpha/\frac1N\sum|Q(s_i,a_i)|$，$\alpha=2.5$；平均在 mini-batch 上估計，而不是整個資料集；這一項雖然含 $Q$，但不對它微分，只用來縮放損失</b>。附帶的好處是：$\nabla_aQ(s,a)$ 也與 $Q$ 的尺度有關，除以 $\overline{|Q|}$ 也<b>使 $\nabla_aQ$ 的尺度在不同任務間一致</b>，相當於把學習率正規化（Sec. 5）。</p>
+    <p>官方程式碼的寫法 <span class="tag">背景（論文外）</span>：<code>pi = actor(state); Q = critic.Q1(state, pi); lmbda = alpha/Q.abs().mean().detach(); actor_loss = -lmbda*Q.mean() + F.mse_loss(pi, action)</code>。這裡的平均用的是 $Q(s,\pi(s))$，而 Eq. 5 寫的是 $Q(s_i,a_i)$；本頁依 Eq. 5。</p>
+    <p>正規化的不變性與界限 <span class="tag">本頁推導</span>：<b>在理想化下（critic 恰好學到 $cQ$），獎勵乘上正數 $c$ 時 $\lambda$ 除以 $c$，$\lambda Q$ 不變，最佳策略不變；實際網路受初始化、Adam、自舉與終止狀態影響，只近似不變</b>。論文本身沒有宣稱不變性，只說平衡對 $Q$ 的尺度很敏感。<b>平移則不同：$Q$ 加上常數會改變 $\overline{|Q|}$，因而改變 $\lambda$ 與策略</b>。在多步問題中，<b>獎勵加上 $b$ 大約使 $Q$ 加上 $b/(1-\gamma)$</b>（$\gamma=0.99$ 時約 $100b$），還受終止狀態影響。下面的元件在一步玩具中比較兩種 $\lambda$；玩具中的 $b$ 直接是 $Q$ 的平移。</p>
+  </div>
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>獎勵尺度、Q 的平移與 λ 正規化</h3><span class="tag">理想化</span></div>
+    <p class="plate-lead">改變 Q 的尺度 c 與平移 b，比較「λ = α ÷ Q 的平均絕對值」與「固定 λ = α」選出的動作。α 固定為 2.5。</p>
+    <div class="pg side">
+      <div class="fig"><div id="c2-fig"><svg role="img" aria-label="TD3+BC 動作隨尺度的變化"></svg></div></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c2-c">尺度 c<output id="c2-co">1</output></label><input id="c2-c" type="range" min="-2" max="2" step="0.1" value="0"></div>
+        <div class="rng"><label class="lbl" for="c2-b">平移 b<output id="c2-bo">0.0</output></label><input id="c2-b" type="range" min="-8" max="8" step="0.1" value="0"></div>
+        <div class="seg" id="c2-mode" role="radiogroup" aria-label="λ 的算法"><button data-v="norm">λ = α ÷ Q 的平均絕對值（論文）</button><button data-v="fixed">固定 λ = α</button></div>
+        <div class="tscroll rt"><table><caption>讀數（目前的模式）</caption><tbody>
+          <tr><th>$c\,\overline{|\hat Q+b|}$</th><td class="num" data-r="m"></td></tr>
+          <tr><th>$\lambda$</th><td class="num" data-r="lam"></td></tr>
+          <tr><th>$\pi^*$</th><td class="num acc" data-r="pi"></td></tr>
+          <tr><th>$q(\pi^*)$</th><td class="num" data-r="q"></td></tr>
+          <tr><th>$g$（$a=\bar a$ 處 Q 項的梯度）</th><td class="num" data-r="g"></td></tr>
+        </tbody></table></div>
+        <p class="note warn hide" id="c2-warn">Q 的平均絕對值小於 0.5，λ 大於 5。</p>
+      </div>
+    </div>
+    <div class="legend"><span class="lg acc">λ 正規化</span><span class="lg ref">固定 λ</span></div>
+    <p class="plate-f">這裡假設 critic 恰好學到 c(Q̂ + b)；真實的 TD3 critic 只會近似如此。b 是 Q 的平移；在多步任務中，獎勵加 b 約使 Q 加 b/(1−γ)。讀數由本頁依 Eq. 3、Eq. 5 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <div class="prose">
+    <p>預設玩具中，正規化時 $\pi^*$ 對所有 $c$ 都是 0.381，$a=\bar a$ 處 Q 項的梯度恆為 0.6576；固定 $\lambda=2.5$ 時，$c=0.01$ 幾乎是純 BC（$\pi^*=-0.253$），$c$ 增加時策略連續右移，$\log_{10}c\ge-0.52$ 起停在 $a=1$，梯度與 $c$ 成正比。正規化時平移 $b=+4$ 使 $\pi^*$ 變為 $-0.036$，$b=-2$ 使 $\pi^*$ 停在 1。</p>
+    <p>論文 App. B 給出選 $\lambda$ 的建議：有領域知識時，可直接取 $\lambda\approx\alpha/$預期的平均價值；若價值函數因外插誤差發散，就減小 $\lambda$ 以加重 BC；若表現接近行為策略，就考慮增大 $\lambda$。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$\lambda$ 怎麼算？$\alpha$ 是多少？為什麼要除以 $\overline{|Q|}$？</p>
+    <p class="a">$\lambda=\alpha/\frac1N\sum|Q(s_i,a_i)|$，$\alpha=2.5$，在 mini-batch 上估計、不微分；BC 項在動作範圍 $[-1,1]$ 下最多 4，$Q$ 的範圍隨獎勵尺度改變，也使 $\nabla_aQ$ 的尺度一致（Eq. 5、Sec. 5）。</p>
+    <p class="q">獎勵乘上 10 或 Q 加上常數，TD3+BC 的最佳策略會改變嗎？</p>
+    <p class="a">理想化下（critic 恰好學到 $cQ$）乘上正數不變，實際網路只近似不變；Q 加上常數會改變 $\overline{|Q|}$，因而改變 $\lambda$ 與策略；多步問題中獎勵加 $b$ 約使 Q 加 $b/(1-\gamma)$（本頁推導）。</p>
+  </div></details>
+</section>
+
+<!-- S7 -->
+<section class="ch" id="norm" data-toc="07" data-tt="狀態正規化">
+  <div class="ch-num">07 · 狀態正規化</div>
+  <h2>狀態特徵正規化為平均 0、標準差 1</h2>
+  <div class="prose">
+    <p>第二項修改是把資料集中每個狀態的特徵正規化。設 $s_i$ 是狀態的第 $i$ 個特徵，$\mu_i$、$\sigma_i$ 是它在資料集上的平均與標準差（Sec. 5）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$s_i=\frac{s_i-\mu_i}{\sigma_i+\epsilon},\qquad \epsilon=10^{-3}$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="prose">
+    <p><b>$s_i\leftarrow(s_i-\mu_i)/(\sigma_i+\epsilon)$，$\epsilon=10^{-3}$</b> 是避免除以 0 的小常數。作者說明這是許多深度 RL 演算法常用的實作細節（Raffin et al., 2019），特別列出有兩個理由：一是希望完全透明地交代所有實作修改；二是它在離線 RL 中帶來不小的效益，而且<b>資料集固定，統計量只需算一次，特別適合離線設定</b>（Sec. 5）。</p>
+    <p>效益的範圍：消融實驗中，<b>拿掉正規化的影響最小</b>，但在多個任務上仍有幫助（Sec. 6、Fig. 5）；<b>AntMaze 中正規化有害，因此不使用</b>（App. C.1）；把它加到 CQL 與 Fisher-BRC 上，影響很小（App. C.2、Fig. 7）。</p>
+    <p>實作時有兩點 <span class="tag">本頁推導</span>：$\mu,\sigma$ 只從資料集算一次，評估時環境給的狀態也要用同一組 $\mu,\sigma$ 正規化；$\epsilon$ 讓常數特徵（$\sigma_i=0$）不會除以 0，正規化後該特徵為 0。</p>
+  </div>
+  <details class="adv"><summary>進階：正規化可能有幫助的一個原因 · 本頁推導</summary><div class="qa">
+    <p>論文沒有解釋正規化為什麼有效。一個標準的最佳化解釋：特徵的尺度差異大、或平均遠離 0 時，損失在不同參數方向上的曲率差異大，梯度下降需要很小的學習率與很多步；正規化使各特徵尺度相同、平均為 0，曲率較一致。限制：TD3 使用 Adam（Table 4），Adam 對每個參數各自縮放步長，會抵消一部分純尺度差異（平均偏移與特徵之間的相關則不會），所以這個解釋的量級不能外推到 TD3+BC。</p>
+  </div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 4 是什麼？為什麼適合離線？哪裡不用？</p>
+    <p class="a">$s_i\leftarrow(s_i-\mu_i)/(\sigma_i+\epsilon)$，$\epsilon=10^{-3}$；資料集固定，統計量只需算一次；AntMaze 中有害而不使用，消融中影響最小（Eq. 4、Sec. 5–6、App. C.1）。</p>
+  </div></details>
+</section>
+
+<!-- S8 -->
+<section class="ch" id="algo" data-toc="08" data-tt="完整演算法">
+  <div class="ch-num">08 · 完整演算法</div>
+  <h2>完整演算法只比 TD3 多幾行</h2>
+  <div class="prose">
+    <p>「Eq. 3、4、5 就是對 TD3 的全部修改，在多數程式庫中只需改幾行」（Sec. 5）。下面的偽碼是本頁依 Eq. 3–5 與 TD3 寫成的 <span class="tag">本頁推導</span>，不是論文原文；終止狀態的遮罩省略。</p>
+  </div>
+  <div class="algo">
+    <div class="row hd"><div>偽碼</div><div class="ex-h">說明</div></div>
+    <div class="row"><code>s ← (s − μ) / (σ + 1e-3)</code><div class="ex"><span class="tag new">新增</span>對資料集所有狀態求 μ, σ 並正規化（Eq. 4）。</div></div>
+    <div class="row"><code>for t = 1 … 1e6:</code><div class="ex"><span class="tag">TD3</span>訓練 1 百萬步。</div></div>
+    <div class="row"><code>  取 mini-batch (s, a, r, s′)，256 筆</code><div class="ex"><span class="tag">TD3</span>從固定資料集抽樣。</div></div>
+    <div class="row"><code>  ã ← clip(π′(s′) + clip(0.2·N(0,1), −0.5, 0.5), −1, 1)</code><div class="ex"><span class="tag">TD3</span>目標策略平滑。</div></div>
+    <div class="row"><code>  y ← r + 0.99 · min(Q′₁(s′, ã), Q′₂(s′, ã))</code><div class="ex"><span class="tag">TD3</span>clipped double-Q 目標。</div></div>
+    <div class="row"><code>  更新 Q₁, Q₂ 以最小化 (Qⱼ(s, a) − y)²</code><div class="ex"><span class="tag">TD3</span>critic 更新。</div></div>
+    <div class="row"><code>  if t mod 2 == 0:</code><div class="ex"><span class="tag">TD3</span>延遲更新。</div></div>
+    <div class="row"><code>    λ ← 2.5 / mean|Q₁(s, a)|（不微分）</code><div class="ex"><span class="tag new">新增</span>Eq. 5；官方程式碼用 Q₁(s, π(s))。</div></div>
+    <div class="row"><code>    更新 π 以最大化 mean[λ·Q₁(s, π(s)) − (π(s) − a)²]</code><div class="ex"><span class="tag new">新增</span>BC 項（Eq. 3）。</div></div>
+    <div class="row"><code>    θ′ ← 0.005·θ + 0.995·θ′</code><div class="ex"><span class="tag">TD3</span>目標網路追隨。</div></div>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table>
+    <caption>Table 4：TD3+BC 的超參數（TD3 部分未從 TD3 GitHub 修改）</caption>
+    <thead><tr><th>超參數</th><th class="num">值</th></tr></thead><tbody>
+    <tr><td>最佳化器</td><td class="num">Adam</td></tr>
+    <tr><td>critic／actor 學習率</td><td class="num">3e-4 / 3e-4</td></tr>
+    <tr><td>mini-batch</td><td class="num">256</td></tr>
+    <tr><td>折扣因子</td><td class="num">0.99</td></tr>
+    <tr><td>目標更新率</td><td class="num">5e-3</td></tr>
+    <tr><td>policy noise／clipping</td><td class="num">0.2 / (−0.5, 0.5)</td></tr>
+    <tr><td>policy update frequency</td><td class="num">2</td></tr>
+    <tr><td>critic、actor 架構</td><td class="num">2 層 × 256，ReLU</td></tr>
+    <tr class="hl"><td>α（TD3+BC 唯一新增）</td><td class="num">2.5</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <h3>常見錯誤</h3>
+    <ol>
+      <li>評估時忘了用資料集的 μ, σ 正規化環境給的狀態（Eq. 4；<span class="tag">本頁推導</span>）。</li>
+      <li>讓梯度流過 $\lambda$ 的分母；論文寫明不微分（Sec. 5）。</li>
+      <li>$\overline{|Q|}$ 用 $Q(s_i,a_i)$（Eq. 5）或 $Q(s,\pi(s))$（官方程式碼，<span class="tag">背景（論文外）</span>）——兩者不同，重現時以所用程式碼為準。</li>
+      <li>BC 項用所有維度的平方和而非平均，使「最多為 4」的比例改變，$\alpha=2.5$ 不再對應論文設定（<span class="tag">本頁推導</span>）。</li>
+      <li>在 AntMaze 套用狀態正規化；論文在該領域不用（App. C.1）。</li>
+      <li>只看最終策略的平均分數；論文顯示離線策略的表現變異很大（Fig. 2–3，第 11 章）。</li>
+    </ol>
+  </div>
+</section>
+
+<!-- S9 -->
+<section class="ch" id="setup" data-toc="09" data-tt="實驗設定">
+  <div class="ch-num">09 · 實驗設定</div>
+  <h2>實驗使用 D4RL 的 15 個資料集</h2>
+  <div class="prose">
+    <p>評估使用 D4RL 基準中 OpenAI Gym 的 MuJoCo 任務（Fu et al., 2020）：三個模擬機器人 HalfCheetah、Hopper、Walker2d，各有五種資料集，共 15 個。五種資料集的意思如下 <span class="tag">背景（論文外）</span>：</p>
+    <ul>
+      <li><b>random</b>：由隨機初始化的策略收集。</li>
+      <li><b>medium</b>：由訓練到中等表現的策略收集。</li>
+      <li><b>medium-replay</b>：訓練到中等表現的過程中累積的回放資料。</li>
+      <li><b>medium-expert</b>：medium 與 expert 資料各半混合。</li>
+      <li><b>expert</b>：由訓練完成的策略收集。</li>
+    </ul>
+    <p>分數以 D4RL 的正規化分數報告 <span class="tag">背景（論文外）</span>：$100\times\frac{\text{分數}-\text{隨機策略分數}}{\text{專家策略分數}-\text{隨機策略分數}}$，0 相當於隨機策略，100 相當於專家策略。</p>
+    <p>比較方法：BC（作者自己的實作）；BRAC-p（以散度懲罰策略偏離行為策略）；AWAC（以優勢加權的 BC）；CQL（在 critic 上加保守懲罰）；Fisher-BRC（以 Fisher 散度正則化 critic）。CQL 與 Fisher-BRC 以作者提供的程式碼重跑，確保評估流程相同；BRAC 的結果取自 D4RL 與 CQL 論文，AWAC 取自其論文（Sec. 6）。</p>
+    <p>協定：資料集為 D4RL v0；每個演算法訓練 1 百萬步，每 5000 步評估一次，每次 10 個 episode；表中數字是最後 10 次評估、5 個 seed 的平均（Sec. 6、Table 2）。<b>TD3+BC 只調了 $\alpha$：在 $\{1,2,2.5,3,4\}$ 中，用 Hopper-medium-v0 與 Hopper-expert-v0、以一個不出現在最終結果中的 seed 選出</b>（App. B）。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="td3bc-algorithm-and-d4rl.html">TD3+BC 演算法與 D4RL 評估</a></p>
+</section>
+
+<!-- S10 -->
+<section class="ch" id="results" data-toc="10" data-tt="實驗結果">
+  <div class="ch-num">10 · 實驗結果</div>
+  <h2>TD3+BC 與 Fisher-BRC 相當，訓練時間少於一半</h2>
+  <div class="prose">
+    <p><b>Table 2 的總分：TD3+BC 979.3、Fisher-BRC 974.6、CQL 764.3</b>；BC 595.3、BRAC-p 284.1，AWAC 沒有 medium-replay 結果。TD3+BC 比 Fisher-BRC 高 4.7。論文寫明 ± 是 seed 間的標準差，但<b>Total 的 ± 等於 15 列 ± 的總和（本頁核算：BC 91.5、CQL 61.5、Fisher-BRC 108.3、TD3+BC 33.4 都完全相等），不是總分的標準差</b>，所以不能把它讀成穩定度。</p>
+    <p>TD3+BC 的弱點是 <b>random 資料：例如 HalfCheetah-random 只有 10.2，Fisher-BRC 32.2</b>，BRAC-p 23.5。逐列比較，<b>TD3+BC 在 15 個任務上都不低於 BC</b>，與論文「從不低於 vanilla BC，即使在 expert 任務」一致（Sec. 6）。學習曲線（Fig. 4）顯示 TD3+BC 與 Fisher-BRC 的學習速度與最終表現相近，而且不需要預訓練生成模型。論文腳註指出，CQL 作者程式碼的結果低於其論文報告的值。</p>
+  </div>
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>結果瀏覽器</h3></div>
+    <p class="plate-lead">選一張表，比較各方法的正規化分數或訓練時間。</p>
+    <div class="ctl" style="gap:10px">
+      <div class="seg" id="c4-tab" role="radiogroup" aria-label="表格"><button data-v="t2">D4RL v0 分數（Table 2）</button><button data-v="time">訓練時間（Table 3、Fig. 8）</button><button data-v="t9">v2 與 DT（Table 9）</button></div>
+      <div class="ctl-row" id="c4-ds" role="radiogroup" aria-label="資料集"></div>
+      <div class="ctl-row" id="c4-alg" role="group" aria-label="演算法"></div>
+    </div>
+    <div class="fig" id="c4-fig" style="margin-top:12px"><svg role="img" aria-label="結果長條圖"></svg></div>
+    <p class="note" id="c4-note"></p>
+    <details class="calc"><summary>完整數字表</summary><div class="qa" id="c4-table"></div></details>
+    <p class="plate-f">數字照錄論文 Table 2、3、9 與 Fig. 8；底層演算法的時間（總計減去兩項調整）與加總由本頁計算。</p>
+  </div>
+  <div class="prose">
+    <p><b>訓練時間</b>（Table 3；單張 GTX 1080、1 百萬步，不含評估）：<b>TD3+BC 39 分鐘；Fisher-BRC 以 PyTorch 重寫後 2 小時 8 分</b>（TensorFlow 原版 2 小時 12 分）；<b>CQL 4 小時 11 分</b>。TD3+BC 的兩項修改分別只增加不到 1 秒與不到 5 秒。總計減去兩項調整，可得各方法底層演算法的時間約為 2 小時 17 分、1 小時 0 分、55 分與 39 分 <span class="tag">本頁推導</span>；CQL 約為 TD3+BC 的 6.4 倍，Fisher-BRC（PyTorch）約 3.3 倍。</p>
+    <p><b>消融與敏感度</b>：沒有 BC 項時，RL 演算法本身不足以達到高表現（部分 random 資料除外）；拿掉正規化的影響最小但仍有幫助（Fig. 5）。<b>α = 2 與 α = 3 幾乎沒有差異；α = 1（偏向模仿）與 α = 4（偏向 RL）時，部分任務開始退步</b>（Fig. 6）。</p>
+    <p><b>附錄實驗</b>：random 與 expert 各取一半的混合資料（Table 7）上，TD3+BC 在 HalfCheetah 101.9、Hopper 112.2、Walker2d 28.8，CQL 為 73.3、110.8、100.3，Fisher-BRC 為 105.8、111.9、32.0；作者的假設是 Walker2d 的落後與 BC 在 Walker2d-expert 上表現差有關。AntMaze（Table 8，不使用正規化）：Umaze 78.6、Umaze-Diverse 71.4、Medium-Diverse 10.6、Medium-Play 3.0、Large-Diverse 0.2、Large-Play 0.0。在 D4RL v2 上與 Decision Transformer（DT，以 Transformer 做序列建模的離線 RL）比較（Table 9）：在 DT 有結果的 9 個任務上，DT 672.6、TD3+BC 677.4，TD3+BC 沒有額外調參；DT 的數字取自其論文、3 個 seed，TD3+BC 為 5 個 seed。DT 訓練 16 小時 21 分，只訓練 100k 步時 1 小時 38 分，TD3+BC 39 分（Fig. 8）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Table 2 中 TD3+BC、Fisher-BRC、CQL 的總分？TD3+BC 的弱點？Total 的 ± 是什麼？</p>
+    <p class="a">979.3、974.6、764.3；random 資料較弱（HalfCheetah-random 10.2 vs Fisher-BRC 32.2）；從不低於 BC；Total 的 ± 等於各列 ± 之和（本頁核算），不是總分的標準差（Table 2、Sec. 6）。</p>
+    <p class="q">三者的訓練時間？$\alpha$ 如何選出？$\alpha$ 的敏感度？</p>
+    <p class="a">TD3+BC 39m、Fisher-BRC 2h 8m（PyTorch）、CQL 4h 11m；$\alpha\in\{1,2,2.5,3,4\}$ 在 Hopper-medium／expert 單一未使用 seed 上調；2 與 3 無差異，1 與 4 部分任務退步（Table 3、App. B、Fig. 6）。</p>
+  </div></details>
+</section>
+
+<!-- S11 -->
+<section class="ch" id="unstable" data-toc="11" data-tt="不穩定">
+  <div class="ch-num">11 · 不穩定</div>
+  <h2>離線訓練的策略表現變異很大</h2>
+  <div class="prose">
+    <p>線上 RL 中，若目前的策略不理想，可以改用之前的 checkpoint 或繼續訓練；離線 RL 依定義只評估一次，最後這一個策略因此特別重要（Sec. 4）。作者用兩種量測看訓練後策略的不穩定：</p>
+    <ul>
+      <li><b>Fig. 2：最後一次評估的 10 個 episode 中，最差 episode 的百分比差</b>（單一時間點內的變異）。</li>
+      <li><b>Fig. 3：最後 10 次評估中，最差一次的百分比差</b>（一段時間內的變異）。百分比差的比較基準推定為平均表現 <span class="tag">推定</span>（圖說未寫明）。</li>
+    </ul>
+    <p>結果是<b>線上 TD3 的變異小，所有離線演算法（BC、CQL、Fisher-BRC、TD3+BC）的變異都很大</b>：平均表現合理時，某些 episode 仍可能很差；表現也取決於在哪一步停止訓練。</p>
+  </div>
+  <blockquote class="author"><p><b>作者認為：</b>變異不太可能來自策略熵，即策略的隨機性（TD3+BC 的策略是確定性的），而是<b>來自分布偏移與對未見狀態的泛化不佳</b>（Ross et al., 2011）：最佳化後的策略從未在環境中執行過，和 BC 的情形相同。連只改幾行的 TD3+BC 也重現這個現象，作者據此認為這是所有離線訓練共有的根本問題，也質疑只報告最終策略平均值的評估慣例（Sec. 4）。</p></blockquote>
+  <div class="prose">
+    <p>限制：不穩定問題本文沒有解決（Sec. 4、Sec. 7）；random 資料的表現弱（App. C.1）。在 App. A（Broader Impact）中，作者寫明相對既有最佳方法的表現增益很小，預期影響在於可及性與易用性，而不是擴大應用範圍；離線 RL 也會受資料集偏差影響。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Fig. 2 與 Fig. 3 量的是什麼？作者的假設？</p>
+    <p class="a">Fig. 2：最後一次評估 10 個 episode 中最差者；Fig. 3：最後 10 次評估中最差者；離線策略變異都大，線上 TD3 小；作者假設來自分布偏移與對未見狀態泛化不佳，不是策略熵（Sec. 4）。</p>
+  </div></details>
+</section>
+
+<!-- S12 -->
+<section class="ch" id="history" data-toc="12" data-tt="研究脈絡">
+  <div class="ch-num">12 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>連續動作的 actor-critic 從 DDPG 發展到 TD3。離線 RL 中，BCQ、BEAR、BRAC 以各種方式限制策略靠近行為策略；AWR、CRR 以優勢加權的 BC 學習；D4RL 提供共同的基準；CQL 與 Fisher-BRC 是本文比較的最佳方法。另一條脈絡是深度 RL 的實作細節研究，指出許多效能差異來自實作而非演算法。本文把這兩條脈絡結合起來：只在 TD3 上加一項 BC。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S13 -->
+<section class="ch" id="next" data-toc="13" data-tt="延伸閱讀">
+  <div class="ch-num">13 · 延伸閱讀</div>
+  <h2>延伸閱讀</h2>
+  <div class="prose"><h3>研究筆記（依閱讀順序）</h3></div>
+  <ol class="rl">
+    <li><div><a href="td3bc-lineage-overview.html">TD3+BC 研究脈絡總覽：從 actor-critic 到最小化的離線 RL</a><span>總覽</span></div></li>
+    <li><div><a href="rl-mdp-q-learning-basics.html">MDP 與 Q-learning 基礎</a><span>站內筆記（No. 568）</span></div></li>
+    <li><div><a href="offline-rl-distribution-shift.html">離線 RL 與分布偏移</a><span>站內筆記（No. 568）</span></div></li>
+    <li><div><a href="ddpg-td3-actor-critic.html">DDPG 到 TD3：連續動作的 actor-critic</a><span>底層演算法</span></div></li>
+    <li><div><a href="batch-constrained-policy-constraint-methods.html">批次約束與策略約束方法：BCQ、BEAR、BRAC 與其後續</a><span>策略約束</span></div></li>
+    <li><div><a href="advantage-weighted-bc-methods.html">優勢加權的行為複製：AWR、CRR、AWAC、BAIL</a><span>加權 BC</span></div></li>
+    <li><div><a href="rl-plus-behavior-cloning-prior-work.html">RL 與行為複製的結合：從示範學習到 SAC+BC 基準</a><span>RL + BC</span></div></li>
+    <li><div><a href="rl-implementation-details-reproducibility.html">深度 RL 的實作細節與可重現性：本論文的「極簡」動機</a><span>實作細節</span></div></li>
+    <li><div><a href="td3bc-algorithm-and-d4rl.html">TD3+BC 演算法與 D4RL 評估</a><span>本論文</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Scott Fujimoto, Shixiang Shane Gu. A Minimalist Approach to Offline Reinforcement Learning. NeurIPS 2021. <a href="https://arxiv.org/abs/2106.06860">arXiv:2106.06860</a>. 程式碼：<a href="https://github.com/sfujim/TD3_BC">github.com/sfujim/TD3_BC</a>.</p>
+  <p>本頁的方程式與數字取自論文 v2；標示「本頁推導」的內容為本頁自行推導，並非論文結論；「推定」為校準值；「背景（論文外）」為論文引用但未寫出的既有知識。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>

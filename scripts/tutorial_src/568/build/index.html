@@ -1,0 +1,1306 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>保守 Q 學習 CQL</title>
+<meta name="description" content="圖解 Kumar、Zhou、Tucker、Levine 的 Conservative Q-Learning（arXiv 2006.04779）：在 Bellman 誤差上加 Q 值正則項，讓離線強化學習的價值估計成為下界；含四個即時計算的互動元件。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout copied from the k-diff tutorial shell: reading column, sticky contents rail,
+   interactive figures on wider plates. One accent colour (CQL estimate); two figure-only
+   series colours: true value (--c-true) and the Eq. 1 variant (--c-eq1). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+
+/* ---- added for No. 568 ---- */
+:root{--c-true:var(--c-par);--c-eq1:var(--c-perp)}
+.hat{position:relative;display:inline-block}
+.hat::before{content:"^";position:absolute;left:50%;top:-.36em;transform:translateX(-50%);font-size:.78em;line-height:1}
+details.advanced{max-width:700px;margin:16px 0 0;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.plate details.advanced{max-width:none}
+details.advanced>summary{cursor:pointer;list-style:none;padding:10px 16px;min-height:44px;display:flex;align-items:center;gap:10px;font:500 14px/1.4 var(--f-body);color:var(--ink-2)}
+details.advanced>summary::-webkit-details-marker{display:none}
+details.advanced>summary::before{content:"";width:7px;height:7px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.advanced[open]>summary::before{transform:rotate(45deg)}
+details.advanced>.adv{padding:2px 16px 16px;font-size:15px}
+.adv .ctl{gap:10px}
+.wgrid{display:grid;grid-template-columns:1fr;gap:4px 18px}
+@media (min-width:600px){.wgrid{grid-template-columns:1fr 1fr}}
+.lg.m-true::before{width:10px;height:10px;border:2px solid var(--c-true);border-radius:50%;background:var(--surface)}
+.lg.m-eq1::before{width:10px;height:10px;border:0;background:var(--c-eq1)}
+.lg.m-cql::before{width:12px;height:12px;border:0;border-radius:50%;background:var(--accent)}
+.lg.l-true::before{border-top:2px solid var(--c-true)}
+.lg.l-eq1::before{border-top:2px dashed var(--c-eq1)}
+.lg.l-cql::before{border-top:3px dotted var(--accent)}
+.lg.l-tau::before{border-top:2px dashed var(--accent)}
+.lg.l-h::before{border-top:2px dotted var(--ink-3)}
+.bar{display:inline-block;height:8px;border-radius:999px;background:var(--ink-2);vertical-align:middle;margin-right:8px}
+.bar.mu{background:transparent;border:1.5px solid var(--accent);height:9px}
+td .bw{display:flex;align-items:center;gap:6px}
+.figrow{display:grid;grid-template-columns:minmax(0,1fr);gap:20px}
+@media (min-width:768px){.figrow.two{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+.fig h4{margin:0 0 6px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.concl{font-size:14px;color:var(--ink);margin:10px 0 0;padding:8px 12px;border:1px solid color-mix(in oklab,var(--accent) 45%,var(--line));background:var(--accent-soft);border-radius:10px}
+.tscroll:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+svg .true{stroke:var(--c-true);stroke-width:2.5;fill:none}
+svg .true-f{fill:var(--c-true)}
+svg .eq1{stroke:var(--c-eq1);stroke-width:2.5;fill:none}
+svg .eq1-f{fill:var(--c-eq1)}
+svg .hol-true{fill:var(--surface);stroke:var(--c-true);stroke-width:2}
+svg .node{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .edge{stroke:var(--ink-2);fill:none}
+svg .edge-f{fill:var(--ink-2)}
+svg .base{stroke:var(--ink);stroke-width:1.5}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 568</span>
+  <span class="ttl">保守 Q 學習：壓低離線資料外動作的 Q 值</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 568</b> · 互動教學 · arXiv 2006.04779 · 2020</div>
+  <h1>保守 Q 學習：壓低離線資料外動作的 <span class="lat">Q</span> 值</h1>
+  <p class="dek">CQL 在 Bellman 誤差上加一個正則項，壓低學到的 Q 值；在論文的假設下，策略的估計價值不超過真實價值。</p>
+  <p class="byline">Aviral Kumar、Aurick Zhou、George Tucker、Sergey Levine（2020）〈Conservative Q-Learning for Offline Reinforcement Learning〉</p>
+  <div class="fig" id="hero-fig"><svg role="img" aria-label="Q 值軸示意：三個動作各一條數線。資料中較常見、策略較少選的動作，CQL 估計比真實值高；策略偏好而資料少的動作，CQL 估計比真實值低很多。"></svg>
+    <div class="legend"><span class="lg m-true">真實 Q</span><span class="lg m-cql">CQL（Eq. 2）估計</span></div>
+    <p class="cap">示意圖使用 C1 的預設數值（教學用自訂例子）：a3 被策略偏好但在資料中只占 20%，它的 Q 被壓低最多。</p></div>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 問題</span><p>離線強化學習只能用現成資料。策略會偏向資料中沒出現、價值被估得太高的動作。</p></div>
+    <div class="fact"><span class="n">02 · 方法</span><p>CQL 在訓練 Q 函數時，壓低策略偏好的動作的 Q 值、抬高資料中動作的 Q 值。在表格式設定下，只要壓低的強度 α 夠大（沒有取樣誤差時任何 α &gt; 0 都可以），策略的估計價值不超過真實價值。</p></div>
+    <div class="fact"><span class="n">03 · 結果</span><p>實作只在 SAC 或 QR-DQN 上多約 20 行。論文摘要稱在許多任務上回報是先前方法的 2–5 倍，尤其是來源複雜的資料；Gym 混合資料集上為 2–3 倍（Sec. 6）。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2006.04779">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-568">在關聯圖中查看</a>
+    <a class="btn" href="cql-lineage-hub.html">研究筆記總覽</a>
+  </div>
+</section>
+
+<!-- S1 ============================================================ -->
+<section class="ch" id="basics" data-toc="01" data-tt="Bellman 算子">
+  <div class="ch-num">01 · Bellman 算子</div>
+  <h2>Q 函數由 Bellman 算子的不動點定義</h2>
+  <div class="prose">
+    <p>強化學習的問題寫成馬可夫決策過程（Markov decision process，MDP）：在狀態 $s$ 選動作 $a$，得到獎勵 $r(s,a)$（$\lvert r\rvert\le R_{\max}$），並依轉移機率 $T(s'\mid s,a)$ 進入下一個狀態 $s'$。折扣因子 $\gamma\in(0,1)$ 讓越晚的獎勵權重越小。策略 $\pi(a\mid s)$ 是在每個狀態選動作的機率分佈。</p>
+    <p>動作價值 $Q^\pi(s,a)$ 是「在 $s$ 先做 $a$，之後都照 π 行動」得到的折扣回報期望；狀態價值 $V^\pi(s)=\mathbb E_{a\sim\pi}[Q^\pi(s,a)]$ 是在 $s$ 直接照 π 行動的期望。兩者的差別是本頁的核心：「$Q$ 的下界」是每一個 $(s,a)$ 都不高估，「$V$ 的下界」只要求依 π 取平均後不高估。</p>
+    <p>Bellman 算子把一個 Q 函數映到另一個 Q 函數：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathcal B^\pi Q=r+\gamma P^\pi Q,\qquad P^\pi Q(s,a)=\mathbb E_{s'\sim T(\cdot\mid s,a),\,a'\sim\pi(\cdot\mid s')}[Q(s',a')]$$</div><span class="eq-n">Sec. 2</span></div>
+  <div class="prose">
+    <p>「不動點」（fixed point）是滿足 $x=f(x)$ 的 $x$；反覆套用 $f$ 會收斂到它。$Q^\pi$ 正是 $\mathcal B^\pi$ 的不動點：$Q^\pi=r+\gamma P^\pi Q^\pi$。Q-learning 改用 Bellman 最佳化算子 $\mathcal B^*Q(s,a)=r(s,a)+\gamma\,\mathbb E_{s'}[\max_{a'}Q(s',a')]$，它的不動點是最佳策略的 Q。</p>
+    <p>「表格式」（tabular）設定指每個 $(s,a)$ 的 Q 值都是一個獨立的數字，沒有神經網路之類的函數近似。這時可以把 Q 看成長度 $\lvert S\rvert\lvert A\rvert$ 的向量、$P^\pi$ 看成矩陣，不動點寫成</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$Q^\pi=(I-\gamma P^\pi)^{-1}r,\qquad (I-\gamma P^\pi)^{-1}=\sum_{t\ge0}\gamma^t(P^\pi)^t$$</div><span class="eq-n">矩陣形式</span></div>
+  <div class="prose">
+    <p>右式每一項都是機率矩陣的乘冪，元素非負，所以 $(I-\gamma P^\pi)^{-1}$ 的每個元素都非負。例：兩個狀態、每個狀態只有一個動作，從狀態 1 必定走到狀態 2、狀態 2 停在原地，則 $P^\pi=\begin{pmatrix}0&1\\0&1\end{pmatrix}$，$(I-\gamma P^\pi)^{-1}=\begin{pmatrix}1&\gamma/(1-\gamma)\\0&1/(1-\gamma)\end{pmatrix}$，元素都 ≥ 0。這代表：若每一步的獎勵都減少一點，不動點也一定減少，不會在某處變大。後面所有下界定理都靠這個性質。</p>
+    <p>off-policy 方法用「別的策略收集的資料」學習。actor-critic 方法另外維護一個策略（actor），訓練它最大化 Q（critic），交替做兩件事（Sec. 2）：策略評估 $\hat Q^{k+1}\leftarrow\arg\min_Q\mathbb E_{s,a,s'\sim\mathcal D}\big[\big(r+\gamma\mathbb E_{a'\sim\hat\pi^k}[\hat Q^k(s',a')]-Q(s,a)\big)^2\big]$，與策略改進 $\hat\pi^{k+1}\leftarrow\arg\max_\pi\mathbb E_{s\sim\mathcal D,a\sim\pi}[\hat Q^{k+1}(s,a)]$。本文的兩個底座是 SAC（soft actor-critic，連續動作的 actor-critic）與 QR-DQN（離散動作、以分位數表示回報分佈的 Q-learning）。</p>
+  </div>
+  <details class="advanced"><summary>符號表</summary><div class="adv"><div class="tscroll" tabindex="0" role="region" aria-label="符號表"><table><caption>本頁符號（依首次出現排序）</caption><thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$Q^\pi,V^\pi$</td><td>真實的動作價值與狀態價值</td></tr>
+    <tr><td>$\mathcal B^\pi,\mathcal B^*,P^\pi$</td><td>Bellman 算子、Bellman 最佳化算子、策略下的轉移</td></tr>
+    <tr><td>$\mathcal D,\pi_\beta,\hat\pi_\beta$</td><td>資料集、行為策略、資料中的經驗行為策略</td></tr>
+    <tr><td>$d^{\pi_\beta}(s)$</td><td>資料的狀態分佈（行為策略的折扣狀態分佈）</td></tr>
+    <tr><td>$\hat{\mathcal B}^\pi$</td><td>只用資料樣本算的經驗 Bellman 算子</td></tr>
+    <tr><td>$\hat Q^k,\hat Q^\pi,\hat V^\pi$</td><td>CQL 第 k 次迭代的 Q、迭代的不動點、$\mathbb E_\pi[\hat Q^\pi]$</td></tr>
+    <tr><td>$\mu,\alpha$</td><td>被壓低 Q 值的動作分佈、權衡係數</td></tr>
+    <tr><td>$D_{\mathrm{CQL}}(s)$</td><td>$\sum_a\pi(\pi/\pi_\beta-1)$</td></tr>
+    <tr><td>$\lvert\mathcal D(s,a)\rvert,C_{r,T,\delta},\delta$</td><td>計數、集中不等式常數、失敗機率</td></tr>
+    <tr><td>$\mathcal H,D_{\mathrm{KL}},\rho$</td><td>熵、KL 散度、KL 正則的先驗分佈</td></tr>
+    <tr><td>$D_{\mathrm{TV}}$</td><td>總變異距離</td></tr>
+    <tr><td>$\hat M,J(\pi,M),d^\pi_M,\rho_0$</td><td>經驗 MDP、折扣回報、折扣狀態分佈、起始狀態分佈</td></tr>
+    <tr><td>$\tau$</td><td>Lagrange 版本的 Q 值差距門檻</td></tr>
+  </tbody></table></div></div></details>
+  <p class="read">延伸閱讀：<a href="rl-mdp-q-learning-basics.html">MDP、Q 函數與 Bellman backup</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼 $(I-\gamma P^\pi)^{-1}$ 的元素都非負？</p><p class="a">它等於 $\sum_t\gamma^t(P^\pi)^t$，每一項都是機率矩陣的乘冪，元素非負。</p>
+  </div></details>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="shift" data-toc="02" data-tt="分佈偏移">
+  <div class="ch-num">02 · 分佈偏移</div>
+  <h2>離線資料讓策略偏向被高估的動作</h2>
+  <div class="prose">
+    <p>離線強化學習（offline RL）只有一份事先收集的資料集 $\mathcal D$，不能再與環境互動。收集資料的策略叫行為策略（behavior policy）$\pi_\beta$；資料取樣自 $d^{\pi_\beta}(s)\pi_\beta(a\mid s)$，其中 $d^{\pi_\beta}$ 是資料的狀態分佈。每個狀態中各動作在資料裡出現的比例，叫經驗行為策略 $\hat\pi_\beta(a\mid s)$。資料不含所有可能的轉移，所以策略評估實際用的是只 backup 一個樣本的經驗 Bellman 算子 $\hat{\mathcal B}^\pi$（Sec. 2）。</p>
+    <p>問題出在 action distribution shift：Bellman 目標值中的 $a'$ 取自學到的策略，但 Q 只在 $\pi_\beta$ 的動作上訓練過。資料中沒出現的動作叫分佈外動作（out-of-distribution，OOD）。策略被訓練成最大化 Q，所以會偏向 Q 值被錯誤高估的 OOD 動作。線上 RL 可以實際試做該動作、觀察真實價值來修正；離線無法試做，錯誤無法修正（Sec. 2）。</p>
+    <p>論文也指出：Q 的訓練沒有 state distribution shift，因為 Bellman backup 不查詢資料外狀態的 Q 值；但策略在測試時可能有 state distribution shift（Sec. 2）。</p>
+    <p>既有方法（BCQ、BEAR、BRAC 等）限制學到的策略靠近行為策略，多數需要另外估計 $\pi_\beta$，因此受限於估計品質；資料來自多個來源時 $\pi_\beta$ 特別複雜（Sec. 5）。作者的出發點是另一條路：直接讓學到的價值估計保守，成為真實價值的下界（Sec. 1）。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="offline-rl-distribution-shift.html">Offline RL 的分布偏移與 OOD 動作造成的 Q 值高估</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼離線 actor-critic 會高估 Q 值？Q 的訓練有沒有 state distribution shift？</p><p class="a">Bellman 目標值用學到的策略取 $a'$，但 Q 只在 $\pi_\beta$ 的動作上訓練；策略最大化 Q 而偏向 Q 被錯誤高估的 OOD 動作，離線無法試做修正。Q 的訓練沒有 state distribution shift（backup 不查詢資料外狀態），測試時策略可能有（Sec. 2）。</p>
+  </div></details>
+</section>
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="eq1" data-toc="03" data-tt="Eq. 1">
+  <div class="ch-num">03 · Eq. 1</div>
+  <h2>只壓低 Q 值得到逐點下界</h2>
+  <div class="prose">
+    <p>作者先處理策略評估：給定要評估的策略 π，估計它的價值。做法是在標準 Bellman 誤差之外，再最小化某個動作分佈 $\mu(a\mid s)$ 下的 Q 值期望。μ 的狀態邊際與資料相同，$\mu(s,a)=d^{\pi_\beta}(s)\mu(a\mid s)$，因為 Q 的訓練只會查詢未見的動作，不會查詢未見的狀態。權衡係數 α（tradeoff factor）控制壓低的強度：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\hat Q^{k+1}\leftarrow\arg\min_Q\ \alpha\,\mathbb E_{s\sim\mathcal D,a\sim\mu(a\mid s)}[Q(s,a)]+\tfrac12\,\mathbb E_{s,a\sim\mathcal D}\Big[\big(Q(s,a)-\hat{\mathcal B}^\pi\hat Q^k(s,a)\big)^2\Big]$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="prose">
+    <p>在表格式設定下，每一輪都能精確最小化。對單一格 $Q(s,a)$ 微分並設為 0，得到每一輪的解：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\hat Q^{k+1}(s,a)=\hat{\mathcal B}^\pi\hat Q^k(s,a)-\alpha\,\frac{\mu(a\mid s)}{\hat\pi_\beta(a\mid s)}$$</div><span class="eq-n">Eq. 11</span></div>
+  <details class="advanced"><summary>推導細節：逐格微分</summary><div class="adv">
+    <p>目標中含 $Q(s,a)$ 的部分是 $\alpha\,d(s)\mu(a\mid s)Q(s,a)+\tfrac12 d(s)\hat\pi_\beta(a\mid s)\big(Q(s,a)-\hat{\mathcal B}^\pi\hat Q^k(s,a)\big)^2$：懲罰項以 μ 加權，Bellman 誤差以資料密度 $\hat\pi_\beta$ 加權。對 $Q(s,a)$ 的導數為 $\alpha\mu+\hat\pi_\beta(Q-\hat{\mathcal B}^\pi\hat Q^k)=0$，移項即得 Eq. 11。<span class="tag">本頁推導</span> 論文只寫「令導數為 0」。</p>
+  </div></details>
+  <div class="prose">
+    <p>Eq. 11 的分母是 $\hat\pi_\beta$：資料越少的動作，同樣的 α 壓得越低。μ、α、$\hat\pi_\beta$ 都為正，所以每一輪都有 $\hat Q^{k+1}\le\hat{\mathcal B}^\pi\hat Q^k$，即每一步都減去一個非負量。因為 $(I-\gamma P^\pi)^{-1}$ 的元素非負（S1），每一步少一點，不動點就少一點：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\hat Q^\pi=(I-\gamma P^\pi)^{-1}\Big[r-\alpha\frac{\mu}{\hat\pi_\beta}\Big]=Q^\pi-\alpha\,(I-\gamma P^\pi)^{-1}\frac{\mu}{\hat\pi_\beta}\ \le\ Q^\pi$$</div><span class="eq-n">Thm. 3.1（$\hat{\mathcal B}^\pi=\mathcal B^\pi$）</span></div>
+  <div class="prose">
+    <p>這是 Thm. 3.1 在沒有取樣誤差（$\hat{\mathcal B}^\pi=\mathcal B^\pi$）時的形式：任何 α &gt; 0 都使不動點 $\hat Q^\pi\le Q^\pi$ 逐點成立，也就是每一個 $(s,a)$ 都不高估。有取樣誤差時的完整敘述在 S7：α 要超過一個門檻，而且 μ 在每個動作上都要 &gt; 0。</p>
+    <p>定理要求 $\mathrm{supp}\,\mu\subset\mathrm{supp}\,\hat\pi_\beta$，推導另假設 $\hat\pi_\beta(a\mid s)>0$ 對所有 $a$（Sec. 3.1）。原因 <span class="tag">本頁推導</span>：若 μ 在資料中沒出現的動作上有質量，那一格的目標只剩 $\alpha\mu Q$ 一項，沒有 Bellman 誤差拉住，最小值是 $-\infty$。</p>
+    <p>逐點下界的代價是過度保守：作者指出策略評估與改進只用到 π 下的期望值，所以只需要期望值的下界（Sec. 1）。下一節加一項把它變緊。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">表格式下 Eq. 1 每一輪的解是什麼？為什麼不動點是逐點下界？</p><p class="a">$\hat Q^{k+1}=\hat{\mathcal B}^\pi\hat Q^k-\alpha\mu/\hat\pi_\beta$（Eq. 11）；每步都減去非負量，$(I-\gamma P^\pi)^{-1}$ 元素非負，所以不動點 $\hat Q^\pi\le Q^\pi$ 逐點成立（無取樣誤差時任何 α &gt; 0；有取樣誤差時 α 要超過門檻且 μ 在每個動作上 &gt; 0；Thm. 3.1）。</p>
+  </div></details>
+</section>
+
+<!-- S4 ============================================================ -->
+<section class="ch" id="eq2" data-toc="04" data-tt="Eq. 2 與 C1">
+  <div class="ch-num">04 · Eq. 2 與 C1</div>
+  <h2>再抬高資料上的 Q 值，部分動作的 Q 會變大</h2>
+  <div class="prose">
+    <p>Eq. 2 在 Eq. 1 的懲罰之外，再加一項「最大化資料分佈 $\hat\pi_\beta$ 下的 Q 值」：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}\hat Q^{k+1}\leftarrow\arg\min_Q\ &\alpha\Big(\mathbb E_{s\sim\mathcal D,a\sim\mu}[Q(s,a)]-\mathbb E_{s\sim\mathcal D,a\sim\hat\pi_\beta}[Q(s,a)]\Big)\\&+\tfrac12\,\mathbb E_{s,a,s'\sim\mathcal D}\Big[\big(Q(s,a)-\hat{\mathcal B}^\pi\hat Q^k(s,a)\big)^2\Big]\end{aligned}$$</div><span class="eq-n">Eq. 2</span></div>
+  <div class="prose">
+    <p>在表格式、無取樣誤差（$\hat{\mathcal B}^\pi=\mathcal B^\pi$、$\hat\pi_\beta=\pi_\beta$）的假設下，同樣逐格微分（多出一項 $-\alpha\pi_\beta$），得到</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\hat Q^{k+1}(s,a)=\mathcal B^\pi\hat Q^k(s,a)-\alpha\Big[\frac{\mu(a\mid s)}{\pi_\beta(a\mid s)}-1\Big]$$</div><span class="eq-n">Eq. 13</span></div>
+  <div class="prose">
+    <p>對 $\mu(a\mid s)<\pi_\beta(a\mid s)$ 的動作，方括號是負的，等於在 Q 上加了一個正量 $\alpha(1-\mu/\pi_\beta)$。所以 Eq. 2 的結果不再是逐點下界：資料中常見、而 μ 較少選的動作可能被高估（App. C）。論文說可以構造三狀態二動作的反例，但沒有給出。下一節說明為什麼依 π 取平均後仍是下界。</p>
+    <p>下面的 C1 只有一個狀態、γ = 0，所以 $Q=r$，Eq. 11 與 Eq. 13 直接給出每個動作被壓低或抬高的量。三個動作的獎勵 $r=(1.0,0.6,0.8)$ 是教學用的自訂值。</p>
+  </div>
+
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>單一狀態：Eq. 1 與 Eq. 2 的逐動作差異</h3><span class="tag">推定：教學用自訂例子</span></div>
+    <p class="plate-lead">空心圓是真實 Q，方形是 Eq. 1 的估計（在數線上方），實心圓是 Eq. 2 的估計（在數線下方）。μ = π，無取樣誤差。</p>
+    <div class="pg side">
+      <div class="fig" id="c1-fig"><svg role="img" aria-label="三個動作的 Q 值數線"></svg>
+        <div class="legend"><span class="lg m-true">真實 Q</span><span class="lg m-eq1">Eq. 1 估計</span><span class="lg m-cql">Eq. 2 估計</span></div></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1-a">權衡係數 α<output id="c1-ao">0.50</output></label><input id="c1-a" type="range" min="0" max="3" step="0.05" value="0.5" aria-valuetext="α 等於 0.50"></div>
+        <div><div class="lbl">策略 π 的預設組</div><div class="seg" id="c1-pre" role="group" aria-label="策略 π 的預設組"><button type="button" data-v="a3" aria-pressed="true">π 偏好 a3</button><button type="button" data-v="a1" aria-pressed="false">π 偏好 a1</button><button type="button" data-v="eq" aria-pressed="false">π = 資料比例</button></div></div>
+        <p class="readout" id="c1-ro"></p>
+      </div>
+    </div>
+    <p class="concl" id="c1-concl"></p>
+    <div class="tscroll" tabindex="0" role="region" aria-label="C1 逐動作讀數"><table id="c1-tab"><caption>逐動作讀數（Eq. 11、Eq. 13；▲ 表示被抬高，▼ 表示被壓低）</caption>
+      <thead><tr><th>動作</th><th class="num">資料比例</th><th class="num">π</th><th class="num">π / 資料比例</th><th class="num">真實 Q</th><th class="num">Eq. 1 − 真實</th><th class="num">Eq. 2 − 真實</th></tr></thead><tbody></tbody></table></div>
+    <details class="advanced"><summary>進階設定：直接調整權重</summary><div class="adv">
+      <p class="note">資料比例 $\hat\pi_\beta$ 的權重最小為 1，保證每個動作都在資料中出現（Sec. 3.1 的假設）。π 的權重可以是 0。</p>
+      <div class="wgrid" id="c1-w"></div>
+      <div class="ctl-row"><button type="button" class="small-btn" id="c1-reset">重設</button></div>
+    </div></details>
+    <p class="sr" id="c1-live" aria-live="polite"></p>
+    <p class="plate-f">讀數由本頁依 Eq. 11 與 Eq. 13（γ = 0、μ = π）即時計算；D 以 $\sum\pi(\pi/\pi_\beta-1)$ 與 $\sum(\pi-\pi_\beta)^2/\pi_\beta$ 兩種方式各算一次。</p>
+  </div>
+  <div class="prose">
+    <p>拖動 α 可以看到：α = 0 時三種標記重合；Eq. 1 的方形全部往左（被壓低）；Eq. 2 中 π 小於資料比例的動作（預設下的 a1、a2）被往右推（抬高），但讀數中 Eq. 2 的估計 V 仍比 V 低。按「π = 資料比例」後，Eq. 2 完全不改變任何 Q，Eq. 1 仍把每個動作壓低 α。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="cql-conservative-policy-evaluation.html">CQL 的保守 policy evaluation：目標式 1、2 與下界定理 3.1、3.2</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 2 的逐格解是什麼？哪些動作的 Q 會被抬高？</p><p class="a">表格式、無取樣誤差（$\hat{\mathcal B}^\pi=\mathcal B^\pi$、$\hat\pi_\beta=\pi_\beta$）時 $\hat Q^{k+1}=\mathcal B^\pi\hat Q^k-\alpha(\mu/\pi_\beta-1)$（Eq. 13）；$\mu(a\mid s)<\pi_\beta(a\mid s)$ 的動作被加上 $\alpha(1-\mu/\pi_\beta)$。</p>
+  </div></details>
+</section>
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="dcql" data-toc="05" data-tt="期望下界">
+  <div class="ch-num">05 · 期望下界</div>
+  <h2>策略下的期望懲罰非負，所以期望值仍是下界</h2>
+  <div class="prose">
+    <p>把 Eq. 13 對 $a\sim\pi$ 取期望，得到估計的狀態價值 $\hat V^{k+1}(s)=\mathbb E_{a\sim\pi}[\hat Q^{k+1}(s,a)]$ 的遞迴：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\hat V^{k+1}(s)=\mathcal B^\pi\hat V^k(s)-\alpha\,\mathbb E_{a\sim\pi(a\mid s)}\Big[\frac{\mu(a\mid s)}{\pi_\beta(a\mid s)}-1\Big]$$</div><span class="eq-n">Eq. 14</span></div>
+  <div class="prose">
+    <p>取 $\mu=\pi$，每一步的期望懲罰是 $\alpha D_{\mathrm{CQL}}(s)$，其中 $D_{\mathrm{CQL}}(s)=\sum_a\pi(a\mid s)\big(\pi(a\mid s)/\pi_\beta(a\mid s)-1\big)$。論文（App. C）把 π 寫成 $(\pi-\pi_\beta)+\pi_\beta$ 展開：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$D_{\mathrm{CQL}}(s)=\sum_a\frac{(\pi-\pi_\beta)^2}{\pi_\beta}+\sum_a\pi_\beta\Big(\frac{\pi}{\pi_\beta}-1\Big)=\sum_a\frac{(\pi-\pi_\beta)^2}{\pi_\beta}+0\ \ge 0$$</div><span class="eq-n">App. C</span></div>
+  <div class="prose">
+    <p>第二項為 0，因為 $\sum_a\pi=\sum_a\pi_\beta=1$。第一項的分子是平方、分母為正，所以 $D_{\mathrm{CQL}}(s)\ge0$，等號若且唯若 $\pi=\pi_\beta$。<span class="tag">本頁推導</span> 這個量正是卡方散度 $\chi^2(\pi\Vert\pi_\beta)=\sum_a\pi^2/\pi_\beta-1$，論文沒有用這個名稱。</p>
+    <p>數值例：$\pi_\beta=(0.5,0.5)$、$\pi=(0.9,0.1)$。第一個動作 $\pi/\pi_\beta-1=0.8$，Q 被壓低 0.8α；第二個動作 $\pi/\pi_\beta-1=-0.8$，Q 被抬高 0.8α。π 下的期望懲罰為 $0.9\times0.8-0.1\times0.8=0.64$；用平方式算為 $0.16/0.5+0.16/0.5=0.64$，兩者一致。C1 的讀數也顯示兩種算法永遠相等。</p>
+    <p>每一步的期望懲罰都非負，再經 $(I-\gamma P^\pi)^{-1}$ 累積，就得到 Thm. 3.2 在無取樣誤差時的結論：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\hat V^\pi(s)=V^\pi(s)-\alpha\Big[(I-\gamma P^\pi)^{-1}\,\mathbb E_\pi\Big[\frac{\pi}{\pi_\beta}-1\Big]\Big](s)\ \le\ V^\pi(s)$$</div><span class="eq-n">Thm. 3.2（$\hat{\mathcal B}^\pi=\mathcal B^\pi$）</span></div>
+  <div class="prose">
+    <p>也就是：Eq. 2 的 $\hat Q^\pi$ 可能不是逐點下界，但 $\mathbb E_{\pi}[\hat Q^\pi]\le V^\pi$，且比 Eq. 1 的下界緊（S6 量化）。</p>
+    <p>為什麼抬高項要用 $\hat\pi_\beta$，不用別的分佈 ν？App. D.2 把抬高項換成任意 ν（ν-CQL，Eq. 19），在表格式、$\mu=\pi$、並考慮全支撐的最壞 π 的條件下，解 $\max_\nu\min_\pi\sum_a\pi(\pi-\nu)/\pi_\beta$：內層最佳 $\pi^*=\tfrac12\nu+\tfrac12\pi_\beta$（Eq. 22），代回後只有 $\nu=\pi_\beta$ 使懲罰非負（Eq. 23，Thm. D.3）。<span class="tag">本頁推導</span> 代回的懲罰值為 $-\tfrac14\chi^2(\nu\Vert\pi_\beta)$，$\nu\ne\pi_\beta$ 時存在 π 使懲罰為負、下界失效。這是「最壞情況的 π」意義下的必要性，不是對每個固定的 π 都必要。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼 $D_{\mathrm{CQL}}(s)\ge0$？何時為 0？$\pi_\beta=(0.5,0.5)$、$\pi=(0.9,0.1)$ 時是多少？</p><p class="a">$D_{\mathrm{CQL}}=\sum_a(\pi-\pi_\beta)^2/\pi_\beta+\sum_a\pi_\beta(\pi/\pi_\beta-1)$，第二項為 0；所以 ≥ 0，等號若且唯若 $\pi=\pi_\beta$；數值 0.64（App. C）。</p>
+    <p class="q">若把抬高項的分佈換成其他 ν 會怎樣？</p><p class="a">表格式、$\mu=\pi$，且考慮全支撐的最壞 π 時，只有 $\nu=\pi_\beta$ 能保證懲罰非負；$\nu\ne\pi_\beta$ 時存在 π 使懲罰為負（$-\tfrac14\chi^2(\nu\Vert\pi_\beta)$，本頁推導）、下界失效（Thm. D.3）。</p>
+  </div></details>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="mdp" data-toc="06" data-tt="累積與 C2">
+  <div class="ch-num">06 · 累積與 C2</div>
+  <h2>每一步的懲罰經 Bellman 迭代累積</h2>
+  <div class="prose">
+    <p>多狀態時，某個 $(s,a)$ 被扣掉的量會經轉移傳到前面的狀態：不動點的總低估量是 $(I-\gamma P^\pi)^{-1}$ 乘上每一步的懲罰。這也讓 Eq. 1 與 Eq. 2 的差距可以精確算出 <span class="tag">本頁推導</span>。取 $\mu=\pi$，Eq. 1 每一步在 π 下的期望懲罰是 $\alpha\,\mathbb E_\pi[\pi/\pi_\beta]=\alpha(D_{\mathrm{CQL}}+1)$，Eq. 2 是 $\alpha D_{\mathrm{CQL}}$，每一步恰好差常數 α。因為 $(I-\gamma P^\pi)^{-1}\mathbf 1=\mathbf 1/(1-\gamma)$（每一列的和是 $\sum_t\gamma^t$），無取樣誤差時兩者的估計 V 在每個狀態都恰好差 $\alpha/(1-\gamma)$。這就是論文所說「Eq. 2 的下界較緊」的精確量；論文本身只寫「we explicitly subtract 1」（App. C）。</p>
+    <p>C2 用一個自訂的三狀態 MDP 計算這些量：狀態 s0、s1、s2，動作「左」「右」。s0 選左留在 s0、選右到 s1；s1 選左到 s0，選右以機率 0.8 到 s2、以機率 0.2 到 s0；s2 選左到 s1、選右留在 s2。只有 s2 選右得到獎勵 1。</p>
+  </div>
+
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>三狀態 MDP：懲罰的累積與不動點</h3><span class="tag">推定：教學用自訂例子</span></div>
+    <p class="plate-lead">矩陣形式直接求三個不動點（真實、Eq. 1、Eq. 2），並從 0 開始迭代 100 步。</p>
+    <div class="figrow two">
+      <div class="fig" id="c2-mdp"><h4>MDP（箭頭粗細 ∝ π 選該動作的機率）</h4><svg role="img" aria-label="三狀態 MDP 的狀態圖"></svg></div>
+      <div class="fig" id="c2-bar"><h4>六個 (s, a) 的 Q 值</h4><svg role="img" aria-label="六個狀態動作對的 Q 值橫條圖"></svg>
+        <div class="legend"><span class="lg l-true">真實（空心框）</span><span class="lg l-eq1">Eq. 1（斜線）</span><span class="lg acc">Eq. 2（實心）</span></div></div>
+    </div>
+    <div class="ctl" style="margin:18px 0 6px">
+      <div class="wgrid">
+        <div class="rng"><label class="lbl" for="c2-a">權衡係數 α<output id="c2-ao">0.10</output></label><input id="c2-a" type="range" min="0" max="1" step="0.01" value="0.1"></div>
+        <div class="rng"><label class="lbl" for="c2-g">折扣因子 γ<output id="c2-go">0.90</output></label><input id="c2-g" type="range" min="0" max="0.95" step="0.05" value="0.9"></div>
+        <div class="rng"><label class="lbl" for="c2-k">迭代步數 k<output id="c2-ko">100</output></label><input id="c2-k" type="range" min="0" max="100" step="1" value="100"></div>
+        <div><div class="lbl">預設組</div><div class="seg" id="c2-pre" role="group" aria-label="C2 預設組"><button type="button" data-v="def" aria-pressed="true">預設</button><button type="button" data-v="g5" aria-pressed="false">γ = 0.5（看高估）</button><button type="button" data-v="eq" aria-pressed="false">π = 資料比例（均勻）</button></div></div>
+      </div>
+    </div>
+    <div class="figrow two">
+      <div class="fig" id="c2-it"><h4>價值：s0 的 V 對迭代步數 k</h4><svg role="img" aria-label="s0 的價值迭代曲線"></svg>
+        <div class="legend"><span class="lg l-true">真實</span><span class="lg l-eq1">Eq. 1</span><span class="lg l-cql">Eq. 2</span></div></div>
+      <div class="fig" id="c2-df"><h4>與真實迭代的差</h4><svg role="img" aria-label="CQL 迭代與真實迭代的差"></svg>
+        <div class="legend"><span class="lg l-eq1">Eq. 1 − 真實</span><span class="lg l-cql">Eq. 2 − 真實</span></div></div>
+    </div>
+    <div class="tscroll" tabindex="0" role="region" aria-label="C2 各狀態讀數"><table id="c2-tab"><caption>各狀態的 V（不動點）</caption>
+      <thead><tr><th>狀態</th><th class="num">真實 V</th><th class="num">Eq. 1 估計</th><th class="num">Eq. 2 估計</th><th class="num">Eq. 1 − Eq. 2</th><th class="num">−α/(1−γ)</th><th class="num">D_CQL(s)</th></tr></thead><tbody></tbody></table></div>
+    <p class="readout" id="c2-ro"></p>
+    <details class="advanced"><summary>進階設定：行為策略與目標策略</summary><div class="adv"><div class="wgrid">
+      <div class="rng"><label class="lbl" for="c2-b0">資料中 s0 選右的比例<output id="c2-b0o">0.80</output></label><input id="c2-b0" type="range" min="0.02" max="0.98" step="0.02" value="0.8"></div>
+      <div class="rng"><label class="lbl" for="c2-b1">資料中 s1 選右的比例<output id="c2-b1o">0.50</output></label><input id="c2-b1" type="range" min="0.02" max="0.98" step="0.02" value="0.5"></div>
+      <div class="rng"><label class="lbl" for="c2-b2">資料中 s2 選右的比例<output id="c2-b2o">0.20</output></label><input id="c2-b2" type="range" min="0.02" max="0.98" step="0.02" value="0.2"></div>
+      <div class="rng"><label class="lbl" for="c2-p">π 選右的機率（三狀態共用）<output id="c2-po">0.90</output></label><input id="c2-p" type="range" min="0" max="1" step="0.05" value="0.9"></div>
+    </div></div></details>
+    <p class="sr" id="c2-live" aria-live="polite"></p>
+    <p class="plate-f">讀數由本頁依 Eq. 11、Eq. 13 與 $Q=(I-\gamma P^\pi)^{-1}r$ 即時計算（6×6 線性方程組）。Eq. 1 與 Eq. 2 相差 α/(1−γ) 為本頁推導。</p>
+  </div>
+  <div class="prose">
+    <p>預設下（α = 0.1、γ = 0.9），表中「Eq. 1 − Eq. 2」三格都是 −1.000，等於 $-\alpha/(1-\gamma)$。γ 越大，同一個 α 造成的低估越大。按「γ = 0.5」：(s1, 左) 的 Eq. 2 估計（0.1618）高於真實值（0.1549），出現高估，但三個狀態的 Eq. 2 估計 V 都仍低於真實 V，與 Thm. 3.2 一致。按「π = 資料比例」：每個狀態的 $D_{\mathrm{CQL}}=0$，Eq. 2 與真實值完全重合。右下的差值圖顯示，Eq. 2 的迭代從 k = 1 起就在真實迭代之下（−0.0063）。γ = 0.95 時，k = 100 的 Eq. 2 值（8.5316）與不動點（8.5902）還差 0.06，表示 100 步尚未完全收斂。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">無取樣誤差、$\mu=\pi$ 時，Eq. 1 與 Eq. 2 的估計 V 差多少？為什麼？</p><p class="a">差 $\alpha/(1-\gamma)$：每步期望懲罰分別為 $\alpha(D_{\mathrm{CQL}}+1)$ 與 $\alpha D_{\mathrm{CQL}}$，差 α，經 $(I-\gamma P^\pi)^{-1}\mathbf 1=\mathbf 1/(1-\gamma)$ 累積（本頁推導）。</p>
+  </div></details>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="sampling" data-toc="07" data-tt="取樣誤差與 C3">
+  <div class="ch-num">07 · 取樣誤差與 C3</div>
+  <h2>取樣誤差決定 α 至少要多大</h2>
+  <div class="prose">
+    <p>前面都假設 $\hat{\mathcal B}^\pi=\mathcal B^\pi$。實際上經驗 Bellman 算子只用資料中的樣本：獎勵取平均、轉移用頻率。資料中 $(s,a)$ 出現的次數記為 $\lvert\mathcal D(s,a)\rvert$。經驗算子可能比真實算子高，例如隨機轉移中資料只含到樂觀的下一狀態（App. D.3）。</p>
+    <p>作者假設集中不等式成立（Assumption D.1）：以機率至少 $1-\delta$，$\lvert\hat r-r(s,a)\rvert\le C_{r,\delta}/\sqrt{\lvert\mathcal D(s,a)\rvert}$、$\Vert\hat T-T\Vert_1\le C_{T,\delta}/\sqrt{\lvert\mathcal D(s,a)\rvert}$。直覺是：平均 n 個樣本，誤差大約以 $1/\sqrt n$ 縮小。常數 $C_{r,T,\delta}$ 取決於獎勵與轉移的變異，δ 是失敗機率。據此，$\hat{\mathcal B}^\pi$ 與 $\mathcal B^\pi$ 的差不超過 $C_{r,T,\delta}R_{\max}/((1-\gamma)\sqrt{\lvert\mathcal D(s,a)\rvert})$（Thm. 3.1、3.2 的寫法；論文主文與 App. D.3 的寫法略有不同）。</p>
+    <p>完整的 Thm. 3.1：對任何 $\mathrm{supp}\,\mu\subset\mathrm{supp}\,\hat\pi_\beta$，以機率 $\ge1-\delta$，對所有 $s\in\mathcal D$ 與 $a$，</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}\hat Q^\pi(s,a)\le{}&Q^\pi(s,a)-\alpha\Big[(I-\gamma P^\pi)^{-1}\frac{\mu}{\hat\pi_\beta}\Big](s,a)\\&+\Big[(I-\gamma P^\pi)^{-1}\frac{C_{r,T,\delta}R_{\max}}{(1-\gamma)\sqrt{\lvert\mathcal D\rvert}}\Big](s,a)\end{aligned}$$</div><span class="eq-n">Thm. 3.1</span></div>
+  <div class="prose">
+    <p>第二項是 CQL 的壓低，第三項是取樣誤差可能造成的高估。α 夠大時壓低蓋過高估，逐點下界成立。App. C 給的門檻是 $\alpha\ge\max_{s,a}\frac{C_{r,T,\delta}R_{\max}}{(1-\gamma)\sqrt{\lvert\mathcal D(s,a)\rvert}}\cdot\max_{s,a}\big(\frac{\mu(a\mid s)}{\hat\pi_\beta(a\mid s)}\big)^{-1}$，推導時寫「since μ(a|s) &gt; 0」：有取樣誤差時，μ 必須在每個動作上都大於 0；μ 有零的格（例如確定性的 μ），任何 α 都抵銷不了該格的取樣誤差 <span class="tag">本頁推導</span>。</p>
+    <p>完整的 Thm. 3.2（$\mu=\pi$）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}\hat V^\pi(s)\le{}&V^\pi(s)-\alpha\Big[(I-\gamma P^\pi)^{-1}\,\mathbb E_\pi\Big[\frac{\pi}{\hat\pi_\beta}-1\Big]\Big](s)\\&+\Big[(I-\gamma P^\pi)^{-1}\frac{C_{r,T,\delta}R_{\max}}{(1-\gamma)\sqrt{\lvert\mathcal D\rvert}}\Big](s)\end{aligned}$$</div><span class="eq-n">Thm. 3.2</span></div>
+  <div class="prose">
+    <p>此處 $1/\sqrt{\lvert\mathcal D\rvert}$ 改指狀態計數。保證 $\hat V^\pi\le V^\pi$ 的門檻為</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\alpha>\frac{C_{r,T,\delta}R_{\max}}{1-\gamma}\cdot\max_{s\in\mathcal D}\frac{1}{\sqrt{\lvert\mathcal D(s)\rvert}}\cdot\Big[\sum_a\pi(a\mid s)\Big(\frac{\pi(a\mid s)}{\hat\pi_\beta(a\mid s)}-1\Big)\Big]^{-1}$$</div><span class="eq-n">Thm. 3.2</span></div>
+  <div class="prose">
+    <p>門檻正比於 $1/\sqrt{\lvert\mathcal D\rvert}$：資料越多，保證下界所需的 α 越小；作者指出無限資料時極小的 α 就夠（Sec. 3.1 末）。門檻還正比於 $1/D_{\mathrm{CQL}}$。<span class="tag">本頁推導</span> 若評估的策略就是 $\pi=\hat\pi_\beta$，則 $D_{\mathrm{CQL}}=0$，方括號的倒數無限大：有取樣誤差時，沒有任何 α 能保證評估行為策略本身的下界。論文沒有討論這個邊界情形。</p>
+    <p>C3 用一個可以寫出閉式解的教學設定呈現這兩個因子。單一狀態、三個動作、γ = 0；每次觀察到的獎勵是真實獎勵加上標準差 σ 的高斯噪聲。資料中動作 a 出現 $n_a$ 次，平均獎勵 $\bar r(a)$ 的誤差是 $\mathcal N(0,\sigma^2/n_a)$。CQL 的估計為 $\hat Q(a)=\bar r(a)-\alpha(\pi_a/\hat\pi_{\beta,a}-1)$，所以估計 V − V $=\sum_a\pi_a(\bar r(a)-r(a))-\alpha\hat D$，第一項是標準差 $s_N=\sigma\sqrt{\sum_a\pi_a^2/n_a}$ 的高斯：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$P(\hat V>V)=1-\Phi\big(\alpha\hat D/s_N\big),\qquad \alpha_\delta=z_{1-\delta}\,s_N/\hat D$$</div><span class="eq-n">本頁推導</span></div>
+
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>取樣誤差：資料越多，保證下界所需的 α 越小</h3><span class="tag">推定＋本頁推導</span></div>
+    <p class="plate-lead">高斯噪聲是本頁的教學設定。α_δ 只重現 Thm. 3.2 門檻中的 1/√N 與 1/D 兩個因子（D 為資料比例下的 D_CQL），不是定理的門檻：定理用狀態計數與最壞情況常數 C，這裡用每個動作的計數與高斯分位數。</p>
+    <div class="figrow two">
+      <div class="fig" id="c3-p"><h4>高估機率 P 對 α（每條線一個 N）</h4><svg role="img" aria-label="高估機率對 α 的曲線"></svg></div>
+      <div class="fig" id="c3-a"><h4>使 P = δ 的 α_δ 對 N（對數座標）</h4><svg role="img" aria-label="α_δ 對 N 的對數圖"></svg>
+        <div class="legend"><span class="lg acc">α_δ</span><span class="lg ref">∝ 1/√N 參考線（與資料點重合）</span></div></div>
+    </div>
+    <div class="ctl" style="margin-top:16px">
+      <div><div class="lbl">目標筆數 N</div><div class="seg" id="c3-N" role="group" aria-label="目標筆數 N"></div></div>
+      <div class="wgrid">
+        <div class="rng"><label class="lbl" for="c3-al">權衡係數 α<output id="c3-alo">0.20</output></label><input id="c3-al" type="range" min="0" max="2" step="0.01" value="0.2"></div>
+        <div class="ctl-row"><button type="button" class="small-btn" id="c3-eq">π = 資料比例</button><button type="button" class="small-btn" id="c3-reset">重設</button></div>
+      </div>
+      <p class="readout" id="c3-ro"></p>
+    </div>
+    <details class="advanced"><summary>進階設定：噪聲、δ 與分佈</summary><div class="adv">
+      <div class="wgrid">
+        <div class="rng"><label class="lbl" for="c3-sg">噪聲標準差 σ<output id="c3-sgo">1.0</output></label><input id="c3-sg" type="range" min="0.1" max="2" step="0.1" value="1"></div>
+        <div><div class="lbl">失敗機率 δ</div><div class="seg" id="c3-d" role="group" aria-label="失敗機率 δ"><button type="button" data-v="0.1" aria-pressed="false">0.10</button><button type="button" data-v="0.05" aria-pressed="true">0.05</button><button type="button" data-v="0.01" aria-pressed="false">0.01</button></div></div>
+      </div>
+      <div class="wgrid" id="c3-w"></div>
+    </div></details>
+    <p class="sr" id="c3-live" aria-live="polite"></p>
+    <p class="plate-f">讀數由本頁依上式即時計算（閉式，Φ 以 erfc 有理近似計算）。計數 $n_a=\max(1,\mathrm{round}(N\pi_{\beta,a}))$，實際總筆數可能不等於 N。</p>
+  </div>
+  <div class="prose">
+    <p>預設（N = 100、σ = 1、α = 0.2）下高估機率為 0.02344，使高估機率等於 δ = 0.05 的 $\alpha_{0.05}=0.16553$；N 增為 1000 時 $\alpha_{0.05}$ 降到 0.05235，約為原來的 $1/\sqrt{10}$。σ 加倍時 $\alpha_\delta$ 加倍。按「π = 資料比例」把 π 設成目前的計數比例後，$\hat D=0$，所有曲線停在 0.5：任何 α 都無法讓高估機率低於一半。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">有取樣誤差時 α 的門檻如何隨資料量變化？評估 $\pi=\hat\pi_\beta$ 時會怎樣？</p><p class="a">門檻正比於 $1/\sqrt{\lvert\mathcal D\rvert}$，資料越多所需 α 越小（Thm. 3.1、3.2，Sec. 3.1 末）；$\pi=\hat\pi_\beta$ 時 $D_{\mathrm{CQL}}=0$，沒有 α 能保證下界（本頁推導）。</p>
+  </div></details>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="cqlr" data-toc="08" data-tt="CQL(H)">
+  <div class="ch-num">08 · CQL(H)</div>
+  <h2>以 Q 的 softmax 作為被壓低的分佈：CQL(R) 與 CQL(H)</h2>
+  <div class="prose">
+    <p>本節用到幾個工具，先定義。熵 $\mathcal H(\mu)=-\sum_a\mu(a)\log\mu(a)$ 衡量分佈的分散程度；KL 散度 $D_{\mathrm{KL}}(\mu,\rho)=\sum_a\mu\log(\mu/\rho)$ 衡量 μ 與參考分佈 ρ 的差異（ρ 在本頁只指這個先驗分佈）。softmax 把一組數字轉成機率：$\mathrm{softmax}(Q)_a=e^{Q_a}/\sum_b e^{Q_b}$。log-sum-exp 是 $\log\sum_a e^{Q_a}$。Lagrangian 是把限制式（例如機率總和為 1）乘上一個乘子加進目標，使有限制的最佳化可以用「導數為 0」求解。</p>
+    <p>到目前為止 π 是固定的。要學策略，可以對每個策略迭代都做完整的評估，但太貴。作者改讓 μ 去近似「最大化目前 Q 的策略」，寫成對 μ 取最大值的 min-max 問題，稱為 CQL(R) 家族（$\mathcal R(\mu)$ 是 μ 的正則項）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}\min_Q\max_\mu\ &\alpha\Big(\mathbb E_{s\sim\mathcal D,a\sim\mu}[Q(s,a)]-\mathbb E_{s\sim\mathcal D,a\sim\hat\pi_\beta}[Q(s,a)]\Big)\\&+\tfrac12\,\mathbb E_{s,a,s'\sim\mathcal D}\Big[\big(Q-\hat{\mathcal B}^{\pi_k}\hat Q^k\big)^2\Big]+\mathcal R(\mu)\end{aligned}$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="prose">
+    <p>取 $\mathcal R(\mu)=-D_{\mathrm{KL}}(\mu,\rho)$ 時，內層最佳解為 $\mu(a\mid s)\propto\rho(a\mid s)\exp(Q(s,a))$（Sec. 3.2）。取 $\rho$ 為均勻分佈（等價於 $\mathcal R=\mathcal H(\mu)$），μ 就是 Q 的 softmax，第一項變成 log-sum-exp，得到 CQL(H)：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}\min_Q\ &\alpha\,\mathbb E_{s\sim\mathcal D}\Big[\log\sum_a\exp(Q(s,a))-\mathbb E_{a\sim\hat\pi_\beta}[Q(s,a)]\Big]\\&+\tfrac12\,\mathbb E_{s,a,s'\sim\mathcal D}\Big[\big(Q-\hat{\mathcal B}^{\pi_k}\hat Q^k\big)^2\Big]\end{aligned}$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="prose">
+    <p>為什麼內層的最大值是 log-sum-exp？App. A 只給答案 $\mu^*(x)=\exp(f(x))/Z$；推導如下。</p>
+  </div>
+  <details class="advanced"><summary>推導細節：Lagrangian</summary><div class="adv">
+    <p>問題是 $\max_\mu\sum_x\mu(x)f(x)-\sum_x\mu(x)\log\mu(x)$，限制 $\sum_x\mu(x)=1$。Lagrangian 為 $\sum_x\mu f-\sum_x\mu\log\mu+\lambda(\sum_x\mu-1)$，對 $\mu(x)$ 微分：$f(x)-\log\mu(x)-1+\lambda=0$，所以 $\mu^*(x)\propto\exp f(x)$，$Z=\sum_x\exp f(x)$。代回：$\sum_x\mu^*f-\sum_x\mu^*(f-\log Z)=\log Z$。<span class="tag">本頁推導</span></p>
+  </div></details>
+  <div class="prose">
+    <p>所以 $\max_\mu\{\mathbb E_\mu[Q]+\mathcal H(\mu)\}=\log\sum_a\exp Q(s,a)$，最佳的 μ 是 $\mu^*\propto\exp Q$，即 Q 的 softmax。這就是 Eq. 4 的第一項。<span class="tag">本頁推導</span> log-sum-exp 介於 $\max_aQ$ 與 $\max_aQ+\log\lvert\mathcal A\rvert$ 之間（最大項至少貢獻 $e^{\max Q}$，每一項至多 $e^{\max Q}$），所以它是 max 的平滑版本，論文稱為 soft-maximum（Sec. 3.2）。最小化它，就是壓低 Q 值最高的那些動作。</p>
+    <p>CQL 也可以用 $\mathcal B^*$ 代替 $\mathcal B^\pi$，寫成 Q-learning；或寫成 actor-critic（Sec. 3.2）。App. A 另有一個與分佈穩健最佳化相關的變體 CQL(var)（Eq. 8–9），本頁不展開。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$\max_\mu\mathbb E_\mu[Q]+\mathcal H(\mu)$ 的解與最大值是什麼？</p><p class="a">$\mu^*\propto\exp Q$，最大值 $\log\sum_a\exp Q(s,a)$，即 Eq. 4 的第一項（App. A）；它介於 $\max_aQ$ 與 $\max_aQ+\log\lvert\mathcal A\rvert$ 之間（本頁推導）。</p>
+  </div></details>
+</section>
+
+<!-- S9 ============================================================ -->
+<section class="ch" id="cqlh" data-toc="09" data-tt="CQL(ρ) 與 C4">
+  <div class="ch-num">09 · CQL(ρ) 與 C4</div>
+  <h2>CQL(H) 把資料少的動作的 Q 值移給資料多的動作</h2>
+  <div class="prose">
+    <p>若 KL 正則的先驗取前一個策略 $\rho=\hat\pi^{k-1}$，得到 CQL(ρ)：Eq. 4 的第一項改為以 $\hat\pi^{k-1}$ 為權重的指數加權 Q 平均。論文的 Eq. 7 寫成 $\alpha\,\mathbb E_{s}\big[\mathbb E_{a\sim\rho}[Q(s,a)\exp(Q(s,a))/Z]-\mathbb E_{a\sim\pi_\beta}[Q(s,a)]\big]$ 加上 Bellman 誤差，並註明「modulo some normalization terms」：第一項是 $\mathbb E_{\mu^*}[Q]$，不是把最佳解完整代回的結果。<span class="tag">本頁推導</span> 完整代回的值是 $\log\sum_a\rho(a)\exp Q(a)$，ρ 為均勻分佈時只比 log-sum-exp 少常數 $\log\lvert\mathcal A\rvert$。作者觀察到 CQL(ρ) 在高維動作空間較穩定，因為 log-sum-exp 需要取樣估計、變異大（Sec. 3.2）。</p>
+    <p><span class="tag">本頁推導</span> 在單一狀態、γ = 0 的 bandit 上，Eq. 4 的駐點條件為 $Q(a)=r(a)-\alpha\big[\mathrm{softmax}(Q)(a)/\pi_\beta(a)-1\big]$，是 Eq. 13 取 $\mu=\mathrm{softmax}(Q)$ 的隱式版本。把這個條件對 a 以 $\pi_\beta$ 加權加總，得到 $\sum_a\pi_\beta(a)(Q(a)-r(a))=0$：資料分佈下的平均 Q 不變。正則項只是把 Q 值從「softmax 偏好、資料少」的動作移到資料多的動作。C4 用四個動作呈現這件事。</p>
+  </div>
+
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>CQL(H)：log-sum-exp、駐點與差距擴大</h3><span class="tag">本頁推導</span></div>
+    <p class="plate-lead">γ = 0 的駐點類比：μ 取自估計 Q 本身的 softmax、沒有 Bellman 遞迴，所以 Thm. 3.4 的「α 夠大」在此任何 α &gt; 0 都成立。這不是 Thm. 3.4 的一步更新本身。表格式下也沒有函數近似造成的 OOD 高估，這裡只示範正則項如何改變 Q。獎勵 r = (1.0, 0.6, 0.2, 1.4) 為教學用自訂值。</p>
+    <div class="pg side">
+      <div class="fig" id="c4-fig"><svg role="img" aria-label="四個動作的 Q 值數線"></svg>
+        <div class="legend"><span class="lg m-true">真實 r</span><span class="lg m-cql">CQL(H) 估計</span></div>
+        <div class="fig" id="c4-sm" style="margin-top:12px"><h4>soft-max 數線</h4><svg role="img" aria-label="max、log-sum-exp 與 max 加 log 4 的位置"></svg></div>
+        <div class="fig hide" id="c4-g" style="margin-top:12px"><h4>Eq. 30 方括號內的量 G(α) 對 α（對數座標）</h4><svg role="img" aria-label="G 對 α 的曲線"></svg>
+          <div class="legend"><span class="lg acc">G(α)</span><span class="lg l-tau">τ</span><span class="lg l-h">H(資料比例)：τ 低於此線時 α → ∞</span></div></div>
+      </div>
+      <div class="ctl">
+        <div><div class="lbl">資料比例的預設組</div><div class="seg" id="c4-pb" role="group" aria-label="資料比例預設組"><button type="button" data-v="rare" aria-pressed="true">a4 罕見</button><button type="button" data-v="unif" aria-pressed="false">均勻</button><button type="button" data-v="common" aria-pressed="false">a4 常見</button></div></div>
+        <div><div class="lbl">模式</div><div class="seg" id="c4-mode" role="group" aria-label="α 的決定方式"><button type="button" data-v="alpha" aria-pressed="true">直接設定 α</button><button type="button" data-v="tau" aria-pressed="false">以 τ 決定 α（Eq. 30）</button></div></div>
+        <div class="rng" id="c4-arow"><label class="lbl" for="c4-a">權衡係數 α<output id="c4-ao">1.00</output></label><input id="c4-a" type="range" min="0" max="5" step="0.05" value="1"></div>
+        <div class="rng hide" id="c4-trow"><label class="lbl" for="c4-t">差距門檻 τ<output id="c4-to">1.30</output></label><input id="c4-t" type="range" min="1.1" max="1.6" step="0.01" value="1.3"></div>
+        <p class="readout" id="c4-ro"></p>
+      </div>
+    </div>
+    <div class="tscroll" tabindex="0" role="region" aria-label="C4 逐動作讀數"><table id="c4-tab"><caption>逐動作讀數：資料比例（實心條）與 softmax 分佈 μ（框線條）</caption>
+      <thead><tr><th>動作</th><th class="num">真實 r</th><th class="num">CQL 估計</th><th>資料比例</th><th>μ</th></tr></thead><tbody></tbody></table></div>
+    <div class="tscroll" tabindex="0" role="region" aria-label="C4 差距讀數"><table id="c4-gap"><caption>資料內與 μ 下的期望 Q 差距</caption>
+      <thead><tr><th>量</th><th class="num">真實 r</th><th class="num">CQL 估計</th></tr></thead><tbody></tbody></table></div>
+    <p class="sr" id="c4-live" aria-live="polite"></p>
+    <p class="plate-f">讀數由本頁依 Eq. 4 的 bandit 形式（Bellman 誤差以資料比例加權）以阻尼 Newton 法即時求解。資料平均不變、差距增加量等於 α·χ²、τ 模式的鞍點與 G ≥ H(資料比例) 皆為本頁推導。</p>
+  </div>
+  <div class="prose">
+    <p>「a4 罕見」下，a4 的真實獎勵最高（1.4），但只占資料的 5%。α 從 0 增加到 0.5，a4 的估計 Q 就降到 0.2128，低於 a1 的 1.0618，Q 最大的動作從 a4 換成 a1；同時資料比例下的平均 Q 一直是 0.7600，與真實值相同。「a4 常見」時 a4 不被壓低（α = 1 時由 1.40 略升到 1.45）。soft-max 數線上，$\mathbb E_\mu[\hat Q]+\mathcal H(\mu)$ 永遠等於 log-sum-exp，且介於 max 與 max + log 4 之間。τ 模式預告 S13 的 Eq. 30：τ 越小，所需的 α 越大。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="cql-algorithm-variants-and-guarantees.html">CQL(R) 的 min-max 形式、CQL(H) 與 CQL(ρ)，以及定理 3.3 至 3.6</a></p>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="slow" data-toc="10" data-tt="Thm. 3.3">
+  <div class="ch-num">10 · Thm. 3.3</div>
+  <h2>策略變得夠慢時，估計值仍是下界</h2>
+  <div class="prose">
+    <p>總變異距離 $D_{\mathrm{TV}}(p,q)=\tfrac12\sum_a\lvert p(a)-q(a)\rvert$ 衡量兩個分佈最多差多少機率。CQL(H) 的內層最佳 μ 是目前 Q 的 softmax，記為 soft-optimal 策略 $\pi_{\hat Q^k}(a\mid s)\propto\exp(\hat Q^k(s,a))$。但實際學到的策略 $\hat\pi^{k+1}$ 不一定等於它。</p>
+    <p>Thm. 3.3（主文不含取樣誤差）：假設 $D_{\mathrm{TV}}(\hat\pi^{k+1},\pi_{\hat Q^k})\le\varepsilon$（策略相對 Q 變得慢）。若</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbb E_{\pi_{\hat Q^k}(a\mid s)}\Big[\frac{\pi_{\hat Q^k}(a\mid s)}{\hat\pi_\beta(a\mid s)}-1\Big]\ \ge\ \max_{a:\,\hat\pi_\beta(a\mid s)>0}\Big(\frac{\pi_{\hat Q^k}(a\mid s)}{\hat\pi_\beta(a\mid s)}\Big)\cdot\varepsilon,$$</div><span class="eq-n">Thm. 3.3</span></div>
+  <div class="prose">
+    <p>則 $\hat V^{k+1}(s)\le V^{k+1}(s)$ 對所有 s 成立。證明把策略下的估計值拆成兩部分：(a) 若策略恰為 soft-optimal 時的低估量，即左式；(b) 策略與 soft-optimal 不同時最多可能帶來的高估，$\sum_a(\pi_{\hat Q^k}-\hat\pi^{k+1})\pi_{\hat Q^k}/\hat\pi_\beta\le D_{\mathrm{TV}}\cdot\max_a\pi_{\hat Q^k}/\hat\pi_\beta$，即右式。低估量大於可能的高估，就仍是下界（App. C）。</p>
+    <p><span class="tag">本頁推導</span> 證明的式子省略了 α；補上後 (a)、(b) 都乘同一個 α，所以 α 不顯式出現在條件中。但 α 經 $\hat Q^k$ 隱含進入：α 越大，$\hat Q^k$ 把資料少的動作壓得越低，$\pi_{\hat Q^k}$ 越靠近 $\hat\pi_\beta$，左式越接近 0，於是 ε 也必須更小。條件主要靠 ε 小來滿足，且 α 大時 ε 要更小。</p>
+    <p>作者認為這個條件是把策略學習率設為 3e-5（Q 函數為 3e-4 或 1e-4）的依據，原文寫「as dictated by Theorem 3.3」（Sec. 4）。實作的 SAC 策略是高斯分佈，不是 Q 的 softmax，所以這是作者的設計理由，不是已驗證的保證。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Thm. 3.3 要求什麼條件？實作上如何落實？</p><p class="a">無取樣誤差下，$D_{\mathrm{TV}}(\hat\pi^{k+1},\pi_{\hat Q^k})\le\varepsilon$ 且 $\mathbb E_{\pi_{\hat Q^k}}[\pi_{\hat Q^k}/\hat\pi_\beta-1]\ge\max_a(\pi_{\hat Q^k}/\hat\pi_\beta)\cdot\varepsilon$，即策略相對 $\pi_{\hat Q^k}\propto\exp\hat Q^k$ 慢變；作者認為這是策略學習率 3e-5（Q 為 3e-4）的依據。</p>
+  </div></details>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="gap" data-toc="11" data-tt="Thm. 3.4">
+  <div class="ch-num">11 · Thm. 3.4</div>
+  <h2>資料內與資料外動作的 Q 值差距被擴大</h2>
+  <div class="prose">
+    <p>Thm. 3.4（gap-expanding）：對足夠大的 $\alpha_k$，對所有 s，</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbb E_{\pi_\beta}[\hat Q^k]-\mathbb E_{\mu_k}[\hat Q^k]\ >\ \mathbb E_{\pi_\beta}[Q^k]-\mathbb E_{\mu_k}[Q^k]$$</div><span class="eq-n">Thm. 3.4</span></div>
+  <div class="prose">
+    <p>學到的 Q 把資料內動作與 $\mu_k$ 下動作的期望差距，拉得比真實 Q 的差距大。作者認為這使策略 $\pi^k\propto\exp\hat Q^k$ 被拉近資料分佈，隱含地避免 OOD 動作（Sec. 3.2）。</p>
+    <p>一步的計算：Eq. 13 的懲罰 $\alpha_k(\mu_k-\pi_\beta)/\pi_\beta$ 在 $\mu_k$ 下的期望是 $\alpha_k\hat\Delta^k$，其中 $\hat\Delta^k=\sum_a\mu_k(\mu_k-\pi_\beta)/\pi_\beta\ge0$（與 $D_{\mathrm{CQL}}$ 同一個平方式）；在 $\pi_\beta$ 下的期望是 $\alpha_k\sum_a(\mu_k-\pi_\beta)=0$。所以差距多出 $\alpha_k\hat\Delta^k$；α 要夠大，才能蓋過 Bellman 目標本身的估計誤差（App. C）。<span class="tag">本頁推導</span> 依 Eq. 13 的符號重算，$\alpha_k\hat\Delta^k$ 前應為正號，條件中的方括號應為 $\mathcal B^{\pi_k}\hat Q^k-Q^{k+1}$；論文 App. C 印成負號與 $\mathcal B^{\pi_k}\hat Q^k-Q^k$，結論不受影響。</p>
+    <p>以 C4 的預設讀數為例（「a4 罕見」、α = 1）：真實獎勵下，資料比例與 μ 的期望差距是 −0.0424；CQL(H) 估計下是 0.0836，增加了 0.1260，恰好等於 $\alpha\,\chi^2(\mu\Vert\pi_\beta)$。C4 是 γ = 0 的駐點類比，μ 取自估計 Q 本身，不是 Thm. 3.4 的一步更新本身。</p>
+    <p>實證（App. B，Fig. 2）：作者在 hopper-expert 與 hopper-medium 上畫 Eq. 10 的 $\hat\Delta^k=\mathbb E_{s,a\sim\mathcal D}[\max_{a'_1..a'_N\sim\mathrm{Unif}}\hat Q^k(s,a')-\hat Q^k(s,a)]$。CQL 大致為負，BEAR 為正且隨訓練上升；hopper-expert 上 BEAR 的表現在訓練後期下降（「unlearning」）。注意 Fig. 2 的 $\hat\Delta^k$ 與證明中的 $\hat\Delta^k$ 是同一個符號、不同的量：在 Fig. 2 中「好」是負值，在證明中 $\hat\Delta^k\ge0$。App. B 也說明這種 OOD 高估來自函數近似，表格式不會出現。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Thm. 3.4 說了什麼？一步更新中差距多出多少？</p><p class="a">α 夠大時資料內動作與 $\mu_k$ 動作的期望 Q 差距大於真實 Q 的差距（gap-expanding）；懲罰在 $\pi_\beta$ 下期望為 0、在 $\mu_k$ 下為 $\alpha_k\hat\Delta^k\ge0$，差距多出 $\alpha_k\hat\Delta^k$。</p>
+  </div></details>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="spi" data-toc="12" data-tt="安全改進">
+  <div class="ch-num">12 · 安全改進</div>
+  <h2>CQL 等於最佳化帶懲罰的經驗回報</h2>
+  <div class="prose">
+    <p>經驗 MDP $\hat M$ 是由資料中的轉移構成的 MDP：轉移與獎勵都用資料中的頻率與平均。$J(\pi,M)$ 是策略 π 在 MDP $M$ 中的折扣回報期望。$d^\pi_M(s)=(1-\gamma)\sum_t\gamma^t\Pr(s_t=s)$ 是 π 在 $M$ 中的正規化折扣狀態分佈。$\rho_0$ 是起始狀態分佈（論文寫作 $\rho(s)$）。</p>
+    <p>Thm. 3.5（= Lemma D.3.1）：設 $\hat Q^\pi$ 是 Eq. 2（$\mu=\pi$）在 $\hat M$ 中的不動點，則 $\pi^*:=\arg\max_\pi\mathbb E_{s\sim\rho_0}[\hat V^\pi(s)]$ 等價於</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\pi^*\leftarrow\arg\max_\pi\ J(\pi,\hat M)-\alpha\,\frac{1}{1-\gamma}\,\mathbb E_{s\sim d^\pi_{\hat M}(s)}\big[D_{\mathrm{CQL}}(\pi,\hat\pi_\beta)(s)\big]$$</div><span class="eq-n">Eq. 5</span></div>
+  <div class="prose">
+    <p>論文的證明只有一句：$\hat Q^\pi$ 是 $\hat M$ 中、獎勵改為 $r(s,a)-\alpha[\pi(a\mid s)/\hat\pi_\beta(a\mid s)-1]$ 的 Bellman 不動點。<span class="tag">本頁推導</span> 這由 Eq. 13 直接讀出；依 π 取期望後每一步扣 $\alpha D_{\mathrm{CQL}}(s)$，折扣累積就是 $\frac{\alpha}{1-\gamma}\mathbb E_{d^\pi}[D_{\mathrm{CQL}}]$。懲罰依賴 π 本身，所以這不是一個固定獎勵的普通 MDP。CQL 因此是在經驗 MDP 中最大化回報，同時以 $D_{\mathrm{CQL}}$ 懲罰離行為策略太遠的策略。</p>
+    <p>Thm. 3.6（= Thm. D.4）：在 Assumption D.1、且 $\hat M$ 由依 $\hat\pi_\beta$ 取樣的動作產生的假設下，最佳化 Eq. 5 得到的 $\pi^*$ 滿足 $J(\pi^*,M)\ge J(\hat\pi_\beta,M)-\zeta$，機率 $1-\delta$：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}\zeta={}&2\Big(\frac{C_{r,\delta}}{1-\gamma}+\frac{\gamma R_{\max}C_{T,\delta}}{(1-\gamma)^2}\Big)\,\mathbb E_{s\sim d^{\pi^*}_{\hat M}}\Big[\frac{\sqrt{\lvert\mathcal A\rvert}}{\sqrt{\lvert\mathcal D(s)\rvert}}\sqrt{D_{\mathrm{CQL}}(\pi^*,\hat\pi_\beta)(s)+1}\Big]\\&-\underbrace{\big(J(\pi^*,\hat M)-J(\hat\pi_\beta,\hat M)\big)}_{\ge\,\alpha\frac{1}{1-\gamma}\mathbb E[D_{\mathrm{CQL}}(\pi^*,\hat\pi_\beta)(s)]}\end{aligned}$$</div><span class="eq-n">Eq. 6</span></div>
+  <div class="prose">
+    <p>第一項是 $\hat M$ 與真實 $M$ 不同（取樣誤差）造成的損失，正比於 $1/\sqrt{\lvert\mathcal D(s)\rvert}$；第二項是 CQL 在經驗 MDP 中帶來的改進，至少為 $\alpha\frac{1}{1-\gamma}\mathbb E[D_{\mathrm{CQL}}]$。$\lvert\mathcal D(s)\rvert$ 大時第一項小，較小的 α 就足以改進（Sec. 3.3）。</p>
+    <p>數值例 <span class="tag">推定：常數自訂，只為說明兩項的權衡</span>：若第一項為 2.0，α = 1、γ = 0.9、$\mathbb E[D_{\mathrm{CQL}}]=0.3$，則第二項 $\ge1\times10\times0.3=3.0$，所以 $\zeta\le2.0-3.0=-1.0$：$\pi^*$ 在真實 MDP 中至少比 $\hat\pi_\beta$ 好 1.0。資料量變為 4 倍時第一項減半為 1.0，$\zeta\le-2.0$。</p>
+    <p>ζ 可以是負的（第二項大於第一項），那才是真正的改進，此時 $\pi^*$ 確實優於 $\hat\pi_\beta$；ζ &gt; 0 時定理只保證「不比行為策略差超過 ζ」。改進是相對經驗行為策略，不是相對最優策略。</p>
+  </div>
+  <details class="advanced"><summary>推導細節：√|A| 與係數 2 的來源</summary><div class="adv">
+    <p>Lemma D.4.1 對任意 π 給出 $\lvert J(\pi,\hat M)-J(\pi,M)\rvert$ 的上界，其中出現 $\sum_a\pi(a\mid s)/\sqrt{\hat\pi_\beta(a\mid s)}$。由 Cauchy–Schwarz，$\big(\sum_a\pi/\sqrt{\hat\pi_\beta}\big)^2\le\lvert\mathcal A\rvert\sum_a\pi^2/\hat\pi_\beta=\lvert\mathcal A\rvert(D_{\mathrm{CQL}}+1)$，得到 $\sqrt{\lvert\mathcal A\rvert}\sqrt{D_{\mathrm{CQL}}+1}$。對 $\pi^*$ 與 $\hat\pi_\beta$ 各用一次，後者的誤差項被前者蓋住，所以係數為 2。論文把 $\pi/\sqrt{\hat\pi_\beta}$ 記為 $\alpha(s,a)$，與權衡係數 α 無關；證明第一行也漏寫 $1/(1-\gamma)$（Eq. 26–27 有）。</p>
+  </div></details>
+  <div class="prose">
+    <p>函數近似（App. D.1）：Thm. D.1 對線性 Q 證明 $d^{\pi_\beta}$ 下期望的下界（不是逐狀態），α 門檻的分子是真實價值無法被線性類表示所造成的高估；Thm. D.2 在 NTK（無限寬度線性化）假設下延伸，但敘述缺少條件式。Sec. 7 作者承認深度網路的嚴格分析留給未來。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Thm. 3.6 的 ζ 由哪兩項組成？ζ 為負代表什麼？</p><p class="a">第一項是 $\hat M$ 與 $M$ 不同的取樣誤差損失（∝ $1/\sqrt{\lvert\mathcal D(s)\rvert}$），第二項是 CQL 在經驗 MDP 中的改進（≥ $\alpha\frac1{1-\gamma}\mathbb E[D_{\mathrm{CQL}}]$）；ζ &lt; 0 時 $\pi^*$ 確實優於 $\hat\pi_\beta$（Eq. 6）。</p>
+  </div></details>
+</section>
+
+<!-- S13 =========================================================== -->
+<section class="ch" id="impl" data-toc="13" data-tt="實作">
+  <div class="ch-num">13 · 實作</div>
+  <h2>實作只需在 SAC 或 QR-DQN 上改 Q 的目標</h2>
+  <div class="prose">
+    <p>連續控制建在 SAC（RLkit 實作）上，使用 CQL(H)，α 以 Lagrange 對偶梯度自動調整；離散控制建在 QR-DQN 上，α 固定（Sec. 4、App. F）。Lagrange 對偶梯度的意思是把 α 也當成變數：限制被違反時增加 α，否則減少。論文說只需在標準實作上加約 20 行（Sec. 1 寫「less than 20 lines」，Sec. 4 寫「only 20 lines」）。演算法不需要估計行為策略：$\mathbb E_{a\sim\hat\pi_\beta}[Q]$ 直接用資料中動作的 Q 平均（Sec. 4）。</p>
+  </div>
+  <div class="algo" role="table" aria-label="Algorithm 1 與說明">
+    <div class="row hd" role="row"><div role="columnheader">Algorithm 1（兩種變體）</div><div class="ex-h" role="columnheader">說明</div></div>
+    <div class="row" role="row"><code role="cell">Initialize Q_θ, and optionally π_φ</code><div class="ex" role="cell">Q 網路參數 θ；actor-critic 版另有策略網路 φ。</div></div>
+    <div class="row" role="row"><code role="cell">for step t in {1, …, N}:</code><div class="ex" role="cell">外層迴圈。</div></div>
+    <div class="row" role="row"><code role="cell">  θ ← θ − η_Q ∇_θ CQL(R)(θ)   (G_Q steps)</code><div class="ex" role="cell">以 Eq. 4（或一般的 CQL(R)）做 $G_Q$ 個梯度步；Q-learning 用 $\mathcal B^*$，actor-critic 用 $\mathcal B^{\pi_\phi}$。$G_Q$、$G_\pi$ 是每輪的梯度步數，論文未給值。</div></div>
+    <div class="row" role="row"><code role="cell">  φ ← φ + η_π E[Q_θ(s,a) − log π_φ(a|s)]   (G_π steps)</code><div class="ex" role="cell">只有 actor-critic：SAC 式熵正則的策略更新，與一般 SAC 相同。</div></div>
+  </div>
+  <div class="prose">
+    <p>α 的 Lagrange 版本（CQL-Lagrange）引入差距門檻 τ：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}\min_Q\max_{\alpha\ge0}\ &\alpha\Big(\mathbb E_{s\sim d^{\pi_\beta}}\Big[\log\sum_a\exp Q(s,a)-\mathbb E_{a\sim\pi_\beta}[Q(s,a)]\Big]-\tau\Big)\\&+\tfrac12\,\mathbb E\big[(Q-\mathcal B^{\pi_k}\hat Q^k)^2\big]\end{aligned}$$</div><span class="eq-n">Eq. 30</span></div>
+  <div class="prose">
+    <p>Q 值差距小於 τ 時 α 趨近 0；大於 τ 時 α 變大、更積極地壓低 Q。所以 τ 越小 → α 越大、越保守。τ 的選擇（App. F）：Gym MuJoCo 用 τ = 10.0；Kitchen 與 Adroit 用 τ = 5.0。初步實驗中 τ = 2.0 使 α 漲到百萬量級、Q 被低估到約 −1e6；在人類示範資料上 τ = 10.0 擋不住高估（Q &gt; 1e+6）。固定 α 的版本用 α = 5.0；Atari 用固定 α：Table 3 的 10% 資料 α = 1.0、1% 資料 α = 4.0、Fig. 1 α = 0.5。</p>
+    <p><span class="tag">本頁推導</span> C4 的 τ 模式給出一個機制示意：在 bandit 上 $\log\sum_ae^{Q_a}-\sum_a\pi_\beta(a)Q_a\ge\mathcal H(\pi_\beta)$（凸共軛，等號在 softmax(Q) 等於資料比例時），所以 τ 不大於 $\mathcal H(\pi_\beta)$ 時，沒有有限的 α 能讓差距降到 τ。「a4 罕見」下 $\mathcal H=1.161$，τ = 1.3 時 α* = 0.2074，τ = 1.17 時約 3，τ = 1.15 時 α → ∞。這不是論文的分析。</p>
+    <p>連續動作無法對所有動作求和，log-sum-exp 以重要性取樣估計。重要性取樣用分佈 q 的樣本估計 p 下的期望：$\mathbb E_p[f]=\mathbb E_q[f\,p/q]$。論文從均勻分佈與目前策略各取 N = 10 個動作（App. F）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\log\sum_a e^{Q(s,a)}\approx\log\Big(\frac{1}{2N}\sum_{a_i\sim\mathrm{Unif}(a)}\frac{e^{Q(s,a_i)}}{\mathrm{Unif}(a)}+\frac{1}{2N}\sum_{a_i\sim\pi(a\mid s)}\frac{e^{Q(s,a_i)}}{\pi(a_i\mid s)}\Big)$$</div><span class="eq-n">App. F</span></div>
+  <div class="prose">
+    <p>離散動作直接用 <code>logsumexp</code> 精確計算。</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="超參數"><table class="stack"><caption>App. F 的超參數</caption>
+    <thead><tr><th>項目</th><th>設定</th></tr></thead><tbody>
+    <tr><td data-h="項目">Q 學習率</td><td data-h="設定">預設 3e-4（試過 1e-4、3e-4，無顯著差異）</td></tr>
+    <tr><td data-h="項目">策略學習率</td><td data-h="設定">3e-5（試過 3e-5、1e-4、3e-4；1e-4 在 hopper-medium、antmaze-medium-play 較好，但在 Adroit 差）</td></tr>
+    <tr><td data-h="項目">τ（Lagrange）</td><td data-h="設定">Gym 10.0；Kitchen、Adroit 5.0</td></tr>
+    <tr><td data-h="項目">固定 α</td><td data-h="設定">5.0；Atari 1.0（10%）、4.0（1%）、0.5（Fig. 1）</td></tr>
+    <tr><td data-h="項目">log-sum-exp 取樣</td><td data-h="設定">Unif 與目前策略各 N = 10 個動作</td></tr>
+    <tr><td data-h="項目">梯度步數</td><td data-h="設定">D4RL 1M；Atari 依 Agarwal et al. 報告 5X 梯度步後的回報</td></tr>
+    <tr><td data-h="項目">其他</td><td data-h="設定">保留 SAC 的 twin-Q（兩個 Q 網路取較小者）與 soft target 更新；超參數選擇只看資料上的預測 Q 值</td></tr>
+    <tr><td data-h="項目">未寫明</td><td data-h="設定">SAC 熵溫度、$G_Q$／$G_\pi$、Lagrange α 的學習率與初值；所有表格都沒有標準差</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <p>App. F 另提到 max-backup 變體（從策略取 10 個動作、取最大的 Q 作為目標值）在 Kitchen 與 AntMaze 上比報告的數字更好，所以 Table 2 不是最佳設定。</p>
+    <h3>常見錯誤</h3>
+    <ol>
+      <li>說「CQL 學到 Q 的逐點下界」：只有 Eq. 1（Thm. 3.1）是逐點；實際使用的 Eq. 2／Eq. 4 只保證 $\mathbb E_\pi[\hat Q]\le V^\pi$，資料中常見的動作可能被高估。</li>
+      <li>說「任何 α &gt; 0 都給下界」：只在無取樣誤差且表格式時成立；否則 α 要超過門檻。</li>
+      <li>把 τ 的方向弄反：τ 是 Q 值差距的預算，τ 小 → α 大；τ = 2.0 時 α 到百萬量級。</li>
+      <li>策略學習率與 Q 相同：論文用 3e-5 對 3e-4，作者以 Thm. 3.3 的慢變條件為依據。</li>
+      <li>高維連續動作直接用 CQL(H) 的取樣估計：重要性權重變異大，Adroit 上 CQL(ρ) 較穩定。</li>
+      <li>以為 CQL 要估計 $\pi_\beta$：演算法不需要；但所有定理的式子都含 $\hat\pi_\beta$。</li>
+      <li>把 Fig. 2 的 $\hat\Delta^k$ 當成 Thm. 3.4 的量：同一符號、不同定義（S11）。</li>
+    </ol>
+  </div>
+  <p class="read">延伸閱讀：<a href="cql-vs-policy-constraint-methods.html">CQL 與策略限制、不確定性、OPE 方法的比較</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">連續控制的 CQL 怎麼實作？τ 小會怎樣？log-sum-exp 怎麼估？</p><p class="a">在 SAC 上用 CQL(H)，α 以 Eq. 30 的 Lagrange 對偶梯度調整（Gym τ = 10.0、Kitchen／Adroit 5.0）；τ 小 → α 大，τ = 2.0 時 α 到百萬量級、Q 低估到約 −1e6；從 Unif 與目前策略各取 N = 10 個動作做重要性取樣（App. F）。</p>
+  </div></details>
+</section>
+
+<!-- S14 =========================================================== -->
+<section class="ch" id="results" data-toc="14" data-tt="實驗">
+  <div class="ch-num">14 · 實驗</div>
+  <h2>多數混合資料集上 CQL 明顯領先</h2>
+  <div class="prose">
+    <p>D4RL 的正規化分數以 0 代表隨機策略、100 代表專家策略。BC（behavioral cloning）直接以監督式學習模仿資料中的動作。BEAR、BRAC 是策略限制方法，SAC 是未加修改的 off-policy 方法。所有分數是 4 個 seed 的平均（Table 1）。</p>
+    <p>在單一策略產生的資料（random、medium、expert）上，CQL 與最佳先前方法相近或略高，論文寫「by a small margin」。在混合多個策略的資料（mixed、medium-expert、random-expert）上，CQL 在多數列大幅領先，論文寫「sometimes as much as 2-3x」（Sec. 6）。逐列比對 9 列混合資料：CQL(H) 有 8 列最高，但 hopper-medium-expert 低於 BC（111.0 vs 111.9），halfcheetah-mixed 只高 0.3（46.2 vs 45.9），halfcheetah-medium-expert 為 1.2 倍（62.4 vs 51.7）；其餘 6 列為 1.9 倍以上，例如 hopper-random-expert 110.5 對 BRAC-v 的 11.1。</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="Table 1 混合資料"><table><caption>Table 1 的 9 列混合資料（正規化分數；欄序照原文）</caption>
+    <thead><tr><th>任務</th><th class="num">SAC</th><th class="num">BC</th><th class="num">BEAR</th><th class="num">BRAC-p</th><th class="num">BRAC-v</th><th class="num">CQL(H)</th></tr></thead><tbody>
+    <tr><td>halfcheetah-medium-expert</td><td class="num">1.8</td><td class="num">35.8</td><td class="num">51.7</td><td class="num">43.8</td><td class="num">45.3</td><td class="num">62.4</td></tr>
+    <tr><td>walker2d-medium-expert</td><td class="num">1.9</td><td class="num">11.3</td><td class="num">10.8</td><td class="num">−0.3</td><td class="num">0.9</td><td class="num">98.7</td></tr>
+    <tr class="hl"><td>hopper-medium-expert</td><td class="num">1.6</td><td class="num">111.9</td><td class="num">4.0</td><td class="num">1.1</td><td class="num">0.8</td><td class="num">111.0</td></tr>
+    <tr><td>halfcheetah-random-expert</td><td class="num">53.0</td><td class="num">1.3</td><td class="num">24.6</td><td class="num">30.2</td><td class="num">2.2</td><td class="num">92.5</td></tr>
+    <tr><td>walker2d-random-expert</td><td class="num">0.8</td><td class="num">0.7</td><td class="num">1.9</td><td class="num">0.2</td><td class="num">2.7</td><td class="num">91.1</td></tr>
+    <tr><td>hopper-random-expert</td><td class="num">5.6</td><td class="num">10.1</td><td class="num">10.1</td><td class="num">5.8</td><td class="num">11.1</td><td class="num">110.5</td></tr>
+    <tr><td>halfcheetah-mixed</td><td class="num">−2.4</td><td class="num">38.4</td><td class="num">36.2</td><td class="num">45.6</td><td class="num">45.9</td><td class="num">46.2</td></tr>
+    <tr><td>hopper-mixed</td><td class="num">3.5</td><td class="num">11.8</td><td class="num">25.3</td><td class="num">0.7</td><td class="num">0.8</td><td class="num">48.6</td></tr>
+    <tr><td>walker2d-mixed</td><td class="num">1.9</td><td class="num">11.3</td><td class="num">10.8</td><td class="num">−0.3</td><td class="num">0.9</td><td class="num">26.7</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <p>原文中 walker2d-medium-expert 與 walker2d-mixed 兩列的五個 baseline 數字完全相同（原文如此）。全部 18 列中 CQL(H) 最高的有 12 列；單一策略資料中不是最高的 5 列為：hopper-random 10.8（BRAC-v 12.0）、halfcheetah-medium 44.4（BRAC-v 45.5）、walker2d-medium 79.2（BRAC-v 81.3）、halfcheetah-expert 104.8（BEAR 108.2）、hopper-expert 109.9（BEAR 110.3）。</p>
+    <p>AntMaze、Adroit、Kitchen（Table 2）：CQL(H) 在 antmaze-medium-play 61.2、medium-diverse 53.7、large-play 15.8、large-diverse 14.9，其他方法除 BEAR 的 medium-diverse 8.0 外都是 0；CQL(ρ) 在中、大迷宮只有 4.6／5.1／3.2／2.3。Adroit 的 human 資料：pen 37.5／55.8（CQL(H)／CQL(ρ)，BC 34.4）、door 9.9／9.1（BC 0.5）；論文說 CQL 是先前最佳離線 RL 方法的 2–9 倍。Kitchen 的 CQL(H) 為 43.8／49.8／51.0（BC 33.8／33.8／47.5）。例外：pen-cloned 的 BC 56.9 高於 CQL 的 39.2／40.3；relocate-cloned 同為 −0.1；kitchen-complete 的 CQL(ρ) 31.3 低於 BC 33.8，所以「全部超過 40%」只對 CQL(H) 成立；antmaze-umaze 上 BEAR 73.0、BRAC-v 70.0 也高於 BC 65.0。</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="Table 3"><table><caption>Table 3：離線 Atari，setting (2)（DQN replay 的 1% 與 10% 樣本）</caption>
+    <thead><tr><th>遊戲</th><th class="num">QR-DQN</th><th class="num">REM</th><th class="num">CQL(H)</th></tr></thead><tbody>
+    <tr><td>Pong (1%)</td><td class="num">−13.8</td><td class="num">−6.9</td><td class="num">19.3</td></tr>
+    <tr><td>Breakout (1%)</td><td class="num">7.9</td><td class="num">11.0</td><td class="num">61.1</td></tr>
+    <tr><td>Q*bert (1%)</td><td class="num">383.6</td><td class="num">343.4</td><td class="num">14012.0</td></tr>
+    <tr><td>Seaquest (1%)</td><td class="num">672.9</td><td class="num">499.8</td><td class="num">779.4</td></tr>
+    <tr><td>Asterix (1%)</td><td class="num">166.3</td><td class="num">386.5</td><td class="num">592.4</td></tr>
+    <tr><td>Pong (10%)</td><td class="num">15.1</td><td class="num">8.9</td><td class="num">18.5</td></tr>
+    <tr><td>Breakout (10%)</td><td class="num">151.2</td><td class="num">86.7</td><td class="num">269.3</td></tr>
+    <tr><td>Q*bert (10%)</td><td class="num">7091.3</td><td class="num">8624.3</td><td class="num">13855.6</td></tr>
+    <tr class="hl"><td>Seaquest (10%)</td><td class="num">2984.8</td><td class="num">3936.6</td><td class="num">3674.1</td></tr>
+    <tr class="hl"><td>Asterix (10%)</td><td class="num">189.2</td><td class="num">75.1</td><td class="num">156.3</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <p>離線 Atari：setting (1) 用前 20% 樣本，Fig. 1 的四個遊戲（Pong、Breakout、Qbert、Seaquest）中 CQL 在 3 個遊戲穩定。setting (2) 用 1% 與 10% 樣本（Table 3；表的圖說寫 setting (1)，正文寫 (2)）。論文寫 1% 資料時 Q*bert 為 36 倍、Breakout 為 6 倍（14012.0/383.6 ≈ 36.5；61.1/11.0 ≈ 5.6）。10% 資料時 CQL 不是全勝：Seaquest 3674.1 低於 REM 3936.6，Asterix 156.3 低於 QR-DQN 189.2。</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="Table 4"><table><caption>Table 4：預測的策略價值減真實折扣回報（負值 = 低估）</caption>
+    <thead><tr><th>資料集</th><th class="num">CQL(H)</th><th class="num">CQL (Eq. 1)</th><th class="num">Ens.(2)</th><th class="num">Ens.(4)</th><th class="num">Ens.(10)</th><th class="num">Ens.(20)</th><th class="num">BEAR</th></tr></thead><tbody>
+    <tr><td>hopper-medium-expert</td><td class="num">−43.20</td><td class="num">−151.36</td><td class="num">3.71e6</td><td class="num">2.93e6</td><td class="num">0.32e6</td><td class="num">24.05e3</td><td class="num">65.93</td></tr>
+    <tr><td>hopper-mixed</td><td class="num">−10.93</td><td class="num">−22.87</td><td class="num">15.00e6</td><td class="num">59.93e3</td><td class="num">8.92e3</td><td class="num">2.47e3</td><td class="num">1399.46</td></tr>
+    <tr><td>hopper-medium</td><td class="num">−7.48</td><td class="num">−156.70</td><td class="num">26.03e12</td><td class="num">437.57e6</td><td class="num">1.12e12</td><td class="num">885e3</td><td class="num">4.32</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <p>Table 4 檢查下界：CQL(H) 的預測值在三個資料集都低於真實回報（−43.20／−10.93／−7.48），且比 Eq. 1 版本（−151.36／−22.87／−156.70）不保守，與 Thm. 3.2「Eq. 2 的下界較緊」一致；BEAR 與 ensemble 都高估。ensemble 的高估範圍 2.47e3–26.03e12；hopper-medium-expert 與 hopper-mixed 隨 ensemble 變大單調下降，只有 hopper-medium 非單調。這是實驗觀察，不是對深度網路的證明。</p>
+    <p>消融（App. G，原始回報）：Table 5 中 CQL(H) 優於 CQL(ρ)（halfcheetah-medium-expert 7234.5 vs 3995.6）；Table 6 中去掉抬高項（Eq. 1）表現下降（hopper-medium 1866.1 vs 1028.4）；Table 7 中 Lagrange 版優於 α = 5.0（antmaze-medium-diverse 0.53 vs 0.21）。</p>
+    <h3>常見錯誤：混比表格</h3>
+    <p>Table 1 的欄序是 SAC、BC、BEAR、BRAC-p、BRAC-v、CQL(H)；Table 2 是 BC、SAC、…，轉錄時容易錯位。Table 1–2 是正規化分數，Table 5–7 是原始回報（Table 7 的 AntMaze 是 0–1 的比例），不能直接比較。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="cql-experiments-d4rl-atari.html">CQL 的實驗：D4RL 連續控制、AntMaze、Adroit、Kitchen 與離線 Atari</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">CQL 在哪類資料上優勢最大？舉一個 CQL 不是最好的例子。Table 4 說明什麼？</p><p class="a">多策略混合資料（mixed／medium-expert／random-expert），例如 hopper-random-expert 110.5 vs 11.1；例外如 pen-cloned BC 56.9 &gt; CQL 39.2、hopper-expert BEAR 110.3 &gt; 109.9；Table 4 中 CQL(H) 的預測值低於真實回報（−43.20／−10.93／−7.48），且比 Eq. 1 版本不保守。</p>
+  </div></details>
+</section>
+
+<!-- S15 =========================================================== -->
+<section class="ch" id="history" data-toc="15" data-tt="研究脈絡">
+  <div class="ch-num">15 · 研究脈絡（選讀）</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>DQN 以深度網路實作 Q-learning；SAC 與 QR-DQN 是 CQL 連續與離散版本的底座；TD3 用兩個 Q 取最小值，在線上 RL 中抑制高估。離線 RL 方面，BCQ、BEAR、BRAC 限制學到的策略靠近行為策略；D4RL 提供基準資料集，綜述文章整理了分佈偏移問題。CQL 改為直接限制 Q 值。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S16 =========================================================== -->
+<section class="ch" id="next" data-toc="16" data-tt="限制與延伸">
+  <div class="ch-num">16 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>作者列出的限制（Sec. 7）：嚴格的理論只涵蓋表格式、線性與部分非線性（NTK）函數近似；深度網路的分析留給未來。離線 RL 也會像監督式學習一樣過擬合，需要類似驗證誤差的早停方法。</p>
+    <p>理論與實作之間還有落差 <span class="tag">本頁推導</span>：Thm. 3.1 要求 $\mathrm{supp}\,\mu\subset\mathrm{supp}\,\hat\pi_\beta$，但 CQL(H) 的 $\mu\propto\exp Q$ 是全支撐；Thm. 3.2 要求 $\mu=\pi$，實作中 μ 是 Q 的 softmax、π 是另外訓練的 SAC 策略，由 Thm. 3.3 的慢變條件銜接；Thm. 3.3、3.4 在主文是無取樣誤差的版本。論文的附錄也有若干符號與編號筆誤（例如 Thm. 3.4 證明的正負號、App. A 的 KL 正負號），本頁採用重算後的版本。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="cql-lineage-hub.html">Conservative Q-Learning 的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="rl-mdp-q-learning-basics.html">MDP、Q 函數與 Bellman backup：value-based RL 的基本記號</a><span>S1 的背景</span></div></li>
+    <li><div><a href="offline-rl-distribution-shift.html">Offline RL 的分布偏移與 OOD 動作造成的 Q 值高估</a><span>S2 的背景</span></div></li>
+    <li><div><a href="cql-conservative-policy-evaluation.html">CQL 的保守 policy evaluation：目標式 1、2 與下界定理 3.1、3.2</a><span>S3–S7</span></div></li>
+    <li><div><a href="cql-algorithm-variants-and-guarantees.html">CQL(R) 的 min-max 形式、CQL(H) 與 CQL(ρ)，以及定理 3.3 至 3.6</a><span>S8–S12</span></div></li>
+    <li><div><a href="cql-vs-policy-constraint-methods.html">CQL 與策略限制、不確定性、OPE 方法的比較</a><span>S13 的背景</span></div></li>
+    <li><div><a href="cql-experiments-d4rl-atari.html">CQL 的實驗：D4RL 連續控制、AntMaze、Adroit、Kitchen 與離線 Atari</a><span>S14</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Aviral Kumar, Aurick Zhou, George Tucker, Sergey Levine. Conservative Q-Learning for Offline Reinforcement Learning. 2020. <a href="https://arxiv.org/abs/2006.04779">arXiv:2006.04779</a>.</p>
+  <p>本頁的方程式與數字取自論文 v3；標示「本頁推導」的內容為本頁自行推導，「推定」為教學用自訂數值，皆非論文結論。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2013, "title": "Playing Atari with Deep Reinforcement Learning", "authors_short": "Mnih et al.", "arxiv": "1312.5602", "role": "以深度網路實作 Q-learning 的早期工作；CQL 離散版的概念基礎", "source": "abstract; CQL §4"}, {"year": 2017, "title": "Distributional Reinforcement Learning with Quantile Regression (QR-DQN)", "authors_short": "Dabney et al.", "arxiv": "1710.10044", "role": "CQL 離散控制版本的底座", "source": "abstract; CQL §4"}, {"year": 2018, "title": "Soft Actor-Critic", "authors_short": "Haarnoja, Zhou, Abbeel et al.", "arxiv": "1801.01290", "role": "CQL 連續控制版本的底座", "source": "abstract; CQL §4"}, {"year": 2018, "title": "Addressing Function Approximation Error in Actor-Critic Methods (TD3)", "authors_short": "Fujimoto, van Hoof, Meger", "arxiv": "1802.09477", "role": "以雙 Q 取最小防止高估的標準做法", "source": "abstract; CQL §6 ablation"}, {"year": 2018, "title": "Off-Policy Deep Reinforcement Learning without Exploration (BCQ)", "authors_short": "Fujimoto, Meger, Precup", "arxiv": "1812.02900", "role": "固定資料集上的 off-policy 問題；限制動作選擇", "source": "abstract; CQL §2, §5"}, {"year": 2019, "title": "Stabilizing Off-Policy Q-Learning via Bootstrapping Error Reduction (BEAR)", "authors_short": "Kumar, Fu, Tucker et al.", "arxiv": "1906.00949", "role": "把 offline 失敗歸因於 bootstrapping error，限制策略", "source": "abstract; CQL §2, §6"}, {"year": 2019, "title": "Advantage-Weighted Regression", "authors_short": "Peng, Kumar, Zhang, Levine", "arxiv": "1910.00177", "role": "以 KL 限制策略的 off-policy 方法", "source": "abstract; CQL §5"}, {"year": 2019, "title": "Behavior Regularized Offline Reinforcement Learning (BRAC)", "authors_short": "Wu, Tucker, Nachum", "arxiv": "1911.11361", "role": "行為正則化的 offline actor-critic，實驗基線", "source": "abstract; CQL §5, §6"}, {"year": 2020, "title": "D4RL: Datasets for Deep Data-Driven Reinforcement Learning", "authors_short": "Fu, Kumar, Nachum, Tucker, Levine", "arxiv": "2004.07219", "role": "CQL 連續控制實驗的 benchmark", "source": "abstract; CQL §6"}, {"year": 2020, "title": "Offline Reinforcement Learning: Tutorial, Review, and Perspectives on Open Problems", "authors_short": "Levine, Kumar, Tucker, Fu", "arxiv": "2005.01643", "role": "offline RL 綜述", "source": "abstract; CQL §1, §2"}, {"year": 2020, "title": "Conservative Q-Learning for Offline Reinforcement Learning", "authors_short": "Kumar, Zhou, Tucker, Levine", "arxiv": "2006.04779", "role": "本論文：以保守 Q 函數取代策略限制", "source": "this paper"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+const lgs=(d0,d1,r0,r1)=>{const a=Math.log(d0),b=Math.log(d1);return v=>r0+(Math.log(v)-a)/(b-a)*(r1-r0)};
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+const fx=(v,n)=>{const t=10**-n/2;return(Math.abs(v)<t?0:v).toFixed(n).replace('-','−')};
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function frame(svg,o){
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m=o.m,x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=m.t;
+  const X=(o.xlog?lgs:lin)(o.x[0],o.x[1],x0,x1),Y=(o.ylog?lgs:lin)(o.y[0],o.y[1],y0,y1);
+  const g=el('g',null,svg);
+  (o.yt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.yf?o.yf(v):String(v)),yy=Y(val);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},g);tx(g,x0-6,yy+4,lab,{class:'tk','text-anchor':'end'})});
+  (o.xt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.xf?o.xf(v):String(v)),xx=X(val);el('line',{x1:xx,x2:xx,y1:y0,y2:y0+4,class:'axl'},g);tx(g,xx,y0+17,lab,{class:'tk','text-anchor':'middle'})});
+  el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  if(o.xl)tx(g,(x0+x1)/2,o.H-3,o.xl,{class:'al','text-anchor':'middle'});
+  return {X,Y,g,x0,x1,y0,y1};
+}
+function arrow(g,x0,y0,x1,y1,cls,dash){const dx=x1-x0,dy=y1-y0,L=Math.hypot(dx,dy);if(L<3)return;const ux=dx/L,uy=dy/L,h=Math.min(8,L*.6);
+  el('line',{x1:x0,y1:y0,x2:x1-ux*h*.7,y2:y1-uy*h*.7,class:cls+(dash?' dash':'')},g);
+  el('path',{d:`M${x1} ${y1}L${x1-ux*h-uy*h*.45} ${y1-uy*h+ux*h*.45}L${x1-ux*h+uy*h*.45} ${y1-uy*h-ux*h*.45}Z`,class:cls+'-f'},g)}
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+function niceAxis(lo,hi,n){if(hi-lo<1e-9){lo-=.5;hi+=.5}const pad=(hi-lo)*.1;lo-=pad;hi+=pad;const raw=(hi-lo)/(n||5),p=10**Math.floor(Math.log10(raw)),m=raw/p,step=(m<1.5?1:m<3.5?2:m<7.5?5:10)*p;
+  const a=Math.floor(lo/step)*step,b=Math.ceil(hi/step)*step,ticks=[];for(let v=a;v<=b+step*1e-6;v+=step)ticks.push(+v.toFixed(10));return{lo:a,hi:b,ticks,step}}
+function segInit(id,cb){const box=$('#'+id);$$('button',box).forEach(b=>b.addEventListener('click',()=>{segSet(id,b.dataset.v);cb(b.dataset.v)}))}
+function segSet(id,v){$$('#'+id+' button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===String(v))))}
+const tfmt=v=>fx(v,0).replace('−','−');
+
+/* ---------- shared math (same algorithms as verify/check.py) ---------- */
+const norm=w=>{const s=w.reduce((a,b)=>a+b,0);return w.map(x=>x/s)};
+const dcql=(pi,pb)=>pi.reduce((s,p,i)=>s+p*(p/pb[i]-1),0);
+const chi2=(pi,pb)=>pi.reduce((s,p,i)=>s+(p-pb[i])**2/pb[i],0);
+function solve(A,b){const n=b.length,M=A.map((r,i)=>[...r,b[i]]);
+  for(let c=0;c<n;c++){let p=c;for(let i=c+1;i<n;i++)if(Math.abs(M[i][c])>Math.abs(M[p][c]))p=i;[M[c],M[p]]=[M[p],M[c]];
+    for(let i=0;i<n;i++)if(i!==c){const f=M[i][c]/M[c][c];for(let j=c;j<=n;j++)M[i][j]-=f*M[c][j]}}
+  return M.map((r,i)=>r[n]/r[i])}
+const lse=q=>{const m=Math.max(...q);return m+Math.log(q.reduce((s,x)=>s+Math.exp(x-m),0))};
+const softmax=q=>{const m=Math.max(...q),e=q.map(x=>Math.exp(x-m)),s=e.reduce((a,b)=>a+b,0);return e.map(x=>x/s)};
+function erfc(x){const z=Math.abs(x),t=1/(1+.5*z);
+  const y=t*Math.exp(-z*z-1.26551223+t*(1.00002368+t*(.37409196+t*(.09678418+t*(-.18628806+t*(.27886807+t*(-1.13520398+t*(1.48851587+t*(-.82215223+t*.17087277)))))))));
+  return x>=0?y:2-y}
+const Z_DELTA={'0.1':1.2816,'0.05':1.6449,'0.01':2.3263};
+const piW=w=>w.some(x=>x>0)?w:w.map(()=>1);
+
+/* ---------- Q-value axes (hero, C1, C4) ---------- */
+function qAxes(box,rows,rng,opt){const svg=$('svg',box),W=widthOf(box,280,900),RH=62,H=rows.length*RH+26;
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const x0=14,x1=W-14,X=lin(rng[0],rng[1],x0,x1),g=el('g',null,svg);
+  const ticks=[];for(let v=Math.ceil(rng[0]);v<=rng[1]+1e-9;v+=opt.step||1)ticks.push(v);
+  const clampX=v=>{if(v<rng[0])return{x:x0,c:'‹'};if(v>rng[1])return{x:x1,c:'›'};return{x:X(v),c:''}};
+  rows.forEach((r,i)=>{const yb=i*RH,y=yb+38;
+    tx(g,x0,yb+14,r.label,{class:'lab'});
+    el('line',{x1:x0,x2:x1,y1:y,y2:y,class:'faint'},g);
+    ticks.forEach(v=>el('line',{x1:X(v),x2:X(v),y1:y-3,y2:y+3,class:'axl'},g));
+    const t=clampX(r.q);
+    const mk=(v,dy,kind)=>{if(v==null)return;const c=clampX(v),yy=y+dy;
+      if(Math.abs(c.x-t.x)>3)arrow(g,t.x,yy,c.x+(c.x>t.x?-5:5),yy,kind==='eq1'?'eq1':'acc',kind==='eq1');
+      if(c.c){tx(g,c.x+(c.c==='‹'?-2:2),yy+4,c.c,{class:'labm','text-anchor':c.c==='‹'?'start':'end'});tx(g,c.x+(c.c==='‹'?10:-10),yy-6,fx(v,2),{class:'tk','text-anchor':c.c==='‹'?'start':'end'})}
+      else if(kind==='eq1')el('rect',{x:c.x-5,y:yy-5,width:10,height:10,class:'eq1-f'},g);
+      else el('circle',{cx:c.x,cy:yy,r:6,class:'acc-f'},g)};
+    mk(r.e1,-12,'eq1');mk(r.e2,opt.single?0:12,'cql');
+    el('circle',{cx:t.x,cy:y,r:6,class:'hol-true'},g)});
+  const yt=rows.length*RH+8,nd=(opt.step||1)<1?1:0;ticks.forEach(v=>tx(g,X(v),yt+8,fx(v,nd),{class:'tk','text-anchor':'middle'}));
+}
+
+/* ---------- C1 ---------- */
+const R1=[1.0,0.6,0.8],C1PRE={a3:[10,20,70],a1:[80,10,10]};
+const c1={wb:[50,30,20],wp:[10,20,70],alpha:.5,pre:'a3'};
+function c1Calc(s){const pb=norm(s.wb),pi=norm(piW(s.wp)),ratio=pi.map((p,i)=>p/pb[i]);
+  const d1=ratio.map(x=>-s.alpha*x),d2=ratio.map(x=>-s.alpha*(x-1));
+  const V=pi.reduce((a,p,i)=>a+p*R1[i],0),dV1=pi.reduce((a,p,i)=>a+p*d1[i],0),dV2=pi.reduce((a,p,i)=>a+p*d2[i],0);
+  return{pb,pi,ratio,d1,d2,V,dV1,dV2,D:dcql(pi,pb),X:chi2(pi,pb)}}
+function c1Weights(){const box=$('#c1-w');box.innerHTML='';
+  ['wb','wp'].forEach(key=>[0,1,2].forEach(i=>{const id=`c1-${key}${i}`,min=key==='wb'?1:0;
+    box.insertAdjacentHTML('beforeend',`<div class="rng"><label class="lbl" for="${id}">${key==='wb'?'資料比例權重':'π 權重'} a${i+1}<output id="${id}o">${c1[key][i]}</output></label><input id="${id}" type="range" min="${min}" max="100" step="1" value="${c1[key][i]}"></div>`);
+    const inp=$('#'+id);inp.addEventListener('input',()=>{c1[key][i]=+inp.value;if(key==='wp'){c1.pre='';segSet('c1-pre','')}renderC1()});inp.addEventListener('change',c1Announce)}))}
+function c1Sync(){['wb','wp'].forEach(key=>[0,1,2].forEach(i=>{const inp=$(`#c1-${key}${i}`);if(inp){inp.value=c1[key][i];$(`#c1-${key}${i}o`).textContent=c1[key][i]}}))}
+function c1Announce(){const r=c1Calc(c1);announce('c1',`α 等於 ${c1.alpha.toFixed(2)}。Eq. 2 估計值減真實值等於 ${fx(r.dV2,4)}，Eq. 1 為 ${fx(r.dV1,4)}，D 等於 ${fx(r.D,4)}。`)}
+function renderC1(){const r=c1Calc(c1);$('#c1-ao').textContent=c1.alpha.toFixed(2);$('#c1-a').setAttribute('aria-valuetext',`α 等於 ${c1.alpha.toFixed(2)}`);
+  [0,1,2].forEach(i=>{['wb','wp'].forEach(k=>{const o=$(`#c1-${k}${i}o`);if(o)o.textContent=c1[k][i]})});
+  qAxes($('#c1-fig'),r.pi.map((p,i)=>({label:`a${i+1} · 資料比例 ${r.pb[i].toFixed(2)} · π ${p.toFixed(2)}`,q:R1[i],e1:R1[i]+r.d1[i],e2:R1[i]+r.d2[i]})),[-3,2],{});
+  const ar=v=>v>5e-5?' ▲':v<-5e-5?' ▼':'';
+  $('#c1-tab tbody').innerHTML=r.pi.map((p,i)=>`<tr><td>a${i+1}</td><td class="num">${r.pb[i].toFixed(2)}</td><td class="num">${p.toFixed(2)}</td><td class="num">${r.ratio[i].toFixed(4)}</td><td class="num">${R1[i].toFixed(2)}</td><td class="num">${fx(r.d1[i],4)}${ar(r.d1[i])}</td><td class="num">${fx(r.d2[i],4)}${ar(r.d2[i])}</td></tr>`).join('');
+  $('#c1-ro').innerHTML=`真實 V = <b>${r.V.toFixed(4)}</b><br>Eq. 1：估計 V − V = <b>${fx(r.dV1,4)}</b><br>Eq. 2：估計 V − V = <b class="acc">${fx(r.dV2,4)}</b><br>D（Σπ(π/π_β−1)）= ${fx(r.D,4)}<br>D（Σ(π−π_β)²/π_β）= ${fx(r.X,4)}`;
+  $('#c1-concl').textContent=r.D<1e-12?'π 等於資料比例：D = 0，Eq. 2 的估計 V 等於 V；Eq. 1 仍把每個動作壓低 α。':
+    (r.d2.some(v=>v>5e-5)?`Eq. 2 抬高了 π 小於資料比例的動作（${r.d2.map((v,i)=>v>5e-5?'a'+(i+1):'').filter(Boolean).join('、')}），但估計 V 仍比 V 低 α·D = ${fx(-r.dV2,4)}。`:`Eq. 2 的估計 V 比 V 低 α·D = ${fx(-r.dV2,4)}。`);
+}
+function initC1(){c1Weights();$('#c1-a').addEventListener('input',e=>{c1.alpha=+e.target.value;renderC1()});$('#c1-a').addEventListener('change',c1Announce);
+  segInit('c1-pre',v=>{c1.pre=v;c1.wp=v==='eq'?[...c1.wb]:[...C1PRE[v]];c1Sync();renderC1();c1Announce()});
+  $('#c1-reset').addEventListener('click',()=>{c1.wb=[50,30,20];c1.wp=[10,20,70];c1.alpha=.5;c1.pre='a3';$('#c1-a').value=.5;segSet('c1-pre','a3');c1Sync();renderC1();c1Announce()});renderC1()}
+function renderHero(){const r=c1Calc({wb:[50,30,20],wp:[10,20,70],alpha:.5});qAxes($('#hero-fig'),r.pi.map((p,i)=>({label:`a${i+1} · 資料比例 ${r.pb[i].toFixed(2)} · 策略 π ${p.toFixed(2)}`,q:R1[i],e2:R1[i]+r.d2[i]})),[-1,2],{single:true})}
+
+/* ---------- C2 ---------- */
+const MDP_T=[[[[0,1]],[[1,1]]],[[[0,1]],[[2,.8],[0,.2]]],[[[1,1]],[[2,1]]]],MDP_R=[[0,0],[0,0],[0,1]];
+const SA=['s0 左','s0 右','s1 左','s1 右','s2 左','s2 右'];
+const c2={pbR:[.8,.5,.2],pR:.9,alpha:.1,gamma:.9,k:100,pre:'def'};let c2cache=null,c2key='';
+function c2Calc(s){const pol=[0,1,2].map(()=>[1-s.pR,s.pR]),beh=s.pbR.map(b=>[1-b,b]),ix=(a,b)=>2*a+b,g=s.gamma;
+  const A=[...Array(6)].map(()=>Array(6).fill(0));
+  for(let st=0;st<3;st++)for(let a=0;a<2;a++){const i=ix(st,a);A[i][i]+=1;for(const[s2,pr]of MDP_T[st][a])for(let a2=0;a2<2;a2++)A[i][ix(s2,a2)]-=g*pr*pol[s2][a2]}
+  const r=[];for(let st=0;st<3;st++)for(let a=0;a<2;a++)r.push(MDP_R[st][a]);
+  const ratio=[];for(let st=0;st<3;st++)for(let a=0;a<2;a++)ratio.push(pol[st][a]/beh[st][a]);
+  const Q=solve(A,r),Q1=solve(A,r.map((v,i)=>v-s.alpha*ratio[i])),Q2=solve(A,r.map((v,i)=>v-s.alpha*(ratio[i]-1)));
+  const V=q=>[0,1,2].map(st=>pol[st][0]*q[ix(st,0)]+pol[st][1]*q[ix(st,1)]);
+  const D=[0,1,2].map(st=>dcql(pol[st],beh[st]));
+  const it=pen=>{let q=Array(6).fill(0);const h=[];for(let k=0;k<=100;k++){h.push(V(q)[0]);
+      const bq=[];for(let i=0;i<6;i++){let e=0;for(const[s2,pr]of MDP_T[i>>1][i&1])e+=pr*(pol[s2][0]*q[ix(s2,0)]+pol[s2][1]*q[ix(s2,1)]);bq.push(r[i]+g*e)}
+      q=bq.map((v,i)=>v-s.alpha*pen[i])}return h};
+  return{Q,Q1,Q2,V:V(Q),V1:V(Q1),V2:V(Q2),D,pol,beh,it0:it(Array(6).fill(0)),it1:it(ratio),it2:it(ratio.map(x=>x-1))}}
+function c2Get(){const key=JSON.stringify([c2.pbR,c2.pR,c2.alpha,c2.gamma]);if(key!==c2key){c2key=key;c2cache=c2Calc(c2)}return c2cache}
+function drawMDP(r){const box=$('#c2-mdp'),svg=$('svg',box),W=widthOf(box,280,520),H=210;svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const g=el('g',null,svg),cx=[W*.16,W*.5,W*.84],cy=105,R=22,sw=p=>(1+4*p).toFixed(1);
+  const curve=(xa,xb,lift,p,lab,lx)=>{const mx=(xa+xb)/2,my=cy-lift,d=`M${xa} ${cy+(lift>0?-R*.6:R*.6)}Q${mx} ${my} ${xb} ${cy+(lift>0?-R*.6:R*.6)}`;el('path',{d,class:'edge','stroke-width':sw(p)},g);
+    const ex=xb,ey=cy+(lift>0?-R*.6:R*.6),dx=ex-mx,dy=ey-my,L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;el('path',{d:`M${ex} ${ey}L${ex-ux*9-uy*4} ${ey-uy*9+ux*4}L${ex-ux*9+uy*4} ${ey-uy*9-ux*4}Z`,class:'edge-f'},g);
+    tx(g,lx??mx,ey-lift/2+(lift>0?-7:15),lab,{class:'tk','text-anchor':'middle'})};
+  const loop=(x,up,p,lab)=>{const s=up?-1:1,y=cy+s*R;el('path',{d:`M${x-10} ${y}C${x-26} ${y+s*40} ${x+26} ${y+s*40} ${x+10} ${y}`,class:'edge','stroke-width':sw(p)},g);
+    el('path',{d:`M${x+10} ${y}l${-2} ${s*9}l${8} ${s*-3}Z`,class:'edge-f'},g);tx(g,x,y+s*44+(up?0:8),lab,{class:'tk','text-anchor':'middle'})};
+  const pr=r.pol[0][1],pl=r.pol[0][0];
+  curve(cx[0]+R*.8,cx[1]-R*.8,30,pr,'右');curve(cx[1]+R*.8,cx[2]-R*.8,30,pr,'右 0.8');
+  curve(cx[1]-R*.8,cx[0]+R*.8,-30,pl,'左');curve(cx[2]-R*.8,cx[1]+R*.8,-30,pl,'左');
+  curve(cx[1]-R*.2,cx[0]+R*.2,120,pr,'右 0.2');
+  loop(cx[0],false,pl,'左');loop(cx[2],false,pr,'右 · r = 1');
+  cx.forEach((x,i)=>{el('circle',{cx:x,cy,r:R,class:'node'},g);tx(g,x,cy+5,'s'+i,{class:'labm','text-anchor':'middle'});
+    tx(g,x,H-4,`資料選右 ${r.beh[i][1].toFixed(2)}`,{class:'tk','text-anchor':'middle'})})}
+function drawBars(r){const box=$('#c2-bar'),svg=$('svg',box),W=widthOf(box,280,520),H=220;
+  const all=[...r.Q,...r.Q1,...r.Q2],ax=niceAxis(Math.min(0,...all),Math.max(...all),4);
+  const f=frame(svg,{W,H,m:{l:44,r:8,t:10,b:30},x:[0,6],y:[ax.lo,ax.hi],yt:ax.ticks,yf:v=>fx(v,Math.max(0,-Math.floor(Math.log10(ax.step)+1e-9)))});
+  let defs=el('defs',null,svg),pt=el('pattern',{id:'hatch',width:6,height:6,patternUnits:'userSpaceOnUse',patternTransform:'rotate(45)'},defs);el('rect',{width:6,height:6,fill:'var(--surface)'},pt);el('line',{x1:0,y1:0,x2:0,y2:6,stroke:'var(--c-eq1)','stroke-width':2.5},pt);
+  const gw=(f.x1-f.x0)/6,bw=Math.min(16,gw/4),y0=f.Y(0);
+  for(let i=0;i<6;i++){const xc=f.X(i+.5);[[r.Q[i],'t'],[r.Q1[i],'e1'],[r.Q2[i],'e2']].forEach(([v,k],j)=>{const x=xc+(j-1.5)*bw+1,y=f.Y(v),h=Math.abs(y-y0),yy=Math.min(y,y0);
+      if(k==='t')el('rect',{x,y:yy,width:bw-2,height:Math.max(h,1),fill:'none',stroke:'var(--c-true)','stroke-width':2},f.g);
+      else if(k==='e1')el('rect',{x,y:yy,width:bw-2,height:Math.max(h,1),fill:'url(#hatch)',stroke:'var(--c-eq1)','stroke-width':1},f.g);
+      else el('rect',{x,y:yy,width:bw-2,height:Math.max(h,1),class:'acc-f'},f.g)});
+    tx(f.g,xc,f.y0+16,SA[i].replace(' ',''),{class:'tk','text-anchor':'middle'});
+    if(r.Q2[i]>r.Q[i]+1e-12)tx(f.g,xc,f.Y(Math.max(r.Q2[i],r.Q[i]))-6,'▲高估',{class:'lab','text-anchor':'middle'})}
+  el('line',{x1:f.x0,x2:f.x1,y1:y0,y2:y0,class:'base'},f.g)}
+function drawIt(r){const k=c2.k;
+  {const box=$('#c2-it'),svg=$('svg',box),W=widthOf(box,280,520),H=210,fp=[r.V[0],r.V1[0],r.V2[0]];
+   const all=[...r.it0,...r.it1,...r.it2,...fp],ax=niceAxis(Math.min(0,...all),Math.max(...all),4),nd=Math.max(0,-Math.floor(Math.log10(ax.step)+1e-9));
+   const right=W<420?8:96;
+   const f=frame(svg,{W,H,m:{l:40,r:right,t:10,b:38},x:[0,100],y:[ax.lo,ax.hi],yt:ax.ticks,yf:v=>fx(v,nd),xt:[0,25,50,75,100],xl:'k'});
+   const labs=[];[[r.it0,'true',fp[0]],[r.it1,'eq1',fp[1]],[r.it2,'acc',fp[2]]].forEach(([h,c,v],j)=>{el('line',{x1:f.x0,x2:f.x1,y1:f.Y(v),y2:f.Y(v),class:'cur'},f.g);
+     el('path',{d:lp(h.map((y,i)=>[f.X(i),f.Y(y)])),class:c+(c==='eq1'?' dash':c==='acc'?' dot':'')},f.g);labs.push({y:f.Y(v),a:fx(h[100],3),b:fx(v,3)})});
+   if(right>40){labs.sort((p,q)=>p.y-q.y);let last=-1e9;labs.forEach(l=>{const y=Math.max(l.y,last+28);last=y;tx(f.g,f.x1+6,y-2,`k=100：${l.a}`,{class:'tk'});tx(f.g,f.x1+6,y+11,`不動點：${l.b}`,{class:'tk'})})}
+   el('line',{x1:f.X(k),x2:f.X(k),y1:f.y1,y2:f.y0,class:'cur'},f.g)}
+  {const box=$('#c2-df'),svg=$('svg',box),W=widthOf(box,280,520),H=210,d1=r.it1.map((v,i)=>v-r.it0[i]),d2=r.it2.map((v,i)=>v-r.it0[i]);
+   const all=[...d1,...d2,0],ax=niceAxis(Math.min(...all),Math.max(...all),4),nd=Math.max(0,-Math.floor(Math.log10(ax.step)+1e-9));
+   const f=frame(svg,{W,H,m:{l:44,r:8,t:10,b:38},x:[0,100],y:[ax.lo,ax.hi],yt:ax.ticks,yf:v=>fx(v,nd),xt:[0,25,50,75,100],xl:'k'});
+   el('line',{x1:f.x0,x2:f.x1,y1:f.Y(0),y2:f.Y(0),class:'base'},f.g);
+   el('path',{d:lp(d1.map((y,i)=>[f.X(i),f.Y(y)])),class:'eq1 dash'},f.g);el('path',{d:lp(d2.map((y,i)=>[f.X(i),f.Y(y)])),class:'acc dot'},f.g);
+   el('line',{x1:f.X(k),x2:f.X(k),y1:f.y1,y2:f.y0,class:'cur'},f.g)}}
+function renderC2(){const r=c2Get();$('#c2-ao').textContent=c2.alpha.toFixed(2);$('#c2-go').textContent=c2.gamma.toFixed(2);$('#c2-ko').textContent=c2.k;
+  [0,1,2].forEach(i=>$(`#c2-b${i}o`).textContent=c2.pbR[i].toFixed(2));$('#c2-po').textContent=c2.pR.toFixed(2);
+  drawMDP(r);drawBars(r);drawIt(r);
+  const ref=-c2.alpha/(1-c2.gamma);
+  $('#c2-tab tbody').innerHTML=[0,1,2].map(i=>`<tr><td>s${i}</td><td class="num">${fx(r.V[i],4)}</td><td class="num">${fx(r.V1[i],4)}</td><td class="num">${fx(r.V2[i],4)}</td><td class="num">${fx(r.V1[i]-r.V2[i],4)}</td><td class="num">${fx(ref,4)}</td><td class="num">${fx(r.D[i],4)}</td></tr>`).join('');
+  const over=r.Q2.map((v,i)=>v>r.Q[i]+1e-12?SA[i]:'').filter(Boolean);
+  $('#c2-ro').innerHTML=`k = ${c2.k}：Eq. 2 迭代 − 真實迭代（s0）= <b class="acc">${fx(r.it2[c2.k]-r.it0[c2.k],4)}</b>；Eq. 1 = <b>${fx(r.it1[c2.k]-r.it0[c2.k],4)}</b><br>Eq. 2 高估的 (s, a)：<b>${over.length?over.join('、'):'無'}</b>`}
+function c2Announce(){const r=c2Get();announce('c2',`α 等於 ${c2.alpha.toFixed(2)}，γ 等於 ${c2.gamma.toFixed(2)}。s0 的真實 V ${fx(r.V[0],3)}，Eq. 2 估計 ${fx(r.V2[0],3)}，兩種估計相差 ${fx(r.V1[0]-r.V2[0],3)}。`)}
+function c2SyncInputs(){$('#c2-a').value=c2.alpha;$('#c2-g').value=c2.gamma;$('#c2-k').value=c2.k;[0,1,2].forEach(i=>$(`#c2-b${i}`).value=c2.pbR[i]);$('#c2-p').value=c2.pR}
+function initC2(){const bind=(id,fn)=>{const e=$('#'+id);e.addEventListener('input',()=>{fn(+e.value);if(id!=='c2-k'){c2.pre='';segSet('c2-pre','')}renderC2()});e.addEventListener('change',c2Announce)};
+  bind('c2-a',v=>c2.alpha=v);bind('c2-g',v=>c2.gamma=v);bind('c2-k',v=>c2.k=v);[0,1,2].forEach(i=>bind('c2-b'+i,v=>c2.pbR[i]=v));bind('c2-p',v=>c2.pR=v);
+  segInit('c2-pre',v=>{c2.pre=v;Object.assign(c2,{pbR:[.8,.5,.2],pR:.9,alpha:.1,gamma:.9});if(v==='g5')c2.gamma=.5;if(v==='eq'){c2.pbR=[.5,.5,.5];c2.pR=.5}c2SyncInputs();renderC2();c2Announce()});renderC2()}
+
+/* ---------- C3 ---------- */
+const NS3=[10,30,100,300,1000,3000,10000];
+const c3={N:100,sigma:1,alpha:.2,delta:.05,wb:[50,30,20],wp:[10,20,70]};
+function c3Calc(s,N){const pb0=norm(s.wb),pi=norm(piW(s.wp)),n=pb0.map(b=>Math.max(1,Math.round(N*b))),total=n.reduce((a,b)=>a+b,0),pbh=norm(n);
+  const D=dcql(pi,pbh),sN=s.sigma*Math.sqrt(pi.reduce((a,p,i)=>a+p*p/n[i],0));
+  if(D<1e-12)return{n,total,pbh,D,s:sN,P:.5,adelta:Infinity};
+  return{n,total,pbh,D,s:sN,P:.5*erfc(s.alpha*D/(sN*Math.SQRT2)),adelta:Z_DELTA[String(s.delta)]*sN/D}}
+const pFmt=p=>p<1e-6?'< 0.000001':p.toFixed(5);
+function renderC3(){const r=c3Calc(c3,c3.N);$('#c3-alo').textContent=c3.alpha.toFixed(2);$('#c3-sgo').textContent=c3.sigma.toFixed(1);
+  ['wb','wp'].forEach(k=>[0,1,2].forEach(i=>{const o=$(`#c3-${k}${i}o`);if(o)o.textContent=c3[k][i]}));
+  {const box=$('#c3-p'),svg=$('svg',box),W=widthOf(box,280,520),H=230;
+   const f=frame(svg,{W,H,m:{l:46,r:10,t:10,b:38},x:[0,2],y:[0,.5],yt:[0,.1,.2,.3,.4,.5],yf:v=>v.toFixed(1),xt:[0,.5,1,1.5,2],xf:v=>String(v),xl:'α'});
+   el('line',{x1:f.x0,x2:f.x1,y1:f.Y(c3.delta),y2:f.Y(c3.delta),class:'ref'},f.g);tx(f.g,f.x1-2,f.Y(c3.delta)-4,'δ = '+c3.delta,{class:'tk','text-anchor':'end'});
+   NS3.forEach(N=>{const pts=[];for(let i=0;i<=200;i++){const a=i/100;pts.push([f.X(a),f.Y(c3Calc(Object.assign({},c3,{alpha:a}),N).P)])}
+     const cur=N===c3.N;el('path',{d:lp(pts),class:cur?'acc':'ref',style:cur?'':'stroke-dasharray:none;stroke-width:1'},f.g);
+     if(cur||N===10){const a=Math.min(.6,2),pa=c3Calc(Object.assign({},c3,{alpha:N===10?.6:.35}),N).P;tx(f.g,f.X(N===10?.6:.35)+4,f.Y(pa)-6,'N = '+N,{class:cur?'lab':'tk'})}});
+   el('line',{x1:f.X(c3.alpha),x2:f.X(c3.alpha),y1:f.y1,y2:f.y0,class:'cur'},f.g);el('circle',{cx:f.X(c3.alpha),cy:f.Y(r.P),r:5,class:'acc-f'},f.g);
+   if(r.adelta>2&&isFinite(r.adelta))tx(f.g,f.x1-2,f.y1+12,`› α_δ = ${r.adelta.toFixed(3)}（超出圖範圍）`,{class:'tk','text-anchor':'end'});
+   if(!isFinite(r.adelta))tx(f.g,f.x1-2,f.y1+12,'D̂ = 0：曲線停在 0.5',{class:'tk','text-anchor':'end'})}
+  {const box=$('#c3-a'),svg=$('svg',box),W=widthOf(box,280,520),H=230;const vals=NS3.map(N=>c3Calc(c3,N).adelta);
+   const fin=vals.filter(isFinite);
+   if(!fin.length){svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);tx(svg,W/2,H/2,'D̂ = 0：任何 α 都不能讓高估機率低於 0.5',{class:'lab','text-anchor':'middle'})}
+   else{let lo=Math.max(1e-3,Math.min(...fin)/2),hi=Math.min(1e2,Math.max(...fin)*2);const yt=[];for(let e=-3;e<=2;e++){const v=10**e;if(v>=lo/1.0001&&v<=hi*1.0001)yt.push(v)}
+     if(yt.length<2){lo=10**Math.floor(Math.log10(lo));hi=10**Math.ceil(Math.log10(hi));yt.length=0;for(let e=Math.log10(lo);e<=Math.log10(hi)+1e-9;e++)yt.push(10**e)}
+     const f=frame(svg,{W,H,m:{l:46,r:10,t:10,b:38},x:[10,10000],xlog:true,y:[lo,hi],ylog:true,yt,yf:v=>v>=1?String(v):v.toPrecision(1),xt:[10,100,1000,10000],xf:v=>String(v),xl:'目標筆數 N'});
+     const cl=v=>Math.min(hi,Math.max(lo,v));
+     const i100=NS3.indexOf(100);if(isFinite(vals[i100])){const a=vals[i100];el('path',{d:lp([[f.X(10),f.Y(cl(a*Math.sqrt(10)))],[f.X(10000),f.Y(cl(a/10))]]),class:'ref',style:'stroke-width:7;opacity:.35;stroke-dasharray:none'},f.g)}
+     el('path',{d:lp(NS3.map((N,i)=>[f.X(N),f.Y(cl(vals[i]))])),class:'acc',style:'stroke-width:2'},f.g);
+     NS3.forEach((N,i)=>{const v=vals[i],out=v<lo||v>hi;el('circle',{cx:f.X(N),cy:f.Y(cl(v)),r:N===c3.N?6:3.5,class:out?'hol-true':'acc-f'},f.g);if(out)tx(f.g,f.X(N)+6,f.Y(cl(v))+4,fx(v,3),{class:'tk'})})}}
+  $('#c3-ro').innerHTML=`計數 n = (${r.n.join(', ')})，實際總筆數 ${r.total}<br>資料比例 = (${r.pbh.map(v=>v.toFixed(3)).join(', ')})<br>D（依計數比例）= ${fx(r.D,5)}，s_N = ${r.s.toFixed(5)}<br>P(估計 V &gt; V) = <b class="acc">${pFmt(r.P)}</b><br>α_δ（δ = ${c3.delta}）= <b>${isFinite(r.adelta)?r.adelta.toFixed(5):'∞'}</b>${isFinite(r.adelta)?'':'<br>D̂ = 0：任何 α 都不能讓高估機率低於 0.5'}`}
+function c3Announce(){const r=c3Calc(c3,c3.N);announce('c3',`N 等於 ${c3.N}，α 等於 ${c3.alpha.toFixed(2)}。高估機率 ${pFmt(r.P)}，所需 α ${isFinite(r.adelta)?r.adelta.toFixed(4):'無限大'}。`)}
+function initC3(){const nb=$('#c3-N');NS3.forEach(N=>nb.insertAdjacentHTML('beforeend',`<button type="button" data-v="${N}" aria-pressed="${N===100}">${N}</button>`));
+  segInit('c3-N',v=>{c3.N=+v;renderC3();c3Announce()});segInit('c3-d',v=>{c3.delta=+v;renderC3();c3Announce()});
+  const al=$('#c3-al');al.addEventListener('input',()=>{c3.alpha=+al.value;renderC3()});al.addEventListener('change',c3Announce);
+  const sg=$('#c3-sg');sg.addEventListener('input',()=>{c3.sigma=+sg.value;renderC3()});sg.addEventListener('change',c3Announce);
+  const box=$('#c3-w');['wb','wp'].forEach(key=>[0,1,2].forEach(i=>{const id=`c3-${key}${i}`;box.insertAdjacentHTML('beforeend',`<div class="rng"><label class="lbl" for="${id}">${key==='wb'?'資料比例權重':'π 權重'} a${i+1}<output id="${id}o">${c3[key][i]}</output></label><input id="${id}" type="range" min="${key==='wb'?1:0}" max="100" step="1" value="${c3[key][i]}"></div>`);
+    const inp=$('#'+id);inp.addEventListener('input',()=>{c3[key][i]=+inp.value;renderC3()});inp.addEventListener('change',c3Announce)}));
+  const sync=()=>['wb','wp'].forEach(k=>[0,1,2].forEach(i=>$(`#c3-${k}${i}`).value=c3[k][i]));
+  $('#c3-eq').addEventListener('click',()=>{c3.wp=c3Calc(c3,c3.N).n.slice();sync();renderC3();c3Announce()});
+  $('#c3-reset').addEventListener('click',()=>{Object.assign(c3,{N:100,sigma:1,alpha:.2,delta:.05,wb:[50,30,20],wp:[10,20,70]});al.value=.2;sg.value=1;segSet('c3-N',100);segSet('c3-d','0.05');sync();renderC3();c3Announce()});renderC3()}
+
+/* ---------- C4 ---------- */
+const R4=[1.0,0.6,0.2,1.4],PB4={rare:[.45,.35,.15,.05],unif:[.25,.25,.25,.25],common:[.10,.20,.20,.50]};
+const f4=(q,pb,al)=>al*(lse(q)-q.reduce((s,x,i)=>s+pb[i]*x,0))+.5*q.reduce((s,x,i)=>s+pb[i]*(x-R4[i])**2,0);
+const c4cache=new Map();
+function c4Solve(key,alpha){const ck=key+'|'+alpha;if(c4cache.has(ck))return c4cache.get(ck);
+  const pb=PB4[key];let q=R4.slice(),it=0;
+  for(it=1;it<=50;it++){const p=softmax(q),g=q.map((x,i)=>alpha*(p[i]-pb[i])+pb[i]*(x-R4[i]));if(Math.max(...g.map(Math.abs))<1e-9*(1+alpha))break;
+    const H=[0,1,2,3].map(i=>[0,1,2,3].map(j=>alpha*((i===j?p[i]:0)-p[i]*p[j])+(i===j?pb[i]:0))),d=solve(H,g.map(x=>-x));
+    let t=1;const f0=f4(q,pb,alpha),gd=g.reduce((s,x,i)=>s+x*d[i],0);while(f4(q.map((x,i)=>x+t*d[i]),pb,alpha)>f0+1e-4*t*gd&&t>1e-10)t*=.5;q=q.map((x,i)=>x+t*d[i])}
+  const mu=softmax(q),H=-mu.reduce((s,m)=>s+(m>0?m*Math.log(m):0),0),E=(w,v)=>w.reduce((s,x,i)=>s+x*v[i],0);
+  const o={q,mu,iters:it,lse:lse(q),max:Math.max(...q),EmuH:E(mu,q)+H,Epb_q:E(pb,q),Epb_r:E(pb,R4),gapHat:E(pb,q)-E(mu,q),gapTrue:E(pb,R4)-E(mu,R4),chi:dcql(mu,pb),alpha};
+  c4cache.set(ck,o);return o}
+const gapReg=(key,a)=>{const o=c4Solve(key,a);return o.lse-o.Epb_q};
+const Hpb=key=>-PB4[key].reduce((s,b)=>s+b*Math.log(b),0);
+function c4Tau(key,tau,amax=1e4){if(gapReg(key,0)<=tau)return 0;if(tau<=Hpb(key)+1e-9||gapReg(key,amax)>tau)return Infinity;
+  let lo=Math.log(1e-6),hi=Math.log(amax);for(let i=0;i<60;i++){const mid=.5*(lo+hi);if(gapReg(key,Math.exp(mid))>tau)lo=mid;else hi=mid}return Math.exp(.5*(lo+hi))}
+const c4={pb:'rare',mode:'alpha',alpha:1,tau:1.3};
+function c4Current(){if(c4.mode==='alpha')return{o:c4Solve(c4.pb,c4.alpha),astar:c4.alpha};const a=c4Tau(c4.pb,c4.tau);return{o:c4Solve(c4.pb,isFinite(a)?a:1e4),astar:a}}
+function renderC4(){$('#c4-ao').textContent=c4.alpha.toFixed(2);$('#c4-to').textContent=c4.tau.toFixed(2);
+  $('#c4-arow').classList.toggle('hide',c4.mode!=='alpha');$('#c4-trow').classList.toggle('hide',c4.mode!=='tau');$('#c4-g').classList.toggle('hide',c4.mode!=='tau');
+  const {o,astar}=c4Current(),pb=PB4[c4.pb];
+  qAxes($('#c4-fig'),R4.map((r,i)=>({label:`a${i+1} · 資料比例 ${pb[i].toFixed(2)} · μ ${o.mu[i].toFixed(3)}`,q:r,e2:o.q[i]})),[-1.5,2],{single:true,step:.5});
+  {const box=$('#c4-sm'),svg=$('svg',box),W=widthOf(box,280,700),H=74,lo=Math.floor(o.max*2)/2-.5,hi=Math.ceil((o.max+Math.log(4))*2)/2+.25;
+   const f=frame(svg,{W,H,m:{l:14,r:14,t:30,b:22},x:[lo,hi],y:[0,1],xt:[...Array(Math.round((hi-lo)/.5)+1)].map((_,i)=>lo+i*.5).filter(v=>v<=hi),xf:v=>fx(v,1)});
+   [[o.max,'max','hol-true',-1],[o.lse,'log-sum-exp','acc-f',0],[o.max+Math.log(4),'max + log 4','hol-true',1]].forEach(([v,lab,c,j])=>{el('circle',{cx:f.X(v),cy:f.y0,r:6,class:c},f.g);tx(f.g,f.X(v),f.y0-12-(j===0?12:0),lab,{class:j===0?'lab':'tk','text-anchor':'middle'})})}
+  if(c4.mode==='tau'){const box=$('#c4-g'),svg=$('svg',box),W=widthOf(box,280,700),H=190,H0=Hpb(c4.pb),G0=gapReg(c4.pb,0);
+   const ax=niceAxis(Math.min(H0,c4.tau),Math.max(G0,c4.tau),4);
+   const f=frame(svg,{W,H,m:{l:46,r:10,t:10,b:38},x:[1e-3,1e4],xlog:true,y:[ax.lo,ax.hi],yt:ax.ticks,yf:v=>fx(v,2),xt:[1e-3,1e-1,10,1e3],xf:v=>v>=1?String(v):String(v),xl:'α'});
+   const pts=[];for(let i=0;i<=60;i++){const a=10**(-3+7*i/60);pts.push([f.X(a),f.Y(gapReg(c4.pb,a))])}
+   el('path',{d:lp(pts),class:'acc',style:'stroke-width:2.5'},f.g);
+   el('line',{x1:f.x0,x2:f.x1,y1:f.Y(c4.tau),y2:f.Y(c4.tau),class:'acc dash',style:'stroke-width:1.5'},f.g);
+   el('line',{x1:f.x0,x2:f.x1,y1:f.Y(H0),y2:f.Y(H0),class:'ref dot'},f.g);
+   if(isFinite(astar)&&astar>=1e-3){el('circle',{cx:f.X(astar),cy:f.Y(c4.tau),r:5,class:'acc-f'},f.g);tx(f.g,f.X(astar),f.Y(c4.tau)-9,'α*',{class:'lab','text-anchor':'middle'})}}
+  $('#c4-tab tbody').innerHTML=R4.map((r,i)=>`<tr><td>a${i+1}</td><td class="num">${r.toFixed(2)}</td><td class="num">${fx(o.q[i],4)}</td><td><span class="bw"><span class="bar" style="width:${(pb[i]*90).toFixed(1)}px"></span>${pb[i].toFixed(2)}</span></td><td><span class="bw"><span class="bar mu" style="width:${(o.mu[i]*90).toFixed(1)}px"></span>${o.mu[i].toFixed(4)}</span></td></tr>`).join('');
+  const Emu=(v)=>o.mu.reduce((s,m,i)=>s+m*v[i],0);
+  $('#c4-gap tbody').innerHTML=`<tr><td>資料比例下的期望</td><td class="num">${fx(o.Epb_r,4)}</td><td class="num">${fx(o.Epb_q,4)}</td></tr><tr><td>μ 下的期望</td><td class="num">${fx(Emu(R4),4)}</td><td class="num">${fx(Emu(o.q),4)}</td></tr><tr><td>差距（資料 − μ）</td><td class="num">${fx(o.gapTrue,4)}</td><td class="num">${fx(o.gapHat,4)}</td></tr><tr class="hl"><td>差距增加量／α·χ²(μ‖資料比例)</td><td class="num">${fx(o.gapHat-o.gapTrue,4)}</td><td class="num">${fx(o.alpha*o.chi,4)}</td></tr>`;
+  const aTxt=c4.mode==='tau'?(isFinite(astar)?`α* = <b class="acc">${astar.toFixed(4)}</b><br>`:`<b class="acc">α → ∞</b>：τ 不大於 H(資料比例) = ${Hpb(c4.pb).toFixed(3)}（圖中畫 α = 1e4 的解）<br>`):'';
+  $('#c4-ro').innerHTML=`${aTxt}max Q = ${o.max.toFixed(4)}<br>log-sum-exp = <b>${o.lse.toFixed(4)}</b><br>E_μ[Q] + H(μ) = ${o.EmuH.toFixed(4)}<br>max + log 4 = ${(o.max+Math.log(4)).toFixed(4)}`}
+function c4Announce(){const {o,astar}=c4Current();announce('c4',`${c4.mode==='tau'?(isFinite(astar)?'α 星等於 '+astar.toFixed(3)+'。':'α 趨近無限大。'):''}a4 的估計 Q 為 ${fx(o.q[3],3)}，差距增加量 ${fx(o.gapHat-o.gapTrue,4)}。`)}
+function initC4(){segInit('c4-pb',v=>{c4.pb=v;renderC4();c4Announce()});segInit('c4-mode',v=>{c4.mode=v;renderC4();c4Announce()});
+  const a=$('#c4-a');a.addEventListener('input',()=>{c4.alpha=Math.round(+a.value/.05)*.05;c4.alpha=+c4.alpha.toFixed(2);renderC4()});a.addEventListener('change',c4Announce);
+  const t=$('#c4-t');t.addEventListener('input',()=>{c4.tau=+(+t.value).toFixed(2);renderC4()});t.addEventListener('change',c4Announce);renderC4()}
+
+/* ---------- timeline ---------- */
+const TL_GROUP={'1312.5602':['base','rl-mdp-q-learning-basics'],'1710.10044':['base','rl-mdp-q-learning-basics'],'1801.01290':['base','rl-mdp-q-learning-basics'],'1802.09477':['base','rl-mdp-q-learning-basics'],
+ '1812.02900':['pc','cql-vs-policy-constraint-methods'],'1906.00949':['pc','cql-vs-policy-constraint-methods'],'1910.00177':['pc','cql-vs-policy-constraint-methods'],'1911.11361':['pc','cql-vs-policy-constraint-methods'],
+ '2005.01643':['shift','offline-rl-distribution-shift'],'2004.07219':['bench','cql-experiments-d4rl-atari'],'2006.04779':['me','cql-lineage-hub']};
+const TL_NAME={base:'線上 RL 基礎',pc:'策略限制',shift:'分佈偏移與綜述',bench:'基準',me:'本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  data=data.map((e,i)=>({e,i})).sort((a,b)=>(+a.e.year||0)-(+b.e.year||0)||a.i-b.i).map(o=>o.e);
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const slug=g[1];const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${slug?`<a href="${slug}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+
+/* ---------- toc, theme, appbar ---------- */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));
+  addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+/* ---------- self test (acceptance tables of design.md §5) ---------- */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t)=>Math.abs(a-b)<=t+1e-12;
+  // C1
+  const C1T=[[[50,30,20],[10,20,70],.5,.78,-1.3017,-.8017,1.60333],[[50,30,20],[50,30,20],.5,.84,-.5,0,0],[[50,30,20],[10,20,70],0,.78,0,0,1.60333],[[1,1,98],[10,20,70],1,.78,-5.5,-4.5,4.5],[[50,50,1],[90,10,0],1,.96,-1.6564,-.6564,.6564]];
+  C1T.forEach(([wb,wp,a,V,d1,d2,D],i)=>{const r=c1Calc({wb,wp,alpha:a});ok(near(r.V,V,5e-4)&&near(r.dV1,d1,5e-4)&&near(r.dV2,d2,5e-4)&&near(r.D,D,5e-5)&&Math.abs(r.D-r.X)<1e-12,`C1 row ${i+1}: V=${r.V} dV1=${r.dV1} dV2=${r.dV2} D=${r.D}`)});
+  ok(near(dcql([.9,.1],[.5,.5]),.64,1e-12),'C1 two-action D = 0.64');
+  // C2
+  const C2T=[[[.8,.5,.2],.9,.1,.9,[5.8287,6.5483,7.8387],[2.7136,3.1798,4.1049],[3.7136,4.1798,5.1049],[0,-.0063,.8197,3.1124,3.7135]],
+    [[.8,.5,.2],.9,.1,.5,[.3097,.6539,1.6958],[-.0364,.1593,.9122],[.1636,.3593,1.1122],[0,-.0063,.1338,.1636,.1636]],
+    [[.5,.5,.5],.5,.1,.9,[1.0157,1.2414,1.9248],[.0157,.2414,.9248],[1.0157,1.2414,1.9248],[0,0,.2359,.8536,1.0156]],
+    [[.8,.5,.2],.9,.1,.95,[13.3450,14.1254,15.4615],[6.5902,7.0998,8.0568],[8.5902,9.0998,10.0568],[0,-.0063,.9726,5.0445,8.5316]],
+    [[.8,.5,.2],.3,.1,.9,[.2060,.2823,.6546],[-1.9280,-1.6931,-1.1957],[-.9280,-.6931,-.1957],null]];
+  C2T.forEach(([pbR,pR,alpha,gamma,V,V1,V2,it],j)=>{const r=c2Calc({pbR,pR,alpha,gamma});
+    ok([0,1,2].every(i=>near(r.V[i],V[i],5e-4)&&near(r.V1[i],V1[i],5e-4)&&near(r.V2[i],V2[i],5e-4)&&near(r.V1[i]-r.V2[i],-alpha/(1-gamma),1e-9)),`C2 row ${j+1}: V2=${r.V2.map(v=>v.toFixed(4))}`);
+    if(it)ok([0,1,5,20,100].every((k,i)=>near(r.it2[k],it[i],5e-4)),`C2 row ${j+1} iteration: ${[0,1,5,20,100].map(k=>r.it2[k].toFixed(4))}`)});
+  {const r=c2Calc({pbR:[.8,.5,.2],pR:.9,alpha:.1,gamma:.5}),over=r.Q2.map((v,i)=>v>r.Q[i]+1e-12?i:-1).filter(i=>i>=0);ok(over.length===1&&over[0]===2&&near(r.Q2[2],.1618,5e-4)&&near(r.Q[2],.1549,5e-4),'C2 γ=0.5: (s1,左) only overestimated cell')}
+  {const r=c2Calc({pbR:[.8,.5,.2],pR:.9,alpha:0,gamma:.9});ok([0,1,5,20,100].every((k,i)=>near(r.it0[k],[0,0,1.3697,4.9031,5.8285][i],5e-4)),'C2 true iteration')}
+  // C3
+  const C3T=[[10,[5,3,2],.51023,.26485,.40784,.52346,.74030],[30,[15,9,6],.29458,.13818,.23547,.30222,.42741],[100,[50,30,20],.16135,.02344,.12897,.16553,.23410],[300,[150,90,60],.09315,.00029,.07446,.09557,.13516],[1000,[500,300,200],.05102,0,.04078,.05235,.07403],[3000,[1500,900,600],.02946,0,.02355,.03022,.04274],[10000,[5000,3000,2000],.01613,0,.01290,.01655,.02341]];
+  C3T.forEach(([N,n,s,P,a10,a05,a01])=>{const base={wb:[50,30,20],wp:[10,20,70],sigma:1,alpha:.2},r=c3Calc(Object.assign({delta:.05},base),N);
+    ok(r.n.join()===n.join()&&near(r.D,1.60333,5e-6)&&near(r.s,s,5e-5)&&(P?near(r.P,P,1e-5):r.P<1e-6)&&near(r.adelta,a05,5e-4)&&near(c3Calc(Object.assign({delta:.1},base),N).adelta,a10,5e-4)&&near(c3Calc(Object.assign({delta:.01},base),N).adelta,a01,5e-4),`C3 N=${N}: P=${r.P} a05=${r.adelta}`)});
+  {const r=c3Calc({wb:[50,30,20],wp:[10,20,70],sigma:1,alpha:0,delta:.05},100);ok(near(r.P,.5,1e-6),'C3 α=0 → P=0.5')}
+  {const r=c3Calc({wb:[50,30,20],wp:[50,30,20],sigma:1,alpha:.5,delta:.05},100);ok(r.D<1e-12&&r.P===.5&&r.adelta===Infinity,'C3 pi=pb gives D=0')}
+  {const r=c3Calc({wb:[50,30,20],wp:[10,20,70],sigma:2,alpha:.2,delta:.05},100);ok(near(r.P,.16018,1e-5)&&near(r.adelta,.33106,5e-4),'C3 σ=2')}
+  {const r=c3Calc({wb:[1,1,98],wp:[10,20,70],sigma:1,alpha:.2,delta:.05},10);ok(r.n.join()==='1,1,10'&&r.total===12&&near(r.D,.188,5e-4)&&near(r.P,.45244,1e-5),'C3 (1,1,98) N=10');
+   const b=c3Calc({wb:[1,1,98],wp:r.n.slice(),sigma:1,alpha:.2,delta:.05},10);ok(b.D<1e-12&&b.P===.5,'C3 button sets π to counts → D̂=0')}
+  {const r=c3Calc({wb:[50,30,20],wp:[10,20,70],sigma:2,alpha:.2,delta:.01},10);ok(near(r.adelta,1.4806,5e-4),'C3 σ=2 N=10 δ=.01')}
+  // C4
+  const C4T=[['rare',0,[1,.6,.2,1.4],2.2841,-.2315,-.2315],['rare',.5,[1.0618,.7055,.1642,.2128],1.9922,.0841,-.0684],['rare',1,[1.0776,.7475,.1286,-.1162],1.9568,.0836,-.0424],['rare',2,[1.0913,.7880,.0920,-.4137],1.9365,.0664,-.0248],['rare',5,[1.1054,.8286,.0564,-.7174],1.9252,.0387,-.0114],['unif',1,[.9107,.7094,.4870,1.0930],2.2115,-.0499,-.0990],['common',1,[.3793,.5948,.3850,1.4522],2.1990,.0280,-.0187],['common',5,[.0534,.5777,.5094,1.4745],2.1827,.0158,-.0066]];
+  C4T.forEach(([k,a,q,L,gh,gt])=>{const o=c4Solve(k,a),Epb={rare:.76,unif:.8,common:.96}[k];
+    ok(q.every((v,i)=>near(o.q[i],v,5e-4))&&near(o.lse,L,5e-4)&&near(o.gapHat,gh,5e-4)&&near(o.gapTrue,gt,5e-4)&&near(o.Epb_q,Epb,5e-4)&&Math.abs(o.EmuH-o.lse)<1e-9&&Math.abs((o.gapHat-o.gapTrue)-a*o.chi)<1e-6&&o.iters<=6,`C4 ${k} α=${a}: q=${o.q.map(v=>v.toFixed(4))} it=${o.iters}`)});
+  [[2,0],[1.6,0],[1.5,.0093],[1.4,.0676],[1.3,.2074],[1.2,.9245],[1.17,2.982]].forEach(([t,a])=>{const v=c4Tau('rare',t);ok(a===0?v===0:(Math.abs(v-a)/a<1e-3||Math.abs(v-a)<5e-5),`C4 τ=${t}: α*=${v}`)});
+  ok(c4Tau('rare',1.15)===Infinity,'C4 τ=1.15 → ∞');ok(near(Hpb('rare'),1.1611,5e-5)&&near(Hpb('unif'),1.3863,5e-5)&&near(Hpb('common'),1.2206,5e-5),'C4 H(π̂β)');
+  // page-level checks
+  const dyn=$$('.readout,#c1-concl,table tbody,svg text,[aria-label],[aria-valuetext],.sr').map(n=>n.textContent+(n.getAttribute('aria-label')||'')+(n.getAttribute('aria-valuetext')||'')).join('');
+  const dynOnly=$$('.readout,#c1-concl,#c1-tab tbody,#c2-tab tbody,#c4-tab tbody,#c4-gap tbody,.fig svg text,.sr').map(n=>n.textContent).join('');
+  ok(!/[̀-ͯ]/.test(dynOnly),'no combining marks in dynamic text');
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');void dyn}
+
+/* ---------- boot ---------- */
+initTheme();initToc();renderHero();initC1();initC2();initC3();initC4();renderTimeline();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{renderHero();renderC1();renderC2();renderC3();renderC4()})});
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false});
+  $$('.katex-display').forEach(n=>{if(n.scrollWidth>n.clientWidth+1){n.setAttribute('tabindex','0');n.setAttribute('role','group')}})}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath()});
+if(/[?&]test\b/.test(location.search))addEventListener('load',()=>setTimeout(selfTest,50));
+})();
+</script>
+</body>
+</html>

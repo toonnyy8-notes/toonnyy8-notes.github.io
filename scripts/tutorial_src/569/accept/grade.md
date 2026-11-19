@@ -1,0 +1,13 @@
+# Grade 569: 12/12 pass
+- LO1: pass (all key facts and numbers match reference)
+- LO2: pass (all key facts and numbers match reference)
+- LO3: pass (all key facts and numbers match reference)
+- LO4: pass (all key facts and numbers match reference)
+- LO5: pass (all key facts and numbers match reference)
+- LO6: pass (all key facts and numbers match reference)
+- LO7: pass (all key facts and numbers match reference)
+- LO8: pass (all key facts and numbers match reference)
+- LO9: pass (all key facts and numbers match reference)
+- LO10: pass (all key facts and numbers match reference)
+- LO11: pass (all key facts and numbers match reference)
+- LO12: pass (all key facts and numbers match reference)

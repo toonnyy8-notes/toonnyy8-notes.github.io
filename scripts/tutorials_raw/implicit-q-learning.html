@@ -1,0 +1,1251 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IQL 隱式 Q 學習</title>
+<meta name="description" content="圖解 Kostrikov、Nair、Levine 的 Implicit Q-Learning：以 expectile regression 只用資料中的動作學習值函數，τ 從 0.5 到 1 連接 SARSA 與 Q-learning，再以優勢加權回歸抽取策略。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+/* other collapsibles (not stripped by the acceptance script) */
+details.more{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.more>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.more[open]>summary::before{transform:rotate(45deg)}
+details.more .qa{padding:0 20px 18px;font-size:15px}
+details.more .q{font-weight:600;margin:12px 0 4px}
+details.more .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+/* ---- No. 569 additions ---- */
+:root{--c-beh:var(--c-par);--c-naive:var(--c-perp);--wall:#3A3833}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--wall:#0B0A09}}
+:root[data-theme="dark"]{--wall:#0B0A09}
+svg .wall{fill:var(--wall)}
+.eq-nr{display:none}
+@media (max-width:599px){.eq-w{display:none}.eq-nr{display:flex}}
+svg .beh-f{fill:var(--c-beh)}
+svg .beh-o{fill:none;stroke:var(--c-beh);stroke-width:1.5}
+svg .naive{stroke:var(--c-naive);stroke-width:2.5;fill:none}
+svg .naive-f{fill:var(--c-naive)}
+svg .acc-t{fill:var(--accent)}
+svg .ood{stroke:var(--ink-3);stroke-width:1.5;stroke-dasharray:4 3}
+svg .c3t{font:500 12px var(--f-mono);fill:var(--ink)}
+svg .c3t.dk{fill:var(--surface)}
+svg .c3t.b{font-weight:700}
+.lg.naive::before{border-top:2px dashed var(--c-naive)}
+.lg.dotl::before{border-top:2px dotted var(--ink-3)}
+.lg.beh::before{border-top:2px solid var(--c-beh)}
+.c1-head,.c1-row{display:grid;grid-template-columns:32px 72px minmax(0,1fr) 40px;gap:8px;align-items:center}
+.c1-head{font:500 12px/1.4 var(--f-body);color:var(--ink-3)}
+.c1-head span:nth-child(3){grid-column:3/5}
+.c1-a{font:500 14px/1 var(--f-mono);color:var(--ink-2)}
+.c1-q{min-height:40px;width:100%;padding:0 8px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);color:var(--ink);font:500 14px/1 var(--f-mono)}
+.c1-row output{font:500 13px/1 var(--f-mono);color:var(--ink);text-align:right}
+#c1-rows{display:flex;flex-direction:column;gap:2px}
+details.more.inline{margin:0;max-width:none}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 569</span>
+  <span class="ttl">IQL：只用資料中的動作做 Q-learning</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 569</b> · 互動教學 · arXiv 2110.06169 · 2021</div>
+  <h1><span class="lat">IQL</span>：只用資料中的動作做 <span class="lat" style="white-space:nowrap">Q-learning</span></h1>
+  <p class="dek">IQL 用非對稱平方損失估計資料動作的上 expectile，不查詢資料外的動作，也能做多步動態規劃。</p>
+  <p class="byline">Ilya Kostrikov、Ashvin Nair、Sergey Levine（2021）〈Offline Reinforcement Learning with Implicit Q-Learning〉</p>
+  <div class="kaxis" id="tx-hero" role="img" aria-label="τ 軸：τ = 0.5 對應 SARSA，τ 趨近 1 對應資料內的 Q-learning；論文在 locomotion 用 0.7，在 Ant Maze 用 0.9"></div>
+  <p class="note" style="margin:6px 0 0">τ 是 IQL 的 expectile 階數，第 03 章定義。</p>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 問題</span><p>標準 Q-learning 對下一個狀態的所有動作取最大值；offline 資料中沒有的動作，其 Q 值無法被資料修正，容易被高估。</p></div>
+    <div class="fact"><span class="n">02 · 做法</span><p>IQL 的 V 用非對稱平方損失擬合資料動作的 Q 值。τ = 0.5 時是平均（SARSA），τ 接近 1 時接近資料中最好動作的值。</p></div>
+    <div class="fact"><span class="n">03 · 結果</span><p>在 D4RL 的 Ant Maze 上，IQL 總分 378.0，CQL 303.6；在一張 GTX1080 上訓練 1M 步少於 20 分鐘。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2110.06169">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-569">在關聯圖中查看</a>
+    <a class="btn" href="iql-lineage-overview.html">研究筆記總覽</a>
+    <a class="btn" href="https://github.com/ikostrikov/implicit_q_learning">程式碼 ↗</a>
+  </div>
+</section>
+
+<!-- S1 ============================================================ -->
+<section class="ch" id="offline" data-toc="01" data-tt="Offline RL">
+  <div class="ch-num">01 · Offline RL</div>
+  <h2>Offline RL 只能使用固定資料集</h2>
+  <div class="prose">
+    <p>強化學習（reinforcement learning, RL）的問題寫成馬可夫決策過程（Markov decision process, MDP）$(S,A,p_0,p,r,\gamma)$：代理人在狀態 $s$ 選動作 $a$，得到獎勵 $r(s,a)$，環境依轉移機率 $p(s'\mid s,a)$ 進到下一個狀態 $s'$。策略（policy）$\pi(a\mid s)$ 決定在每個狀態選哪個動作，目標是最大化折扣回報 $\mathbb E_\pi[\sum_t\gamma^t r(s_t,a_t)]$，$\gamma\in[0,1)$ 是折扣因子（Sec. 3）。</p>
+    <p>狀態-動作價值 $Q(s,a)$ 是從 $s$ 執行 $a$、之後依策略行動得到的期望折扣回報；狀態價值 $V(s)$ 是從 $s$ 出發的期望折扣回報。Offline RL 只用一個先前收集好的固定資料集 $\mathcal D$ 學策略，資料由某個<b>行為策略</b>（behavior policy）$\pi_\beta$ 收集，訓練期間不能再與環境互動。</p>
+    <p>多數 offline 方法沿用時間差分（temporal difference, TD）學習：讓 $Q_\theta(s,a)$ 逼近「目標」$r+\gamma\max_{a'}Q(s',a')$。例如 $r=1$、$\gamma=0.9$、下一個狀態的最大 Q 值為 5 時，目標是 $1+0.9\times5=5.5$。目標中的 Q 用 <b>target network</b> $Q_{\hat\theta}$ 計算：$\hat\theta$ 是緩慢跟隨 $\theta$ 的參數複本（Polyak 平均），避免目標隨每次更新跳動。損失為（Sec. 3）：</p>
+  </div>
+  <div class="eq eq-w"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 1，可水平捲動">$$L_{TD}(\theta)=\mathbb E_{(s,a,s')\sim\mathcal D}\Big[\big(r(s,a)+\gamma\max_{a'}Q_{\hat\theta}(s',a')-Q_\theta(s,a)\big)^2\Big]$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="eq eq-nr"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 1，可水平捲動">$$\begin{aligned}L_{TD}(\theta)=\mathbb E_{\mathcal D}\Big[\big(&r(s,a)+\gamma\max_{a'}Q_{\hat\theta}(s',a')\\&-Q_\theta(s,a)\big)^2\Big]\end{aligned}$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="prose">
+    <p>策略定義為 $\pi(s)=\arg\max_aQ_\theta(s,a)$。問題出在 $\max_{a'}Q_{\hat\theta}(s',a')$ 這一項：它會查詢資料中沒有出現的動作 $a'$。論文的說法是，資料外的動作（out-of-distribution action, OOD）可能給出錯誤的 $Q_{\hat\theta}(s',a')$，而策略被定義成取估計 Q 的最大值，常導致高估（Sec. 3）。<span class="tag">本頁解讀</span>這些 $(s',a')$ 不在資料中，損失從不比較它們，錯誤因此不會被修正；取最大值時結果多半落在高估的值上。這個現象稱為<b>分布偏移</b>（distributional shift）。</p>
+  </div>
+  <figure class="plate" style="max-width:520px">
+    <svg viewBox="0 0 360 210" role="img" aria-label="六個動作的 Q 值：真實值都是 1；資料中的三個動作估計接近 1，資料外三個動作的估計為 2.5、0.2、1.4，最大值取到 2.5">
+      <line x1="40" x2="350" y1="160" y2="160" class="axl"/>
+      <line x1="40" x2="350" y1="110" y2="110" class="ref"/><text x="346" y="104" class="tk" text-anchor="end">真實 Q = 1</text>
+      <rect x="52" y="107" width="34" height="53" class="beh-f" rx="2"/><rect x="102" y="113" width="34" height="47" class="beh-f" rx="2"/><rect x="152" y="110" width="34" height="50" class="beh-f" rx="2"/>
+      <rect x="202" y="35" width="34" height="125" fill="none" class="ood" rx="2"/><rect x="252" y="150" width="34" height="10" fill="none" class="ood" rx="2"/><rect x="302" y="90" width="34" height="70" fill="none" class="ood" rx="2"/>
+      <text x="219" y="26" class="labm acc-t" text-anchor="middle">2.5 ← max</text>
+      <text x="69" y="178" class="tk" text-anchor="middle">a₁</text><text x="119" y="178" class="tk" text-anchor="middle">a₂</text><text x="169" y="178" class="tk" text-anchor="middle">a₃</text><text x="219" y="178" class="tk" text-anchor="middle">a₄</text><text x="269" y="178" class="tk" text-anchor="middle">a₅</text><text x="319" y="178" class="tk" text-anchor="middle">a₆</text>
+      <text x="119" y="200" class="tk" text-anchor="middle">資料中的動作（實心）</text><text x="269" y="200" class="tk" text-anchor="middle">資料外的動作（空心）</text>
+    </svg>
+    <figcaption class="plate-f">示意數值<span class="tag">推定</span>：六個動作的真實 Q 都是 1。資料中的三個動作有資料修正，估計為 1.05、0.95、1.0；資料外三個動作的估計誤差為 +1.5、−0.8、+0.4。對全部動作取最大值得到 2.5，落在誤差最大的那個動作上。</figcaption>
+  </figure>
+  <div class="prose">
+    <p>先前方法以兩種方式處理：約束策略不要離行為策略太遠（BCQ、BEAR、BRAC、AWAC、TD3+BC），或把資料外動作的 Q 值壓低（CQL）。兩者都要在「策略能改進多少」與「誤估風險」之間權衡（Sec. 1）。IQL 問的是：能不能完全不查詢資料外動作的值？</p>
+  </div>
+  <details class="more">
+    <summary>符號表</summary>
+    <div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+      <thead><tr><th>符號</th><th>意義</th><th>章節</th></tr></thead><tbody>
+      <tr><td>$s,a,s'$</td><td>狀態、動作、下一個狀態</td><td>01</td></tr>
+      <tr><td>$r(s,a)$、$\gamma$</td><td>獎勵、折扣因子</td><td>01</td></tr>
+      <tr><td>$p(s'\mid s,a)$</td><td>環境轉移（dynamics）</td><td>01</td></tr>
+      <tr><td>$\pi(a\mid s)$、$\pi_\beta$</td><td>策略；收集資料的行為策略</td><td>01</td></tr>
+      <tr><td>$\mathcal D$</td><td>固定資料集，元素為 $(s,a,r,s',a')$</td><td>01</td></tr>
+      <tr><td>$Q(s,a)$、$V(s)$</td><td>狀態-動作價值、狀態價值</td><td>01</td></tr>
+      <tr><td>$\theta,\hat\theta$</td><td>Q 網路參數、target network 參數</td><td>01</td></tr>
+      <tr><td>$Q^{\pi_\beta}$</td><td>行為策略的 Q 值（Eq. 2–3 的解）</td><td>02</td></tr>
+      <tr><td>$\mathcal A_\beta(s)$</td><td>資料支撐內的動作 $\{a:\pi_\beta(a\mid s)>0\}$</td><td>02</td></tr>
+      <tr><td>$\mu(a\mid s)$</td><td>資料中狀態 $s$ 下動作 $a$ 的比例；本頁解讀為與 $\pi_\beta$ 同一個分布</td><td>03</td></tr>
+      <tr><td>$\tau$、$L_2^\tau$、$m_\tau$</td><td>expectile 階數、非對稱平方損失、$\tau$-expectile</td><td>03</td></tr>
+      <tr><td>$\psi$、$\phi$</td><td>V 網路參數、策略網路參數</td><td>04、07</td></tr>
+      <tr><td>$\mathbb E^\tau$、$V_\tau,Q_\tau$</td><td>expectile 運算；Eq. 5、6 的母體最佳解</td><td>05</td></tr>
+      <tr><td>$Q^*$、$V^*$</td><td>資料支撐內的最佳 Q；$V^*(s)=\max_{a\in\mathcal A_\beta(s)}Q^*(s,a)$</td><td>05</td></tr>
+      <tr><td>$\beta$、$A(s,a)$</td><td>AWR 的反溫度；優勢 $Q(s,a)-V(s)$</td><td>07</td></tr>
+      <tr><td>$Q^1,Q^2$、$\alpha$</td><td>clipped double Q 的兩個 Q 網路；Polyak 係數 0.005</td><td>08</td></tr>
+      </tbody></table></div></div>
+  </details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 1 的哪一項會查詢資料外的動作？為什麼會造成高估？</p>
+    <p class="a">$\max_{a'}Q_{\hat\theta}(s',a')$；資料外的 $a'$ 可能給出錯誤的 Q 值，而策略取估計 Q 的最大值，常導致高估（Sec. 3）。本頁解讀：損失從不比較這些 $(s',a')$，錯誤不會被修正。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="rl-mdp-q-learning-basics.html">MDP、Q 函數與 Bellman backup</a>、<a href="offline-rl-distribution-shift.html">Offline RL 的分布偏移與 OOD 動作造成的 Q 值高估</a>、<a href="iql-policy-constraint-and-regularization-methods.html">Policy constraint 與 value regularization</a></p>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="sarsa" data-toc="02" data-tt="SARSA">
+  <div class="ch-num">02 · SARSA</div>
+  <h2>SARSA 只用資料動作，但只學到行為策略</h2>
+  <div class="prose">
+    <p>如果把 Eq. 1 的 $\max_{a'}$ 換成資料中實際出現的下一個動作 $a'$，就得到 SARSA 形式的目標（Sec. 4）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 2，可水平捲動">$$L(\theta)=\mathbb E_{(s,a,s',a')\sim\mathcal D}\big[(r(s,a)+\gamma Q_{\hat\theta}(s',a')-Q_\theta(s,a))^2\big]$$</div><span class="eq-n">Eq. 2</span></div>
+  <div class="prose">
+    <p>Eq. 2 的 $a'$ 取自資料，因此不查詢資料外的動作。平方誤差（MSE）讓 $Q_\theta$ 擬合目標的平均；容量無限、沒有取樣誤差時，最佳解滿足</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 3，可水平捲動">$$Q_{\theta^*}(s,a)\approx r(s,a)+\gamma\,\mathbb E_{s'\sim p(\cdot|s,a),\ a'\sim\pi_\beta(\cdot|s')}\big[Q_{\hat\theta}(s',a')\big]$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="prose">
+    <p class="note">原文 Eq. 3 的下標寫作 $a'\sim\pi_\beta(\cdot|s)$；依上下文應為 $s'$，本頁照此修正。</p>
+    <p>Eq. 2 學到的是行為策略的 $Q^{\pi_\beta}$（Eq. 3）。Onestep RL（Brandfonbrener et al. 2021）與 AWR（Peng et al. 2019）這類<b>單步方法</b>（single-step method）先學 $Q^{\pi_\beta}$，再訓練策略最大化它，只做一次策略改進。它們在 D4RL 的 MuJoCo locomotion 任務上表現好，因為那些資料含有大量接近最佳的軌跡；在需要<b>拼接</b>（stitching）的任務上表現很差。拼接指把資料中不同的次佳軌跡片段接成一條從起點到終點的路徑；這需要把終點附近的價值沿著多個片段逐步往回傳，也就是多步動態規劃（Sec. 2、5.2）。</p>
+    <p>IQL 想學的目標是：在 $s'$ 下只對資料支撐內的動作 $\mathcal A_\beta(s')=\{a':\pi_\beta(a'|s')>0\}$ 取最大值（Sec. 4）。Eq. 4 與 Eq. 2 的差別就在這裡：Eq. 2 對資料動作取平均，Eq. 4 對資料支撐內的動作取最大值。</p>
+  </div>
+  <div class="eq eq-w"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 4，可水平捲動">$$L(\theta)=\mathbb E_{(s,a,s')\sim\mathcal D}\Big[\big(r(s,a)+\gamma\max_{a'\in A,\ \pi_\beta(a'|s')>0}Q_{\hat\theta}(s',a')-Q_\theta(s,a)\big)^2\Big]$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="eq eq-nr"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 4，可水平捲動">$$\begin{aligned}L(\theta)=\mathbb E_{\mathcal D}\Big[\big(&r(s,a)+\gamma\max_{a'\in\mathcal A_\beta(s')}Q_{\hat\theta}(s',a')\\&-Q_\theta(s,a)\big)^2\Big]\end{aligned}$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="prose">
+    <p>難處在於：資料中每個 $s'$ 通常只出現一個 $a'$，無法直接對「支撐內的所有動作」取最大值。BCQ 用生成模型取樣候選動作，但生成模型仍可能產生資料外的動作（App. D）。IQL 改用 expectile regression 間接估計這個最大值。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 2 學到的是什麼？IQL 想學的 Eq. 4 與它差在哪裡？</p>
+    <p class="a">Eq. 2 的 $a'$ 取自資料，學到行為策略的 $Q^{\pi_\beta}$（Eq. 3）；Eq. 4 對 $s'$ 下資料支撐內（$\pi_\beta(a'|s')>0$）的動作取最大值。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="one-step-offline-rl-and-sequence-modeling.html">單步 offline RL 與序列建模：One-step RL、Decision Transformer</a></p>
+</section>
+<!-- S3 ============================================================ -->
+<section class="ch" id="expectile" data-toc="03" data-tt="Expectile">
+  <div class="ch-num">03 · Expectile</div>
+  <h2>Expectile 以非對稱平方損失逼近支撐內的最大值</h2>
+  <div class="prose">
+    <p>先固定一個狀態 $s$。資料中這個狀態下出現過幾個動作，記 $\mu(a\mid s)$ 為動作 $a$ 在資料中的比例<span class="tag">本頁解讀</span>（論文 Sec. 4.4 使用這個符號但沒有定義；本頁把它解讀為與行為策略 $\pi_\beta$ 同一個分布）。把「動作的 Q 值」看成隨機變數 $X$：以機率 $\mu(a\mid s)$ 取值 $Q(s,a)$。</p>
+    <p>隨機變數 $X$ 的 $\tau\in(0,1)$ <b>expectile</b> 定義為非對稱最小平方問題的解（Sec. 4.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="公式：expectile 的定義，可水平捲動">$$m_\tau=\arg\min_{m}\ \mathbb E_{x\sim X}\big[L_2^\tau(x-m)\big],\qquad L_2^\tau(u)=\lvert\tau-\mathbb 1(u&lt;0)\rvert\,u^2$$</div><span class="eq-n">Sec. 4.1</span></div>
+  <div class="prose">
+    <p>$\tau=0.5$ 時 $L_2^{0.5}(u)=\tfrac12u^2$，就是 MSE，解為平均值。$\tau>0.5$ 時，損失降低 $x&lt;m_\tau$ 的權重、提高 $x>m_\tau$ 的權重（Fig. 1 左）。例如 $\tau=0.9$：殘差 $u=+0.5$ 的損失是 $0.9\times0.25=0.225$，$u=-0.5$ 的損失是 $0.1\times0.25=0.025$，正殘差的權重 0.9、負殘差 0.1，比為 9。這個解也能寫成條件版本 $\arg\min_{m_\tau(x)}\mathbb E[L_2^\tau(y-m_\tau(x))]$，用隨機梯度下降最佳化，梯度不偏（Sec. 4.1）。</p>
+    <p>expectile 與 quantile regression（非對稱 $\ell_1$ 損失）相關。作者選 expectile 的理由是：只需要修改 RL 已經在用的 MSE，而且實驗上比 quantile 略好（註腳 2）。對標準常態分布，$m_{0.1}=-0.8616$、$m_{0.9}=0.8616$、$m_{0.99}=1.7174$<span class="tag">本頁推導</span>，對應 Fig. 1 中圖的幾條線。</p>
+    <p><span class="tag">本頁推導</span>對 $m$ 微分並令其為 0，得到一階條件 $\tau\,\mathbb E[(X-m)_+]=(1-\tau)\,\mathbb E[(m-X)_+]$。這等於說 $m_\tau$ 是一個加權平均：$x\ge m_\tau$ 的值權重 $\tau$，$x&lt;m_\tau$ 的值權重 $1-\tau$。兩個推論：$m_\tau$ 一定落在支撐的最小值與最大值之間；比例為 0 的值（資料中沒有的動作）完全不影響 $m_\tau$。隨著 $\tau$ 增大，$m_\tau$ 單調上升，$\tau\to1$ 時趨近支撐內的最大值（第 05 章的 Lemma 1）。</p>
+    <p>下面的元件以一個狀態為例：五個資料動作的 Q 值為 1、2、3、4、8，比例 μ 為 0.30、0.30、0.20、0.15、0.05；另有一個資料中沒有的動作 $a_6$，Q 網路對它的外插值是 12。這個分布的 expectile 在 τ = 0.5 時為 2.5（平均），τ = 0.9 時為 4.0714，τ = 0.99 時為 7.0678，τ→1 時趨近資料內的最大值 8。$a_6$ 的比例為 0，不改變任何 expectile；對所有動作取最大值（Eq. 1 的做法）則會得到 12。</p>
+  </div>
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>Expectile 探索器</h3></div>
+    <p class="plate-lead">調整 τ 與五個資料動作的 Q 值、比例 μ，觀察 m<sub>τ</sub> 如何從平均移向資料內的最大值，以及資料中沒有的 a₆ 為何不影響結果。</p>
+    <div class="pg two">
+      <div class="fig" id="c1-f1"><svg role="img" aria-label="動作的 Q 值"></svg></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1-tau">expectile 階數 τ<output id="c1-tauo">0.900</output></label><input id="c1-tau" type="range" min="0.01" max="0.999" step="0.001" value="0.9"></div>
+        <div class="ctl-row"><button class="chip" type="button" data-tau="0.5">τ = 0.5</button><button class="chip" type="button" data-tau="0.9">τ = 0.9</button><button class="chip" type="button" data-tau="0.99">τ = 0.99</button><button class="chip" type="button" data-tau="1">τ = 1（取最大值）</button></div>
+        <div class="c1-head"><span>動作</span><span>Q 值</span><span>比例 μ</span></div>
+        <div id="c1-rows"></div>
+        <label class="chk"><input type="checkbox" id="c1-a6">讓 a₆ 出現在資料中（μ = 0.01）</label>
+        <div class="ctl-row"><button class="small-btn" type="button" id="c1-reset">回到預設</button></div>
+        <p class="readout" id="c1-ro"></p>
+      </div>
+    </div>
+    <div class="pg two" style="margin-top:20px">
+      <div class="fig" id="c1-f2"><svg role="img" aria-label="非對稱損失"></svg></div>
+      <div class="fig" id="c1-f3"><svg role="img" aria-label="expectile 隨 τ 變化"></svg></div>
+    </div>
+    <p class="plate-f">μ 在計算時正規化為和 1。上圖：長條長度為 μ，實線為 m<sub>τ</sub>，虛線為平均，點線為資料內最大值與對所有動作取的最大值。左下：目前 τ（實線）與 τ = 0.5（虛線）的 L₂<sup>τ</sup>(u)。右下：橫軸刻度為 −log₁₀(1−τ)。讀數由本頁依 Sec. 4.1 的定義以閉式解即時計算<span class="tag">本頁推導</span>（加權平均形式）。</p>
+    <p class="sr" aria-live="polite" id="c1-live"></p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$L_2^\tau(u)$ 是什麼？$\tau=0.5$ 與 $\tau=0.9$ 有何不同？</p>
+    <p class="a">$L_2^\tau(u)=\lvert\tau-\mathbb 1(u&lt;0)\rvert u^2$；$\tau=0.5$ 是 MSE（解為平均）；$\tau=0.9$ 時正殘差權重 0.9、負殘差 0.1，比為 9（Sec. 4.1）。</p>
+    <p class="q">C1 預設分布（Q = 1,2,3,4,8；μ = .30,.30,.20,.15,.05）在 τ = 0.5、0.9、0.99 的 expectile？τ→1 呢？μ = 0 的動作（Q = 12）有影響嗎？</p>
+    <p class="a">2.5、4.0714、7.0678；τ→1 趨近支撐內最大值 8（Lemma 1）；μ = 0 的動作完全不影響（本頁推導：expectile 是 $x\ge m$ 權重 τ、$x&lt;m$ 權重 1−τ 的加權平均）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="expectile-regression-value-learning.html">Expectile regression 與 value learning</a></p>
+</section>
+
+<!-- S4 ============================================================ -->
+<section class="ch" id="two-critics" data-toc="04" data-tt="另外學 V">
+  <div class="ch-num">04 · 另外學 V</div>
+  <h2>另外學一個 V，避免把偶然轉移到高回報狀態的樣本當成動作的價值</h2>
+  <div class="prose">
+    <p>最直接的做法是把 Eq. 2 的平方換成 $L_2^\tau$，本頁稱為「單一損失」（Sec. 4.2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="公式：單一損失，可水平捲動">$$L(\theta)=\mathbb E_{(s,a,s',a')\sim\mathcal D}\big[L_2^\tau(r(s,a)+\gamma Q_{\hat\theta}(s',a')-Q_\theta(s,a))\big]$$</div><span class="eq-n">Sec. 4.2</span></div>
+  <div class="prose">
+    <p>它的缺點是：目標值的隨機性不只來自動作 $a'$，也來自環境轉移 $s'\sim p(\cdot\mid s,a)$。一個大的目標值可能只是偶然轉移到高回報狀態的樣本（原文稱 “lucky” sample），並不代表存在一個能穩定達到該值的動作（Sec. 4.2）。作者因此把學習拆成兩個損失，另外用一個 V 網路 $V_\psi$（參數 $\psi$）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 5，可水平捲動">$$L_V(\psi)=\mathbb E_{(s,a)\sim\mathcal D}\big[L_2^\tau\big(Q_{\hat\theta}(s,a)-V_\psi(s)\big)\big]$$</div><span class="eq-n">Eq. 5</span></div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 6，可水平捲動">$$L_Q(\theta)=\mathbb E_{(s,a,s')\sim\mathcal D}\big[\big(r(s,a)+\gamma V_\psi(s')-Q_\theta(s,a)\big)^2\big]$$</div><span class="eq-n">Eq. 6</span></div>
+  <div class="prose">
+    <p>Eq. 5 的 $L_2^\tau(Q_{\hat\theta}(s,a)-V_\psi(s))$ 只對資料中的動作取 expectile，Q 用 target network $Q_{\hat\theta}$；此時 Q 已經對轉移取過平均，所以 expectile 只反映動作之間的差異。Eq. 6 的 $(r+\gamma V_\psi(s')-Q_\theta)^2$ 用 MSE，把轉移的隨機性平均掉；$V_\psi(s')$ 不用 target。兩式都不需要顯式策略，也只用資料中的 $(s,a)$ 與 $s'$（Sec. 4.2）。</p>
+    <p>下面的單狀態例子<span class="tag">本頁推導</span>呈現兩者的差別。狀態 $s$ 有兩個資料動作：$a_1$ 的回報固定為 5；$a_2$ 以機率 $p$ 轉移到回報 10 的狀態，否則到回報 0 的狀態；資料中 $a_2$ 的比例為 $q$。單一損失對每個 $(s,a)$ 各擬合一個 Q，所以它的 $Q(a_2)$ 是 $\{10:p,\ 0:1-p\}$ 的 τ-expectile，τ→1 時對任何 $p>0$ 都趨近 10；IQL 的 Eq. 6 用 MSE，$Q(a_2)=10p$。兩者的狀態值都用 Eq. 5 的方式對動作取 expectile。預設 $p=0.3$、$q=0.5$、τ = 0.9 時，單一損失的 $Q(a_2)=7.9412$（IQL 為 $10p=3$），狀態值在單一損失下為 7.6471，在 IQL 下為 4.8000，而資料中最好動作的期望值是 5。τ→1 時單一損失的狀態值趨近 10，IQL 趨近 5。轉移是確定性的（$p=0$ 或 $1$）時兩者相同。</p>
+  </div>
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>單一損失與 Eq. 5–6 的差別</h3></div>
+    <p class="plate-lead">回報直接當作 r + γV(s′) 的值，只看一步<span class="tag">推定</span>。拖動 τ 觀察兩種狀態值如何分開。</p>
+    <div class="pg two">
+      <div class="fig" id="c2-f1"><svg role="img" aria-label="單狀態示意圖"></svg></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c2-p">a₂ 到高回報狀態的機率 p<output id="c2-po">0.30</output></label><input id="c2-p" type="range" min="0" max="1" step="0.01" value="0.3"></div>
+        <div class="rng"><label class="lbl" for="c2-q">資料中 a₂ 的比例 q<output id="c2-qo">0.50</output></label><input id="c2-q" type="range" min="0.01" max="0.99" step="0.01" value="0.5"></div>
+        <div class="rng"><label class="lbl" for="c2-t">expectile 階數 τ<output id="c2-to">0.900</output></label><input id="c2-t" type="range" min="0.5" max="0.999" step="0.001" value="0.9"></div>
+        <p class="readout" id="c2-ro"></p>
+      </div>
+    </div>
+    <div class="fig" id="c2-f2" style="margin-top:16px"><svg role="img" aria-label="狀態值隨 τ 的變化"></svg></div>
+    <div class="legend"><span class="lg naive">單一損失（三角）</span><span class="lg acc">IQL（Eq. 5–6，圓點）</span><span class="lg dotl">資料中最好動作的期望值（第 05 章 Theorem 3 的極限）</span></div>
+    <p class="plate-f">單一損失：Q(a₂) = expectile{10: p, 0: 1−p}，V = expectile{5: 1−q, Q(a₂): q}。IQL：Q(a₂) = 10p，V = expectile{5: 1−q, 10p: q}。讀數由本頁依 Eq. 5–6 即時計算<span class="tag">本頁推導</span>。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為何不直接把 TD 目標的平方換成 $L_2^\tau$？C2 預設（p = 0.3、q = 0.5、τ = 0.9）兩種做法的值？</p>
+    <p class="a">目標值的隨機性也來自環境轉移，大目標值可能只是偶然轉移到高回報狀態的樣本（Sec. 4.2）；C2：單一損失的 Q(a₂) = 7.9412（IQL 為 10p = 3），狀態值單一損失版 7.6471、IQL 4.8000、資料中最好動作的期望值 5（τ→1 時分別趨近 10 與 5）。</p>
+    <p class="q">Eq. 5、Eq. 6 各對什麼取 expectile／平均？哪一式用 target network？</p>
+    <p class="a">Eq. 5：$L_2^\tau(Q_{\hat\theta}(s,a)-V_\psi(s))$，只對資料動作取 expectile，用 target $Q_{\hat\theta}$；Eq. 6：$(r+\gamma V_\psi(s')-Q_\theta)^2$，MSE 把轉移的隨機性平均掉。</p>
+  </div></details>
+</section>
+<!-- S5 ============================================================ -->
+<section class="ch" id="theory" data-toc="05" data-tt="理論">
+  <div class="ch-num">05 · 理論</div>
+  <h2>τ 從 0.5 到 1 連接 SARSA 與 Q-learning</h2>
+  <div class="prose">
+    <p>記 $\mathbb E^\tau_{x\sim X}[x]$ 為 $X$ 的 τ-expectile（$\mathbb E^{0.5}$ 即一般期望值）。Eq. 5、6 的最佳解 $V_\tau,Q_\tau$ 遞迴定義為（Sec. 4.4）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="公式：V_τ 與 Q_τ 的遞迴，可水平捲動">$$V_\tau(s)=\mathbb E^\tau_{a\sim\mu(\cdot|s)}\big[Q_\tau(s,a)\big],\qquad Q_\tau(s,a)=r(s,a)+\gamma\,\mathbb E_{s'\sim p(\cdot|s,a)}\big[V_\tau(s')\big]$$</div><span class="eq-n">Sec. 4.4</span></div>
+  <div class="prose">
+    <p>這裡的 $\mu$ 是資料中的動作分布（第 03 章；本頁解讀為 $\pi_\beta$）。論文依序證明四個結果：</p>
+    <ul>
+      <li><b>Lemma 1</b>：$X$ 為有界隨機變數、支撐的上確界為 $x^*$，則 $\lim_{\tau\to1}m_\tau=x^*$。證明概要：expectile 隨 τ 單調不減，且以 $x^*$ 為上界。</li>
+      <li><b>Lemma 2</b>：對所有 $s$，$\tau_1&lt;\tau_2\Rightarrow V_{\tau_1}(s)\le V_{\tau_2}(s)$，即 τ 越大 $V_\tau$ 越大（單調）。</li>
+      <li><b>Corollary 2.1</b>：$V_\tau(s)\le\max_{a\in\mathcal A_\beta(s)}Q^*(s,a)$，其中 $Q^*(s,a)=r(s,a)+\gamma\,\mathbb E_{s'}[\max_{a'\in\mathcal A_\beta(s')}Q^*(s',a')]$ 是限制在資料支撐內的最佳 Q。證明：凸組合不大於最大值。</li>
+      <li><b>Theorem 3</b>：$\lim_{\tau\to1}V_\tau(s)=\max_{a\in\mathcal A_\beta(s)}Q^*(s,a)$。</li>
+    </ul>
+    <p>本頁記 $V^*(s)=\max_{a\in\mathcal A_\beta(s)}Q^*(s,a)$，即資料支撐內的最佳狀態值（本頁記號；第 06 章沿用）。Theorem 3 因此可寫成 $\lim_{\tau\to1}V_\tau=V^*$。</p>
+    <p>這些結果都針對 $V_\tau,Q_\tau$ 的<b>母體最佳解</b>，也就是論文所說的「在某些假設下」（Sec. 4.2）：無限容量、無取樣誤差（Sec. 4 對 Eq. 3 的敘述），Lemma 1 另需有界支撐，也就是獎勵有界。論文的 Theorem 3 證明只有一行（結合 Lemma 1 與 Corollary 2.1）。有限資料時結論不保證成立，第 06 章的元件會出現一個例子。</p>
+    <p><span class="tag">本頁推導</span>τ = 0.5 時 $V(s)=\mathbb E_{a\sim\mu}[Q(s,a)]$，代入 Eq. 6 就是 Eq. 3，即 SARSA 估計 $Q^{\pi_\beta}$。τ→1 時 $V$ 趨近資料支撐內的最大值，Eq. 6 變成 Eq. 4，即資料支撐內的 Q-learning。作者因此說這個方法涵蓋 SARSA（τ = 0.5）到 Q-learning（τ→1）的整個譜，並依 Theorem 3 把它命名為 implicit Q-learning（Sec. 4.4）。</p>
+    <p>τ 越接近 1，近似越好，但最佳化問題也越困難，所以作者把 τ 當成超參數（Sec. 4.4）。</p>
+  </div>
+  <details class="more"><summary>Lemma 2 的證明展開（App. A.1）</summary><div class="qa">
+    <p>把 $V_{\tau_1}(s)$ 依遞迴展開一層：$V_{\tau_1}(s)=\mathbb E^{\tau_1}_{a\sim\mu}[r(s,a)+\gamma\mathbb E_{s'}V_{\tau_1}(s')]$。因為 expectile 隨 τ 單調，把外層的 $\mathbb E^{\tau_1}$ 換成 $\mathbb E^{\tau_2}$ 不會變小；再把內層的 $V_{\tau_1}(s')$ 展開、同樣替換，逐層重複。極限就是 $V_{\tau_2}(s)$，所以 $V_{\tau_1}(s)\le V_{\tau_2}(s)$。這個論證仿照 policy improvement 的證明（Sutton &amp; Barto 2018）。</p>
+  </div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">τ = 0.5 與 τ→1 各對應什麼方法？Lemma 2 與 Theorem 3 說什麼？</p>
+    <p class="a">τ = 0.5 是 SARSA（估計 $Q^{\pi_\beta}$），τ→1 是資料支撐內的 Q-learning；Lemma 2：τ 越大 $V_\tau$ 越大（單調）；Theorem 3：$\lim_{\tau\to1}V_\tau(s)=\max_{a:\pi_\beta(a|s)>0}Q^*(s,a)$；前提是母體最佳解（無限容量、無取樣誤差、獎勵有界）。</p>
+  </div></details>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="maze" data-toc="06" data-tt="玩具迷宮">
+  <div class="ch-num">06 · 玩具迷宮</div>
+  <h2>玩具迷宮顯示多步動態規劃的差異</h2>
+  <div class="prose">
+    <p>論文在 Sec. 5.1 用一個 u 形迷宮比較單步方法與 IQL：單一起點、單一終點；進入終點得獎勵 10，其餘為 0；以機率 0.25 轉移到隨機狀態，否則到指令的狀態；資料集為 1 條最佳軌跡加 99 條均勻隨機動作的軌跡；γ = 0.9；IQL 用 τ = 0.95。結果：單步方法（Onestep RL）的值離終點越遠衰減得越快、被雜訊主導（原文 “dominated by noise”），得到的策略很差；IQL 的值接近真正的最佳值（Fig. 2）。</p>
+    <p>下面的元件是本頁的表格版重建，不是論文的程式。以下各項為本頁自選<span class="tag">推定</span>：迷宮形狀（7 × 8 格，36 個可走格）；「隨機狀態」解讀為「隨機方向的相鄰格」；軌跡最長 100 步；以資料計數得到的經驗模型取代神經網路。表格版直接對經驗模型解第 05 章的 $V_\tau,Q_\tau$ 遞迴：Q 由經驗轉移平均，V 對資料中出現的動作取 expectile。<span class="tag">本頁推導</span>expectile 對常數平移等變且單調，所以這個遞迴是 γ-壓縮，定點迭代會收斂（有限狀態、有界獎勵、固定的經驗模型；終點的值固定為 0）。資料中從未當過起始狀態的格子沒有外出資料，它的值固定為 0。</p>
+    <p>元件還有兩個論文沒有的設定。<b>近似誤差 σ</b>：表格版沒有函數近似的誤差，本頁在策略抽取時把一個固定的高斯雜訊（標準差 σ）加到每個 Q 值上，代表神經網路的誤差。<b>母體模式</b>：不用有限資料，改用真實轉移機率與均勻行為策略（四個動作都在支撐內），此時第 05 章的結果精確成立。</p>
+  </div>
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>玩具迷宮：τ 如何讓值函數做多步傳遞</h3></div>
+    <p class="plate-lead">依序按三個步驟，或直接調整 τ 與 σ。每格印出值（兩位小數），箭頭為貪婪動作。</p>
+    <div class="steps" id="c3-guide" role="group" aria-label="三步引導"><button type="button" data-s="1" aria-pressed="false"><span class="s">1</span>看 τ = 0.5</button><button type="button" data-s="2" aria-pressed="false"><span class="s">2</span>看 τ = 0.95</button><button type="button" data-s="3" aria-pressed="false"><span class="s">3</span>切換到母體、τ = 1</button></div>
+    <div class="pg two">
+      <div class="fig" id="c3-fig"><svg role="img" aria-label="迷宮熱圖"></svg><table class="sr" id="c3-sr"></table></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c3-tau">expectile 階數 τ<output id="c3-tauo">0.95</output></label><input id="c3-tau" type="range" min="0.5" max="0.99" step="0.01" value="0.95"></div>
+        <div class="ctl-row"><button class="chip" type="button" data-tau="0.5">0.5（SARSA）</button><button class="chip" type="button" data-tau="0.7">0.7</button><button class="chip" type="button" data-tau="0.9">0.9</button><button class="chip" type="button" data-tau="0.95">0.95</button><button class="chip" type="button" data-tau="1">1（取最大值）</button></div>
+        <div><div class="lbl" id="c3-sig-l">近似誤差 σ</div><div class="seg" id="c3-sig" role="group" aria-labelledby="c3-sig-l"><button type="button" data-v="0" aria-pressed="false">0</button><button type="button" data-v="0.001" aria-pressed="false">0.001</button><button type="button" data-v="0.01" aria-pressed="true">0.01</button><button type="button" data-v="0.03" aria-pressed="false">0.03</button><button type="button" data-v="0.1" aria-pressed="false">0.1</button></div></div>
+        <p class="readout" id="c3-ro"></p>
+        <details class="more inline" id="c3-adv"><summary>進階</summary><div class="qa" style="display:flex;flex-direction:column;gap:12px;padding-top:4px">
+          <div><div class="lbl" id="c3-mode-l">資料</div><div class="seg" id="c3-mode" role="group" aria-labelledby="c3-mode-l"><button type="button" data-v="data" aria-pressed="true">有限資料集</button><button type="button" data-v="pop" aria-pressed="false">母體</button></div></div>
+          <div><div class="lbl" id="c3-view-l">顯示</div><div class="seg" id="c3-view" role="group" aria-labelledby="c3-view-l"><button type="button" data-v="v" aria-pressed="true">Vτ</button><button type="button" data-v="star" aria-pressed="false">V*</button><button type="button" data-v="diff" aria-pressed="false">V* − Vτ</button></div></div>
+          <label class="chk"><input type="checkbox" id="c3-arr" checked>顯示貪婪策略箭頭</label>
+          <div class="ctl-row"><button class="small-btn" type="button" id="c3-next">重新產生資料（seed + 1）</button><button class="small-btn" type="button" id="c3-one">回到 seed 1</button><span class="note">目前 seed = <span id="c3-seedo" class="mono">1</span></span></div>
+        </div></details>
+      </div>
+    </div>
+    <div class="fig" id="c3-side" style="margin-top:16px;max-width:520px"><svg role="img" aria-label="V_τ(起點) 隨 τ 的變化"></svg></div>
+    <p class="plate-f">設定<span class="tag">推定</span>：機率 0.75 照指令方向，0.25 改為均勻隨機方向；撞牆留在原地；進入 G 得 10 並結束；γ = 0.9。資料集由 mulberry32(seed) 產生（1 條最佳軌跡 + 99 條隨機軌跡，最長 100 步）。σ 雜訊由 mulberry32(seed + 1000) 產生，只加在策略抽取。斜線格為沒有外出資料的狀態。本文中的數字以 seed 1 為準。讀數由本頁依 Sec. 4.4 的遞迴即時計算。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+  <div class="prose">
+    <p>seed 1 的資料中，τ = 0.5 的起點值 $V_{0.5}$ 只有 0.0007，τ = 0.95 的起點值 $V_{0.95}$ 為 0.8136，最佳值 $V^*$ 為 1.1186。τ = 0.5 對應 SARSA，估計的是均勻隨機行為策略的值，離終點越遠衰減越快；τ = 0.95 時值沿著資料中的軌跡片段一路傳回起點，形狀接近 $V^*$。seed 1 到 5 的 $V_{0.5}$(起點) 都在 0.0004–0.0007，$V_{0.95}$(起點) 都在 0.70–0.84。這與 Fig. 2 的定性結論一致。</p>
+    <p>策略的部分屬於<span class="tag">本頁解讀</span>。表格版沒有近似誤差：σ = 0 時，seed 1 中 τ = 0.5 與 τ = 0.9 的貪婪策略都達到最佳回報 1.119，因為貪婪策略只需要動作之間的大小順序。論文說單步方法的策略很差、值被雜訊主導，但沒有說原因是函數近似誤差。本頁用 σ 呈現一種可能的機制：σ 大於動作之間的 Q 差距時，貪婪動作由 σ 決定。σ = 0.01 時，τ = 0.5 的起點回報降到 0.051，τ = 0.9 仍為 1.119；seed 1–5 中 τ = 0.5 為 0.000–0.051、τ = 0.9 為 0.616–1.119。σ = 0 的策略結果依資料而定（seed 4 所有 τ 都是 0.616）。</p>
+    <p>另一個觀察：有限資料集在 τ = 1 時的起點值為 1.2620，<b>高於</b> $V^*$ = 1.1186。推測原因是經驗轉移的抽樣誤差被最大值選中；Corollary 2.1 的上界是對真實 MDP 的敘述。切換到母體模式後，τ = 1 的值精確等於 $V^*$，且起點值隨 τ 單調上升（Lemma 2、Theorem 3）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">玩具迷宮（Fig. 2）的設定？在 C3 預設下 τ = 0.5、0.95 的起點值與 V* 比較？</p>
+    <p class="a">進入終點獎勵 10、機率 0.25 隨機轉移、1 條最佳 + 99 條隨機軌跡、γ = 0.9、IQL τ = 0.95；C3（seed 1）：$V_{0.5}$ = 0.0007、$V_{0.95}$ = 0.8136、$V^*$ = 1.1186，τ = 0.5 的值離終點越遠衰減越快。</p>
+  </div></details>
+</section>
+<!-- S7 ============================================================ -->
+<section class="ch" id="awr" data-toc="07" data-tt="策略抽取">
+  <div class="ch-num">07 · 策略抽取</div>
+  <h2>策略以優勢加權的行為複製抽取</h2>
+  <div class="prose">
+    <p>Eq. 5、6 學到近似最佳的 Q 與 V，但沒有顯式的策略，所以需要一個策略抽取步驟。為了同樣不查詢資料外的動作，作者用 advantage-weighted regression（AWR；Peters &amp; Schaal 2007、Peng et al. 2019、Nair et al. 2020）訓練策略網路 $\pi_\phi$（Sec. 4.3）：</p>
+  </div>
+  <div class="eq eq-w"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 7，可水平捲動">$$L_\pi(\phi)=\mathbb E_{(s,a)\sim\mathcal D}\big[\exp\big(\beta(Q_{\hat\theta}(s,a)-V_\psi(s))\big)\log\pi_\phi(a|s)\big]$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="eq eq-nr"><div class="eq-m" tabindex="0" role="region" aria-label="公式 Eq. 7，可水平捲動">$$\begin{aligned}L_\pi(\phi)=\mathbb E_{\mathcal D}\big[&\exp(\beta(Q_{\hat\theta}-V_\psi))\\&\cdot\log\pi_\phi(a|s)\big]\end{aligned}$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="prose">
+    <p>$A(s,a)=Q(s,a)-V(s)$ 稱為優勢（advantage）。Eq. 7 是加權的<b>行為複製</b>（behavioral cloning）：對資料中的每個 $(s,a)$ 最大化 $\log\pi_\phi(a|s)$，權重為 $\exp(\beta A)$。$\beta\in[0,\infty)$ 是反溫度（inverse temperature）：β 小時權重接近相等，行為接近行為複製；β 大時權重集中在優勢最大的動作，趨向 Q 的最大值（Sec. 4.3）。</p>
+    <p>Eq. 7 只對資料中的 $(s,a)$ 加權對數概似，不查詢資料外的動作。先前研究證明這個目標等於在分布約束下最大化 Q（Peters &amp; Schaal 2007、Peng et al. 2019、Nair et al. 2020），因此策略抽取帶有一個隱含的約束（Sec. 1–2）。策略完全不影響值函數的訓練，所以策略抽取可以與 TD 學習同時進行，也可以在之後進行（Sec. 4.3）。實作上，指數化的優勢 $\exp(\beta A)$ 截斷到 $(-\infty,100]$（App. B，沿用 Brandfonbrener et al.）。</p>
+    <p class="note">正負號注意：Eq. 7 是要<b>最大化</b>的加權對數概似，但 Alg. 1 寫成梯度下降 $\phi\leftarrow\phi-\lambda_\pi\nabla_\phi L_\pi$。實作時損失取 $-\mathbb E[\cdots]$。</p>
+    <p><span class="tag">本頁推導</span>在同一個狀態內、Q 固定時，$\exp(-\beta V(s))$ 是所有動作共用的常數，正規化後的策略不受影響；不截斷時，該狀態的策略與 V 無關。截斷後，V 決定哪些動作的權重被壓到 100。真實 IQL 中，τ 主要透過 TD 學習（Eq. 5–6）改變學到的 Q 與 V 而影響策略；下面的元件 Q 是固定的，不呈現這個效果。</p>
+  </div>
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>AWR 策略抽取：β、截斷與隱含約束</h3></div>
+    <p class="plate-lead">一維動作、單一狀態的示意<span class="tag">推定</span>。<b>這裡的 Q 是固定的函數</b>，所以 τ 只透過 V 與截斷影響結果；τ 對學到的 Q 的影響見 C3。</p>
+    <div class="pg side">
+      <div><div class="fig" id="c4-f1"><svg role="img" aria-label="Q 函數與 V"></svg></div><div class="fig" id="c4-f2" style="margin-top:8px"><svg role="img" aria-label="資料量、加權後的長條與策略密度"></svg></div></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c4-b">反溫度 β<output id="c4-bo">3.0</output></label><input id="c4-b" type="range" min="0" max="30" step="0.1" value="3"></div>
+        <div class="ctl-row"><button class="chip" type="button" data-preset="0.5,0.7">Kitchen/Adroit：β 0.5、τ 0.7</button><button class="chip" type="button" data-preset="3,0.7">locomotion：β 3、τ 0.7</button><button class="chip" type="button" data-preset="10,0.9">Ant Maze：β 10、τ 0.9</button></div>
+        <div class="rng"><label class="lbl" for="c4-tau">expectile 階數 τ<output id="c4-tauo">0.70</output></label><input id="c4-tau" type="range" min="0.5" max="0.99" step="0.01" value="0.7"></div>
+        <div class="ctl-row"><button class="chip" type="button" data-tau="1">τ = 1</button></div>
+        <label class="chk"><input type="checkbox" id="c4-clip" checked>截斷 exp(βA) ≤ 100</label>
+        <p class="readout" id="c4-ro"></p>
+      </div>
+    </div>
+    <div class="legend"><span class="lg beh">資料量 nᵢ（空心）</span><span class="lg acc">加權後 nᵢ·wᵢ（實心）與策略密度</span><span class="lg ref">行為密度（β = 0）</span></div>
+    <p class="plate-f">資料動作 a = −0.8, −0.75, …, 0.3（23 個），資料量 n ∝ exp(−(a+0.25)²/(2·0.25²))；Q(a) = 1 − (a − 0.6)²，最大值在資料外的 a = 0.6。長條各自正規化到最大值 1（左軸）；兩條密度共用右軸。被截斷的長條頂端有短橫線。策略為加權最大概似的高斯分布。讀數由本頁依 Eq. 7 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c4-live"></p>
+  </div>
+  <div class="prose">
+    <p>預設 τ = 0.7 下：β = 0 時策略平均為 −0.2500，即資料的平均；β = 3 時移到 −0.0426；Ant Maze 設定（β = 10、τ = 0.9）時為 0.1469。策略平均是資料動作的加權平均，永遠不超過資料中最大的動作 0.3，即使 Q 在資料外的 0.6 更大。截斷的作用在 β 大時最明顯：τ = 0.7、β = 30 時，不截斷的有效樣本比例只剩 0.0231，截斷後為 0.3237。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 7 中 β 的作用？為何不查詢 OOD 動作？論文怎麼截斷？</p>
+    <p class="a">β 小時接近行為複製，β 大時趨向 Q 的最大值；只對資料中的 $(s,a)$ 加權對數概似，相當於分布約束下最大化 Q；$\exp(\beta A)$ 截斷到 $(-\infty,100]$（Sec. 4.3、App. B）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="awr-advantage-weighted-policy-extraction.html">Advantage-weighted regression 與策略抽取：AWR、AWAC、CRR</a></p>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="impl" data-toc="08" data-tt="演算法">
+  <div class="ch-num">08 · 演算法</div>
+  <h2>演算法總結與實作設定</h2>
+  <div class="prose">
+    <p>IQL 分兩個階段（Alg. 1）。TD 學習階段每個梯度步依序更新 V 網路參數 ψ（Eq. 5）、Q 網路參數 θ（Eq. 6），再以 Polyak 平均更新 target 參數 θ̂（α = 0.005）；策略抽取階段更新策略參數 φ（Eq. 7）。兩個階段也可以同時進行，online 微調時就是同時進行（Sec. 4.3）。</p>
+  </div>
+  <div class="algo" role="table" aria-label="Algorithm 1 與逐行說明">
+    <div class="row hd" role="row"><div role="columnheader">Algorithm 1 · Implicit Q-learning</div><div class="ex-h" role="columnheader">說明</div></div>
+    <div class="row" role="row"><code role="cell">初始化 ψ, θ, θ_targ, φ</code><div class="ex" role="cell">θ_targ 即正文的 θ̂（target network）。</div></div>
+    <div class="row" role="row"><code role="cell">TD 學習（IQL）：每個梯度步</code><div class="ex" role="cell">只用資料中的 (s, a, r, s′)。</div></div>
+    <div class="row" role="row"><code role="cell">  ψ ← ψ − λ_V ∇ψ L_V(ψ)</code><div class="ex" role="cell">Eq. 5；Q 取 min(Q¹_targ, Q²_targ)。</div></div>
+    <div class="row" role="row"><code role="cell">  θ ← θ − λ_Q ∇θ L_Q(θ)</code><div class="ex" role="cell">Eq. 6；兩個 Q 網路各自擬合同一個目標 r + γV(s′)。</div></div>
+    <div class="row" role="row"><code role="cell">  θ_targ ← (1 − α) θ_targ + α θ</code><div class="ex" role="cell">Polyak 平均，α = 0.005。</div></div>
+    <div class="row" role="row"><code role="cell">策略抽取（AWR）：每個梯度步</code><div class="ex" role="cell">可與 TD 學習同時或之後進行。</div></div>
+    <div class="row" role="row"><code role="cell">  φ ← φ − λ_π ∇φ L_π(φ)</code><div class="ex" role="cell">Eq. 7（實作取負號）；A = min(Q¹_targ, Q²_targ) − V。</div></div>
+  </div>
+  <div class="prose">
+    <p class="note">學習率 λ<sub>V</sub>、λ<sub>Q</sub>、λ<sub>π</sub>：Adam，學習率 $3\cdot10^{-4}$；actor 的學習率用 cosine schedule（App. B）。</p>
+    <p><b>Clipped double Q-learning</b>（Fujimoto et al. 2018）：IQL 維持兩個 Q 網路 $Q^1,Q^2$（各有自己的參數與 target），V 更新與策略更新時取兩者的最小值（Sec. 4.3）。兩個獨立的估計同時高估的機會較小，取最小值是抑制第 01 章所說的高估的一般做法（取最小值的理由為本頁補充，論文只寫用法）。</p>
+    <p>超參數（App. B–C）：Ant Maze 用 τ = 0.9、β = 10，獎勵減 1；MuJoCo locomotion 用 τ = 0.7、β = 3，獎勵除以資料集中最佳與最差軌跡回報的差；Kitchen 與 Adroit 用 τ = 0.7、β = 0.5，策略網路加 dropout 0.1。</p>
+  </div>
+  <div class="tscroll"><table class="stack">
+    <caption>實作設定（App. B–C）</caption>
+    <thead><tr><th>項目</th><th>值</th></tr></thead><tbody>
+    <tr><td data-h="項目">Ant Maze</td><td data-h="值">τ = 0.9，β = 10.0；獎勵減 1</td></tr>
+    <tr><td data-h="項目">MuJoCo locomotion</td><td data-h="值">τ = 0.7，β = 3.0；獎勵除以資料集中最佳與最差軌跡回報的差</td></tr>
+    <tr><td data-h="項目">Kitchen、Adroit</td><td data-h="值">τ = 0.7，β = 0.5；策略網路 dropout 0.1</td></tr>
+    <tr><td data-h="項目">微調（僅 dexterous manipulation 設定）</td><td data-h="值">τ = 0.8，β = 3.0；offline 25000 步 <span class="tag">原文有歧義</span>；探索用高斯噪聲 σ = 0.03。Ant Maze 微調的 τ、β 論文未另外給出</td></tr>
+    <tr><td data-h="項目">微調流程</td><td data-h="值">offline 1M 梯度步 → online 1M 環境步，每個環境步 1 次梯度更新，其他設定不變</td></tr>
+    <tr><td data-h="項目">網路</td><td data-h="值">所有網路皆為 2 層 MLP、256 隱藏單元、ReLU</td></tr>
+    <tr><td data-h="項目">最佳化</td><td data-h="值">Adam，學習率 3·10⁻⁴；actor 學習率用 cosine schedule</td></tr>
+    <tr><td data-h="項目">策略</td><td data-h="值">高斯分布，標準差與狀態無關</td></tr>
+    <tr><td data-h="項目">target 更新</td><td data-h="值">soft update，α = 0.005</td></tr>
+    <tr><td data-h="項目">優勢截斷</td><td data-h="值">exp(βA) 截斷到 (−∞, 100]</td></tr>
+    <tr><td data-h="項目">評估</td><td data-h="值">locomotion：10 條評估軌跡 × 10 個 seed；Ant Maze：100 條評估軌跡</td></tr>
+    <tr><td data-h="項目">框架</td><td data-h="值">JAX + Flax</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p class="note">「offline 25000 步」：App. C 先寫 dexterous manipulation 用 25000 步 offline 訓練，下一段又說 AWAC 因過擬合而改用 25000 步。這個數字可以讀成 IQL 與 AWAC 共用，也可以讀成只描述 AWAC；論文沒有說清楚。</p>
+    <h3>常見錯誤</h3>
+    <ol>
+      <li>在 TD 目標中用策略產生的動作，或對所有動作取 max：IQL 的 Eq. 5、6 只用資料中的 $(s,a)$ 與 $s'$。</li>
+      <li>把 expectile 直接套在 TD 目標上（單一損失）：會把偶然轉移到高回報狀態的結果當成動作的價值（Sec. 4.2）。</li>
+      <li>Eq. 7 的正負號：要最大化加權對數概似，實作損失取負號。</li>
+      <li>忘記截斷 $\exp(\beta A)$：App. B 截斷到 100；不截斷時大 β 會讓少數樣本主導（C4 的有效樣本比例）。</li>
+      <li>把 τ 設成接近 1：Theorem 3 說 τ→1 近似越好，但作者指出最佳化較難（Sec. 4.4），實際用 0.7–0.9；τ 越大不一定越好。</li>
+      <li>Ant Maze 的獎勵要減 1，locomotion 的獎勵要正規化（App. B）。</li>
+    </ol>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Alg. 1 每步更新哪些參數？clipped double Q 用在哪？Ant Maze 與 locomotion 的 τ、β？</p>
+    <p class="a">ψ（Eq. 5）、θ（Eq. 6）、θ̂ Polyak（α = 0.005），之後 φ（Eq. 7）；維持兩個 Q 網路，V 與策略更新時取兩者的最小值；Ant Maze τ = 0.9、β = 10，locomotion τ = 0.7、β = 3。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="iql-algorithm-and-d4rl-evaluation.html">IQL 演算法、超參數與 D4RL 評估</a></p>
+</section>
+<!-- S9 ============================================================ -->
+<section class="ch" id="results" data-toc="09" data-tt="D4RL 結果">
+  <div class="ch-num">09 · D4RL 結果</div>
+  <h2>IQL 在需要拼接的 Ant Maze 上領先</h2>
+  <div class="prose">
+    <p>作者在 D4RL 基準上比較兩類方法：多步動態規劃（CQL、TD3+BC、AWAC）與單步方法（Onestep RL、Decision Transformer，簡稱 DT），另列行為複製 BC 與只用最好 10% 資料的 10%BC。locomotion 資料含有大量接近最佳的軌跡；Ant Maze 的 medium、large 資料幾乎沒有接近最佳的軌跡，需要拼接（Sec. 5.2）。</p>
+    <p>Ant Maze 總分 IQL 378.0，CQL 303.6；locomotion 總分 IQL 692.4，CQL 698.5，兩者相近；全部總分 IQL 1070.4，CQL 1002.1（Table 1）。訓練時間 IQL 20 分鐘，CQL 80 分鐘；80 分鐘是作者以 JAX 重寫的 CQL，原始實作 1M 次更新超過 4 小時，IQL 約比重寫版快 4 倍（Sec. 5.2）。作者寫「所有方法都使用 “-v2” 環境」以求公平，因此 CQL 的分數高於其他論文的報告值（Sec. 5.2）；Table 1 的 Ant Maze 列仍標為 “-v0”，本頁照錄。</p>
+  </div>
+  <div class="tscroll"><table>
+    <caption>Table 1 總分（D4RL 正規化分數）</caption>
+    <thead><tr><th>總分</th><th class="num">BC</th><th class="num">10%BC</th><th class="num">DT</th><th class="num">AWAC</th><th class="num">Onestep RL</th><th class="num">TD3+BC</th><th class="num">CQL</th><th class="num">IQL</th></tr></thead><tbody>
+    <tr><td>locomotion-v2</td><td class="num">466.7</td><td class="num">666.2</td><td class="num">672.6</td><td class="num">450.7</td><td class="num">684.6</td><td class="num">677.4</td><td class="num">698.5</td><td class="num">692.4</td></tr>
+    <tr class="hl"><td>antmaze-v0</td><td class="num">100.2</td><td class="num">134.2</td><td class="num">112.2</td><td class="num">107.7</td><td class="num">125.3</td><td class="num">163.8</td><td class="num">303.6</td><td class="num">378.0</td></tr>
+    <tr><td>total</td><td class="num">566.9</td><td class="num">800.4</td><td class="num">784.8</td><td class="num">558.4</td><td class="num">809.9</td><td class="num">841.2</td><td class="num">1002.1</td><td class="num">1070.4</td></tr>
+    <tr><td>runtime</td><td class="num">10m</td><td class="num">10m</td><td class="num">960m</td><td class="num">20m</td><td class="num">≈20m</td><td class="num">20m</td><td class="num">80m</td><td class="num">20m</td></tr>
+    </tbody></table></div>
+  <div class="tscroll"><table>
+    <caption>Table 1 的 Ant Maze 各資料集</caption>
+    <thead><tr><th>資料集</th><th class="num">Onestep RL</th><th class="num">CQL</th><th class="num">IQL</th></tr></thead><tbody>
+    <tr><td>umaze</td><td class="num">64.3</td><td class="num">74.0</td><td class="num">87.5</td></tr>
+    <tr><td>umaze-diverse</td><td class="num">60.7</td><td class="num">84.0</td><td class="num">62.2</td></tr>
+    <tr><td>medium-play</td><td class="num">0.3</td><td class="num">61.2</td><td class="num">71.2</td></tr>
+    <tr><td>medium-diverse</td><td class="num">0.0</td><td class="num">53.7</td><td class="num">70.0</td></tr>
+    <tr><td>large-play</td><td class="num">0.0</td><td class="num">15.8</td><td class="num">39.6</td></tr>
+    <tr><td>large-diverse</td><td class="num">0.0</td><td class="num">14.9</td><td class="num">47.5</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>單步方法在 medium 與 large Ant Maze 上接近 0，這是第 02 章與第 06 章所說的拼接問題。Fig. 3 有四格（antmaze-medium／large × play／diverse），比較 τ = 0.9、0.7、0.5：τ = 0.9 的回報遠高於較小的 τ，0.7 與 0.5 在這些資料集上都很低。作者的結論是：需要拼接的任務必須用較大的 expectile（Sec. 5.2）。論文沒有給出曲線的數據，本頁不重繪。</p>
+    <p>Kitchen 總分 IQL 159.8（BC 154.5、CQL 144.6），Adroit 總分 118.1（BC 104.5、CQL 93.6），加總 1348.3（CQL 1240.3、BC 825.9）（Table 1、Table 3）。作者認為 Adroit 與 Kitchen 鑑別力較低，多數 RL 方法與模仿學習相近（Sec. 5.2）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">IQL 與 CQL 在 Ant Maze、locomotion 的總分與 runtime？Fig. 3 的結論？</p>
+    <p class="a">Ant Maze 378.0 vs 303.6；locomotion 692.4 vs 698.5；20 分鐘 vs 80 分鐘（作者的 JAX 版 CQL）；Fig. 3：medium／large Ant Maze 上 τ = 0.9 的回報遠高於較小的 τ，需要拼接的任務要用較大的 expectile（Table 1、Fig. 3、Sec. 5.2）。</p>
+  </div></details>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="finetune" data-toc="10" data-tt="Online 微調">
+  <div class="ch-num">10 · Online 微調</div>
+  <h2>Offline 初始化之後可以繼續 online 微調</h2>
+  <div class="prose">
+    <p>微調流程：先做 1M 梯度步的 offline 訓練，再一邊與環境互動、把新資料加進 replay buffer，一邊訓練 1M 個環境步，每個環境步做 1 次梯度更新；其他設定不變（App. C）。比較對象是為 online 微調設計的 AWAC，以及前一節表現最好的先前方法 CQL；資料為 Ant Maze 與三個 dexterous manipulation 任務（Sec. 5.3）。</p>
+    <p>總分 IQL 從 408.2 升到 597.7，CQL 從 182.8 升到 241.0，AWAC 從 154.4 升到 211.4（Table 2）。作者給兩個理由：IQL 的 offline 表現強，提供好的初始化；IQL 的策略抽取是加權行為複製，先前研究顯示這類策略抽取有利於 online 改進（Nair et al. 2020）（Sec. 5.3）。例外是 pen-binary-v0，AWAC 從 44.6 升到 70.3，高於 IQL 的 37.4 到 60.7。</p>
+  </div>
+  <div class="tscroll"><table>
+    <caption>Table 2 總分（offline → online 1M 步）</caption>
+    <thead><tr><th>總分</th><th class="num">AWAC</th><th class="num">CQL</th><th class="num">IQL</th></tr></thead><tbody>
+    <tr><td>antmaze-v0</td><td class="num">107.7 → 108.3</td><td class="num">151.5 → 231.1</td><td class="num">370.1 → 473.7</td></tr>
+    <tr><td>hand-v0（pen、door、relocate binary）</td><td class="num">46.7 → 103.1</td><td class="num">31.5 → 9.9</td><td class="num">38.1 → 124.0</td></tr>
+    <tr class="hl"><td>total</td><td class="num">154.4 → 211.4</td><td class="num">182.8 → 241.0</td><td class="num">408.2 → 597.7</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p class="note">CQL 的 offline 總分 182.8 照原文印出；其兩列相加為 151.5 + 31.5 = 183.0。CQL 的微調數字是作者以原始實作重跑的結果，作者重現的 offline 表現較差，尤其在 medium、large Ant Maze（App. C），所以 Table 2 的 CQL offline 起點（antmaze 151.5）不能與 Table 1 的 303.6 比較。Table 2 的 IQL offline 起點也與 Table 1 不同（例如 antmaze-umaze 86.7 對 87.5），論文未說明。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Table 2 三個方法的總分變化？作者給的兩個理由？</p>
+    <p class="a">IQL 408.2 → 597.7、CQL 182.8 → 241.0、AWAC 154.4 → 211.4；offline 初始化強，以及加權行為複製式的策略抽取有利於 online 改進（Sec. 5.3）。</p>
+  </div></details>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="history" data-toc="11" data-tt="研究脈絡">
+  <div class="ch-num">11 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>Offline RL 先以約束策略（BCQ、BEAR、BRAC、TD3+BC）或正則化 Q 值（CQL）處理資料外的動作；另一條路線用加權回歸抽取策略（AWR、AWAC、CRR）；單步方法（Onestep RL、DT）完全避開對資料外動作的估值，但放棄了多步動態規劃。分布式 RL 用 quantile regression 估計價值的分布，是 expectile 方法的相關工作。IQL 把 expectile 用在「動作造成的變化」上，同時保有多步動態規劃與只用資料動作兩項特性。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="next" data-toc="12" data-tt="取捨與延伸">
+  <div class="ch-num">12 · 取捨與延伸</div>
+  <h2>論文中提到的取捨與延伸閱讀</h2>
+  <div class="prose">
+    <p>論文沒有獨立的限制章節。文中明寫的取捨有：τ 越接近 1 最佳化越難（Sec. 4.4）；連續動作仍需要在最後抽取一個 actor（App. D）；單步與多步方法難以直接比較（Table 1 註）；Kitchen、Adroit 的鑑別力低（Sec. 5.2）；CQL 的 offline 結果作者無法重現到原論文的水準（App. C）。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="iql-lineage-overview.html">IQL 的研究脈絡總覽：從 policy constraint 與 value regularization 到 in-sample 的 expectile 學習</a><span>總覽</span></div></li>
+    <li><div><a href="rl-mdp-q-learning-basics.html">MDP、Q 函數與 Bellman backup：value-based RL 的基本記號</a><span>No. 568 的筆記</span></div></li>
+    <li><div><a href="offline-rl-distribution-shift.html">Offline RL 的分布偏移與 OOD 動作造成的 Q 值高估</a><span>No. 568 的筆記</span></div></li>
+    <li><div><a href="iql-policy-constraint-and-regularization-methods.html">Offline RL 的 policy constraint 與 value regularization：BCQ、BEAR、BRAC、CQL、TD3+BC</a><span>先前方法</span></div></li>
+    <li><div><a href="awr-advantage-weighted-policy-extraction.html">Advantage-weighted regression 與策略抽取：AWR、AWAC、CRR</a><span>策略抽取</span></div></li>
+    <li><div><a href="one-step-offline-rl-and-sequence-modeling.html">單步 offline RL 與序列建模：One-step RL、Decision Transformer</a><span>單步方法</span></div></li>
+    <li><div><a href="expectile-regression-value-learning.html">Expectile regression 與 value learning：以非對稱 L2 損失近似資料支撐內的最大值</a><span>本論文的核心工具</span></div></li>
+    <li><div><a href="iql-algorithm-and-d4rl-evaluation.html">IQL 演算法、超參數與 D4RL 評估</a><span>本論文的方法與實驗</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Ilya Kostrikov, Ashvin Nair, Sergey Levine. Offline Reinforcement Learning with Implicit Q-Learning. 2021. <a href="https://arxiv.org/abs/2110.06169">arXiv:2110.06169</a>.</p>
+  <p>本頁的方程式與數字取自論文 v1；標示「本頁推導」的內容為本頁自行推導，「推定」為本頁為了玩具元件自選的數值，「本頁解讀」為本頁對論文的解讀，三者都不是論文結論。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+<script type="application/json" id="timeline-data">[{"year": 2018, "title": "Addressing Function Approximation Error in Actor-Critic Methods", "authors_short": "Fujimoto et al.", "arxiv": "1802.09477", "role": "TD3；IQL 沿用其 clipped double Q-learning", "source": "IQL §4.3 引用"}, {"year": 2018, "title": "Implicit Quantile Networks for Distributional Reinforcement Learning", "authors_short": "Dabney et al.", "arxiv": "1806.06923", "role": "以 quantile regression 估計價值分布", "source": "IQL §2 引用"}, {"year": 2018, "title": "Off-Policy Deep Reinforcement Learning without Exploration", "authors_short": "Fujimoto et al.", "arxiv": "1812.02900", "role": "BCQ；以明確模型約束策略", "source": "IQL §1、§2 引用"}, {"year": 2019, "title": "Stabilizing Off-Policy Q-Learning via Bootstrapping Error Reduction", "authors_short": "Kumar et al.", "arxiv": "1906.00949", "role": "BEAR；約束策略避免 bootstrapping error", "source": "IQL §1、§2 引用"}, {"year": 2019, "title": "Advantage-Weighted Regression", "authors_short": "Peng et al.", "arxiv": "1910.00177", "role": "IQL 策略抽取所用的加權回歸", "source": "IQL §4.3 引用"}, {"year": 2019, "title": "Behavior Regularized Offline Reinforcement Learning", "authors_short": "Wu et al.", "arxiv": "1911.11361", "role": "BRAC；行為正則化", "source": "IQL §1、§2 引用"}, {"year": 2020, "title": "D4RL: Datasets for Deep Data-Driven Reinforcement Learning", "authors_short": "Fu et al.", "arxiv": "2004.07219", "role": "評估基準", "source": "IQL §5 引用"}, {"year": 2020, "title": "Conservative Q-Learning for Offline Reinforcement Learning", "authors_short": "Kumar et al.", "arxiv": "2006.04779", "role": "正則化 Q 函數；主要比較對象", "source": "IQL §1、§2、§5 引用"}, {"year": 2020, "title": "AWAC", "authors_short": "Nair et al.", "arxiv": "2006.09359", "role": "線上微調設定與 AWR 式策略抽取", "source": "IQL §1、§5.3 引用"}, {"year": 2020, "title": "Critic Regularized Regression", "authors_short": "Wang et al.", "arxiv": "2006.15134", "role": "隱含散度約束的加權回歸", "source": "IQL §1、§2 引用"}, {"year": 2021, "title": "Offline RL Without Off-Policy Evaluation", "authors_short": "Brandfonbrener et al.", "arxiv": "2106.08909", "role": "單步 policy improvement", "source": "IQL §2、§4 引用"}, {"year": 2021, "title": "Decision Transformer", "authors_short": "Chen et al.", "arxiv": "2106.01345", "role": "序列建模，不用價值函數", "source": "IQL §2 引用"}, {"year": 2021, "title": "A Minimalist Approach to Offline Reinforcement Learning", "authors_short": "Fujimoto & Gu", "arxiv": "2106.06860", "role": "TD3+BC", "source": "IQL §1、§2 引用"}, {"year": 2021, "title": "Offline Reinforcement Learning with Implicit Q-Learning", "authors_short": "Kostrikov et al.", "arxiv": "2110.06169", "role": "本論文：expectile 的 in-sample 價值學習", "source": "本論文"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+const lgs=(d0,d1,r0,r1)=>{const a=Math.log(d0),b=Math.log(d1);return v=>r0+(Math.log(v)-a)/(b-a)*(r1-r0)};
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+const f2=v=>(Math.abs(v)<0.005?0:v).toFixed(2),f3=v=>(Math.abs(v)<0.0005?0:v).toFixed(3);
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function frame(svg,o){
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m=o.m,x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=m.t;
+  const X=(o.xlog?lgs:lin)(o.x[0],o.x[1],x0,x1),Y=lin(o.y[0],o.y[1],y0,y1);
+  const g=el('g',null,svg);
+  (o.yt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.yf?o.yf(v):String(v)),yy=Y(val);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},g);tx(g,x0-8,yy+4,lab,{class:'tk','text-anchor':'end'})});
+  (o.xt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.xf?o.xf(v):String(v)),xx=X(val);el('line',{x1:xx,x2:xx,y1:y0,y2:y0+4,class:'axl'},g);tx(g,xx,y0+18,lab,{class:'tk','text-anchor':'middle'})});
+  el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  if(o.xl)tx(g,(x0+x1)/2,o.H-4,o.xl,{class:'al','text-anchor':'middle'});
+  if(o.yl)tx(g,4,12,o.yl,{class:'al'});
+  return {X,Y,g,x0,x1,y0,y1};
+}
+function arrow(g,x0,y0,x1,y1,cls,dash){const dx=x1-x0,dy=y1-y0,L=Math.hypot(dx,dy);if(L<2)return;const ux=dx/L,uy=dy/L,h=Math.min(10,L*.6);
+  el('line',{x1:x0,y1:y0,x2:x1-ux*h*.7,y2:y1-uy*h*.7,class:cls+(dash?' dash':'')},g);
+  el('path',{d:`M${x1} ${y1}L${x1-ux*h-uy*h*.45} ${y1-uy*h+ux*h*.45}L${x1-ux*h+uy*h*.45} ${y1-uy*h-ux*h*.45}Z`,class:cls+'-f'},g)}
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+
+/* ---------- shared math (mirrors verify/common.py, maze*.py, numbers.py) ---------- */
+function bisectExpectile(pts,tau){let lo=pts[0][0],hi=pts[pts.length-1][0];
+  for(let it=0;it<200;it++){const m=(lo+hi)/2;let g=0;for(const [x,p] of pts)g+=p*(x>=m?tau:1-tau)*(x-m);if(g>0)lo=m;else hi=m}return(lo+hi)/2}
+function expectile(xs,ps,tau){const pts=[];for(let i=0;i<xs.length;i++)if(ps[i]>0)pts.push([xs[i],ps[i]]);
+  if(!pts.length)return NaN;pts.sort((a,b)=>a[0]-b[0]);const n=pts.length;
+  if(tau>=1)return pts[n-1][0];if(tau<=0)return pts[0][0];
+  const P=[0],S=[0];for(const [x,p] of pts){P.push(P[P.length-1]+p);S.push(S[S.length-1]+p*x)}
+  for(let k=0;k<n;k++){const lp=P[k],ls=S[k],hp=P[n]-P[k],hs=S[n]-S[k];
+    const m=(tau*hs+(1-tau)*ls)/(tau*hp+(1-tau)*lp);
+    if((k===0||pts[k-1][0]<=m+1e-12)&&pts[k][0]>=m-1e-12)return m}
+  return bisectExpectile(pts,tau)}
+const L2tau=(u,tau)=>Math.abs(tau-(u<0?1:0))*u*u;
+function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function gauss(r){const u1=r(),u2=r();return Math.sqrt(-2*Math.log(1-u1))*Math.cos(2*Math.PI*u2)}
+
+/* C2 */
+function c2Values(p,q,tau){const qNaive=expectile([10,0],[p,1-p],tau),qIql=10*p;
+  return{qNaive,qIql,vNaive:expectile([5,qNaive],[1-q,q],tau),vIql:expectile([5,qIql],[1-q,q],tau),truth:Math.max(5,10*p)}}
+
+/* C3 maze */
+const GRID=['........','........','..####..','..####..','..####..','..####..','G.####.S'];
+const MR=GRID.length,MC=GRID[0].length,CELLS=[],IDX={};
+GRID.forEach((row,r)=>[...row].forEach((ch,c)=>{if(ch!=='#'){IDX[r+','+c]=CELLS.length;CELLS.push([r,c,ch])}}));
+const NS3=CELLS.length,GOAL=CELLS.findIndex(c=>c[2]==='G'),START=CELLS.findIndex(c=>c[2]==='S');
+const DIRS=[[-1,0],[0,1],[1,0],[0,-1]],GAMMA=0.9,SLIP=0.25,R_GOAL=10,HORIZON=100,N_RAND=99;
+function move(s,a){const [r,c]=CELLS[s],k=(r+DIRS[a][0])+','+(c+DIRS[a][1]);return k in IDX?IDX[k]:s}
+function trueP(s,a){const o=new Map();for(let b=0;b<4;b++){const p=SLIP/4+(b===a?1-SLIP:0),s2=move(s,b);o.set(s2,(o.get(s2)||0)+p)}return o}
+const TRUEP=[];for(let s=0;s<NS3;s++){TRUEP.push([0,1,2,3].map(a=>[...trueP(s,a)]))}
+function qTrue(V,s,a){let q=0;for(const [s2,p] of TRUEP[s][a])q+=p*((s2===GOAL?R_GOAL:0)+GAMMA*(s2===GOAL?0:V[s2]));return q}
+let VSTAR=null;
+function valueIteration(){if(VSTAR)return VSTAR;let V=new Float64Array(NS3);
+  for(let it=0;it<5000;it++){const nV=new Float64Array(NS3);let d=0;for(let s=0;s<NS3;s++){if(s===GOAL)continue;let b=-Infinity;for(let a=0;a<4;a++)b=Math.max(b,qTrue(V,s,a));nV[s]=b;d=Math.max(d,Math.abs(b-V[s]))}V=nV;if(d<1e-12)break}
+  return VSTAR=V}
+function greedyTrue(V){const pol=[];for(let s=0;s<NS3;s++){const qs=[0,1,2,3].map(a=>qTrue(V,s,a)),m=Math.max(...qs);pol.push(qs.findIndex(q=>q>=m-1e-12))}return pol}
+/* dataset: Map key s*4+a -> Map(s2 -> count). PRNG order per step: [random traj: action] -> slip test -> [slip: direction] */
+function makeDataset(seed){const rnd=mulberry32(seed),pol=greedyTrue(valueIteration()),N=new Map();
+  for(let k=0;k<1+N_RAND;k++){let s=START;for(let t=0;t<HORIZON;t++){let a=k===0?pol[s]:Math.floor(rnd()*4);const act=a;
+      if(rnd()<SLIP)a=Math.floor(rnd()*4);const s2=move(s,a),key=s*4+act;
+      if(!N.has(key))N.set(key,new Map());const d=N.get(key);d.set(s2,(d.get(s2)||0)+1);if(s2===GOAL)break;s=s2}}
+  return N}
+function populationCounts(){const N=new Map();for(let s=0;s<NS3;s++){if(s===GOAL)continue;for(let a=0;a<4;a++)N.set(s*4+a,new Map(TRUEP[s][a]))}return N}
+/* tabular IQL (Sec. 4.4 recursion on the empirical model). States without outgoing data keep V = 0. */
+function iqlTabular(N,tau){const pairs=[],acts=new Map();
+  for(const [key,d] of N){const s=Math.floor(key/4),a=key%4;let n=0;for(const c of d.values())n+=c;pairs.push({s,a,n,d:[...d]});if(!acts.has(s))acts.set(s,[]);acts.get(s).push(pairs.length-1)}
+  let V=new Float64Array(NS3);const Q=new Float64Array(pairs.length);let it=0;
+  for(it=1;it<=5000;it++){pairs.forEach((pr,i)=>{let q=0;for(const [s2,c] of pr.d)q+=c/pr.n*((s2===GOAL?R_GOAL:0)+GAMMA*(s2===GOAL?0:V[s2]));Q[i]=q});
+    const nV=Float64Array.from(V);let dm=0;
+    for(const [s,ids] of acts){const m=expectile(ids.map(i=>Q[i]),ids.map(i=>pairs[i].n),tau);dm=Math.max(dm,Math.abs(m-V[s]));nV[s]=m}
+    V=nV;if(dm<1e-10)break}
+  return{V,Q,pairs,acts,iters:Math.min(it,5000)}}
+function noiseTable(seed){const r=mulberry32(seed+1000),xi=new Float64Array(NS3*4);for(let i=0;i<NS3*4;i++)xi[i]=gauss(r);return xi}
+function extract(res,xi,sigma){const pol=new Array(NS3).fill(null);
+  for(const [s,ids] of res.acts){let best=-Infinity;const qn=ids.map(i=>{const v=res.Q[i]+sigma*xi[s*4+res.pairs[i].a];best=Math.max(best,v);return v});
+    let a=99;ids.forEach((i,j)=>{if(qn[j]>=best-1e-12)a=Math.min(a,res.pairs[i].a)});pol[s]=a}
+  return pol}
+function evalPolicy(pol){let V=new Float64Array(NS3);
+  for(let it=0;it<5000;it++){const nV=new Float64Array(NS3);let d=0;
+    for(let s=0;s<NS3;s++){if(s===GOAL)continue;const v=pol[s]===null?(qTrue(V,s,0)+qTrue(V,s,1)+qTrue(V,s,2)+qTrue(V,s,3))/4:qTrue(V,s,pol[s]);nV[s]=v;d=Math.max(d,Math.abs(v-V[s]))}
+    V=nV;if(d<1e-12)break}
+  return V}
+
+/* C4 AWR */
+const A4=Array.from({length:23},(_,i)=>Math.round((-0.8+0.05*i)*1e10)/1e10),N4=A4.map(a=>Math.exp(-((a+0.25)**2)/(2*0.25**2))),Q4f=a=>1-(a-0.6)**2,Q4=A4.map(Q4f);
+function awr(tau,beta,clip){const V=expectile(Q4,N4,tau),adv=Q4.map(q=>q-V);let w;
+  if(clip)w=adv.map(x=>Math.min(Math.exp(Math.min(beta*x,700)),100));else{const mx=Math.max(...adv.map(x=>beta*x));w=adv.map(x=>Math.exp(beta*x-mx))}
+  const c=N4.map((n,i)=>n*w[i]),S=c.reduce((a,b)=>a+b,0),mean=c.reduce((s,ci,i)=>s+ci*A4[i],0)/S,
+    std=Math.sqrt(c.reduce((s,ci,i)=>s+ci*(A4[i]-mean)**2,0)/S),Sn=N4.reduce((a,b)=>a+b,0),
+    ess=S*S/(Sn*N4.reduce((s,n,i)=>s+n*w[i]*w[i],0)),clipFrac=clip?N4.reduce((s,n,i)=>s+(beta*adv[i]>Math.log(100)?n:0),0)/Sn:0;
+  return{V,adv,w,c,mean,std,ess,clipFrac,clipped:adv.map(x=>clip&&beta*x>Math.log(100))}}
+const sched={};function schedule(id,fn){if(sched[id])return;sched[id]=requestAnimationFrame(()=>{sched[id]=0;fn()})}
+const f4=v=>(Math.abs(v)<0.00005?0:v).toFixed(4);
+function sub(t,base,s){const a=document.createElementNS(NS,'tspan');a.textContent=base;t.appendChild(a);const b=document.createElementNS(NS,'tspan');b.setAttribute('baseline-shift','sub');b.setAttribute('font-size','75%');b.textContent=s;t.appendChild(b);return t}
+function tauText(st){return st.tauIsOne?'τ = 1（取最大值）':'τ = '+st.tau.toFixed(st.tauDigits||3)}
+/* slider + chips helper for tau with tauIsOne flag */
+function bindTau(st,ids,onChange){const r=$('#'+ids.range),o=$('#'+ids.out);
+  const sync=()=>{o.textContent=st.tauIsOne?'1（取最大值）':st.tau.toFixed(st.tauDigits);r.setAttribute('aria-valuetext',tauText(st));
+    $$('[data-tau]',r.closest('.plate')).forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.tau==='1'?st.tauIsOne:(!st.tauIsOne&&Math.abs(+b.dataset.tau-st.tau)<1e-9))))};
+  r.addEventListener('input',()=>{st.tau=+r.value;st.tauIsOne=false;sync();onChange(false)});
+  r.addEventListener('change',()=>onChange(true));
+  $$('[data-tau]',r.closest('.plate')).forEach(b=>b.addEventListener('click',()=>{if(b.dataset.tau==='1'){st.tauIsOne=true;r.value=r.max}else{st.tauIsOne=false;st.tau=+b.dataset.tau;r.value=st.tau}sync();onChange(true)}));
+  st.syncTau=sync;sync()}
+const tauOf=st=>st.tauIsOne?1:st.tau;
+
+/* ---------- C1 ---------- */
+const C1DEF={q:[1,2,3,4,8],mu:[.30,.30,.20,.15,.05]};
+const c1={tau:.9,tauIsOne:false,tauDigits:3,q:C1DEF.q.slice(),mu:C1DEF.mu.slice(),incA6:false};
+function c1Dist(){const S=c1.mu.reduce((a,b)=>a+b,0);if(S<=0)return null;let ps=c1.mu.map(m=>m/S),xs=c1.q.slice();
+  if(c1.incA6){ps=ps.map(p=>p*.99);ps.push(.01)}else ps.push(0);xs.push(12);return{xs,ps}}
+function renderC1(final){const D=c1Dist(),t=tauOf(c1);const ro=$('#c1-ro');
+  if(!D){ro.innerHTML='<b>無資料</b>：所有 μ 都是 0。';['#c1-f1','#c1-f2','#c1-f3'].forEach(s=>$(s+' svg').textContent='');return}
+  const m=expectile(D.xs,D.ps,t),mean=expectile(D.xs,D.ps,.5),inMax=Math.max(...D.xs.filter((x,i)=>D.ps[i]>0)),allMax=Math.max(...D.xs);
+  const loss=D.xs.reduce((s,x,i)=>s+D.ps[i]*L2tau(x-m,t),0);
+  /* fig 1 */
+  {const box=$('#c1-f1'),W=widthOf(box,280,560),H=340,svg=$('svg',box);const lo=Math.min(...D.xs)-1,hi=allMax+1;
+   const mu=D.ps.slice(0,6);const fr=frame(svg,{W,H,m:{l:40,r:104,t:16,b:36},x:[0,Math.max(...mu,0.05)*1.15],y:[lo,hi],yt:niceTicks(lo,hi,6),xt:[0],xl:'資料中的比例 μ（長條長度）',yl:'Q'});
+   const groups=new Map();D.xs.forEach((x,i)=>{const k=x.toFixed(6);if(!groups.has(k))groups.set(k,{x,ids:[],p:0});const g=groups.get(k);g.ids.push(i);g.p+=D.ps[i]});
+   for(const g of groups.values()){const y=fr.Y(g.x),ood=g.ids.length===1&&g.ids[0]===5&&!c1.incA6;
+     if(ood){el('rect',{x:fr.x0,y:y-6,width:Math.max(26,(fr.x1-fr.x0)*.12),height:12,rx:2,fill:'none',stroke:'var(--ink-3)','stroke-dasharray':'4 3'},fr.g);tx(fr.g,fr.x0+Math.max(26,(fr.x1-fr.x0)*.12)+6,y+4,'a₆：資料中沒有',{class:'tk'})}
+     else{const w=Math.max(2,fr.X(g.p)-fr.x0);el('rect',{x:fr.x0,y:y-6,width:w,height:12,rx:2,class:'beh-f'},fr.g);tx(fr.g,fr.x0+w+6,y+4,g.ids.map(i=>'a'+'₁₂₃₄₅₆'[i]).join('、'),{class:'tk'})}}
+   const lines=[[mean,'平均','ref'],[inMax,'資料內最大','dotl'],[allMax,'所有動作 max','dotl2'],[m,'m_τ','accl']];
+   const labs=[];lines.forEach(([v,l,c])=>{const y=fr.Y(v);el('line',{x1:fr.x0,x2:fr.x1,y1:y,y2:y,class:c==='accl'?'acc':c==='ref'?'ref':'ref dot'},fr.g);labs.push({y,l,c,v})});
+   labs.sort((a,b)=>a.y-b.y);let last=-1e9;labs.forEach(L=>{let y=Math.max(L.y+4,last+15);last=y;const t=el('text',{x:fr.x1+6,y,class:L.c==='accl'?'labm acc-t':'tk'},fr.g);
+     if(L.c==='accl')sub(t,'m','τ').appendChild(document.createTextNode(' = '+f4(m)));else t.textContent=L.l+' '+(+L.v.toFixed(3))});
+   svg.setAttribute('aria-label',`一個狀態的動作 Q 值與資料比例；${tauText(c1)} 時 expectile 為 ${f4(m)}，平均 ${f4(mean)}，資料內最大 ${inMax}`)}
+  /* fig 2: loss shape */
+  {const box=$('#c1-f2'),W=widthOf(box,260,460),H=200,svg=$('svg',box);const fr=frame(svg,{W,H,m:{l:40,r:12,t:12,b:36},x:[-1,1],y:[0,1],yt:[0,.5,1],xt:[-1,-.5,0,.5,1],xl:'殘差 u'});
+   const pts=(tt)=>Array.from({length:201},(_,i)=>{const u=-1+i/100;return[fr.X(u),fr.Y(L2tau(u,tt))]});
+   el('path',{d:lp(pts(.5)),class:'ref'},fr.g);el('path',{d:lp(pts(Math.min(t,1))),class:'acc'},fr.g);
+   [.5,-.5].forEach(u=>{const v=L2tau(u,t);el('circle',{cx:fr.X(u),cy:fr.Y(v),r:3.5,class:'acc-f'},fr.g);tx(fr.g,fr.X(u),fr.Y(v)-8,v.toFixed(3),{class:'tk','text-anchor':'middle'})});
+   tx(fr.g,fr.x0+6,fr.y1+12,'虛線：τ = 0.5（MSE 的一半）',{class:'tk'});
+   svg.setAttribute('aria-label',`非對稱損失：${tauText(c1)}，u = +0.5 的損失 ${L2tau(.5,t).toFixed(3)}，u = −0.5 的損失 ${L2tau(-.5,t).toFixed(3)}`)}
+  /* fig 3: m_tau vs tau */
+  {const box=$('#c1-f3'),W=widthOf(box,260,460),H=200,svg=$('svg',box);const xa=Math.log10(2),xb=3;const curve=[];
+   for(let i=0;i<300;i++){const x=xa+(xb-xa)*i/299,tt=1-10**(-x);curve.push([x,expectile(D.xs,D.ps,tt)])}
+   const lo=Math.min(mean,...curve.map(c=>c[1]))-.5,hi=inMax+.5;
+   const fr=frame(svg,{W,H,m:{l:40,r:14,t:12,b:36},x:[xa,xb],y:[lo,hi],yt:niceTicks(lo,hi,4),xt:[[xa,'0.5'],[1,'0.9'],[2,'0.99'],[3,'0.999']],xl:'τ（刻度為 −log₁₀(1−τ)）'});
+   el('line',{x1:fr.x0,x2:fr.x1,y1:fr.Y(inMax),y2:fr.Y(inMax),class:'ref dot'},fr.g);tx(fr.g,fr.x1,fr.Y(inMax)-6,'τ→1 的極限 '+inMax,{class:'tk','text-anchor':'end'});
+   el('path',{d:lp(curve.map(([x,y])=>[fr.X(x),fr.Y(y)])),class:'acc'},fr.g);
+   let cx,cy=fr.Y(m);if(c1.tauIsOne)cx=fr.x1;else if(t<.5){cx=fr.x0;tx(fr.g,fr.x0+6,fr.y0-8,'τ < 0.5 不在圖中',{class:'tk'})}else cx=fr.X(-Math.log10(1-t));
+   el('circle',{cx,cy,r:5,class:'acc-f'},fr.g);
+   svg.setAttribute('aria-label',`expectile 隨 τ 單調上升，趨近資料內最大值 ${inMax}`)}
+  ro.innerHTML=`${tauText(c1)}<br>m<sub>τ</sub> = <b class="acc">${f4(m)}</b><br>平均（τ = 0.5）= ${f4(mean)}<br>資料內最大 = ${+inMax.toFixed(4)}<br>𝓛(m<sub>τ</sub>) = ${loss.toFixed(5)}`;
+  if(final)announce('c1',`${tauText(c1)}，expectile ${f4(m)}`)}
+function niceTicks(lo,hi,n){const span=hi-lo,step0=span/n,mag=10**Math.floor(Math.log10(step0)),step=[1,2,2.5,5,10].map(s=>s*mag).find(s=>s>=step0)||10*mag;const out=[];for(let v=Math.ceil(lo/step)*step;v<=hi+1e-9;v+=step)out.push(+v.toFixed(6));return out}
+function initC1(){bindTau(c1,{range:'c1-tau',out:'c1-tauo'},f=>schedule('c1',()=>renderC1(f)));
+  const rows=$('#c1-rows');
+  for(let i=0;i<5;i++){const d=document.createElement('div');d.className='c1-row';
+    d.innerHTML=`<label class="c1-a" for="c1-q${i}">a<sub>${i+1}</sub></label><input class="c1-q" id="c1-q${i}" type="number" min="-5" max="15" step="0.5" value="${c1.q[i]}" aria-label="動作 a${i+1} 的 Q 值"><input id="c1-m${i}" type="range" min="0" max="1" step="0.01" value="${c1.mu[i]}" aria-label="動作 a${i+1} 在資料中的比例 μ"><output id="c1-mo${i}">${c1.mu[i].toFixed(2)}</output>`;rows.appendChild(d);
+    $('#c1-q'+i,d).addEventListener('input',e=>{const v=parseFloat(e.target.value);if(Number.isFinite(v)){c1.q[i]=Math.max(-5,Math.min(15,v));schedule('c1',()=>renderC1(false))}});
+    $('#c1-q'+i,d).addEventListener('change',()=>renderC1(true));
+    const mr=$('#c1-m'+i,d);mr.setAttribute('aria-valuetext','μ = '+c1.mu[i].toFixed(2));
+    mr.addEventListener('input',e=>{c1.mu[i]=+e.target.value;$('#c1-mo'+i).textContent=c1.mu[i].toFixed(2);mr.setAttribute('aria-valuetext','μ = '+c1.mu[i].toFixed(2));schedule('c1',()=>renderC1(false))});
+    mr.addEventListener('change',()=>renderC1(true))}
+  $('#c1-a6').addEventListener('change',e=>{c1.incA6=e.target.checked;renderC1(true)});
+  $('#c1-reset').addEventListener('click',()=>{c1.q=C1DEF.q.slice();c1.mu=C1DEF.mu.slice();c1.incA6=false;$('#c1-a6').checked=false;
+    for(let i=0;i<5;i++){$('#c1-q'+i).value=c1.q[i];$('#c1-m'+i).value=c1.mu[i];$('#c1-mo'+i).textContent=c1.mu[i].toFixed(2)}renderC1(true)});
+  renderC1(false)}
+
+/* ---------- C2 ---------- */
+const c2={p:.3,q:.5,tau:.9};
+function renderC2(final){const {p,q,tau}=c2,v=c2Values(p,q,tau);
+  $('#c2-po').textContent=p.toFixed(2);$('#c2-qo').textContent=q.toFixed(2);$('#c2-to').textContent=tau.toFixed(3);
+  $('#c2-p').setAttribute('aria-valuetext','p = '+p.toFixed(2));$('#c2-q').setAttribute('aria-valuetext','q = '+q.toFixed(2));$('#c2-t').setAttribute('aria-valuetext','τ = '+tau.toFixed(3));
+  /* schematic */
+  {const box=$('#c2-f1'),W=widthOf(box,280,420),H=210,svg=$('svg',box);svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+   const g=el('g',null,svg),sx=34,sy=105,ax=W*.42,ox=W-58;
+   el('circle',{cx:sx,cy:sy,r:18,class:'hollow'},g);tx(g,sx,sy+5,'s',{class:'lab','text-anchor':'middle'});
+   const node=(x,y,l)=>{el('rect',{x:x-24,y:y-14,width:48,height:28,rx:8,class:'hollow'},g);tx(g,x,y+5,l,{class:'lab','text-anchor':'middle'})};
+   arrow(g,sx+18,sy-6,ax-26,52,'ink');arrow(g,sx+18,sy+6,ax-26,158,'ink');
+   tx(g,sx-14,sy-34,'1 − q = '+(1-q).toFixed(2),{class:'tk'});tx(g,sx-14,sy+46,'q = '+q.toFixed(2),{class:'tk'});
+   node(ax,44,'a₁');node(ax,166,'a₂');
+   arrow(g,ax+24,44,ox-26,44,'ink');tx(g,ox,49,'5',{class:'labm','text-anchor':'middle'});tx(g,(ax+ox)/2,36,'確定',{class:'tk','text-anchor':'middle'});
+   arrow(g,ax+24,160,ox-26,128,'ink');arrow(g,ax+24,172,ox-26,196,'ink');
+   tx(g,ox,133,'10',{class:'labm','text-anchor':'middle'});tx(g,ox,201,'0',{class:'labm','text-anchor':'middle'});
+   tx(g,(ax+ox)/2+4,132,'p = '+p.toFixed(2),{class:'tk','text-anchor':'middle'});tx(g,(ax+ox)/2+4,204,'1 − p',{class:'tk','text-anchor':'middle'});
+   svg.setAttribute('aria-label',`狀態 s 有兩個資料動作：a₁ 回報 5；a₂ 以機率 ${p.toFixed(2)} 回報 10、否則 0；資料中 a₂ 的比例 ${q.toFixed(2)}`)}
+  /* curves */
+  {const box=$('#c2-f2'),W=widthOf(box,280,520),H=250,svg=$('svg',box);
+   const fr=frame(svg,{W,H,m:{l:36,r:16,t:14,b:38},x:[.5,.999],y:[0,10.5],yt:[0,2.5,5,7.5,10],xt:[.5,.6,.7,.8,.9,[.999,'0.999']],xf:v=>v.toFixed(1),xl:'τ',yl:'V'});
+   const T=Array.from({length:300},(_,i)=>.5+(.999-.5)*i/299);
+   const cn=T.map(t=>[fr.X(t),fr.Y(c2Values(p,q,t).vNaive)]),ci=T.map(t=>[fr.X(t),fr.Y(c2Values(p,q,t).vIql)]);
+   el('line',{x1:fr.x0,x2:fr.x1,y1:fr.Y(v.truth),y2:fr.Y(v.truth),class:'ref dot'},fr.g);
+   el('path',{d:lp(cn),class:'naive dash'},fr.g);el('path',{d:lp(ci),class:'acc'},fr.g);
+   for(let i=0;i<300;i+=50){const [x,y]=cn[i];el('path',{d:`M${x} ${y-5}L${x+5} ${y+4}L${x-5} ${y+4}Z`,class:'naive-f'},fr.g);el('circle',{cx:ci[i][0],cy:ci[i][1],r:3.5,class:'acc-f'},fr.g)}
+   const cx=fr.X(tau);el('line',{x1:cx,x2:cx,y1:fr.y1,y2:fr.y0,class:'cur'},fr.g);
+   const labs=[[cn[299][1],'單一損失','tk'],[ci[299][1],'IQL（Eq. 5–6）','tk'],[fr.Y(v.truth),'資料中最好動作的期望值','tk']].sort((a,b)=>a[0]-b[0]);
+   let last=-1e9;labs.forEach(([y,l])=>{y=Math.max(y-6,last+17);last=y;tx(fr.g,fr.x1-4,y,l,{class:'tk','text-anchor':'end'})});
+   svg.setAttribute('aria-label',`τ = ${tau.toFixed(3)} 時，單一損失的 V = ${f4(v.vNaive)}，IQL 的 V = ${f4(v.vIql)}，參考值 ${v.truth}`)}
+  $('#c2-ro').innerHTML=`Q(a₂)：單一損失 <b>${f4(v.qNaive)}</b>，IQL <b>${f4(v.qIql)}</b><br>V：單一損失 <b>${f4(v.vNaive)}</b>，IQL <b class="acc">${f4(v.vIql)}</b><br>資料中最好動作的期望值 = ${+v.truth.toFixed(4)}<br>單一損失 V − 參考值 = ${f4(v.vNaive-v.truth)}`;
+  if(final)announce('c2',`τ ${tau.toFixed(3)}：單一損失 ${f4(v.vNaive)}，IQL ${f4(v.vIql)}`)}
+function initC2(){[['p','p'],['q','q'],['t','tau']].forEach(([id,k])=>{const r=$('#c2-'+id);r.addEventListener('input',()=>{c2[k]=+r.value;schedule('c2',()=>renderC2(false))});r.addEventListener('change',()=>renderC2(true))});renderC2(false)}
+
+/* ---------- C3 ---------- */
+const c3={mode:'data',seed:1,tau:.95,tauIsOne:false,tauDigits:2,sigma:.01,arrows:true,view:'v'};
+const c3cache=new Map();let c3curve=null,c3curveKey='',c3curveJob=0;
+function c3N(){const key=c3.mode==='pop'?'pop':'d'+c3.seed;if(!c3cache.has(key))c3cache.set(key,{N:c3.mode==='pop'?populationCounts():makeDataset(c3.seed),xi:noiseTable(c3.seed),res:new Map()});return c3cache.get(key)}
+function c3Res(C,tau){const k=tau.toFixed(4);if(!C.res.has(k))C.res.set(k,iqlTabular(C.N,tau));return C.res.get(k)}
+function c3Curve(){const key=c3.mode+'|'+c3.seed;if(c3curveKey===key)return;c3curveKey=key;c3curve=new Array(21).fill(null);const job=++c3curveJob,C=c3N();let i=0;
+  const step=()=>{if(job!==c3curveJob)return;const t0=performance.now();while(i<21&&performance.now()-t0<12){c3curve[i]=c3Res(C,.5+.025*i).V[START];i++}renderC3Side();if(i<21)setTimeout(step,0)};step()}
+const ARW='↑→↓←';
+function renderC3(final){const C=c3N(),t=tauOf(c3),res=c3Res(C,t),V=res.V,Vs=valueIteration();
+  const pol=extract(res,C.xi,c3.sigma),Vp=evalPolicy(pol);const hasOut=new Set(res.acts.keys());
+  const box=$('#c3-fig'),W=widthOf(box,300,560),cs=Math.floor(W/MC),H=cs*MR,svg=$('svg',box);svg.textContent='';svg.setAttribute('viewBox',`0 0 ${cs*MC} ${H}`);svg.setAttribute('width',cs*MC);svg.setAttribute('height',H);
+  const g=el('g',null,svg),beh=rgbOf('--c-beh'),s2=rgbOf('--surface-2'),acc=rgbOf('--accent');
+  const val=s=>c3.view==='v'?V[s]:c3.view==='star'?Vs[s]:Vs[s]-V[s];
+  let dmax=1e-9;if(c3.view==='diff')for(let s=0;s<NS3;s++)if(s!==GOAL&&(hasOut.has(s)||c3.mode==='pop'))dmax=Math.max(dmax,Math.abs(Vs[s]-V[s]));
+  const sr=[];
+  for(let r=0;r<MR;r++){const row=[];for(let c=0;c<MC;c++){const x=c*cs,y=r*cs,k=r+','+c;
+    if(!(k in IDX)){el('rect',{x,y,width:cs,height:cs,class:'wall'},g);row.push('牆');continue}
+    const s=IDX[k];let fill,txt='',dark=false;
+    if(s===GOAL){fill='var(--accent-soft)';txt='G'}
+    else if(c3.view!=='star'&&!hasOut.has(s)){fill='url(#hatch)';txt=''}
+    else{const v=val(s),fr=c3.view==='diff'?Math.min(1,Math.abs(v)/dmax):Math.max(0,Math.min(1,v/10));const to=c3.view==='diff'?acc:beh;
+      fill=mix(to,s2,fr);dark=fr>.55;txt=f2(v)}
+    const rect=el('rect',{x:x+.5,y:y+.5,width:cs-1,height:cs-1,fill,rx:3},g);if(dark)rect.setAttribute('data-dark','1');
+    const cls=dark?'c3t dk':'c3t';
+    if(s===GOAL)tx(g,x+cs/2,y+cs/2+5,'G',{class:'lab','text-anchor':'middle'});
+    else if(txt){tx(g,x+cs/2,y+cs-8,txt,{class:cls,'text-anchor':'middle'})}else{tx(g,x+cs/2,y+cs/2-1,'無外出',{class:'c3t','text-anchor':'middle'});tx(g,x+cs/2,y+cs/2+13,'資料',{class:'c3t','text-anchor':'middle'})}
+    if(s===START)tx(g,x+4,y+13,'S',{class:cls+' b'});
+    if(c3.arrows&&s!==GOAL&&c3.view!=='star'&&pol[s]!==null)tx(g,x+cs-5,y+14,ARW[pol[s]],{class:cls,'text-anchor':'end'});
+    row.push(s===GOAL?'終點 G':(txt?txt:'無外出資料')+(s===START?'（起點）':'')+(c3.arrows&&pol[s]!==null&&s!==GOAL&&c3.view!=='star'?' '+'上右下左'[pol[s]]:''))}sr.push(row)}
+  const defs=el('defs',null,svg),pat=el('pattern',{id:'hatch',width:6,height:6,patternUnits:'userSpaceOnUse',patternTransform:'rotate(45)'},defs);el('rect',{width:6,height:6,fill:'var(--surface)'},pat);el('line',{x1:0,y1:0,x2:0,y2:6,stroke:'var(--line)','stroke-width':2},pat);
+  const viewName={v:'Vτ',star:'V*',diff:'V* − Vτ'}[c3.view];
+  svg.setAttribute('aria-label',`迷宮熱圖（${viewName}），${tauText(c3)}：起點 ${f2(val(START))}，終點旁 ${f2(val(IDX['6,1']))}`);
+  $('#c3-sr').innerHTML='<caption>熱圖數值（列 0 在上；方向為貪婪動作）</caption>'+sr.map((row,r)=>'<tr><th scope="row">列 '+r+'</th>'+row.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('');
+  let nTr=0;for(const d of C.N.values())for(const n of d.values())nTr+=n;
+  $('#c3-seedo').textContent=c3.seed;
+  $('#c3-ro').innerHTML=(c3.mode==='pop'?'母體模式（真實轉移、均勻行為策略）':`seed ${c3.seed}：${res.acts.size}/${NS3-1} 個狀態有外出資料，${nTr} 次轉移`)+
+    `<br>${tauText(c3)}，迭代 ${res.iters} 次<br>V<sub>τ</sub>(起點) = <b class="acc">${f4(V[START])}</b>　V*(起點) = ${f4(Vs[START])}<br>貪婪策略（σ = ${c3.sigma}）的起點回報 = <b>${Vp[START].toFixed(3)}</b>（V* 的 ${(100*Vp[START]/Vs[START]).toFixed(0)}%）`;
+  c3Curve();renderC3Side();
+  if(final)announce('c3',`${tauText(c3)}，起點 V ${f4(V[START])}，策略回報 ${Vp[START].toFixed(3)}`)}
+function renderC3Side(){const box=$('#c3-side'),W=widthOf(box,240,420),H=180,svg=$('svg',box);const Vs=valueIteration()[START];
+  const top=Math.max(Vs,...(c3curve||[]).filter(v=>v!==null))*1.12;
+  const fr=frame(svg,{W,H,m:{l:40,r:12,t:12,b:36},x:[.5,1],y:[0,top],yt:niceTicks(0,top,3),xt:[.5,.6,.7,.8,.9,1],xf:v=>v.toFixed(1),xl:'τ',yl:'Vτ(起點)'});
+  el('line',{x1:fr.x0,x2:fr.x1,y1:fr.Y(Vs),y2:fr.Y(Vs),class:'ref dot'},fr.g);tx(fr.g,fr.x0+4,fr.Y(Vs)-6,'V* = '+Vs.toFixed(4),{class:'tk'});
+  const pts=[];(c3curve||[]).forEach((v,i)=>{if(v!==null)pts.push([fr.X(.5+.025*i),fr.Y(v)])});if(pts.length>1)el('path',{d:lp(pts),class:'acc'},fr.g);
+  const t=tauOf(c3),C=c3N(),k=t.toFixed(4);if(C.res.has(k))el('circle',{cx:fr.X(t),cy:fr.Y(C.res.get(k).V[START]),r:5,class:'acc-f'},fr.g);
+  svg.setAttribute('aria-label','起點的 V_τ 隨 τ 上升；水平點線為 V*')}
+function rgbOf(v){const d=document.createElement('span');d.style.color=`var(${v})`;document.body.appendChild(d);const c=getComputedStyle(d).color;d.remove();return(c.match(/[\d.]+/g)||[0,0,0]).slice(0,3).map(Number)}
+function mix(a,b,f){return`rgb(${a.map((x,i)=>Math.round(x*f+b[i]*(1-f))).join(',')})`}
+function initC3(){bindTau(c3,{range:'c3-tau',out:'c3-tauo'},f=>schedule('c3',()=>renderC3(f)));
+  const seg=(id,key,conv)=>$$('#'+id+' button').forEach(b=>b.addEventListener('click',()=>{c3[key]=conv(b.dataset.v);$$('#'+id+' button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderC3(true)}));
+  seg('c3-sig','sigma',Number);seg('c3-mode','mode',String);seg('c3-view','view',String);
+  $('#c3-arr').addEventListener('change',e=>{c3.arrows=e.target.checked;renderC3(true)});
+  $('#c3-next').addEventListener('click',()=>{c3.seed++;renderC3(true)});$('#c3-one').addEventListener('click',()=>{c3.seed=1;renderC3(true)});
+  const setSeg=(id,v)=>$$('#'+id+' button').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.v===String(v))));
+  $$('#c3-guide button').forEach(b=>b.addEventListener('click',()=>{const s=+b.dataset.s;$$('#c3-guide button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
+    if(s===3){c3.mode='pop';c3.tauIsOne=true;$('#c3-tau').value=.99;$('#c3-adv').open=true}else{c3.mode='data';c3.tauIsOne=false;c3.tau=s===1?.5:.95;$('#c3-tau').value=c3.tau}
+    setSeg('c3-mode',c3.mode);c3.syncTau();renderC3(true)}));
+  const io=new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting)){io.disconnect();renderC3(false)}});io.observe($('#c3'));}
+
+/* ---------- C4 ---------- */
+const c4={beta:3,tau:.7,tauIsOne:false,tauDigits:2,clip:true};
+function renderC4(final){const t=tauOf(c4),r=awr(t,c4.beta,c4.clip),r0=awr(t,0,true);
+  $('#c4-bo').textContent=c4.beta.toFixed(1);$('#c4-b').setAttribute('aria-valuetext','β = '+c4.beta.toFixed(1));
+  $$('#c4 [data-preset]').forEach(b=>{const [bb,tt]=b.dataset.preset.split(',').map(Number);b.setAttribute('aria-pressed',String(Math.abs(bb-c4.beta)<1e-9&&!c4.tauIsOne&&Math.abs(tt-c4.tau)<1e-9))});
+  const pdf=(a,m,s)=>Math.exp(-((a-m)**2)/(2*s*s))/(s*Math.sqrt(2*Math.PI));
+  {const box=$('#c4-f1'),W=widthOf(box,280,640),H=200,svg=$('svg',box);const fr=frame(svg,{W,H,m:{l:40,r:14,t:12,b:36},x:[-1,1],y:[-2,1.2],yt:[-2,-1,0,1],xt:[-1,-.5,0,.3,.6,1],xf:v=>String(v),xl:'動作 a',yl:'Q(a)'});
+   el('rect',{x:fr.X(.3),y:fr.y1,width:fr.X(1)-fr.X(.3),height:fr.y0-fr.y1,fill:'var(--surface-2)'},fr.g);
+   tx(fr.g,fr.X(.65),fr.y0-30,'資料中沒有的動作',{class:'tk','text-anchor':'middle'});tx(fr.g,fr.X(.65),fr.y0-14,'IQL 從不查詢',{class:'tk','text-anchor':'middle'});
+   const seg=(a0,a1)=>Array.from({length:81},(_,i)=>{const a=a0+(a1-a0)*i/80;return[fr.X(a),fr.Y(Q4f(a))]});
+   el('path',{d:lp(seg(-.8,.3)),class:'ink'},fr.g);el('path',{d:lp(seg(.3,1)),class:'ink dash'},fr.g);el('path',{d:lp(seg(-1,-.8)),class:'ink dash'},fr.g);
+   el('line',{x1:fr.x0,x2:fr.x1,y1:fr.Y(r.V),y2:fr.Y(r.V),class:'acc'},fr.g);const tt=el('text',{x:fr.x0+6,y:fr.Y(r.V)-6,class:'labm acc-t'},fr.g);tt.textContent='V = ';sub(tt,'m','τ').appendChild(document.createTextNode(' = '+f4(r.V)));
+   svg.setAttribute('aria-label',`Q 函數在資料範圍 −0.8 到 0.3 內為實線；V = ${f4(r.V)}`)}
+  {const box=$('#c4-f2'),W=widthOf(box,280,640),H=230,svg=$('svg',box);
+   const pk=Math.max(pdf(r.mean,r.mean,r.std),pdf(r0.mean,r0.mean,r0.std))*1.1;
+   const fr=frame(svg,{W,H,m:{l:40,r:44,t:26,b:36},x:[-1,1],y:[0,1.05],yt:[0,.5,1],xt:[-1,-.5,0,.3,1],xf:v=>String(v),xl:'動作 a'});
+   const Yd=lin(0,pk,fr.y0,fr.y1);[0,pk/2,pk].forEach(v=>tx(fr.g,fr.x1+6,Yd(v)+4,v.toFixed(1),{class:'tk'}));tx(fr.g,fr.x1+40,fr.y1-14,'密度',{class:'tk','text-anchor':'end'});
+   const nm=Math.max(...N4),cm=Math.max(...r.c),bw=Math.max(3,(fr.X(.05)-fr.X(0))*.42);
+   A4.forEach((a,i)=>{const x=fr.X(a);el('rect',{x:x-bw-1,y:fr.Y(N4[i]/nm),width:bw,height:fr.y0-fr.Y(N4[i]/nm),class:'beh-o'},fr.g);
+     el('rect',{x:x+1,y:fr.Y(r.c[i]/cm),width:bw,height:fr.y0-fr.Y(r.c[i]/cm),class:'acc-f'},fr.g);
+     if(r.clipped[i])el('line',{x1:x,x2:x+bw+2,y1:fr.Y(r.c[i]/cm)-3,y2:fr.Y(r.c[i]/cm)-3,class:'ink'},fr.g)});
+   const dens=(m,s)=>Array.from({length:201},(_,i)=>{const a=-1+i/100;return[fr.X(a),Yd(pdf(a,m,s))]});
+   el('path',{d:lp(dens(r0.mean,r0.std)),class:'ref'},fr.g);el('path',{d:lp(dens(r.mean,r.std)),class:'acc'},fr.g);
+   svg.setAttribute('aria-label',`資料量與加權後的長條；策略平均 ${f4(r.mean)}，標準差 ${f4(r.std)}`)}
+  $('#c4-ro').innerHTML=`${tauText(c4)}，β = ${c4.beta.toFixed(1)}，截斷${c4.clip?'開':'關'}<br>V = ${f4(r.V)}<br>策略平均 ā = <b class="acc">${f4(r.mean)}</b>　標準差 s = ${f4(r.std)}<br>有效樣本比例 = ${f4(r.ess)}<br>被截斷的資料比例 = ${f4(r.clipFrac)}`;
+  if(final)announce('c4',`β ${c4.beta.toFixed(1)}，策略平均 ${f4(r.mean)}`)}
+function initC4(){bindTau(c4,{range:'c4-tau',out:'c4-tauo'},f=>schedule('c4',()=>renderC4(f)));
+  const b=$('#c4-b');b.addEventListener('input',()=>{c4.beta=+b.value;schedule('c4',()=>renderC4(false))});b.addEventListener('change',()=>renderC4(true));
+  $$('#c4 [data-preset]').forEach(x=>x.addEventListener('click',()=>{const [bb,tt]=x.dataset.preset.split(',').map(Number);c4.beta=bb;c4.tau=tt;c4.tauIsOne=false;b.value=bb;$('#c4-tau').value=tt;c4.syncTau();renderC4(true)}));
+  $('#c4-clip').addEventListener('change',e=>{c4.clip=e.target.checked;renderC4(true)});renderC4(false)}
+
+/* ---------- tau axis (hero) ---------- */
+function taxis(node){node.innerHTML='<div class="kx-track"><div class="kx-line"></div></div>';const tr=node.firstChild;const pos=t=>(t-.5)/.5*100;
+  [[.5,'0.5','l'],[.75,'0.75',''],[1,'1','r']].forEach(([t,v,c])=>{const s=document.createElement('span');s.className='kx-tick '+c;s.style.left=pos(t)+'%';s.innerHTML=`<b>τ</b> ${v}`;tr.appendChild(s)});
+  [[.5,'SARSA（估計行為策略）',0],[.7,'locomotion <span class="v">0.7</span>',1],[.9,'Ant Maze <span class="v">0.9</span>',1],[1,'資料內 Q-learning',0]].forEach(([t,l,a])=>{const d=document.createElement('div');d.className='kx-mark'+(a?' acc':'');d.style.left=pos(t)+'%';d.innerHTML=`<span class="kx-dot"></span><span class="kx-stem"></span><span class="kx-lab ${t>.85?'r':t<.6?'l':'c'}">${l}</span>`;tr.appendChild(d)});
+  layoutKAxis(node)}
+function layoutKAxis(node){const tr=node.firstChild;if(!tr)return;const labs=$$('.kx-lab',tr);labs.forEach(l=>{l.style.bottom='14px';l.previousSibling.style.height='8px'});
+  const items=labs.map(l=>({l,r:l.getBoundingClientRect()})).sort((a,b)=>a.r.left-b.r.left);const rows=[];let mx=0;
+  items.forEach(it=>{let r=0;while(rows[r]!==undefined&&it.r.left<rows[r]+8)r++;rows[r]=it.r.right;mx=Math.max(mx,r);it.l.style.bottom=(14+r*28)+'px';it.l.previousSibling.style.height=(8+r*28)+'px'});
+  tr.style.marginTop=(mx*28+40)+'px'}
+/* ---------- timeline ---------- */
+const TL_GROUP={'1812.02900':['con','iql-policy-constraint-and-regularization-methods'],'1906.00949':['con','iql-policy-constraint-and-regularization-methods'],'1911.11361':['con','iql-policy-constraint-and-regularization-methods'],'2006.04779':['con','iql-policy-constraint-and-regularization-methods'],'2106.06860':['con','iql-policy-constraint-and-regularization-methods'],
+ '1910.00177':['awr','awr-advantage-weighted-policy-extraction'],'2006.09359':['awr','awr-advantage-weighted-policy-extraction'],'2006.15134':['awr','awr-advantage-weighted-policy-extraction'],
+ '2106.08909':['one','one-step-offline-rl-and-sequence-modeling'],'2106.01345':['one','one-step-offline-rl-and-sequence-modeling'],
+ '1806.06923':['dist','expectile-regression-value-learning'],'2004.07219':['bench','iql-algorithm-and-d4rl-evaluation'],'1802.09477':['bench','iql-algorithm-and-d4rl-evaluation'],'2110.06169':['me','iql-lineage-overview']};
+const TL_NAME={con:'策略約束與值正則化',awr:'加權回歸',one:'單步與序列建模',dist:'分布式 RL',bench:'基準與元件',me:'本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  if(!data.some(e=>e.arxiv==='2110.06169'))data.push({year:2021,title:'Offline Reinforcement Learning with Implicit Q-Learning',authors_short:'本論文',arxiv:'2110.06169',role:'以 expectile regression 只用資料中的動作學習值函數。'});
+  data=data.map((e,i)=>({e,i})).sort((a,b)=>(+a.e.year||0)-(+b.e.year||0)||a.i-b.i).map(o=>o.e);
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const slug=g[1];const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${slug?`<a href="${slug}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+
+/* ---------- toc, theme, appbar ---------- */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));
+  addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}renderC3(false)})}
+
+/* ---------- self test ---------- */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t)=>Math.abs(a-b)<=t+1e-12;
+  const C1Q=[1,2,3,4,8],C1M=[.3,.3,.2,.15,.05];
+  [[.01,1.0493],[.1,1.4412],[.5,2.5],[.7,3.0263],[.9,4.0714],[.95,5.1053],[.99,7.0678],[.999,7.8919],[1,8]].forEach(([t,v])=>{ok(near(expectile(C1Q,C1M,t),v,5e-5),'C1 m tau='+t);ok(near(expectile(C1Q.concat(12),C1M.concat(0),t),v,5e-5),'C1 a6 ignored tau='+t)});
+  [[.01,.04826],[.5,1.325],[.9,1.12929],[.999,.03231]].forEach(([t,v])=>{const m=expectile(C1Q,C1M,t);ok(near(C1Q.reduce((s,x,i)=>s+C1M[i]*L2tau(x-m,t),0),v,5e-5),'C1 loss tau='+t)});
+  const a6=[...C1M.map(p=>p*.99),.01];ok(near(expectile(C1Q.concat(12),a6,.9),4.5549,5e-4)&&near(expectile(C1Q.concat(12),a6,.99),7.7826,5e-4),'C1 a6 included');
+  ok(near(L2tau(.5,.9),.225,1e-12)&&near(L2tau(-.5,.9),.025,1e-12),'L2tau 9x');
+  ok(expectile([2,2,2],[1,1,1],.999)===2,'dup tau .999');ok(near(expectile([1,3,3,8],[.25,.25,.25,.25],.999),7.9830,5e-5),'dup 1,3,3,8');ok(Number.isNaN(expectile([1,2],[0,0],.5)),'empty NaN');
+  {const pts=[[1,.3],[2,.3],[3,.2],[4,.15],[8,.05]];ok(near(bisectExpectile(pts,.9),4.0714286,1e-6),'bisect fallback')}
+  {const r=mulberry32(42);let worst=0;for(let k=0;k<50;k++){const xs=[],ps=[];for(let i=0;i<5;i++){xs.push(r()*10-5);ps.push(r())}const t=.01+.98*r(),m=expectile(xs,ps,t);worst=Math.max(worst,Math.abs(xs.reduce((s,x,i)=>s+ps[i]*Math.abs(t-(x<m?1:0))*(x-m),0)))}ok(worst<1e-9,'first-order residual '+worst)}
+  {const r=mulberry32(1);ok(r()===0.6270739405881613&&r()===0.002735721180215478,'mulberry32')}
+  /* tauIsOne */
+  {$('[data-tau="1"]',$('#c1')).click();renderC1(false);ok($('#c1-tau').getAttribute('aria-valuetext').includes('τ = 1')&&$('#c1-ro').textContent.includes('8.0000'),'C1 tauIsOne');
+   const r=$('#c1-tau');r.value=.9;r.dispatchEvent(new Event('input'));ok(!c1.tauIsOne,'C1 slider clears flag');renderC1(false)}
+  /* C2 */
+  {const tab=[[.3,.5,.5,3,4,4],[.3,.5,.7,5,5,4.4],[.3,.5,.9,7.9412,7.6471,4.8],[.3,.5,.99,9.7697,9.722,4.98],[.7,.5,.7,8.4483,7.4138,6.4],[.3,.1,.9,7.9412,6.4706,4.9756],[.05,.5,.99,8.3898,8.3559,4.955],[1,.5,.9,10,9.5,9.5],[0,.5,.9,0,4.5,4.5]];
+   tab.forEach(([p,q,t,a,b,c])=>{const v=c2Values(p,q,t);ok(near(v.qNaive,a,5e-4)&&near(v.vNaive,b,5e-4)&&near(v.vIql,c,5e-4),`C2 p=${p} q=${q} tau=${t}`)})}
+  /* C3 */
+  {const Vs=valueIteration();ok(near(Vs[START],1.1186,5e-5),'V* start');
+   const N=makeDataset(1);let nTr=0;for(const d of N.values())for(const n of d.values())nTr+=n;ok(nTr===9841&&N.size===140,'dataset seed1 '+nTr+'/'+N.size);
+   const probe=[[6,1],[0,0],[0,4],[0,7],[6,7]].map(([r,c])=>IDX[r+','+c]);
+   const tab=[[.5,185,[8.956,.295,.052,.010,.0007]],[.7,167,[9.469,1.321,.497,.193,.0434]],[.9,96,[9.723,3.481,1.904,1.138,.5136]],[.95,76,[9.766,4.312,2.465,1.588,.8136]],[.99,61,[9.797,5.137,3.056,2.068,1.1583]],[1,56,[9.804,5.366,3.227,2.208,1.262]]];
+   const pols={.5:[1.119,.401,.051,0,0],.7:[1.119,1.119,1.119,.154,.099],.9:[1.119,1.119,1.119,1.114,.417],.95:[1.061,1.061,1.068,1.067,.398],.99:[1.056,1.056,1.053,1.056,.397],1:[1.056,1.056,1.053,1.056,.396]};
+   const xi=noiseTable(1);
+   tab.forEach(([t,it,vals])=>{const r=iqlTabular(N,t);ok(Math.abs(r.iters-it)<=2,`C3 iters tau=${t}: ${r.iters}`);vals.forEach((v,i)=>ok(near(r.V[probe[i]],v,i===4?5e-4:5e-3),`C3 V tau=${t} probe${i}`));
+     [0,.001,.01,.03,.1].forEach((s,i)=>ok(near(evalPolicy(extract(r,xi,s))[START],pols[t][i],5e-3),`C3 Vpi tau=${t} sigma=${s}`))});
+   const P=populationCounts();[[.5,.0003],[.9,.4539],[.99,1.0332],[1,1.1186]].forEach(([t,v])=>ok(near(iqlTabular(P,t).V[START],v,5e-4),'pop tau='+t));
+   const rp=iqlTabular(P,1);ok(Math.max(...rp.V.map((v,i)=>Math.abs(v-Vs[i])))<1e-8,'pop tau=1 equals V*');
+   const seeds=[[1,1.119,.051,1.119,1.119,.0007,.8136],[2,1.100,.038,.714,1.096,.0006,.7020],[3,1.119,.015,1.119,1.114,.0004,.8157],[4,.616,0,.616,.616,.0005,.8373],[5,.720,.043,1.034,1.034,.0005,.7199]];
+   seeds.forEach(([sd,a,b,c,d,e,f])=>{const Nn=makeDataset(sd),x=noiseTable(sd),r5=iqlTabular(Nn,.5),r9=iqlTabular(Nn,.9),r95=iqlTabular(Nn,.95);
+     ok(near(evalPolicy(extract(r5,x,0))[START],a,5e-3)&&near(evalPolicy(extract(r5,x,.01))[START],b,5e-3)&&near(evalPolicy(extract(r9,x,0))[START],c,5e-3)&&near(evalPolicy(extract(r9,x,.01))[START],d,5e-3),'seed table pol '+sd);
+     ok(near(r5.V[START],e,5e-4)&&near(r95.V[START],f,5e-4),'seed table V '+sd);
+     if(sd===2)ok(!r95.V.some(Number.isNaN)&&!r95.acts.has(IDX['6,1']),'seed2 no NaN, (6,1) no outgoing data')})}
+  /* C4 */
+  {const tab=[[.7,0,1,null,-.25,.2328,1,0],[.7,.5,1,.3541,-.2059,.2272,.9652,0],[.7,3,1,.3541,-.0426,.1907,.5162,0],[.5,10,1,.2233,.0597,.1173,.2625,.1274],[.7,10,1,.3541,.1175,.1153,.1615,.0344],[.9,10,1,.5326,.1469,.1196,.1136,0],[.5,10,0,null,.1469,.1196,.1136,0],[.7,30,1,.3541,.0167,.1113,.3237,.3041],[.9,30,0,null,.259,.052,.0231,0]];
+   tab.forEach(([t,b,c,V,m,s,e,cf])=>{const r=awr(t,b,!!c);ok((V===null||near(r.V,V,5e-4))&&near(r.mean,m,5e-4)&&near(r.std,s,5e-4)&&near(r.ess,e,5e-4)&&near(r.clipFrac,cf,5e-4),`C4 tau=${t} beta=${b} clip=${c}`)});
+   ok(Math.abs(awr(.5,30,false).mean-awr(.9,30,false).mean)<1e-12,'C4 no-clip independent of V')}
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ---------- boot ---------- */
+initTheme();initToc();initC1();initC2();initC3();initC4();renderTimeline();
+$$('.kaxis').forEach(taxis);
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{renderC1(false);renderC2(false);renderC3(false);renderC4(false);$$('.kaxis').forEach(layoutKAxis)})});
+document.fonts&&document.fonts.ready.then(()=>$$('.kaxis').forEach(layoutKAxis));
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false})}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath()});
+if(/[?&]test\b/.test(location.search))selfTest();
+})();
+</script>
+</body>
+</html>
