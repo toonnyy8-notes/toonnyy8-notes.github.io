@@ -20,7 +20,9 @@
 - 作者、年份、摘要由 arXiv API 補上；非 arXiv 連結這三欄留空
 - Tags：以關鍵字規則從標題、原分類（與摘要）擷取並標準化成 37 個標籤
 - Clusters：12 個研究群集，依原始分類（人工整理的討論串／頻道）對應決定
-- Related Paper IDs：Tag 加權 Jaccard 相似度＋同原分類加分，取前 6 篇
+- Keywords：每篇 3–6 個英文關鍵詞（`scripts/keywords.json`），同一概念用同一字串，供搜尋與計算相似度
+- 引用關係：`scripts/fetch_refs.py` 從 Semantic Scholar 取得每篇的 references，只保留資料庫內論文之間的引用（`scripts/citations.json`，[引用者, 被引用者]）；詳情卡顯示「引用的論文（前置）」與「被引用」
+- Related Paper IDs：引用關係（任一方向）＋共同關鍵詞（依稀有度 idf 加權）＋少量 tag 與同原分類加分，取前 6 篇；圖上實線表示兩篇間有引用，虛線表示只有主題相近
 
 ## 重新產生
 

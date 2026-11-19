@@ -74,24 +74,38 @@ for p in P:
   s=re.split(r'(?<=[.!?])\s',ab,1)[0] if ab else (p['note'] or '')
   p['summary']=(s[:240]+'…') if len(s)>240 else s
   p['branch']=sorted({re.search(r'\((.*?)\)',x).group(1) for x in p['sources']})
-# ponytail: tag-Jaccard + shared-category bonus, O(n^2) over ~340 papers; swap for embeddings if the list grows past a few thousand
-df=collections.Counter(t for p in P for t in p['tags'])
+# Related papers. Score = citation link (either direction) + shared keywords weighted by rarity (idf) + a little for shared tags / category.
+# ponytail: O(n^2) over ~600 papers; swap for embeddings if the list grows past a few thousand.
+import math
+KW={int(k):v for k,v in json.load(open('keywords.json')).items()}
+CITE=[tuple(e) for e in json.load(open('citations.json'))] if os.path.exists('citations.json') else []
+ids={p['id'] for p in P}
+refs=collections.defaultdict(set); cited=collections.defaultdict(set)
+for a,b in CITE:
+  if a in ids and b in ids: refs[a].add(b); cited[b].add(a)
+kdf=collections.Counter(k for p in P for k in KW.get(p['id'],[]))
+idf={k:math.log(len(P)/n) for k,n in kdf.items()}
+tdf=collections.Counter(t for p in P for t in p['tags'])
 for p in P:
-  sc=[]
+  p['keywords']=KW.get(p['id'],[])
+  p['refs']=sorted(refs[p['id']]); p['cited_by']=sorted(cited[p['id']])
+for p in P:
+  sc=[]; kp=set(p['keywords'])
   for q in P:
     if q is p: continue
-    a,b=set(p['tags']),set(q['tags']); inter=a&b
-    s=sum(1/df[t]**.5 for t in inter)/max(1,len(a|b))**.5 if inter else 0
-    if set(p['cats'])&set(q['cats']): s+=.35
-    elif p['cluster']==q['cluster']: s+=.1
-    if s>.25: sc.append((s,q['id']))
+    s=1.5 if (q['id'] in refs[p['id']] or q['id'] in cited[p['id']]) else 0
+    s+=sum(idf[k] for k in kp&set(q['keywords']))/4
+    inter=set(p['tags'])&set(q['tags'])
+    s+=.3*sum(1/tdf[t]**.5 for t in inter)/max(1,len(set(p['tags'])|set(q['tags'])))**.5 if inter else 0
+    if set(p['cats'])&set(q['cats']): s+=.2
+    if s>.6: sc.append((s,q['id']))
   p['related']=[i for s,i in sorted(sc,reverse=True)[:6]]
 deg=collections.Counter(i for p in P for i in p['related'])
 for p in P: p['degree']=deg[p['id']]
 with open('../papers.csv','w',newline='',encoding='utf-8-sig') as f:
-  w=csv.writer(f);w.writerow(['Paper ID','Title','Authors','Year','URL','Source File & Branch','Source Category','Cluster','Core Topic / Summary','Tags','Related Paper IDs'])
-  for p in P: w.writerow([p['id'],p['title'],', '.join(p['authors'][:6])+(' et al.' if len(p['authors'])>6 else ''),p['year'],p['url'],'; '.join(p['sources']),'; '.join(p['cats']),p['cluster'],p['summary'],'; '.join(p['tags']),', '.join(map(str,p['related']))])
-keep=['id','title','url','authors','year','sources','branch','cats','cluster','tags','summary','related','degree']
+  w=csv.writer(f);w.writerow(['Paper ID','Title','Authors','Year','URL','Source File & Branch','Source Category','Cluster','Core Topic / Summary','Tags','Keywords','Cites (Paper IDs)','Cited By (Paper IDs)','Related Paper IDs'])
+  for p in P: w.writerow([p['id'],p['title'],', '.join(p['authors'][:6])+(' et al.' if len(p['authors'])>6 else ''),p['year'],p['url'],'; '.join(p['sources']),'; '.join(p['cats']),p['cluster'],p['summary'],'; '.join(p['tags']),'; '.join(p['keywords']),', '.join(map(str,p['refs'])),', '.join(map(str,p['cited_by'])),', '.join(map(str,p['related']))])
+keep=['id','title','url','authors','year','sources','branch','cats','cluster','tags','keywords','summary','refs','cited_by','related','degree']
 data=[{k:p[k] for k in keep} for p in P]
 for d in data: d['authors']=d['authors'][:8]
 with open('../papers.jsonl','w') as f:  # one paper per line, so git diffs show only the papers that changed
@@ -101,6 +115,8 @@ db=sqlite3.connect('../papers.db')  # same data, normalised for SQL: many-valued
 db.executescript("""CREATE TABLE papers(id INTEGER PRIMARY KEY,title TEXT,url TEXT,year TEXT,cluster TEXT,summary TEXT,degree INTEGER);
 CREATE TABLE authors(paper_id INTEGER REFERENCES papers,pos INTEGER,name TEXT);
 CREATE TABLE tags(paper_id INTEGER REFERENCES papers,tag TEXT);
+CREATE TABLE keywords(paper_id INTEGER REFERENCES papers,keyword TEXT);
+CREATE TABLE citations(citing_id INTEGER REFERENCES papers,cited_id INTEGER REFERENCES papers);
 CREATE TABLE sources(paper_id INTEGER REFERENCES papers,source TEXT,branch TEXT);
 CREATE TABLE categories(paper_id INTEGER REFERENCES papers,category TEXT);
 CREATE TABLE related(paper_id INTEGER REFERENCES papers,related_id INTEGER REFERENCES papers,rank INTEGER);""")
@@ -108,8 +124,10 @@ for p in P:
   db.execute('INSERT INTO papers VALUES(?,?,?,?,?,?,?)',(p['id'],p['title'],p['url'],p['year'],p['cluster'],p['summary'],p['degree']))
   db.executemany('INSERT INTO authors VALUES(?,?,?)',[(p['id'],i,a) for i,a in enumerate(p['authors'])])
   db.executemany('INSERT INTO tags VALUES(?,?)',[(p['id'],t) for t in p['tags']])
+  db.executemany('INSERT INTO keywords VALUES(?,?)',[(p['id'],k) for k in p['keywords']])
+  db.executemany('INSERT INTO citations VALUES(?,?)',[(p['id'],r) for r in p['refs']])
   db.executemany('INSERT INTO sources VALUES(?,?,?)',[(p['id'],s,re.search(r'\((.*?)\)',s).group(1)) for s in p['sources']])
   db.executemany('INSERT INTO categories VALUES(?,?)',[(p['id'],c) for c in p['cats']])
   db.executemany('INSERT INTO related VALUES(?,?,?)',[(p['id'],r,i+1) for i,r in enumerate(p['related'])])
 db.commit(); db.close()
-print(collections.Counter(p['cluster'] for p in P).most_common()); print(df.most_common())
+print(collections.Counter(p['cluster'] for p in P).most_common()); print(tdf.most_common()); print(len(CITE),"citations;",len(kdf),"keywords")

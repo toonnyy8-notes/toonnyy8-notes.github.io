@@ -32,9 +32,9 @@ Paper Master 把「研究手記」Discord 伺服器裡收集的論文，整理�
 ## 步驟 1–4：資料庫與關聯圖
 
 1. **讀取**上面的清單，依 arXiv ID 或網址合併重複論文，保留所有來源。Paper ID 一經發布就不變：新論文接在最大編號之後，不能因清單順序改變而重新編號，因為教學、筆記與外部連結都用 `#paper-<id>`。
-2. **資料庫欄位**：Paper ID、Title、Authors、Year、URL、Source File & Branch、Source Category、Cluster、Core Topic / Summary、Tags、Related Paper IDs。作者、年份、摘要從 arXiv 補；查不到就留空，不猜。
-3. **Tags 與群集**：Tags 要標準化（同義詞合併成一個，例如 Diffusion Model → Diffusion）；群集依 Tags 共現與原始分類歸納，每個群集要有核心主題名稱。
-4. **關聯圖**（參考 Connected Papers）：節點＝論文，大小＝關聯度，顏色＝群集；連線＝主題相似，越像距離越近。要有搜尋（高亮直接關聯的論文）、依 Tag／群集／來源分支篩選，以及點節點後顯示完整資訊與最相關論文的側邊欄。
+2. **資料庫欄位**：Paper ID、Title、Authors、Year、URL、Source File & Branch、Source Category、Cluster、Core Topic / Summary、Tags、Keywords、Cites、Cited By、Related Paper IDs。作者、年份、摘要從 arXiv 補；查不到就留空，不猜。
+3. **Tags、關鍵詞與群集**：Tags 要標準化（同義詞合併成一個，例如 Diffusion Model → Diffusion）；群集依 Tags 共現與原始分類歸納，每個群集要有核心主題名稱。新論文要在 `scripts/keywords.json` 補 3–6 個英文小寫關鍵詞，沿用既有字串（同一概念只能有一種寫法），並重跑 `scripts/fetch_refs.py` 更新引用關係。
+4. **關聯圖**（參考 Connected Papers）：節點＝論文，大小＝關聯度，顏色＝群集；連線＝相依關係：兩篇之間有引用時畫實線，否則以共同關鍵詞（依稀有度加權）與主題判定相似並畫虛線，越像距離越近。要有搜尋（高亮直接關聯的論文）、依 Tag／群集／來源分支篩選，以及點節點後顯示完整資訊與最相關論文的側邊欄。
 
 ## 步驟 6：每篇論文的詳細介紹
 
