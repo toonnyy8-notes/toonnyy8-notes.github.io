@@ -6,14 +6,14 @@ kind: topic
 tags: [exposure-bias, variance-error, metric, analytic-dpm]
 arxiv: ["2308.15321", "2201.06503", "2006.11239"]
 sources: [2308.15321]
-related: ["exposure-bias-elucidation-overview", "diffusion-exposure-bias", "ddpm-reverse-sampling-formulation", "diffusion-sampling-variance-schedule", "epsilon-scaling-method"]
+related: [exposure-bias-elucidation-overview, diffusion-exposure-bias, ddpm-training-and-sampling-recap, diffusion-sampling-variance-schedule, epsilon-scaling-method]
 ---
 # 預測誤差與取樣變異數：解析分析與度量 δ_t
 
 回到 [總覽](exposure-bias-elucidation-overview.html)。本篇為 2308.15321 第 3 節的內容。
 
 ## 建模
-依 [Analytic-DPM 的高斯近似](diffusion-sampling-variance-schedule.html)，令 x_θ^t = x_0 + e_t ε_0（ε_0 ~ N(0, I)）。代入 [DDPM 後驗](ddpm-reverse-sampling-formulation.html) 後，取樣時網路實際收到的 x̂_t 之分佈 q_θ(x̂_t | x_{t+1}) 為：平均 √ᾱ_t x_0，變異數 (1 − ᾱ_t + (√ᾱ_t β_{t+1} / (1−ᾱ_{t+1}) · e_{t+1})²) I。訓練時的 q(x_t|x_0) 變異數為 (1−ᾱ_t) I。
+依 [Analytic-DPM 的高斯近似](diffusion-sampling-variance-schedule.html)，令 x_θ^t = x_0 + e_t ε_0（ε_0 ~ N(0, I)）。代入 [DDPM 後驗](ddpm-training-and-sampling-recap.html) 後，取樣時網路實際收到的 x̂_t 之分佈 q_θ(x̂_t | x_{t+1}) 為：平均 √ᾱ_t x_0，變異數 (1 − ᾱ_t + (√ᾱ_t β_{t+1} / (1−ᾱ_{t+1}) · e_{t+1})²) I。訓練時的 q(x_t|x_0) 變異數為 (1−ᾱ_t) I。
 
 ## 結論
 - 取樣分佈的變異數在每一步都大於訓練分佈，差距為 (√ᾱ_t β_{t+1} / (1−ᾱ_{t+1}) · e_{t+1})²，且此差距在單步即出現。

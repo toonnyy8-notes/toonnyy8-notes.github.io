@@ -4,8 +4,8 @@ title: DDPM-IP：訓練時的輸入擾動
 cluster: Diffusion & Generative Models
 kind: topic
 tags: [ddpm-ip, input-perturbation, regularization, exposure-bias]
-arxiv: ["2301.11706", "2105.05233", "2010.02502", "2206.00364"]
-sources: ["paper.txt Abstract, §5.1–5.3, Alg. 3, Tab. 5", "arXiv API metadata"]
+arxiv: ["2301.11706", "2105.05233", "2010.02502", "2206.00364", "2308.15321"]
+sources: ["paper.txt Abstract, §5.1–5.3, Alg. 3, Tab. 5", "arXiv API metadata", "2308.15321 §3.4"]
 related: ["diffusion-exposure-bias", "vicinal-risk-and-smoothness-regularization", "ddpm-training-and-sampling-recap", "ddpm-quality-and-ddim-sampling"]
 ---
 # DDPM-IP：訓練時的輸入擾動
@@ -33,6 +33,10 @@ y_t = √ᾱ_t · x_0 + √(1−ᾱ_t) · (ε + γ_t ξ)（Eq. 6），
 - CelebA 64×64：FID 1.27，節省 37.5% 訓練時間（摘要）。
 - 在 CIFAR10、ImageNet 32×32、LSUN tower 64×64、CelebA 64×64、FFHQ 128×128 上，ADM-IP 以較少取樣步數達到不輸 1,000 步 ADM 的 FID（例如 CIFAR10 為 80 步 2.93 對 1,000 步 2.99）；論文稱加速超過 12.5 倍。
 - 與 DDIM 併用（Tab. 5）：見 [生成品質改進與 DDIM 取樣](ddpm-quality-and-ddim-sampling.html)。
+
+## 2308.15321 的描述
+
+2308.15321 稱 Ning 等人首次指出擴散模型的曝光偏差，並引入輸入擾動來模擬取樣時的預測誤差，其依據是 Lipschitz 連續性；在第 3.4 節歸類為資料增強：以高斯項擴增每個訓練樣本 x_t，FID 有大幅改善。該方法需要重新訓練。與其他緩解方法的比較見 [曝光偏差的既有緩解方法](exposure-bias-prior-mitigations.html)。
 
 ## 侷限（論文自述）
 

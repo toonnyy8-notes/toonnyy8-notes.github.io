@@ -6,7 +6,7 @@ kind: topic
 tags: [variance-schedule, analytic-dpm, edm, sampling]
 arxiv: ["2102.09672", "2105.05233", "2201.06503", "2206.00364", "2308.15321"]
 sources: [2308.15321]
-related: ["exposure-bias-elucidation-overview", "ddpm-reverse-sampling-formulation", "prediction-error-variance-analysis", "epsilon-scaling-method"]
+related: [exposure-bias-elucidation-overview, ddpm-training-and-sampling-recap, prediction-error-variance-analysis, epsilon-scaling-method]
 ---
 # 取樣變異數與 noise schedule
 

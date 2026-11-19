@@ -6,7 +6,7 @@ kind: topic
 tags: [epsilon-scaling, training-free, adm, fid, sampling]
 arxiv: ["2308.15321", "2105.05233", "2206.00364", "2010.02502"]
 sources: [2308.15321]
-related: ["exposure-bias-elucidation-overview", "prediction-error-variance-analysis", "exposure-bias-prior-mitigations", "diffusion-sampling-variance-schedule", "ddpm-reverse-sampling-formulation"]
+related: [exposure-bias-elucidation-overview, prediction-error-variance-analysis, exposure-bias-prior-mitigations, diffusion-sampling-variance-schedule, ddpm-training-and-sampling-recap]
 ---
 # Epsilon Scaling
 
@@ -24,7 +24,7 @@ related: ["exposure-bias-elucidation-overview", "prediction-error-variance-analy
 ## 結果（皆取自本論文）
 - 以預訓練 ADM 為基線（[ADM 見此](diffusion-sampling-variance-schedule.html)），CIFAR-10 無條件生成 100 步 FID 由 3.37 降至 2.17；FFHQ 128×128 100 步由 14.52 降至 6.77。
 - 在表 3 中，ADM-ES 以 100 步達 2.17 FID，優於 EDM（2.27 與 2.23）；本論文指出取樣速度比 EDM 與 Improved SDE 快 5 至 20 倍。
-- 在 DDIM/DDPM（η=0/1）、EDM、LDM、DiT、PFGM++ 上均驗證有效（見 [DDPM 與 DDIM 公式](ddpm-reverse-sampling-formulation.html)）。
+- 在 DDIM/DDPM（η=0/1）、EDM、LDM、DiT、PFGM++ 上均驗證有效（見 [DDPM 與 DDIM 公式](ddpm-training-and-sampling-recap.html)）。
 - 圖 4 顯示 ADM-ES 在取樣終點的 δ_t 較低。
 
 與需要重訓的方法相比見 [既有緩解方法](exposure-bias-prior-mitigations.html)。
