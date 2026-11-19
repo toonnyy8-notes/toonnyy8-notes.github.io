@@ -13,6 +13,8 @@ T=[
  ('rejection-mh','拒絕取樣與 Metropolis–Hastings 入門',[273,1]),
  ('mala','MALA 入門',[273,146,228]),
  ('prediction-targets-k-diff','擴散模型的預測目標：從 ε、v、x 到連續的 k',[238]),
+ ('strong-stochastic-flow-maps','強隨機 Flow Map 導讀',[235]),
+ ('ldm-is-ae','LDM-is-AE 導讀',[234]),
 ]
 os.makedirs('out/tutorials',exist_ok=True)
 BAR='''<nav id="pm-bar" aria-label="Paper Master" style="position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif">
