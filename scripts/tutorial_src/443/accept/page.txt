@@ -1,0 +1,607 @@
+Diffusion-QL 擴散策略
+
+跳到內容
+
+ No. 443
+ Diffusion-QL：以擴散模型表示離線 RL 的策略
+
+00 摘要01 離線 RL02 高斯策略的限制03 擴散策略04 噪聲排程05 去噪損失06 Q 值項07 Q 函數08 2D bandit09 擴散步數 N10 D4RL 結果11 消融12 實作設定13 研究脈絡14 限制與延伸閱讀
+
+00摘要
+01離線 RL
+02高斯策略的限制
+03擴散策略
+04噪聲排程
+05去噪損失
+06Q 值項
+07Q 函數
+082D bandit
+09擴散步數 N
+10D4RL 結果
+11消融
+12實作設定
+13研究脈絡
+14限制與延伸閱讀
+
+ No. 443 · 互動教學 · arXiv 2208.06193 · ICLR 2023
+
+ Diffusion-QL：以擴散模型表示離線強化學習的策略
+
+ 這篇論文把策略寫成一個從噪聲逐步去噪產生動作的擴散模型，並在它的訓練損失中加入一項鼓勵高價值動作的項。
+
+ Zhendong Wang、Jonathan J Hunt、Mingyuan Zhou（2023）〈Diffusion Policies as an Expressive Policy Class for Offline Reinforcement Learning〉
+
+ 01 · 問題離線強化學習只能從一個固定的資料集學習策略（在每個狀態選動作的規則）。資料若由多種策略收集，動作的分布常有多個峰；常用的高斯策略只有一個峰。
+
+ 02 · 方法本文把策略寫成擴散模型：從隨機噪聲出發，重複去噪 N 次得到一個動作。訓練時在去噪損失上再加一項，鼓勵模型產生 Q 值（對動作長期報酬的估計）高的動作。
+
+ 03 · 結果在 D4RL 標準測試的四類任務上，本方法的類別平均分數都高於平均最高的單一基準（例如 Gym 88.0 對 CQL 的 77.6）；逐任務比較時，20 個任務中有 3 個由其他方法最高。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+ 程式碼 ↗
+
+ 01 · 離線 RL
+
+ 離線 RL 只能從固定資料集學習
+
+ 強化學習（reinforcement learning, RL）的環境以馬可夫決策過程（MDP）M={S,A,P,R,γ,d0} $\mathcal M=\{\mathcal S,\mathcal A,P,R,\gamma,d_0\}$ ​} 描述：狀態空間、動作空間、轉移機率 P(s′∣s,a) $P(s'\mid s,a)$ ∣s,a)、獎勵函數 R $R$ 、折扣因子 γ∈[0,1) $\gamma\in[0,1)$ 與初始狀態分布 d0 $d_0$ ​（Sec. 2）。策略 πθ(a∣s) $\pi_\theta(a\mid s)$ ​(a∣s) 是參數為 θ $\theta$ 、在狀態 s $s$ 下選擇動作 a $a$ 的機率分布；目標是最大化 E[∑t=0∞γtr(st,at)] $\mathbb E[\sum_{t=0}^\infty\gamma^tr(s_t,a_t)]$ ∞​γtr(st​,at​)]，其中下標 t $t$ 是軌跡的時間步。動作價值（Q 值）
+
+ Qπ(st,at)=Eat+1,at+2,…∼π[∑t=0∞γtr(st,at)] $Q^\pi(s_t,a_t)=\mathbb E_{a_{t+1},a_{t+2},\ldots\sim\pi}\Big[\sum_{t=0}^\infty\gamma^tr(s_t,a_t)\Big]$ (st​,at​)=Eat+1​,at+2​,…∼π​[t=0∑∞​γtr(st​,at​)]
+Sec. 2
+
+ 是從 (st,at) $(s_t,a_t)$ ​,at​) 出發、之後依 π $\pi$ 行動的期望折扣報酬。Qπ $Q^\pi$ 滿足一步的遞迴關係 Qπ(s,a)=E[r+γQπ(s′,a′)] $Q^\pi(s,a)=\mathbb E[r+\gamma Q^\pi(s',a')]$ (s,a)=E[r+γQπ(s′,a′)]，a′∼π(⋅∣s′) $a'\sim\pi(\cdot\mid s')$ ∼π(⋅∣s′) 背景（論文外）。實作上以網路 Qϕ $Q_\phi$ ​ 擬合「目標值」（TD 目標）y=r+γQ(s′,a′) $y=r+\gamma Q(s',a')$ ,a′)，最小化 (y−Qϕ(s,a))2 $(y-Q_\phi(s,a))^2$ ​(s,a))2。第 07 章的 Eq. 4 就是這個做法的加強版。
+
+ 離線 RL（offline RL）只用行為策略 πb $\pi_b$ ​ 收集的固定資料集 D≜{(s,a,r,s′)} $\mathcal D\triangleq\{(s,a,r,s')\}$ )} 學習，不能與環境互動（Sec. 2）。這讓它適合自動駕駛、治療規劃等實際試錯有風險或昂貴的應用（Sec. 1）。困難在於：策略改進會評估資料外的動作，這些動作的 Q 值估計不準、常被高估，天真的方法因而偏向這些分布外（out-of-distribution, OOD）動作（Sec. 1）。上面的 TD 目標中的 a′ $a'$ 由策略產生、不一定在資料中，這正是高估進入學習的地方。
+
+ 作者把既有方法分為四類（Sec. 1）：(1) 正則化策略與行為策略的距離；(2) 讓價值函數對 OOD 動作給低值；(3) 模型式方法，先學環境動態再悲觀地規劃；(4) 以報酬引導的序列預測。本文屬第 (1) 類。
+
+ 符號表（第 01 章）
+
+ s,a,r,s′ $s,a,r,s'$ ：狀態、動作、獎勵、下一個狀態；γ $\gamma$ ：折扣因子。
+
+ πθ(a∣s) $\pi_\theta(a\mid s)$ ​(a∣s)：策略；Qπ $Q^\pi$ 、Qϕ $Q_\phi$ ​：Q 值、參數 ϕ $\phi$ 的 Q 網路。
+
+ D $\mathcal D$ 、πb $\pi_b$ ​：離線資料集、收集它的行為策略；下標 t $t$ ：軌跡時間步。
+
+ 延伸閱讀：MDP、Q 函數與 Bellman backup、Offline RL 的分布偏移
+
+ 02 · 高斯策略的限制
+
+ 對角高斯策略無法表示多峰的行為分布
+
+ 策略正則化限制新策略不要離行為策略太遠。代表方法（Sec. 2、4）：BCQ 以 CVAE 複製行為策略，再學一個有界的擾動；BEAR 以 MMD 限制策略接近 CVAE 複製的行為策略；TD3+BC 在策略改進中加一項行為複製（behavior cloning, BC）損失；IQL 以 in-sample 學到的優勢加權行為複製。這裡 CVAE（條件變分自編碼器）是以潛變數 z $z$ 與解碼器 p(a∣s,z) $p(a\mid s,z)$ 表示 π(a∣s) $\pi(a\mid s)$ 、以 ELBO 訓練的生成模型（Sec. 4）；MMD（最大均值差異）是只用兩組樣本估計兩個分布差距的量，所以每個狀態需要多個動作樣本（Sec. 1）。
+
+ 作者認為這類方法表現略差，有兩個原因（Sec. 1）：(1) 策略類別表達力不足：常用的對角高斯無法表示多峰、偏斜、維度之間的相關；(2) 正則化方式不合適：KL 需要密度值、MMD 需要每個狀態多個樣本，而且都要先另學一個行為複製模型（兩步正則化），複製的誤差會傳給正則化。作者把 BCQ、BEAR 稱為兩步正則化：先學行為複製，再限制策略在複製結果附近，效果取決於複製品質（Sec. 4）。
+
+ BC-MLE 的策略是對角高斯 N(μθ(s),Σθ(s)) $\mathcal N(\mu_\theta(s),\Sigma_\theta(s))$ ​(s),Σθ​(s))，最大化 ED[log⁡πθ(a∣s)] $\mathbb E_{\mathcal D}[\log\pi_\theta(a\mid s)]$ ​[logπθ​(a∣s)]，即最大概似估計（MLE）。這等於最小化 KL(資料 ∥ πθ) $\mathrm{KL}(\text{資料}\,\|\,\pi_\theta)$ ​)，KL 的第一個參數是資料分布（論文寫「from the data distribution to the policy」）背景（論文外）：資料有密度而策略密度很小的地方懲罰極大，所以單峰高斯必須讓密度覆蓋所有資料峰，包括峰之間沒有資料的區域（mode-covering）。
+
+ 以第 08 章的四峰資料為例：中心 (0,±0.8) $(0,\pm0.8)$ 、(±0.8,0) $(\pm0.8,0)$ ，標準差 0.05，四峰等權。高斯的 MLE 就是樣本平均與樣本變異數 本頁推導。由對稱性 μ=(0,0) $\mu=(0,0)$ 。第一維 a1 $a_1$ ​：一半資料來自上、下峰（中心 a1=0 $a_1=0$ ​=0），一半來自左、右峰（中心 a1=±0.8 $a_1=\pm0.8$ ​=±0.8），所以
+
+ Var(a1)=E[a12]−02=12(02+0.052)+12(0.82+0.052)=12⋅0.64+0.0025=0.3225 $\begin{aligned}\mathrm{Var}(a_1)&=\mathbb E[a_1^2]-0^2=\tfrac12(0^2+0.05^2)+\tfrac12(0.8^2+0.05^2)\\&=\tfrac12\cdot0.64+0.0025=0.3225\end{aligned}$ ​)​=E[a12​]−02=21​(02+0.052)+21​(0.82+0.052)=21​⋅0.64+0.0025=0.3225​
+本頁推導
+
+ 擬合結果：平均 (0,0) $(0,0)$ ，每維變異數 0.3225（標準差 0.568），第二維相同。擬合高斯在原點的密度 1/(2π⋅0.3225)=0.4935 $1/(2\pi\cdot0.3225)=0.4935$ ，是同一個高斯在任一資料中心的密度 0.1830 的 2.70 倍；它在 ∣a∣ $|a|$ 小於 0.3 的圓內放了 13.0% 的機率，而真實資料在原點的密度約為 0。這對應論文 Fig. 1「BC-MLE 的高密度區正是真實分布的低密度區」的敘述。注意這是本頁的閉式解，論文的 BC-MLE 是訓練出的網路。
+
+ C2a行為複製：真實資料與對角高斯
+本頁推導
+
+ 切換分頁，比較真實資料與對角高斯 MLE 的 1000 個樣本。
+
+ 真實資料對角高斯（MLE）
+
+ 重新抽樣
+
+ 對角高斯（MLE） 本頁推導
+ 落在峰附近（< 0.2）0.106
+
+ 落在中央無資料區域（< 0.3）0.136
+
+ 落在動作範圍外0.136
+
+ 峰附近：上／右／下／左0.032 ／ 0.024 ／ 0.022 ／ 0.028
+
+ 擬合高斯：原點密度 ÷ 峰中心密度2.70
+
+ 樣本資料峰（半徑 0.2）與中央區域（半徑 0.3）；1σ、2σ 等密度圓
+
+ 讀數由本頁即時抽樣計算（seed 7，1000 點）；「峰附近」= 距任一峰中心小於 0.2，「中央無資料區域」= 距原點小於 0.3。對角高斯為本頁的閉式 MLE，論文未說明其 BC-MLE 如何處理動作範圍 [−1, 1]²。
+
+ 延伸閱讀：Gaussian、CVAE 與 MMD 策略的多峰限制、批次約束與策略約束方法
+
+ 03 · 擴散策略
+
+ 擴散策略以 N 次去噪產生動作
+
+ 擴散模型有兩條鏈（Sec. 2）。前向鏈依預先給定的排程 βi $\beta_i$ ​ 逐步加噪：q(ai∣ai−1)=N(1−βi ai−1,βiI) $q(a^i\mid a^{i-1})=\mathcal N(\sqrt{1-\beta_i}\,a^{i-1},\beta_iI)$ ∣ai−1)=N(1−βi​​ai−1,βi​I)。記 αi=1−βi $\alpha_i=1-\beta_i$ ​=1−βi​、αˉi=∏j≤iαj $\bar\alpha_i=\prod_{j\le i}\alpha_j$ i​=∏j≤i​αj​（DDPM 記號，論文直接使用 背景（論文外）），多步加噪有閉式 ai=αˉi a+1−αˉi ϵ $a^i=\sqrt{\bar\alpha_i}\,a+\sqrt{1-\bar\alpha_i}\,\epsilon$ =αˉi​​a+1−αˉi​​ϵ，ϵ∼N(0,I) $\epsilon\sim\mathcal N(0,I)$ 。反向鏈從高斯噪聲出發逐步去噪，以最大化證據下界（ELBO）訓練。
+
+ 記號：上標 i∈{1,…,N} $i\in\{1,\dots,N\}$ 是擴散步，下標 t $t$ 是軌跡時間步（Sec. 3.1）。論文 Sec. 2 的擴散步用下標 t $t$ 、T $T$ ，Sec. 3 起改為上標 i $i$ 、N $N$ ；本頁一律用後者。本文把策略寫成以狀態 s $s$ 為條件的反向鏈：
+
+ πθ(a∣s)=pθ(a0:N∣s)=N(aN;0,I)∏i=1Npθ(ai−1∣ai,s) $\pi_\theta(a\mid s)=p_\theta(a^{0:N}\mid s)=\mathcal N(a^N;0,I)\prod_{i=1}^Np_\theta(a^{i-1}\mid a^i,s)$ ​(a∣s)=pθ​(a0:N∣s)=N(aN;0,I)i=1∏N​pθ​(ai−1∣ai,s)
+Sec. 3.1
+
+ 輸出動作是鏈的終點 a0 $a^0$ （論文把聯合分布寫成 πθ $\pi_\theta$ ​；嚴格說策略是 a0 $a^0$ 的邊際分布）。沿用 DDPM，pθ(ai−1∣ai,s)=N(μθ,βiI) $p_\theta(a^{i-1}\mid a^i,s)=\mathcal N(\mu_\theta,\beta_iI)$ ​(ai−1∣ai,s)=N(μθ​,βi​I)，平均由噪聲預測網路 ϵθ(ai,s,i) $\epsilon_\theta(a^i,s,i)$ ​(ai,s,i) 構成：μθ=1αi(ai−ci ϵθ(ai,s,i)) $\mu_\theta=\frac1{\sqrt{\alpha_i}}\big(a^i-c_i\,\epsilon_\theta(a^i,s,i)\big)$ ​=αi​​1​(ai−ci​ϵθ​(ai,s,i))，其中 ci=βi/1−αˉi $c_i=\beta_i/\sqrt{1-\bar\alpha_i}$ ​=βi​/1−αˉi​​ 是本頁為排版引入的縮寫。取樣：aN∼N(0,I) $a^N\sim\mathcal N(0,I)$ ∼N(0,I)，依 Eq. 1 從 i=N $i=N$ 到 1 $1$ 去噪，輸出 a0 $a^0$ ：
+
+ ci=βi1−αˉi,ai−1=ai−ci ϵθ(ai,s,i)αi+βi ϵ $\begin{aligned}c_i&=\frac{\beta_i}{\sqrt{1-\bar\alpha_i}},\\ a^{i-1}&=\frac{a^i-c_i\,\epsilon_\theta(a^i,s,i)}{\sqrt{\alpha_i}}+\sqrt{\beta_i}\,\epsilon\end{aligned}$ ​ai−1​=1−αˉi​​βi​​,=αi​​ai−ci​ϵθ​(ai,s,i)​+βi​​ϵ​
+Eq. 1
+
+ ϵ∼N(0,I) $\epsilon\sim\mathcal N(0,I)$ ；i=1 $i=1$ 時 ϵ=0 $\epsilon=0$ ，不加噪聲（沿用 DDPM，改善樣本品質）。這與論文寫的 aiαi−βiαi(1−αˉi)ϵθ+βiϵ $\frac{a^i}{\sqrt{\alpha_i}}-\frac{\beta_i}{\sqrt{\alpha_i(1-\bar\alpha_i)}}\epsilon_\theta+\sqrt{\beta_i}\epsilon$ ​​ai​−αi​(1−αˉi​)​βi​​ϵθ​+βi​​ϵ 代數相同。
+
+ 作者列出用擴散模型當策略的三個性質（Sec. 1）：表達力強，能表示多峰分布；擴散損失是強的分布匹配，可視為不需額外行為複製的樣本式正則化；逐步去噪讓 Q 值的引導能作用在每一個反向步。
+
+ 符號表（第 03–07 章）
+
+ 上標 i $i$ 、N $N$ ：擴散步與總步數；ai $a^i$ ：第 i $i$ 步的帶噪動作，a0 $a^0$ 為輸出動作。
+
+ βi $\beta_i$ ​、αi=1−βi $\alpha_i=1-\beta_i$ ​=1−βi​、αˉi=∏j≤iαj $\bar\alpha_i=\prod_{j\le i}\alpha_j$ i​=∏j≤i​αj​、ci=βi/1−αˉi $c_i=\beta_i/\sqrt{1-\bar\alpha_i}$ ​=βi​/1−αˉi​​：噪聲排程。
+
+ ϵ $\epsilon$ 、ϵθ(ai,s,i) $\epsilon_\theta(a^i,s,i)$ ​(ai,s,i)：標準高斯噪聲、噪聲預測網路。
+
+ Ld $\mathcal L_d$ ​、Lq $\mathcal L_q$ ​：去噪損失、Q 值損失（第 05、06 章）；η $\eta$ 、α $\alpha$ ：Q 值項的超參數與權重（第 06 章，α $\alpha$ 不是 αi $\alpha_i$ ​）。
+
+ ϕ1,ϕ2,ϕ1′,ϕ2′,θ′ $\phi_1,\phi_2,\phi'_1,\phi'_2,\theta'$ ​,ϕ2​,ϕ1′​,ϕ2′​,θ′、ρ $\rho$ ：兩個 Q 網路、目標 Q 網路、目標策略、軟更新係數（第 07 章）。
+
+ 延伸閱讀：DDPM 的訓練與取樣流程、擴散模型作為策略類別
+
+ 04 · 噪聲排程
+
+ 小 N 用的噪聲排程讓最後一步的訊號固定
+
+ 取樣要算 N $N$ 次 ϵθ $\epsilon_\theta$ ​，所以 N $N$ 要小。為了在小 N $N$ 下工作，作者沿用 Xiao et al. (2021) 的排程，它是 Song et al. (2021) 變異數保持（VP）SDE 的離散化（Sec. 3.1）：
+
+ βi=1−αi=1−exp⁡ ⁣(−βmin⁡N−(βmax⁡−βmin⁡)(2i−1)2N2) $\beta_i=1-\alpha_i=1-\exp\!\Big(-\frac{\beta_{\min}}{N}-\frac{(\beta_{\max}-\beta_{\min})(2i-1)}{2N^2}\Big)$ ​=1−αi​=1−exp(−Nβmin​​−2N2(βmax​−βmin​)(2i−1)​)
+Sec. 3.1
+
+ βmin⁡=0.1 $\beta_{\min}=0.1$ ​=0.1、βmax⁡=10.0 $\beta_{\max}=10.0$ ​=10.0。把 αi $\alpha_i$ ​ 連乘時指數相加，而 ∑j=1i(2j−1)=i2 $\sum_{j=1}^i(2j-1)=i^2$ i​(2j−1)=i2 本頁推導，所以
+
+ αˉi=exp⁡ ⁣(−0.1 iN−4.95 i2N2) $\bar\alpha_i=\exp\!\Big(-0.1\,\frac iN-4.95\,\frac{i^2}{N^2}\Big)$ i​=exp(−0.1Ni​−4.95N2i2​)
+本頁推導
+
+ αˉi $\bar\alpha_i$ i​ 只依賴 i/N $i/N$ ，所以任何 N $N$ 下最後一步 αˉN=e−5.05≈0.0064 $\bar\alpha_N=e^{-5.05}\approx0.0064$ N​=e−5.05≈0.0064：帶噪動作中只剩 αˉN=0.080 $\sqrt{\bar\alpha_N}=0.080$ N​​=0.080 倍的原動作。各個 N $N$ 的 αˉi $\bar\alpha_i$ i​ 都落在同一條曲線上；每步的 βi=1−αˉi/αˉi−1 $\beta_i=1-\bar\alpha_i/\bar\alpha_{i-1}$ ​=1−αˉi​/αˉi−1​ 則不是同一函數上的點，N $N$ 小時每步的 βi $\beta_i$ ​ 大（N=2 $N=2$ ：0.724、0.977；N=5 $N=5$ ：0.1959 到 0.8350；N=50 $N=50$ ：0.0040 到 0.1796）。
+
+ C1噪聲排程：每步噪聲與訊號保留比例
+
+ 切換 N，觀察圓點（訊號保留比例）是否落在同一條曲線上，以及長條（每步噪聲 β）的大小。
+
+ N = 2N = 5N = 10N = 20N = 50
+
+ 讀數（N = 5）
+ i $i$ βi $\beta_i$ ​αˉi $\bar\alpha_i$ i​αˉi $\sqrt{\bar\alpha_i}$ i​​
+10.19590.80410.8967
+20.45880.43520.6597
+30.63580.15850.3981
+40.75490.03890.1971
+50.83500.00640.0801
+
+ 訊號保留比例的共同曲線各步訊號保留比例每步噪聲 β
+
+ 讀數由本頁依 Sec. 3.1 的排程式即時計算；任何 N 下最後一步都只剩約 0.080 倍的原動作。本頁推導訊號保留比例只依賴 i/N。
+
+ 05 · 去噪損失
+
+ 去噪損失可視為行為複製
+
+ 作者沿用 Ho et al. (2020) 的簡化目標訓練 ϵθ $\epsilon_\theta$ ​（Sec. 3.1）：
+
+ Ld(θ)=  E[∥ϵ−ϵθ(αˉi a+1−αˉi ϵ, s, i)∥2],i∼U, ϵ∼N(0,I), (s,a)∼D $\begin{aligned}\mathcal L_d(\theta)=\;&\mathbb E\Big[\big\|\epsilon-\epsilon_\theta(\sqrt{\bar\alpha_i}\,a+\sqrt{1-\bar\alpha_i}\,\epsilon,\,s,\,i)\big\|^2\Big],\\&i\sim\mathcal U,\ \epsilon\sim\mathcal N(0,I),\ (s,a)\sim\mathcal D\end{aligned}$ ​(θ)=​E[​ϵ−ϵθ​(αˉi​​a+1−αˉi​​ϵ,s,i)​2],i∼U, ϵ∼N(0,I), (s,a)∼D​
+Eq. 2
+
+ U $\mathcal U$ 是 {1,…,N} $\{1,\dots,N\}$ 上的均勻分布。Ld $\mathcal L_d$ ​ 以噪聲預測誤差學習行為策略 πb(a∣s) $\pi_b(a\mid s)$ ​(a∣s)；它只需要從 D $\mathcal D$ 取樣，不需要 πb $\pi_b$ ​ 的密度，也不需要另學一個行為模型（Sec. 3.1）。資料來自人類示範時，行為策略的密度可能根本無法取得；作者稱這是比兩步策略更乾淨的正則化做法。加入下一章的 Q 值項後，Ld $\mathcal L_d$ ​ 只近似於行為複製項，所以本頁說它「可視為」行為複製。Ld $\mathcal L_d$ ​ 每個資料點只需抽一個 i $i$ ，訓練便宜；昂貴的是取樣。
+
+ 理想去噪器 本頁推導：瀏覽器中無法訓練論文的網路，下面的元件改用一個閉式的「完美」去噪器。設資料是 4 個高斯峰的混合：第 k $k$ 峰中心 mk $m_k$ ​、標準差 s=0.05 $s=0.05$ 、權重 wk $w_k$ ​。帶噪動作 x=αˉi a+1−αˉi ϵ $x=\sqrt{\bar\alpha_i}\,a+\sqrt{1-\bar\alpha_i}\,\epsilon$ i​​a+1−αˉi​​ϵ 的分布仍是 4 峰混合，每峰中心 αˉi mk $\sqrt{\bar\alpha_i}\,m_k$ i​​mk​、每維變異數 vi=αˉis2+1−αˉi $v_i=\bar\alpha_is^2+1-\bar\alpha_i$ ​=αˉi​s2+1−αˉi​。看到 x $x$ 後，它來自第 k $k$ 峰的後驗機率（後驗責任）qk∝wkexp⁡(−∥x−αˉimk∥2/2vi) $q_k\propto w_k\exp(-\|x-\sqrt{\bar\alpha_i}m_k\|^2/2v_i)$ ​∝wk​exp(−∥x−αˉi​​mk​∥2/2vi​)，責任加權的中心為 mˉ=∑kqkmk $\bar m=\sum_kq_km_k$ =∑k​qk​mk​。若資料分布已知，最好的噪聲預測是給定帶噪動作時噪聲的條件平均，對高斯混合有閉式解：
+
+ ϵ∗(x,i)=1−αˉivi(x−αˉi mˉ(x)) $\epsilon^*(x,i)=\frac{\sqrt{1-\bar\alpha_i}}{v_i}\big(x-\sqrt{\bar\alpha_i}\,\bar m(x)\big)$ (x,i)=vi​1−αˉi​​​(x−αˉi​​mˉ(x))
+本頁推導
+
+ 它是 Eq. 2 在這個資料分布下的最小值，相當於訓練到完美的網路。以 ϵ∗ $\epsilon^*$ 代替 ϵθ $\epsilon_\theta$ ​ 跑 Eq. 1，就能看到不同 N $N$ 的取樣結果。理想去噪器沒有容量限制，所以玩具中的 N 效應只來自 Eq. 1 的步數與排程，不是網路的表達力；論文只說 N 是表達力與成本的權衡，未分解原因。
+
+ C2b行為複製：對角高斯與擴散（理想去噪器）
+玩具
+
+ 選「擴散」分頁並切換 N：N 越大，樣本越集中在四個峰；N = 2 時大多落在峰之間。
+
+ 真實資料對角高斯（MLE）擴散（理想去噪器）
+
+ 重新抽樣
+
+ 1235102050
+
+ 擴散（理想去噪器，N = 50） 玩具
+ 落在峰附近（< 0.2）1.000
+
+ 落在中央無資料區域（< 0.3）0.000
+
+ 落在動作範圍外0.000
+
+ 峰附近：上／右／下／左0.255 ／ 0.243 ／ 0.248 ／ 0.254
+
+ 樣本資料峰（半徑 0.2）與中央區域（半徑 0.3）
+
+ 玩具：擴散分頁用理想去噪器代替訓練好的網路。理想去噪器沒有容量限制，所以這裡的 N 效應只來自 Eq. 1 的步數與排程（另外起點 aN∼N(0,I) $a^N\sim\mathcal N(0,I)$ ∼N(0,I) 與真實的第 N 步分布也不完全相同：第 N 步仍保留 0.08 倍的原動作）。論文只說 N 是表達力與成本的權衡，未分解原因；本圖不重現論文 Fig. 1–2。讀數由本頁依 Eq. 1 即時計算（seed 7，1000 點）。
+
+ 在預設 seed 下，擴散 N=50 $N=50$ 時 100% 的樣本落在峰附近、四峰各約 25%；N=5 $N=5$ 約一半（48.4%）；N=2 $N=2$ 時 63.6% 落在中央無資料區域、幾乎沒有樣本在峰附近；N=1 $N=1$ 時全部在原點附近，因為只有一步時輸出就是後驗平均。對角高斯只有 10.6% 在峰附近。
+
+ 延伸閱讀：ε-prediction：DDPM 與 score
+
+ 06 · Q 值項
+
+ 在去噪損失上加一項 Q 值
+
+ Ld $\mathcal L_d$ ​ 單獨只能複製行為策略，不能超越它。作者在訓練時把 Q 值最大化項線性加到損失上（Sec. 3.2）：
+
+ π=arg⁡min⁡πθ L(θ),L(θ)=Ld(θ)+Lq(θ)=Ld(θ)−α⋅Es∼D, a0∼πθ[Qϕ(s,a0)] $\begin{aligned}\pi&=\arg\min_{\pi_\theta}\ \mathcal L(\theta),\\ \mathcal L(\theta)&=\mathcal L_d(\theta)+\mathcal L_q(\theta)\\&=\mathcal L_d(\theta)-\alpha\cdot\mathbb E_{s\sim\mathcal D,\,a^0\sim\pi_\theta}\big[Q_\phi(s,a^0)\big]\end{aligned}$ L(θ)​=argπθ​min​ L(θ),=Ld​(θ)+Lq​(θ)=Ld​(θ)−α⋅Es∼D,a0∼πθ​​[Qϕ​(s,a0)]​
+Eq. 3
+
+ 這裡的 α $\alpha$ 是 Q 值項的權重，不是排程的 αi $\alpha_i$ ​。a0 $a^0$ 由 Eq. 1 重參數化：固定 aN $a^N$ 與每一步的 ϵ $\epsilon$ ，a0 $a^0$ 就是 θ $\theta$ 的可微函數，∇aQ $\nabla_aQ$ ​Q 穿過整條反向鏈傳回 θ $\theta$ 。這是在訓練時注入 Q 的引導，不是取樣時的引導；後者是 Diffuser 的做法（Sec. 2）。
+
+ Q 的尺度隨資料集而變，所以沿用 TD3+BC 的正規化：α=η/E(s,a)∼D[∣Qϕ(s,a)∣] $\alpha=\eta/\mathbb E_{(s,a)\sim\mathcal D}[|Q_\phi(s,a)|]$ ​[∣Qϕ​(s,a)∣]，分母只做正規化、不微分，η $\eta$ 是平衡兩項的超參數（Sec. 3.2）。本頁推導因為分母不微分，把 Qϕ $Q_\phi$ ​ 乘上任意正常數，αQϕ $\alpha Q_\phi$ ​ 不變；這只限乘法，把 Qϕ $Q_\phi$ ​ 加上常數會改變 E∣Q∣ $\mathbb E|Q|$ ，因而改變 α $\alpha$ 。這也不表示 η $\eta$ 可跨資料集共用：論文的 η $\eta$ 從 0.005 到 4.5 依領域調整（第 12 章）。
+
+ 延伸閱讀：Diffusion-QL：行為複製項與 Q 值項的損失耦合、TD3+BC 演算法與 D4RL 評估
+
+ 07 · Q 函數
+
+ Q 函數以兩個 Q 網路與目標網路學習
+
+ 第 01 章的 TD 目標 y=r+γQ(s′,a′) $y=r+\gamma Q(s',a')$ ,a′) 若直接用同一個網路計算，目標會隨網路一起移動、而且高估會累積。Diffusion-QL 的 Q 函數依慣例學習（Sec. 3.2）：建兩個 Q 網路 Qϕ1,Qϕ2 $Q_{\phi_1},Q_{\phi_2}$ ​​,Qϕ2​​，以及目標網路 Qϕ1′,Qϕ2′ $Q_{\phi'_1},Q_{\phi'_2}$ ′​​,Qϕ2′​​ 與目標策略 πθ′ $\pi_{\theta'}$ ​（參數變化較慢的副本）。目標值取兩個目標 Q 網路中較小者（double Q-learning 技巧，Hasselt 2010）：
+
+ yt=r(st,at)+γmin⁡i=1,2Qϕi′(st+1,at+10),at+10∼πθ′,E(st,at,st+1)∼D[∥yt−Qϕi(st,at)∥2] $\begin{aligned}y_t&=r(s_t,a_t)+\gamma\min_{i=1,2}Q_{\phi'_i}(s_{t+1},a^0_{t+1}),\quad a^0_{t+1}\sim\pi_{\theta'},\\ &\mathbb E_{(s_t,a_t,s_{t+1})\sim\mathcal D}\Big[\big\|y_t-Q_{\phi_i}(s_t,a_t)\big\|^2\Big]\end{aligned}$ ​​=r(st​,at​)+γi=1,2min​Qϕi′​​(st+1​,at+10​),at+10​∼πθ′​,E(st​,at​,st+1​)∼D​[​yt​−Qϕi​​(st​,at​)​2]​
+Eq. 4
+
+ 目標值為 r+γmin⁡i=1,2Qϕi′(st+1,at+10) $r+\gamma\min_{i=1,2}Q_{\phi'_i}(s_{t+1},a^0_{t+1})$ ​Qϕi′​​(st+1​,at+10​)，at+10 $a^0_{t+1}$ 0​ 由目標策略 πθ′ $\pi_{\theta'}$ ​ 以 Eq. 1 取樣；用到兩個 Q 網路、兩個目標 Q 網路與目標策略，目標網路以 ρ $\rho$ 軟更新（Sec. 3.2、Alg. 1）。Eq. 4 中 min⁡i=1,2 $\min_{i=1,2}$ ​ 的 i $i$ 是 Q 網路編號，不是擴散步。下面依 Alg. 1 逐行說明；論文沒有寫出 ρ $\rho$ 、γ $\gamma$ 的數值，也沒有寫 Lq $\mathcal L_q$ ​ 用哪一個 Q 網路。
+
+ Algorithm 1 · Diffusion Q-learning
+說明
+
+ 初始化 πθ、Qφ1、Qφ2 與目標網路 πθ′、Qφ′1、Qφ′2策略是條件擴散模型；兩個 Q 網路與各自的目標副本。
+
+ for 每次迭代:論文訓練 1000 epochs（Gym 2000），每 epoch 1000 次梯度步。
+
+ 抽 mini-batch B = {(s_t, a_t, r_t, s_t+1)} ~ Dbatch 大小 256（Sec. 5）。
+
+ a⁰_t+1 ~ πθ′(· | s_t+1) 以 Eq. 1 取樣目標策略跑 N 步反向鏈，給出下一個動作。
+
+ 以 Eq. 4 更新 Qφ1、Qφ2目標值取兩個目標 Q 的較小者。可加入 CQL 的 max Q backup註。
+
+ a⁰_t ~ πθ(· | s_t) 以 Eq. 1 取樣保留梯度：Lq $\mathcal L_q$ ​ 要穿過整條鏈。
+
+ 最小化 Eq. 3 更新策略Ld−α E[Q] $\mathcal L_d-\alpha\,\mathbb E[Q]$ ​−αE[Q]，α $\alpha$ 的分母不微分。
+
+ θ′ = ρθ′ + (1−ρ)θ; φ′i = ρφ′i + (1−ρ)φi軟更新；論文未寫 ρ 的值。
+
+ 註：max Q backup 只用在 AntMaze，且 antmaze-umaze 除外（Table 3）。
+
+ 延伸閱讀：DDPG 到 TD3：連續動作的 actor-critic
+
+ 08 · 2D bandit
+
+ 2D bandit 中擴散策略收斂到報酬最高的峰
+
+ Sec. 4 用一個沒有狀態轉移的單步問題（bandit）比較各種正則化。動作 a∈[−1,1]2 $a\in[-1,1]^2$ ；資料 M=10000 $M=10000$ 筆，來自四個等權高斯，中心 (0,0.8) $(0,0.8)$ 、(0.8,0) $(0.8,0)$ 、(0,−0.8) $(0,-0.8)$ 、(−0.8,0) $(-0.8,0)$ ，標準差 (0.05,0.05) $(0.05,0.05)$ 。
+
+ 只做行為複製時（Fig. 1 第一列；BC-Diffusion 用 N=50 $N=50$ ）：擴散模型抓到四個峰；BC-MLE 只有一個峰、標準差大；CVAE 抓到四峰但在峰之間放了高密度（換 seed 時有時抓不到全部四峰）；MMD 的 Tanh-Gaussian 把密度集中在邊界附近。
+
+ 接著每個資料點從高斯分布抽一個獎勵，平均由所屬中心決定、標準差 0.5：上 3.0、右 1.5、下 5.0、左 0.0（Fig. 1 圖例）。獎勵函數未知、需要學，所有方法訓練 1000 epochs。結果（Sec. 4）：Diffusion-QL 收斂到下方（報酬最高）的峰；BCQ 把動作放在 CVAE 找出的四個對角角落；TD3+BC 無法集中到最佳峰（它的行為複製把大部分密度放在沒有資料的區域）；BEAR-MMD 的動作近乎隨機分布。作者認為原因是擴散策略能還原涵蓋所有峰的行為策略，Q 學習再在這個區域內找最佳動作。App. A 把四個中心移到角落 (±0.8,±0.8) $(\pm0.8,\pm0.8)$ ，結論相同。
+
+ 下面的玩具 玩具 用第 05 章的理想去噪器做 Eq. 3 的權衡。策略只有 4 個可訓練的數：每個峰的 logit zk $z_k$ ​，峰的權重 w=softmax(z) $w=\mathrm{softmax}(z)$ （wk=ezk/∑jezj $w_k=e^{z_k}/\sum_je^{z_j}$ ​=ezk​/∑j​ezj​）；峰的位置與寬度固定在資料的值，初始 z=0 $z=0$ （等權，即行為策略）。Q 不學習，改用一個推定的平滑函數 Q~(a)=∑kRkgk(a)/∑kgk(a) $\tilde Q(a)=\sum_kR_kg_k(a)/\sum_kg_k(a)$ ​(a)=∑k​Rk​gk​(a)/∑k​gk​(a)，Rk $R_k$ ​ 是第 k $k$ 峰的獎勵平均，gk=exp⁡(−∥a−mk∥2/2σQ2) $g_k=\exp(-\|a-m_k\|^2/2\sigma_Q^2)$ ​=exp(−∥a−mk​∥2/2σQ2​)，σQ=0.2 $\sigma_Q=0.2$ ​=0.2。每一步依 Eq. 3 算出對 z $z$ 的梯度（穿過 Eq. 1 的鏈），用 Adam 更新；Adam 是一種依梯度與其歷史平均調整步長的梯度下降法。
+
+ C3Diffusion-QL 玩具：去噪損失與 Q 值項的權衡
+玩具
+
+ 選 η 與 N，按「執行」：觀察四個峰的權重如何隨訓練改變，以及取樣結果。
+
+ 下 5.0上 3.0右 1.5左 0.0
+
+ η（Q 值項的超參數）1.00
+
+ η = 0（只有去噪損失）η = 0.3η = 1η = 3
+
+ N251020
+
+ 執行重設
+
+ 讀數 玩具
+ 步數w上 $w_{\text{上}}$ ​w右 $w_{\text{右}}$ ​w下 $w_{\text{下}}$ ​w左 $w_{\text{左}}$ ​Ld $\mathcal L_d$ ​Lq $\mathcal L_q$ ​
+
+ 00.2500.2500.2500.250——
+
+ 評估（1000 個樣本，seed 11）玩具
+ 落在峰附近（距峰中心 < 0.2）落在下峰附近（< 0.2）平滑 Q 的平均
+
+ 0.4910.1252.322
+
+ 玩具：只有 4 個混合權重可訓練，Q 為推定的平滑函數，不重現論文 Fig. 1 的數字。讀數由本頁依 Eq. 1–3 即時計算，梯度為解析式 本頁推導；Adam 學習率 0.03、batch 256、600 步，α = η ÷ 2.375（2.375 為平滑 Q 在四個峰中心的平均絕對值）。
+
+ 玩具（N=5 $N=5$ 、600 步）：η=0 $\eta=0$ 時四個權重都在 0.25 附近擺動（隨機抽樣的誤差約 ±0.03）；η=0.3 $\eta=0.3$ 時下峰約 0.65，η=1 $\eta=1$ 時約 0.90，η=3 $\eta=3$ 時約 0.98。權重 0.90 時評估樣本只有 72% 落在下峰附近：N=5 $N=5$ 的鏈本身會把部分樣本放在峰之間（N=10 $N=10$ 同為 η=1 $\eta=1$ 時為 76%）。N=2 $N=2$ 、η=1 $\eta=1$ 時 63% 在下峰附近，其餘在峰之間，與論文「N=2 $N=2$ 仍有少數動作落在無資料區」方向相同，但玩具的比例遠大於論文所說的「少數」，原因也只是取樣步數。
+
+ 玩具的限制：它的 Q 精確、只有 4 個權重、沒有 OOD 高估，所以大 η $\eta$ 在玩具中沒有代價，也看不出去噪損失防止策略走到資料外的作用。論文則依領域調整 η $\eta$ ：Adroit 用 0.1–0.15、Kitchen 用 0.005、AntMaze 用 0.5–4.5（Table 3）。玩具只示範兩項如何加總、梯度如何穿過鏈。
+
+ 延伸閱讀：多峰限制與 2D bandit 示例
+
+ 09 · 擴散步數 N
+
+ 擴散步數 N 權衡表達力與計算
+
+ Fig. 2 第一列：BC-Diffusion 隨 N $N$ 增加越來越能還原資料分布，N=50 $N=50$ 時準確還原。第二列：加入 Q 學習後，中等的小 N $N$ 已表現良好；N $N$ 越大，策略越被限制在資料區域內，N=2 $N=2$ 時仍有少數動作落在沒有資料的區域，N=50 $N=50$ 時被限制在正確的資料區域（Sec. 4）。Fig. 3 在三個 medium-expert 任務上比較 N∈[2,5,10,20] $N\in[2,5,10,20]$ ：N $N$ 越大收斂越快、越穩定。
+
+ 代價是取樣要算 N $N$ 次網路。作者在 D4RL 用 N=5 $N=5$ ，訓練時間與 CQL 相近（Sec. 5）；作者估計 N=5 $N=5$ 的推論「可能」比一步前饋策略慢 4–5 倍（App. G 原文為 could be，未給量測條件）。論文說 N $N$ 是表達力與計算成本的權衡，未分解原因。對照玩具（C2b）：N=2 $N=2$ 落在峰附近的比例 0.1%、N=50 $N=50$ 為 100%；玩具用理想去噪器，其 N 效應只來自 Eq. 1 的步數與排程，不是網路容量。
+
+ 延伸閱讀：擴散策略的推論成本
+
+ 10 · D4RL 結果
+
+ D4RL 四個領域的平均分數都最高，但不是每個任務
+
+ D4RL 的四個領域（Sec. 5）：Gym-MuJoCo 較容易，資料含不少接近最佳的軌跡；AntMaze 獎勵稀疏，資料中沒有從起點到終點的完整好軌跡，策略必須把不同軌跡的片段接起來走到終點（論文稱 stitch）；Adroit 多為人類示範、資料範圍窄，需要強正則化；Kitchen 要依序完成 4 個子任務，需要長期價值。分數為 D4RL 正規化分數 背景（論文外）：0 對應隨機策略、100 對應專家。
+
+ 比較方法（Sec. 5 的分類）：BC（行為複製）；AWAC、AWR（優勢加權）；Onestep RL（只做一步策略改進）；TD3+BC、BCQ、BEAR、BRAC（策略正則化）；IQL（in-sample 學 Q 再加權行為複製）；CQL、REM（Q 值約束：對 OOD 動作壓低 Q）；MoRel（模型式：學環境模型後悲觀規劃）；DT、Diffuser（序列模型）；SAC（線上演算法直接用於離線）。基準分數取自各自論文、Fu et al. 2020 或 Kostrikov et al. 2021b。
+
+ 訓練 1000 epochs（Gym 2000），每 epoch 1000 次梯度步，batch 256。Table 1 標題寫 Diffusion-QL 的分數是 5 個獨立訓練模型 × 10 條軌跡（Gym）或 × 100 條（其他）的平均 ± 標準誤；App. C 卻寫 6 個模型，兩處不一致。
+
+ 結果（Table 1）：Gym 88.0（平均最高的單一基準 CQL 77.6）、AntMaze 69.6（IQL 63.0）、Adroit 65.1（BCQ 56.5）、Kitchen 69.0（IQL 53.3）。逐任務比較時，20 個任務中 3 個由其他方法最高：hopper-medium（MoRel 95.4 對 90.5）、walker2d-medium-expert（Onestep RL 113.0 對 110.1）、antmaze-umaze-diverse（CQL 84.0 對 66.2）。論文 Table 1 標題寫「在所有領域明顯勝過所有先前方法」，Sec. 6 寫「across all tasks」；本頁只陳述表中數字。
+
+ C4結果瀏覽器
+
+ Table 1：與基準比較Table 4：離線與線上模型選擇
+
+ GymAntMazeAdroitKitchen
+
+ 該任務最高的基準全部基準
+
+ Diffusion-QL（± 標準誤）該任務最高的基準
+halfcheetah-medium-v2
+Diffusion-QL51.1 ± 0.5
+Onestep RL48.4
+
+▲ 基準較高hopper-medium-v2
+Diffusion-QL90.5 ± 4.6
+MoRel95.4
+
+walker2d-medium-v2
+Diffusion-QL87.0 ± 0.9
+TD3+BC83.7
+
+halfcheetah-medium-replay-v2
+Diffusion-QL47.8 ± 0.3
+CQL45.5
+
+hopper-medium-replay-v2
+Diffusion-QL101.3 ± 0.6
+Onestep RL97.5
+
+walker2d-medium-replay-v2
+Diffusion-QL95.5 ± 1.5
+TD3+BC81.8
+
+halfcheetah-medium-expert-v2
+Diffusion-QL96.8 ± 0.3
+Onestep RL93.4
+
+hopper-medium-expert-v2
+Diffusion-QL111.1 ± 1.3
+MoRel108.7
+
+▲ 基準較高walker2d-medium-expert-v2
+Diffusion-QL110.1 ± 0.3
+Onestep RL113.0
+
+領域平均（論文 Avg）
+Diffusion-QL88.0
+平均最高：CQL77.6
+
+ Table 1 · Gym（完整數字）任務BCAWACDiffuserMoRelOnestep RLTD3+BCDTCQLIQLDiffusion-QL
+halfcheetah-medium-v242.643.544.242.148.448.342.644.047.451.1 ± 0.5
+hopper-medium-v252.957.058.595.459.659.367.658.566.390.5 ± 4.6
+walker2d-medium-v275.372.479.777.881.883.774.072.578.387.0 ± 0.9
+halfcheetah-medium-replay-v236.640.542.240.238.144.636.645.544.247.8 ± 0.3
+hopper-medium-replay-v218.137.296.893.697.560.982.795.094.7101.3 ± 0.6
+walker2d-medium-replay-v226.027.061.249.849.581.866.677.273.995.5 ± 1.5
+halfcheetah-medium-expert-v255.242.879.853.393.490.786.891.686.796.8 ± 0.3
+hopper-medium-expert-v252.555.8107.2108.7103.398.0107.6105.491.5111.1 ± 1.3
+walker2d-medium-expert-v2107.574.5108.495.6113.0110.1108.1108.8109.6110.1 ± 0.3
+Average51.950.175.372.976.175.374.777.677.088.0
+
+ Table 1 的基準分數取自各方法的論文、Fu et al. 2020 或 Kostrikov et al. 2021b（Sec. 5）；Diffusion-QL 為離線模型選擇。「平均最高的單一基準」不是各任務最高值的平均。誤差鬚為 ± 標準誤。
+
+ 作者的解釋（Sec. 5.1，作者認為）：Gym 的 medium 資料由訓練到約專家 1/3 表現的 SAC 收集，分布分散難學，擴散模型能複製它；AntMaze 需要強而穩定的 Q 學習，適當的 η $\eta$ 下 Diffusion-QL 勝過先前方法；Adroit 以較小的 η $\eta$ 加強正則化；Kitchen 需要長期價值。AntMaze 的標準誤大，因為每條軌跡的報酬是 1（成功）或 0（失敗）。
+
+ 延伸閱讀：Diffusion-QL 的 D4RL 實驗結果與消融、離線 RL 基準與比較方法
+
+ 11 · 消融
+
+ 消融比較擴散模型與 CVAE、Q 值項與 BCQ 式改進
+
+ Table 2 在三個 Gym medium-expert 任務上拆開兩個元件：策略部分比較擴散模型與 CVAE，Q 學習部分比較 Eq. 3 與 BCQ 的策略改進（Sec. 5.2）。三個任務的平均：BC-CVAE 79.9、BC-Diffusion 85.9、BCQ-CVAE 105.1、BCQ-Diffusion 106.0、CVAE-QL 76.6、Diffusion-QL 106.9。
+
+ Table 2（平均 ± 標準誤）
+ 任務BC-CVAEBC-DiffusionBCQ-CVAEBCQ-DiffusionCVAE-QLDiffusion-QL
+
+ halfcheetah-medium-expert-v267.3 ± 7.476.6 ± 7.096.1 ± 0.594.6 ± 1.070.3 ± 5.597.2 ± 0.4
+
+ hopper-medium-expert-v269.9 ± 8.678.0 ± 8.9108.5 ± 0.6109.3 ± 0.9109.2 ± 4.6112.3 ± 0.8
+
+ walker2d-medium-expert-v2102.5 ± 4.4103.1 ± 4.4110.7 ± 0.2114.0 ± 0.550.5 ± 38.2111.2 ± 0.9
+
+ 平均79.985.9105.1106.076.6106.9
+
+ 作者的結論（作者認為）：BC-Diffusion 高於 BC-CVAE，擴散模型較會複製；同在 BCQ 框架下 BCQ-Diffusion 高於 BCQ-CVAE；BCQ 對偏移的硬性限制會限制策略改進，Diffusion-QL 更高；CVAE 與不受限的 Q 學習結合時失敗（CVAE-QL 在 walker2d 為 50.5 ± 38.2）。逐任務並非全部由 Diffusion-QL 最高：walker2d-medium-expert 的 BCQ-Diffusion 114.0 高於 Diffusion-QL 111.2。另外，Table 2 的 Diffusion-QL 欄（97.2、112.3、111.2）與 Table 4 的線上模型選擇欄相同，不是 Table 1 的離線值（96.8、111.1、110.1）本頁推導；論文未說明 Table 2 用哪種選擇。
+
+ App. H 測試另一種多峰策略：把 TD3+BC 的確定性策略換成高斯混合（mixture density network，網路輸出 K $K$ 個高斯成分的權重、平均與變異數），稱為 TD3+BC-GM。適當的 K $K$ 能複製四峰，但加入 Q 學習時無法收斂到最佳位置，總是在次佳峰上留一些密度。D4RL 上用 K=3 $K=3$ ：
+
+ Table 5
+ 任務TD3+BCTD3+BC-GMDiffusion-QL
+
+ halfcheetah-medium-expert-v290.449.096.8
+
+ hopper-medium-expert-v298.040.0111.1
+
+ walker2d-medium-expert-v2110.166.5110.1
+
+ 作者列出的可能原因：高斯混合在高維難擬合、必須事先選 K $K$ 、每個成分是對角高斯。（Table 5 的 TD3+BC halfcheetah 為 90.4，Table 1 為 90.7。）
+
+ 12 · 實作設定
+
+ 實作設定、模型選擇與常見錯誤
+
+ 網路（App. B）：ϵθ $\epsilon_\theta$ ​ 是 3 層 MLP、Mish 激活、256 隱藏單元；輸入是 ai $a^i$ 、狀態 s $s$ 與 i $i$ 的正弦位置嵌入三者串接。兩個 Q 網路同樣設定，皆用 Adam。獎勵（App. C）：Gym 與 Kitchen 用原始獎勵；Adroit 獎勵標準化；AntMaze 依 CQL 的建議修改。
+
+ 超參數（App. E）只調三個：策略學習率 {10−3,3×10−4,3×10−5} $\{10^{-3},3\times10^{-4},3\times10^{-5}\}$ ,3×10−4,3×10−5}（Q 網路固定 3×10−4 $3\times10^{-4}$ ）、η $\eta$ 、是否用 max Q backup。η $\eta$ ：Gym 全為 1.0；AntMaze 0.5–4.5；Adroit 0.1–0.15；Kitchen 0.005。規則是 Adroit、Kitchen 需要更多正則化（小 η $\eta$ ），AntMaze 需要更多 Q 學習（大 η $\eta$ ）。max Q backup 只用於 AntMaze，且 antmaze-umaze 除外。
+
+ Table 3：各任務的超參數
+ 任務學習率ηmax Q backup
+halfcheetah-medium-v23 × 10⁻41否
+hopper-medium-v23 × 10⁻41否
+walker2d-medium-v23 × 10⁻41否
+halfcheetah-medium-replay-v23 × 10⁻41否
+hopper-medium-replay-v23 × 10⁻41否
+walker2d-medium-replay-v23 × 10⁻41否
+halfcheetah-medium-expert-v23 × 10⁻41否
+hopper-medium-expert-v23 × 10⁻41否
+walker2d-medium-expert-v23 × 10⁻41否
+antmaze-umaze-v03 × 10⁻40.5否
+antmaze-umaze-diverse-v03 × 10⁻42是
+antmaze-medium-play-v01 × 10⁻32是
+antmaze-medium-diverse-v03 × 10⁻43是
+antmaze-large-play-v03 × 10⁻44.5是
+antmaze-large-diverse-v03 × 10⁻43.5是
+pen-human-v13 × 10⁻50.15否
+pen-cloned-v13 × 10⁻50.1否
+kitchen-complete-v03 × 10⁻40.005否
+kitchen-partial-v03 × 10⁻40.005否
+kitchen-mixed-v03 × 10⁻40.005否
+
+ 離線模型選擇（Sec. 5、App. D）：作者觀察到 Ld $\mathcal L_d$ ​ 的變化比線上表現晚出現（論文稱 lagging indicator）。訓練中監看 Ld $\mathcal L_d$ ​ 並存多個 checkpoint，Ld $\mathcal L_d$ ​ 上升時停止，選 Ld $\mathcal L_d$ ​ 第二或第三低的 checkpoint；不選最低，因為目標是策略學習而非行為複製。只用第二低時，Gym 平均 87.6、AntMaze 69.1。正文的結果都用離線選擇。若允許少量線上評估挑選 checkpoint（App. F、Table 4），平均為 Gym 89.3、AntMaze 75.4、Adroit 68.3、Kitchen 71.6（離線：88.0、69.6、65.1、69.0）。
+
+ 常見錯誤
+
+ 忘了 i=1 $i=1$ 時不加噪聲（Sec. 3.1）。
+
+ 讓梯度流過 α $\alpha$ 的分母 E∣Q∣ $\mathbb E|Q|$ ；論文寫明不微分（Sec. 3.2）。
+
+ 在無梯度模式下跑反向鏈取 a0 $a^0$ ；Lq $\mathcal L_q$ ​ 需要梯度穿過整條鏈（Sec. 3.2）。
+
+ 把擴散步 i $i$ 與軌跡時間 t $t$ 混用，或把 Eq. 4 的 min⁡i=1,2 $\min_{i=1,2}$ ​ 當成擴散步。
+
+ 以為 η $\eta$ 可跨領域共用：Table 3 的 η $\eta$ 從 0.005 到 4.5（App. E）。
+
+ 以最低的 Ld $\mathcal L_d$ ​ 選 checkpoint：論文選第二或第三低（App. D）。
+
+ 期待論文給出 ρ $\rho$ 、γ $\gamma$ 與 Lq $\mathcal L_q$ ​ 用哪個 Q：論文未寫明（Alg. 1），重現時以所用程式碼為準。
+
+ 13 · 研究脈絡
+
+ 研究脈絡
+
+ 擴散模型從 Sohl-Dickstein et al.（2015）、Song & Ermon（2019）到 DDPM（2020），Xiao et al.（2021）提供小步數的排程。離線 RL 中，BCQ、BEAR、BRAC、TD3+BC、IQL 以各種方式把策略限制在資料附近，CQL 則壓低 OOD 動作的 Q 值，D4RL 提供共同基準。同期的 Diffuser 把擴散模型用在整條軌跡的規劃，BeT 處理多峰行為複製。本文把擴散模型用在單一動作上，並在訓練時加入 Q 值項。每張卡片連到對應的研究筆記。
+
+ 擴散模型Actor-critic策略正則化基準與保守 Q同期工作本文
+
+ 2015擴散模型Deep Unsupervised Learning using Nonequilibrium Thermodynamics
+Sohl-Dickstein et al.
+擴散式生成模型的起點，論文列為擴散模型基礎。
+arXiv ↗筆記
+2015Actor-criticContinuous control with deep reinforcement learning
+Lillicrap et al.
+DDPG；論文引用其 Bellman 目標用於 critic 學習。
+arXiv ↗筆記
+2018策略正則化Off-Policy Deep Reinforcement Learning without Exploration
+Fujimoto et al.
+BCQ；以 CVAE 複製行為策略再調整的策略正則化代表，並提出外推誤差問題。
+arXiv ↗筆記
+2019策略正則化Stabilizing Off-Policy Q-Learning via Bootstrapping Error Reduction
+Kumar et al.
+BEAR；以 MMD 限制策略接近複製的行為策略。
+arXiv ↗筆記
+2019策略正則化Behavior Regularized Offline Reinforcement Learning
+Wu et al.
+BRAC；比較 KL、MMD、Wasserstein 對偶等行為複製正則化。
+arXiv ↗筆記
+2019擴散模型Generative Modeling by Estimating Gradients of the Data Distribution
+Song, Ermon
+分數式生成模型，論文列為擴散模型基礎。
+arXiv ↗筆記
+2020擴散模型Denoising Diffusion Probabilistic Models
+Ho, Jain, Abbeel
+本論文採用其 MLP 版 DDPM 與 ε 預測簡化目標。
+arXiv ↗筆記
+2020基準與保守 QD4RL: Datasets for Deep Data-Driven Reinforcement Learning
+Fu et al.
+本論文的評估基準。
+arXiv ↗筆記
+2020基準與保守 QConservative Q-Learning for Offline Reinforcement Learning
+Kumar et al.
+價值約束類基準；max Q backup 可選用於 Algorithm 1。
+arXiv ↗筆記
+2021策略正則化A Minimalist Approach to Offline Reinforcement Learning
+Fujimoto, Gu
+TD3+BC；本論文沿用其 Q 值正規化 α。
+arXiv ↗筆記
+2021策略正則化Offline Reinforcement Learning with Implicit Q-Learning
+Kostrikov, Nair, Levine
+IQL；in-sample 優勢加權行為複製，為本論文的主要比較對象。
+arXiv ↗筆記
+2021擴散模型Tackling the Generative Learning Trilemma with Denoising Diffusion GANs
+Xiao, Kreis, Vahdat
+本論文沿用其小步數 VP-SDE 雜訊排程。
+arXiv ↗筆記
+2022同期工作Planning with Diffusion for Flexible Behavior Synthesis
+Janner et al.
+Diffuser；軌跡層級擴散，與本論文的動作層級做對照。
+arXiv ↗筆記
+2022同期工作Behavior Transformers: Cloning k modes with one stone
+Shafiullah et al.
+論文引用其作為 Gaussian 策略難以表示多峰行為的依據。
+arXiv ↗筆記
+2022本文Diffusion Policies as an Expressive Policy Class for Offline Reinforcement Learning
+Wang, Hunt, Zhou
+本論文：Diffusion-QL，以條件擴散模型作策略並加入 Q 值引導。
+arXiv ↗筆記
+
+ 14 · 限制與延伸閱讀
+
+ 限制與延伸閱讀
+
+ 限制（App. G）：推論時 Eq. 1 要算 N $N$ 次 ϵθ $\epsilon_\theta$ ​；作者估計 N=5 $N=5$ 的擴散策略「可能」比一步前饋策略慢 4–5 倍，需要快速反應的場景可能無法部署。作者引用一組加速擴散取樣的文獻（Lu et al. 2022、Wang et al. 2022、Xiao et al. 2021、Salimans & Ho 2022、Song et al. 2020、Zheng et al. 2022），並提出訓練後把擴散策略蒸餾成前饋策略的可能性。
+
+ 研究筆記（依閱讀順序）
+
+ Diffusion-QL 的研究脈絡總覽總覽
+
+ MDP、Q 函數與 Bellman backup站內筆記（No. 568）
+
+ Offline RL 的分布偏移站內筆記（No. 568）
+
+ 批次約束與策略約束方法策略約束
+
+ DDPG 到 TD3：連續動作的 actor-criticActor-critic
+
+ Gaussian、CVAE 與 MMD 策略的多峰限制與 2D bandit 示例多峰限制
+
+ DDPM 的訓練與取樣流程擴散模型
+
+ 擴散模型作為策略類別：以反向擴散鏈表示 π(a|s)本論文
+
+ Diffusion-QL：行為複製項與 Q 值項的損失耦合本論文
+
+ 擴散模型在 RL 中的同期與前驅工作同期工作
+
+ Diffusion-QL 的 D4RL 實驗結果與消融實驗
+
+ 擴散策略的推論成本與論文提出的加速方向限制
+
+ 站內相關教學
+
+ TD3+BC：極簡的離線強化學習No. 570
+
+ Conservative Q-LearningNo. 568
+
+ Implicit Q-LearningIQL
+
+ Diffuser：以擴散模型規劃No. 447
+
+ Zhendong Wang, Jonathan J Hunt, Mingyuan Zhou. Diffusion Policies as an Expressive Policy Class for Offline Reinforcement Learning. ICLR 2023. arXiv:2208.06193. 程式碼：github.com/Zhendong-Wang/Diffusion-Policies-for-Offline-RL.
+
+ 本頁的方程式與數字取自論文 v3；標示「本頁推導」的內容為本頁自行推導，並非論文結論；「玩具」元件使用閉式理想去噪器與推定的 Q，不重現論文數字；「背景（論文外）」為論文沿用但未寫出的既有知識。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記

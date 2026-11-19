@@ -1,0 +1,612 @@
+IDQL 擴散策略抽取
+
+跳到內容
+
+ No. 444
+ IDQL：IQL 是 actor-critic 方法，策略用擴散模型抽取
+
+00 摘要01 IQL 回顧02 隱含 actor03 三種損失04 單峰的限制05 IDQL 演算法06 擴散行為模型07 離群樣本與 N08 實作設定09 D4RL 結果10 Online 微調11 研究脈絡12 延伸閱讀
+
+00摘要
+01IQL 回顧
+02隱含 actor
+03三種損失
+04單峰的限制
+05IDQL 演算法
+06擴散行為模型
+07離群樣本與 N
+08實作設定
+09D4RL 結果
+10Online 微調
+11研究脈絡
+12延伸閱讀
+
+ No. 444 · 互動教學 · arXiv 2304.10573 · 2023
+
+ IDQL：IQL 是 actor-critic 方法，策略用擴散模型抽取
+
+ 這篇論文證明 IQL 的 critic 隱含一個由行為策略重新加權而成的策略，再用擴散模型產生候選動作、以 critic 的權重從中挑選。
+
+ Philippe Hansen-Estruch、Ilya Kostrikov、Michael Janner、Jakub Grudzien Kuba、Sergey Levine（2023）〈IDQL: Implicit Q-Learning as an Actor-Critic Method with Diffusion Policies〉
+
+ μ 是收集資料的行為策略，w 是 critic 算出的權重，π_imp 是 critic 隱含的策略；第 02 章定義。圖為本頁的玩具例子（τ = 0.9）推定。
+
+ 01 · 問題Offline RL 只能用一份固定的資料集學策略。IQL 只用資料中出現過的動作訓練 critic（估計動作價值的網路），但沒有說明這個 critic 對應哪一個策略。
+
+ 02 · 理論本文證明：critic 的損失一旦選定，就對應一個策略，它等於收集資料的策略乘上一個由 critic 算出的權重。這個策略可能有多個峰。
+
+ 03 · 做法與結果IDQL 用擴散模型（逐步去噪的生成模型）學資料中的動作分布，每個狀態抽 N 個候選，選 critic 值最高者。D4RL 上 locomotion 與 antmaze 各只選一個 τ 時，總分 1150.9，IQL 為 997.9。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+ 程式碼 ↗
+ 前置教學：IQL
+
+ 01 · IQL 回顧
+
+ IQL 只用資料中的動作學 Q 與 V
+
+ 強化學習中，代理人在狀態 s $s$ 選動作 a $a$ ，得到獎勵 r(s,a) $r(s,a)$ ，環境轉移到下一個狀態 s′ $s'$ ；γ∈[0,1) $\gamma\in[0,1)$ 是折扣因子。Offline RL 只能使用一份固定的資料集 D={s,a,r,s′} $\mathcal D=\{s,a,r,s'\}$ }，資料由某個行為策略（behavior policy）μ(a∣s) $\mu(a\mid s)$ 收集，訓練時不能再與環境互動（Sec. 3）。資料中沒有出現的動作稱為資料外動作（out-of-distribution action, OOD），它們的價值估計無法被資料修正，所以 offline 方法都要處理它們（Sec. 1）。
+
+ 策略 π $\pi$ 的動作價值 Qπ(s,a) $Q^\pi(s,a)$ (s,a) 是在 s $s$ 採取 a $a$ 、之後依 π $\pi$ 行動的期望折扣回報；狀態價值是它在 π $\pi$ 下的平均，Vπ(s)=Ea∼π[Qπ(s,a)] $V^\pi(s)=\mathbb E_{a\sim\pi}[Q^\pi(s,a)]$ (s)=Ea∼π​[Qπ(s,a)]。所以每個 Q 函數都是「某一個策略」的值，換策略就換 Q。
+
+ IQL（Kostrikov et al.）的 critic 有三個網路：Q 網路 Qθ $Q_\theta$ ​、參數為 θ $\theta$ 指數移動平均 θ^ $\hat\theta$ 的 target Q 網路 Qθ^ $Q_{\hat\theta}$ ​，以及 V 網路 Vψ $V_\psi$ ​。V 用 expectile 損失擬合資料中動作的 Q 值，τ $\tau$ 是 expectile 的階數：
+
+ LV(ψ)=E(s,a)∼D[L2τ(Qθ^(s,a)−Vψ(s))],L2τ(u)=∣τ−1(u<0)∣u2 $L_V(\psi)=\mathbb E_{(s,a)\sim\mathcal D}\big[L_2^\tau(Q_{\hat\theta}(s,a)-V_\psi(s))\big],\quad L_2^\tau(u)=\lvert\tau-\mathbb 1(u<0)\rvert u^2$ ​(ψ)=E(s,a)∼D​[L2τ​(Qθ^​(s,a)−Vψ​(s))],L2τ​(u)=∣τ−1(u<0)∣u2
+Eq. 1
+
+ LQ(θ)=E(s,a,s′)∼D[(r(s,a)+γVψ(s′)−Qθ(s,a))2] $L_Q(\theta)=\mathbb E_{(s,a,s')\sim\mathcal D}\big[(r(s,a)+\gamma V_\psi(s')-Q_\theta(s,a))^2\big]$ ​(θ)=E(s,a,s′)∼D​[(r(s,a)+γVψ​(s′)−Qθ​(s,a))2]
+Eq. 2
+
+ 也就是說，IQL 的 V 以 expectile 損失 L2τ(Qθ^−Vψ) $L_2^\tau(Q_{\hat\theta}-V_\psi)$ τ​(Qθ^​−Vψ​) 擬合資料動作的 Q（Eq. 1），Q 以 r+γVψ(s′) $r+\gamma V_\psi(s')$ ​(s′) 為目標做平方損失（Eq. 2），兩個損失都只用資料中的動作（Sec. 3）。最後用優勢加權回歸（advantage weighted regression, AWR）抽出一個單峰高斯策略 πϕ $\pi_\phi$ ​，溫度 α∈[0,∞] $\alpha\in[0,\infty]$ 平衡「利用 critic」與「行為複製」：
+
+ Lπ(ϕ)=E(s,a)∼D[exp⁡(α(Qθ^(s,a)−Vψ(s)))log⁡πϕ(a∣s)] $L_\pi(\phi)=\mathbb E_{(s,a)\sim\mathcal D}\big[\exp(\alpha(Q_{\hat\theta}(s,a)-V_\psi(s)))\log\pi_\phi(a|s)\big]$ ​(ϕ)=E(s,a)∼D​[exp(α(Qθ^​(s,a)−Vψ​(s)))logπϕ​(a∣s)]
+Eq. 3
+
+ 原文寫成「minimizing」這個式子，但它是要最大化的加權對數概似，實作時損失取負號（IQL 原文的 Eq. 7 也有同類寫法）。
+
+ 本章只回顧
+expectile 的性質、τ 從 0.5 到 1 如何連接 SARSA 與 Q-learning、AWR 的截斷等細節，見 IQL 互動教學。本頁只用到上面三個式子。
+
+ IQL 留下的問題是：Eq. 1–2 學到的 Q 對應哪一個策略並不清楚，因此也難以理解 IQL 類演算法的瓶頸（Sec. 1）。Kostrikov et al. 證明 τ 趨近 1 時 IQL 回到 Q-learning，但實際使用 0.5<τ<1 $0.5<\tau<1$ ，這時 Q 對應的策略沒有描述（Sec. 4）。本文要回答的就是這個問題。
+
+ 符號表
+
+ 符號意義章節
+
+ s,a,s′,r,γ $s,a,s',r,\gamma$ ,r,γ狀態、動作、下一狀態、獎勵、折扣01
+
+ D $\mathcal D$ 、μ(a∣s) $\mu(a\mid s)$ 固定資料集；收集資料的行為策略01
+
+ Qπ,Vπ $Q^\pi,V^\pi$ ,Vπ策略 π $\pi$ 的動作價值與狀態價值01
+
+ Qθ,Qθ^,Vψ $Q_\theta,Q_{\hat\theta},V_\psi$ ​,Qθ^​,Vψ​Q 網路、target Q 網路、V 網路01
+
+ τ $\tau$ 、L2τ $L_2^\tau$ τ​expectile 階數；非對稱平方損失01
+
+ α $\alpha$ AWR 的溫度（Eq. 3）；指數損失的溫度（Eq. 11）01、03
+
+ f $f$ 、f′ $f'$ 一般凸損失；對引數 u=Q−V $u=Q-V$ 的導數02
+
+ V∗ $V^*$ 、πimp $\pi_{imp}$ ​、w $w$ Eq. 6 的解；隱含 actor；重要性權重（Eq. 8）02
+
+ πawr $\pi_{awr}$ ​∝μexp⁡(αQ) $\propto\mu\exp(\alpha Q)$ ，Vexp $V_{exp}$ ​ 是它的正規化常數03
+
+ μϕ $\mu_\phi$ ​、N $N$ 擴散行為模型；每個狀態抽的候選動作數05
+
+ T,βt,αt,αˉt,ϵ $T,\beta_t,\alpha_t,\bar\alpha_t,\epsilon$ ​,αt​,αˉt​,ϵ擴散步數、噪聲排程、1−βt $1-\beta_t$ ​、∏i≤tαi $\prod_{i\le t}\alpha_i$ ​αi​、標準高斯噪聲06
+
+ 延伸閱讀：MDP、Q 函數與 Bellman backup、Offline RL 的分布偏移、IQL 的研究脈絡總覽、Expectile regression 與 value learning
+
+ 02 · 隱含 actor
+
+ 凸且 f′(0) = 0 的損失都對應一個隱含 actor
+
+ 作者先把 Eq. 1 的 expectile 損失換成任意凸損失 f $f$ ，作用在差值 Q(s,a)−V(s) $Q(s,a)-V(s)$ 上（Sec. 4.1）。記 LVf(V(s))=Ea∼μ[f(Q(s,a)−V(s))] $L_V^f(V(s))=\mathbb E_{a\sim\mu}[f(Q(s,a)-V(s))]$ f​(V(s))=Ea∼μ​[f(Q(s,a)−V(s))]，推廣後的 critic 更新為：
+
+ V∗(s)=arg⁡min⁡V(s) Ea∼μ(a∣s)[f(Q(s,a)−V(s))] $V^*(s)=\arg\min_{V(s)}\ \mathbb E_{a\sim\mu(a|s)}\big[f(Q(s,a)-V(s))\big]$ (s)=argV(s)min​ Ea∼μ(a∣s)​[f(Q(s,a)−V(s))]
+Eq. 6
+
+ f=L2τ $f=L_2^\tau$ τ​ 時就是 IQL。接著沿用 actor-critic 方法中值函數的慣用定義：V $V$ 是某個策略下 Q $Q$ 的平均。這個策略稱為隱含 actor（implicit actor）πimp $\pi_{imp}$ ​，它的具體形式在下方的 Eq. 8 給出：
+
+ V(s)=Ea∼πimp(a∣s)[Q(s,a)] $V(s)=\mathbb E_{a\sim\pi_{imp}(a|s)}[Q(s,a)]$ ​(a∣s)​[Q(s,a)]
+Eq. 7
+
+ 以下 f′ $f'$ 表示 f $f$ 對引數 u=Q−V $u=Q-V$ 的導數。（論文寫 f′=∂f/∂V(s) $f'=\partial f/\partial V(s)$ =∂f/∂V(s)，依連鎖律差一個負號；證明實際用的是對引數的導數。）
+
+ Theorem 4.1：對每個狀態 s $s$ 與滿足 f′(0)=0 $f'(0)=0$ (0)=0 的凸損失 f $f$ ，Eq. 6 的解 V∗ $V^*$ 也是 arg⁡min⁡VEa∼πimp[(Q(s,a)−V(s))2] $\arg\min_{V}\mathbb E_{a\sim\pi_{imp}}[(Q(s,a)-V(s))^2]$ ​Ea∼πimp​​[(Q(s,a)−V(s))2] 的解，其中
+
+ πimp(a∣s)∝μ(a∣s) w(s,a),w(s,a)=∣f′(Q(s,a)−V∗(s))∣∣Q(s,a)−V∗(s)∣ $\pi_{imp}(a|s)\propto\mu(a|s)\,w(s,a),\qquad w(s,a)=\frac{|f'(Q(s,a)-V^*(s))|}{|Q(s,a)-V^*(s)|}$ ​(a∣s)∝μ(a∣s)w(s,a),w(s,a)=∣Q(s,a)−V∗(s)∣∣f′(Q(s,a)−V∗(s))∣​
+Eq. 8
+
+ πimp(a∣s)∝μ(a∣s) w(s,a)w(s,a)=∣f′(Q−V∗)∣∣Q−V∗∣ $\begin{aligned}&\pi_{imp}(a|s)\propto\mu(a|s)\,w(s,a)\\&w(s,a)=\frac{|f'(Q-V^*)|}{|Q-V^*|}\end{aligned}$ ​πimp​(a∣s)∝μ(a∣s)w(s,a)w(s,a)=∣Q−V∗∣∣f′(Q−V∗)∣​​
+Eq. 8
+
+ 證明只有四步（App. B）：
+
+ 目標對 V $V$ 凸，最小解滿足一階條件 0=∂∂VEμ[f(Q−V)]=−Ea∼μ[f′(Q−V∗)] $0=\frac{\partial}{\partial V}\mathbb E_\mu[f(Q-V)]=-\mathbb E_{a\sim\mu}[f'(Q-V^*)]$ ∂​Eμ​[f(Q−V)]=−Ea∼μ​[f′(Q−V∗)]，負號來自 ∂(Q−V)/∂V=−1 $\partial(Q-V)/\partial V=-1$ 。
+
+ f $f$ 凸且 f′(0)=0 $f'(0)=0$ (0)=0，所以 f′(x) $f'(x)$ (x) 與 x $x$ 同號，可以寫成 f′(x)=∣f′(x)∣⋅x/∣x∣ $f'(x)=|f'(x)|\cdot x/|x|$ (x)=∣f′(x)∣⋅x/∣x∣。
+
+ 代入第 1 步：0=Eμ[∣f′(Q−V∗)∣∣Q−V∗∣(Q−V∗)]=Zimp Eπimp[Q−V∗] $0=\mathbb E_\mu\big[\frac{|f'(Q-V^*)|}{|Q-V^*|}(Q-V^*)\big]=Z_{imp}\,\mathbb E_{\pi_{imp}}[Q-V^*]$ ​[∣Q−V∗∣∣f′(Q−V∗)∣​(Q−V∗)]=Zimp​Eπimp​​[Q−V∗]，Zimp $Z_{imp}$ ​ 是讓 μw $\mu w$ 積分為 1 的正規化常數。
+
+ Eπimp[Q−V∗]=0 $\mathbb E_{\pi_{imp}}[Q-V^*]=0$ ​​[Q−V∗]=0 正好是 12Eπimp[(Q−V)2] $\tfrac12\mathbb E_{\pi_{imp}}[(Q-V)^2]$ 1​Eπimp​​[(Q−V)2] 在 V=V∗ $V=V^*$ 的一階條件，所以 V∗=Eπimp[Q] $V^*=\mathbb E_{\pi_{imp}}[Q]$ =Eπimp​​[Q]，即 Eq. 7。
+
+ 所以 Theorem 4.1 的條件是 f $f$ 凸且 f′(0)=0 $f'(0)=0$ (0)=0，結論是 V∗ $V^*$ 也最小化 Eπimp[(Q−V)2] $\mathbb E_{\pi_{imp}}[(Q-V)^2]$ ​​[(Q−V)2]，其中 πimp∝μ ∣f′(Q−V∗)∣/∣Q−V∗∣ $\pi_{imp}\propto\mu\,|f'(Q-V^*)|/|Q-V^*|$ ​∝μ∣f′(Q−V∗)∣/∣Q−V∗∣；證明的關鍵一步是用 f′(x)=∣f′(x)∣ x/∣x∣ $f'(x)=|f'(x)|\,x/|x|$ (x)=∣f′(x)∣x/∣x∣ 把一階條件 Eμ[f′(Q−V∗)]=0 $\mathbb E_\mu[f'(Q-V^*)]=0$ ​[f′(Q−V∗)]=0 改寫成 Eπimp[Q−V∗]=0 $\mathbb E_{\pi_{imp}}[Q-V^*]=0$ ​​[Q−V∗]=0。這說明 IQL 是一個 actor-critic 方法，而隱含 actor 是行為策略 μ $\mu$ 的重新加權（Sec. 4.1）。
+
+Eq. 8 的結構：π_imp = μ × w（再正規化）。玩具例子，expectile τ = 0.9推定。
+ 讀定理時要注意的四點
+
+ (a) 本頁推導隱含假設：證明還用到 f $f$ 可微、V∗ $V^*$ 存在、Q=V∗ $Q=V^*$ 處的權重有定義（或該處機率為 0）、0<Zimp<∞ $0<Z_{imp}<\infty$ ​<∞；第 03 章的 quantile 損失不滿足第一與第四條。(b) πimp $\pi_{imp}$ ​ 由 V∗ $V^*$ 定義，是「先有 V∗ $V^*$ 再讀出 actor」的關係。(c) critic 訓練不需要建出 πimp $\pi_{imp}$ ​，只需在訓練結束後抽取（Sec. 4.1）。(d) 權重的形狀可能很複雜，表達力弱的策略類別難以近似（Sec. 4.1，Eq. 8 之後）。
+
+ 延伸閱讀：廣義 IQL 的隱含 actor 與 critic 損失選擇
+
+ 03 · 三種損失
+
+ 三種損失給出三種隱含 actor
+
+ 作者舉了三個 f $f$ （Sec. 4.1）。每一個都有一個超參數控制隱含 actor 偏離行為策略的程度。
+
+ 三種 critic 損失（Eq. 9–12）
+ 損失f(u)解權重 w
+
+ ExpectileL2τ(u) $L_2^\tau(u)$ τ​(u)Vτ2 $V^2_\tau$ 2​∣τ−1(Q<Vτ2)∣ $\lvert\tau-\mathbb 1(Q<V^2_\tau)\rvert$ 2​)∣（Eq. 9）
+
+ Quantile∣τ−1(u<0)∣ ∣u∣ $\lvert\tau-\mathbb 1(u<0)\rvert\,\lvert u\rvert$ Vτ1 $V^1_\tau$ 1​∣τ−1(Q<Vτ1)∣∣Q−Vτ1∣ $\dfrac{\lvert\tau-\mathbb 1(Q<V^1_\tau)\rvert}{\lvert Q-V^1_\tau\rvert}$ 1​∣∣τ−1(Q<Vτ1​)∣​（Eq. 10）
+
+ Exponentialexp⁡(αu)−αu $\exp(\alpha u)-\alpha u$ Vexp $V_{exp}$ ​（Eq. 11）α∣exp⁡(α(Q−Vexp))−1∣∣Q−Vexp∣ $\dfrac{\alpha\lvert\exp(\alpha(Q-V_{exp}))-1\rvert}{\lvert Q-V_{exp}\rvert}$ ​∣α∣exp(α(Q−Vexp​))−1∣​（Eq. 12）
+
+ Expectile：Eq. 9 的權重 w=∣τ−1(Q<V)∣ $w=\lvert\tau-\mathbb 1(Q<V)\rvert$ 表示 Q 高於 V $V$ 的動作權重為 τ、低於 V $V$ 的動作權重為 1−τ。τ = 0.9 時兩側權重比為 9，τ = 0.7 時為 2.33本頁推導。作者寫：τ 越大，越偏離行為策略（Sec. 4.1）。（Eq. 9 省略了 f′=2∣τ−1(u<0)∣u $f'=2\lvert\tau-\mathbb 1(u<0)\rvert u$ =2∣τ−1(u<0)∣u 的常數 2，正規化後不影響 πimp $\pi_{imp}$ ​。）
+
+ Exponential：Eq. 11–12 與 App. C.1 的推導對應 f(u)=exp⁡(αu)−αu $f(u)=\exp(\alpha u)-\alpha u$ ，f′(0)=0 $f'(0)=0$ (0)=0（Sec. 4.1 文字寫成 αexp⁡(u)−αu $\alpha\exp(u)-\alpha u$ ）。它的解是
+
+ Vexp(s)=1αlog⁡∑aexp⁡(αQ(s,a)+log⁡μ(a∣s)) $V_{exp}(s)=\frac1\alpha\log\sum_a\exp\big(\alpha Q(s,a)+\log\mu(a|s)\big)$ ​(s)=α1​loga∑​exp(αQ(s,a)+logμ(a∣s))
+Eq. 11
+
+ 所以 Vexp $V_{exp}$ ​ 是 AWR 策略 πawr∝exp⁡(αQ+log⁡μ) $\pi_{awr}\propto\exp(\alpha Q+\log\mu)$ ​∝exp(αQ+logμ) 的正規化常數。作者稱這個損失等於加上 KL 散度約束，並指出它與 EQL（Garg et al.）、Xu et al. 的 critic 相同、與 SAC 的 soft policy 相似（Sec. 4.1）。App. C.2 算出 DKL(μ∥πexp)=Eμ[α(V−Q)] $D_{KL}(\mu\Vert\pi_{exp})=\mathbb E_\mu[\alpha(V-Q)]$ ​(μ∥πexp​)=Eμ​[α(V−Q)]，其中 πexp=μexp⁡(α(Q−V)) $\pi_{exp}=\mu\exp(\alpha(Q-V))$ ​=μexp(α(Q−V)) 就是 πawr $\pi_{awr}$ ​；注意方向是 μ 在前，與 AWR 約束常用的 π∥μ $\pi\Vert\mu$ 相反。本頁推導另一個方向是 DKL(πawr∥μ)=Eπawr[α(Q−Vexp)] $D_{KL}(\pi_{awr}\Vert\mu)=\mathbb E_{\pi_{awr}}[\alpha(Q-V_{exp})]$ ​(πawr​∥μ)=Eπawr​​[α(Q−Vexp​)]，因此 Vexp=Eπawr[Q]−1αDKL(πawr∥μ) $V_{exp}=\mathbb E_{\pi_{awr}}[Q]-\tfrac1\alpha D_{KL}(\pi_{awr}\Vert\mu)$ ​=Eπawr​​[Q]−α1​DKL​(πawr​∥μ)：Vexp $V_{exp}$ ​ 等於 AWR 策略的平均 Q 減去 KL 懲罰。
+
+ 這帶出一個細節：Theorem 4.1 給的隱含 actor 用權重 wexp $w_{exp}$ ​（Eq. 12），它與 πawr $\pi_{awr}$ ​ 不是同一個分布。定理保證 Eπimp[Q]=Vexp $\mathbb E_{\pi_{imp}}[Q]=V_{exp}$ ​​[Q]=Vexp​，但 Eπawr[Q] $\mathbb E_{\pi_{awr}}[Q]$ ​​[Q] 比 Vexp $V_{exp}$ ​ 大，差額正好是 KL 懲罰。作者寫「若 IQL 搭配 AWR 抽取，這個 f $f$ 會給出對應的正確 critic」（Sec. 4.1），本頁不改寫這句，只在 C1 並列兩個分布。
+
+ Quantile：權重 w=∣τ−1(Q<V)∣/∣Q−V∣ $w=\lvert\tau-\mathbb 1(Q<V)\rvert/\lvert Q-V\rvert$ 在 Q $Q$ 接近 V $V$ 時很大。作者寫這個隱含策略的點應該聚集在分位數附近，並說 quantile 在中位數行為表現與 Q-learning 之間權衡（Sec. 4.1）。
+
+ quantile 損失的兩個細節本頁推導
+
+ (1) quantile 的 f $f$ 在 0 不可微，不滿足 Theorem 4.1 的 f′(0)=0 $f'(0)=0$ (0)=0 條件，只能用次梯度理解。(2) 若 Q $Q$ 在 μ $\mu$ 下有連續密度、且在 Vτ1 $V^1_\tau$ 1​ 處密度為正，則 ∫μ w1 da $\int\mu\,w_1\,da$ ​da 在 Q=V $Q=V$ 附近像 ∫dq/∣q−V∣ $\int dq/|q-V|$ 一樣發散；正規化後 πimp $\pi_{imp}$ ​ 是 Vτ1 $V^1_\tau$ 1​ 處的點質量，平均就是 Vτ1 $V^1_\tau$ 1​、標準差為 0。這與作者「聚集在分位數附近」一致。論文的 Fig. 2 段落則寫 quantile actor 緊密集中在「mean」附近，與 Sec. 4.1 的說法不同。
+
+ 下面的元件用一個玩具 bandit 呈現三種隱含 actor推定：只有一個狀態，動作 a $a$ 是一維的，Q(a)=a $Q(a)=a$ （線性獎勵，與論文 Fig. 1 的 r=a1+a2 $r=a_1+a_2$ ​+a2​ 同為線性，這樣動作與 Q 值可以畫在同一軸上）。行為策略 μ $\mu$ 是三群高斯混合，中心 1、2、3（低、中、高獎勵群），標準差 0.15，預設權重 0.3、0.5、0.2，Eμ[Q]=1.9 $\mathbb E_\mu[Q]=1.9$ ​[Q]=1.9。
+
+ C1三種 critic 損失的隱含 actor
+
+ 玩具（推定）：不是論文的實驗。選一種損失並調整超參數，看 V* 與 π_imp 如何改變；讀數中的 E_π_imp[Q] 應與 V* 相同（Theorem 4.1）。
+
+ 損失
+expectilequantileexponential
+
+ 階數 τ0.90
+
+ 溫度 α（對數刻度）1.00
+
+ 高獎勵群的比例 p_h0.20
+
+ 回到預設
+
+ expectile，τ = 0.90
+V* = 2.5770
+E_π_imp[Q] = 2.5770　Theorem 4.1：應等於 V*
+sd_π_imp = 0.7057
+E_μ[Q] = 1.9000
+上下權重比 τ/(1−τ) = 9.0000
+
+ μ：資料中的動作π_imp（Theorem 4.1）π_awr（只在 exponential）V*
+
+ μ = 0.3·N(1, 0.15²) + 0.5·N(2, 0.15²) + 0.2·N(3, 0.15²)（p_h 改變時其餘兩群維持 3:5），Q(a) = a。V* 由 Eq. 9–11 的一階條件以二分法或閉式解求得，密度與動差在 2001 點網格上以梯形法計算。quantile 的 π_imp 不可正規化，圖中只畫形狀 μ·|τ−1(a<V)|/max(|a−V|, 0.02)（0.02 只為避免除以 0）。讀數由本頁依 Eq. 8–12 即時計算本頁推導。
+
+ 預設 τ = 0.9 時，expectile 的 V∗=2.5770 $V^*=2.5770$ =2.5770，C1 算出的 Eπimp[Q] $\mathbb E_{\pi_{imp}}[Q]$ ​​[Q] 也是 2.5770，兩者相等正是 Theorem 4.1。τ = 0.5 時 πimp=μ $\pi_{imp}=\mu$ ​=μ、V∗=1.9 $V^*=1.9$ =1.9；τ 增大時高獎勵群被放大，V $V$ 平滑上升。exponential 在 α = 1 時 Vexp=2.1545 $V_{exp}=2.1545$ ​=2.1545，而 πawr $\pi_{awr}$ ​ 的平均是 2.3980，差額 0.2435 正是 DKL(πawr∥μ)/α $D_{KL}(\pi_{awr}\Vert\mu)/\alpha$ ​(πawr​∥μ)/α。quantile 在 τ = 0.8 時 V=2.5191 $V=2.5191$ ，落在中群與高群之間資料很少的區域，點質量就放在這個動作上（玩具現象）。
+
+ 延伸閱讀：EQL 與 IVR：指數型 critic 與隱含價值正則化
+
+ 04 · 單峰的限制
+
+ 單峰高斯無法表示多峰的隱含 actor
+
+ Theorem 4.1 說隱含 actor 是行為策略的重新加權。行為策略有多個峰時，隱含 actor 通常也有多個峰。標準 IQL 卻用單峰的條件高斯策略近似它，而且 critic 不知道這個近似，也不會隨之調整；一般的 actor-critic 方法中，critic 會隨 actor 的限制調整（Sec. 4.2）。作者的假設是：critic 與 actor 解耦的好處，只有在最終的顯式 actor 夠強、能表示隱含 actor 時才能實現。
+
+ 論文的 Fig. 1 用一個二維 bandit 說明：三個動作群、獎勵 r(a1,a2)=a1+a2 $r(a_1,a_2)=a_1+a_2$ ​,a2​)=a1​+a2​、critic 取 0.9 expectile。各種反溫度下以 AWR 擬合的高斯都近似錯誤，而擴散抽取法的樣本正確捕捉了隱含策略（Fig. 1）。
+
+ 換一個表達力強的模型（擴散模型是能表示多峰分布的生成模型，第 06 章介紹）再用 AWR 權重訓練，也不能解決問題：已知表達力強的模型在重要性加權的目標下，會提高所有訓練點的概似，不論權重大小（Sec. 4.2）。作者實驗中，以 AWR 權重訓練的擴散模型沒有幫助：只抽 1 個樣本時通常比 IDQL 差，最好時與多樣本設定相當，所以 AWR 不必要，還多一個訓練超參數（App. F.5）。
+
+ 總結兩個理由：隱含 actor 是行為策略的重新加權，可能多峰，單峰高斯近似不了，而解耦的 critic 不會隨 actor 調整；表達力強的模型在重要性加權目標下會提高所有訓練點的概似，AWR 加權的擴散模型沒有幫助。第 05 章末的 C2 用玩具比較兩種抽取方式。另一種做法是把擴散模型直接當成 actor、再加 Q 最大化項，見 Diffusion-QL 教學。
+
+ 延伸閱讀：Advantage-weighted regression 與策略抽取、Gaussian、CVAE 與 MMD 策略的多峰限制
+
+ 05 · IDQL 演算法
+
+ IDQL 把 critic 訓練與擴散行為模型分開
+
+ μϕ(a∣s) $\mu_\phi(a\mid s)$ ​(a∣s) 是用擴散模型學到的行為策略；本章只把它當成可以抽樣的黑盒，訓練與取樣在第 06 章。IDQL 的作法是：訓練一個表達力強的模型表示行為策略，再用 critic 對它的樣本重新加權，重新抽樣後就得到所要的策略（Sec. 4.2）。訓練階段（Alg. 1）每步更新 V 參數 ψ、Q 參數 θ、以 EMA 係數 η = 0.005 更新 target 參數，以及擴散參數 φ；擴散模型做的是行為複製，與 critic 無關。
+
+ Alg. 1 · 訓練（學習率 λ、EMA η）
+說明
+
+ ψ ← ψ − λ∇ψ L_V^f(ψ)Eq. 6；IDQL 實際用 expectile，即 Eq. 1。
+
+ θ ← θ − λ∇θ L_Q(θ)Eq. 2，目標 r + γV(s′)。
+
+ θ_targ ← (1 − η)θ_targ + ηθθ_targ 即正文的 target 參數；η = 0.005（App. E）。
+
+ φ ← φ − λ∇φ L_µ(φ)擴散行為複製（第 06 章，Eq. 4），與 critic 無關。
+
+ Alg. 2 · 評估（每個狀態的樣本數 N）
+說明
+
+ 觀察 s；抽 a_i ~ µφ(a|s), i = 1..N從擴散行為模型抽 N 個候選動作。
+
+ 算 w(s, a_i)Eq. 9、10、12；或 Eq. 13 的 one-hot。
+
+ p_i = w(s,a_i) / Σ_j w(s,a_j)正規化成機率。
+
+ 依 p_i 做類別抽樣，執行選到的動作得到隱含 actor 的近似樣本。
+
+ 作者也發現，直接取 Q 最大的候選在評估時表現較好，相當於把權重設成 one-hot（Sec. 4.2）。這類似隨機 actor 用於 critic 學習、確定性 actor 用於評估的常見做法：
+
+ π(s)=arg⁡max⁡ai∼μ(a∣s), i=1…NQ(s,ai) $\pi(s)=\arg\max_{a_i\sim\mu(a|s),\ i=1\dots N}Q(s,a_i)$ ​∼μ(a∣s), i=1…Nmax​Q(s,ai​)
+Eq. 13
+
+ 因此 IDQL 每步更新 ψ（Eq. 6/1）、θ（Eq. 2）、θ_targ 以 EMA η = 0.005、φ（Eq. 4，擴散行為複製，與 critic 無關）；評估時抽 N 個 ai∼μϕ $a_i\sim\mu_\phi$ ​∼μϕ​，權重正規化成 pi $p_i$ ​ 後做類別抽樣，而論文實際評估用 Eq. 13 取 Q 最大的候選，因為表現較好。IDQL 就是這個一般演算法加上擴散模型的 μϕ $\mu_\phi$ ​ 與 DDPM 目標（Sec. 5）；理論上任何生成模型都可以，作者發現擴散模型最好（Sec. 4.2）。
+
+ 作者寫 Alg. 2 給出正確隱含 actor 的樣本。本頁推導Alg. 2 是自正規化重要性抽樣：N = 1 時抽到的就是 μ $\mu$ ，N 趨近無限大時趨近 πimp $\pi_{imp}$ ​；作者那句話只在後者成立，中間的 N 沒有一般結論。用 quantile 權重（Eq. 10）時，權重在 Q=V $Q=V$ 處發散，只要某個候選很接近 V $V$ ，它就拿走幾乎全部權重（同第 03 章的點質量）。
+
+ 擴散模型只在評估時與 critic 互動，所以調參便宜（Sec. 2）；訓練時間 IDQL 60 分鐘，DQL 240 分鐘，SfBC 785 分鐘（Table 1–2）。Online 微調有兩種做法（Sec. 4.2）：(1) 凍結 μϕ $\mu_\phi$ ​，用 argmax 動作探索，只微調 Q 與 V；(2) 用 πimp $\pi_{imp}$ ​ 探索，三個網路都微調。
+
+ C2抽取方法：單峰高斯 AWR 對重新抽樣
+
+ 玩具（推定）：不是論文的實驗。行為模型直接從 C1 的 μ 抽樣（代表完美訓練的擴散模型），critic 用精確的 expectile V*。改變 N 與抽取方式，看抽到的動作分布。
+
+ AWR 溫度 α3.0
+
+ critic 的 τ0.90
+
+ 每個狀態的候選數 N
+141664256
+
+ 抽取
+重新抽樣（Alg. 2）argmax（Eq. 13）
+
+ 重新抽樣（seed + 1）回到 seed 1seed = 1
+
+ AWR 高斯（α = 3.0）
+平均 2.9506，標準差 0.3638
+低密度質量 0.1787
+AWR 目標與 π_imp 的差距（TV）0.4313
+最佳單峰高斯（動差擬合 π_imp）
+平均 2.5770，標準差 0.7057，低密度 0.2128，TV 0.4928
+IDQL 抽到的動作（N = 64，重新抽樣）
+計算中…
+
+ μ（淺色填滿）π_imp（目標）AWR 高斯最佳單峰高斯（動差擬合 π_imp）IDQL 抽到的動作（直方圖）資料密度 < 1% 峰值
+
+ 每次「抽 N 個候選、選一個」重複 K = 2000 次（mulberry32(seed)）。重新抽樣依 Eq. 9 的權重做類別抽樣；argmax 選 Q 最大者。AWR 高斯是 μ·exp(αQ) 的加權最大概似解（閉式）。低密度區門檻（μ 低於峰值的 1%）為自選值推定。TV 為總變異距離。讀數由本頁依 Alg. 2、Eq. 3、Eq. 9、Eq. 13 即時計算。
+
+ τ = 0.9 時，最佳單峰高斯（以動差擬合 πimp $\pi_{imp}$ ​：平均 2.5770、標準差 0.7057）有 21.28% 的機率落在低密度區，總變異距離 0.4928，而 πimp $\pi_{imp}$ ​ 本身只有 0.40%；這部分只來自「單峰」這個限制。α = 3 的 AWR 高斯（平均 2.9506、標準差 0.3638）低密度 17.87%、與 πimp $\pi_{imp}$ ​ 的差距 0.4313，其中還混入了權重不一致：AWR 的目標是 μeαQ $\mu e^{\alpha Q}$ 而不是 πimp $\pi_{imp}$ ​，論文 Sec. 2 也說 AWR 的 KL 約束與 critic 捕捉的策略不一致。重新抽樣 N = 1 時三群比例 0.315／0.4995／0.1855，就是 μ $\mu$ ；N = 256 時 0.12／0.187／0.693，接近 πimp $\pi_{imp}$ ​ 的 0.1156／0.1925／0.6919。argmax 的平均隨 N 上升，N = 64 時 3.2472、全部在高群；N = 256 時 15.35% 在高群的分布尾端，這些是 μ $\mu$ 的合法樣本，不是離群樣本。
+
+ 延伸閱讀：以擴散行為模型做策略抽取、擴散模型作為策略類別
+
+ 06 · 擴散行為模型
+
+ D4RL 設定中，擴散行為模型以五步去噪產生動作
+
+ 行為策略 μ $\mu$ 是收集資料的真實分布；μϕ $\mu_\phi$ ​ 是用擴散模型對它的近似。論文在 Eq. 4–5 也用 μϕ(⋅,s,t) $\mu_\phi(\cdot,s,t)$ ​(⋅,s,t) 表示擴散網路本身，那時網路輸出的是噪聲。
+
+ 擴散模型的前向過程逐步加噪：q(at∣at−1)=N(1−βt at−1,βtI) $q(a_t\mid a_{t-1})=\mathcal N(\sqrt{1-\beta_t}\,a_{t-1},\beta_tI)$ ​∣at−1​)=N(1−βt​​at−1​,βt​I)，t=1,…,T $t=1,\dots,T$ ，βt $\beta_t$ ​ 是噪聲排程（schedule）。記 αt=1−βt $\alpha_t=1-\beta_t$ ​=1−βt​、αˉt=∏i≤tαi $\bar\alpha_t=\prod_{i\le t}\alpha_i$ t​=∏i≤t​αi​本頁補充（論文把 αˉt $\bar\alpha_t$ t​ 寫成 α^t $\hat\alpha_t$ t​，且未定義兩者，此處依 DDPM 補上）。網路 μϕ $\mu_\phi$ ​ 學習預測加入的噪聲 ϵ $\epsilon$ ：
+
+ Lμ(ϕ)=Et∼U(1,T), ϵ∼N(0,I), (s,a)∼D[∥ϵ−μϕ(αˉt a+1−αˉt ϵ, s, t)∥] $L_\mu(\phi)=\mathbb E_{t\sim U(1,T),\,\epsilon\sim\mathcal N(0,I),\,(s,a)\sim\mathcal D}\big[\lVert\epsilon-\mu_\phi(\sqrt{\bar\alpha_t}\,a+\sqrt{1-\bar\alpha_t}\,\epsilon,\ s,\ t)\rVert\big]$ ​(ϕ)=Et∼U(1,T),ϵ∼N(0,I),(s,a)∼D​[∥ϵ−μϕ​(αˉt​​a+1−αˉt​​ϵ, s, t)∥]
+Eq. 4
+
+ Lμ(ϕ)=E[∥ϵ−μϕ(αˉt a+1−αˉt ϵ, s, t)∥] $\begin{aligned}L_\mu(\phi)=\mathbb E\big[\lVert&\epsilon-\mu_\phi(\sqrt{\bar\alpha_t}\,a\\&+\sqrt{1-\bar\alpha_t}\,\epsilon,\ s,\ t)\rVert\big]\end{aligned}$ ​(ϕ)=E[∥​ϵ−μϕ​(αˉt​​a+1−αˉt​​ϵ, s, t)∥]​
+Eq. 4
+
+ 原文 Eq. 4 的範數沒有平方，DDPM 原始目標是平方誤差；本頁照錄原文。
+
+ 取樣時從純噪聲 aT∼N(0,I) $a_T\sim\mathcal N(0,I)$ ​∼N(0,I) 出發，逐步去噪（Eq. 5）：
+
+ at−1←1αt(at−βt1−αˉtμϕ(at∣s,t))+βt ϵ,t=T,…,1 $a_{t-1}\leftarrow\frac1{\sqrt{\alpha_t}}\Big(a_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\mu_\phi(a_t|s,t)\Big)+\sqrt{\beta_t}\,\epsilon,\quad t=T,\dots,1$ ​←αt​​1​(at​−1−αˉt​​βt​​μϕ​(at​∣s,t))+βt​​ϵ,t=T,…,1
+Eq. 5
+
+ at−1←  1αt(at−βt1−αˉtμϕ(at∣s,t))+βt ϵ,t=T,…,1 $\begin{aligned}a_{t-1}\leftarrow\;&\tfrac1{\sqrt{\alpha_t}}\Big(a_t-\tfrac{\beta_t}{\sqrt{1-\bar\alpha_t}}\mu_\phi(a_t|s,t)\Big)\\&+\sqrt{\beta_t}\,\epsilon,\quad t=T,\dots,1\end{aligned}$ ​←​αt​​1​(at​−1−αˉt​​βt​​μϕ​(at​∣s,t))+βt​​ϵ,t=T,…,1​
+Eq. 5
+
+ 程式碼官方程式碼（jaxrl5/networks/diffusion.py 的 ddpm_sampler）在最後一步（Eq. 5 的 t=1 $t=1$ ）不加噪聲；clip_sampler 開啟時每一步都把動作截斷到 [−1,1] $[-1,1]$ ，最終輸出再截斷一次。Eq. 5 的文字寫成每一步都加噪聲。
+
+ 設定與結論（App. E、F.3）：T=5 $T=5$ ，排程為 variance preserving（VP）。F.3 寫：2D 玩具資料以 T=50 $T=50$ 最好，D4RL 以 T=5 $T=5$ 最好（作者推測控制資料較確定，仍是開放問題）；增加 T 對 D4RL 有小幅負面影響，T>20 $T>20$ 時評估很慢；排程影響大，VP 最好、cosine 在小 T 也很好、linear 需要太大的 T；作者認為排程造成的訊噪比、尤其第一個加噪步很關鍵。
+
+ 三個排程的公式程式碼
+
+ 論文只給排程名稱與引用；以下取自官方程式碼。VP：βt=1−exp⁡ ⁣(−bminT−(bmax−bmin)(2t−1)2T2) $\beta_t=1-\exp\!\big(-\frac{b_{min}}T-\frac{(b_{max}-b_{min})(2t-1)}{2T^2}\big)$ ​=1−exp(−Tbmin​​−2T2(bmax​−bmin​)(2t−1)​)，bmin=0.1, bmax=10 $b_{min}=0.1,\ b_{max}=10$ ​=0.1, bmax​=10。linear：βt $\beta_t$ ​ 由 10−4 $10^{-4}$ 線性增加到 0.02。cosine：αˉ(t)=cos⁡2 ⁣(t/T+0.0081.008⋅π2)/αˉ(0) $\bar\alpha(t)=\cos^2\!\big(\frac{t/T+0.008}{1.008}\cdot\frac\pi2\big)/\bar\alpha(0)$ (t)=cos2(1.008t/T+0.008​⋅2π​)/αˉ(0)，βt=min⁡(1−αˉt/αˉt−1, 0.999) $\beta_t=\min(1-\bar\alpha_t/\bar\alpha_{t-1},\,0.999)$ ​=min(1−αˉt​/αˉt−1​,0.999)。本頁推導VP 的 αˉT=exp⁡(−5.05)=0.0064 $\bar\alpha_T=\exp(-5.05)=0.0064$ T​=exp(−5.05)=0.0064，與 T 無關；linear 在 T = 5 時 αˉT=0.9506 $\bar\alpha_T=0.9506$ T​=0.9506，終點離純噪聲很遠。
+
+ C4擴散取樣：排程與步數 T
+
+ 玩具（推定）：不是論文的實驗。噪聲預測用貝氏最佳解（即完美訓練的網路），所以這裡沒有網路誤差、只有取樣的離散化。F.3 中 D4RL 以 T = 5 最好、2D 資料以 T = 50 最好；結論不能直接套到 D4RL。
+
+ 排程
+VPcosinelinear
+
+ 步數 T
+25102050
+
+ 重新抽樣（seed + 1）回到 seed 1seed = 1
+
+ vp，T = 5
+abar_T = 0.0064
+計算中…
+
+ β_k（長條）abar_k（折線）目標 μ 的密度K = 4000 個樣本的直方圖
+
+ ε*(a, t) = −√(1 − abar_t) · ∂ log p_t(a)，p_t = Σ π_k N(√abar_t · m_k, abar_t · 0.15² + 1 − abar_t)本頁推導。迴圈 k = T, …, 1 依 Eq. 5 更新，k = 1 時不加噪聲（程式碼做法），不截斷。排程公式取自官方程式碼程式碼。讀數由本頁即時計算。
+
+ VP、T = 5 時三群比例 0.2948／0.505／0.2003，與目標 0.3／0.5／0.2 接近，但有 7.80% 的樣本落在群與群之間的低密度區；T = 50 時降到 0.85%。linear、T = 5 時 αˉT=0.9506 $\bar\alpha_T=0.9506$ T​=0.9506，起點不是噪聲，92% 的樣本落在低群附近。T = 2 時任何排程都明顯偏離。這個玩具沒有網路誤差，所以 T 越大越好；論文在 D4RL 上以 T = 5 最好、增加 T 小幅變差，兩者不矛盾：真實網路還有學習誤差，F.3 也說原因仍是開放問題。
+
+ 延伸閱讀：DDPM 的訓練與取樣流程、擴散行為複製、DDPM 與 LN_Resnet
+
+ 07 · 離群樣本與 N
+
+ 離群樣本使 argmax 對 N 敏感
+
+ 作者在二維連續資料上測試簡單的 DDPM：一般 MLP 無法捕捉資料分布，產生很多分布外的樣本；加大 batch 與容量後擬合較好，但仍有很多離群點（Fig. 3、Sec. 5）。離群點特別危險，因為它們可能落在已訓練 Q 函數的分布外，得到錯誤的高 Q 值（Sec. 5）。作者因此採用容量大、正則化好的網路：帶 layer norm 的殘差網路 LN_Resnet（App. G）。
+
+ App. G 的 LN_Resnet，hidden 256、n = 3；Dense(act) 輸出與動作同維度的噪聲預測。
+
+ App. F.6：容量大且正則化好的網路很關鍵；dropout 大幅減少過擬合，layer norm 有小幅好處。App. F.4：batch size 對 antmaze 重要、對 locomotion 影響小，但不如架構與容量重要。因此第 06 章的設定可以總結為：擴散模型預測加入的噪聲 ε（DDPM 目標），Eq. 5 從 aT∼N(0,I) $a_T\sim\mathcal N(0,I)$ ​∼N(0,I) 逐步去噪；T=5 $T=5$ 、VP 排程（2D 資料 T=50 $T=50$ 最好；linear 需要太大的 T）；簡單 MLP 產生很多離群樣本，離群點可能被 critic 給出錯誤的高 Q 值，所以用 LN_Resnet 3 個 block、hidden 256、dropout 0.1。T = 5 是 D4RL 上的最佳值，C4 的玩具沒有網路誤差、T 越大越好，兩者不矛盾。
+
+ 架構與 N 有交互作用（Sec. 6.4、Fig. 4）。作者把 LN_Resnet 與啟動層數相近的三層 MLP 比較，掃描每個狀態的候選數 N：LN_Resnet 在 locomotion 上 N 越大越好，在 antmaze 上 N 的影響小；MLP 則 N 越大表現越差，antmaze 尤其明顯。
+
+ 本頁推導下面的元件示範一個與 Sec. 5 說法相容的機制。若行為模型以比例 ε 產生離群樣本，且 critic 高估它們，argmax 選到至少一個離群樣本的機率約為 1−(1−ε)N $1-(1-\varepsilon)^N$ ，隨 N 上升。這是機制示意，不是 Fig. 4 的重現，也不代表論文的 MLP 有某個 ε。
+
+ C3離群樣本與 N：argmax 的敏感度
+
+ 玩具（推定）：不是 Fig. 4 的重現；離群比例 ε 與離群區間都是自選值。行為模型 = (1 − ε)·μ + ε·U[3.5, 5]，critic 對所有動作外插 Q̂(a) = a，離群樣本的真實獎勵為 0。
+
+ 離群比例 ε0.01
+
+ 候選數 N
+1248163264128256
+
+ ε = 0.01，N = 64
+E[r] = 1.7063
+P(選到離群) = 0.4744
+1 − (1 − ε)^N = 0.4744
+ε = 0 時 E[r] = 3.2462
+
+ 目前 ε 的期望真實獎勵沒有離群（ε = 0）P(選到離群)≈ 1 − (1 − ε)^N
+
+ E[r] = ∫ N·G(x)^(N−1)·(1 − ε)·μ(x)·x dx，G = (1 − ε)F_μ + εF_U，在 [−0.5, 5] 的 6001 點網格上以梯形法計算本頁推導。讀數由本頁即時計算。
+
+ 沒有離群（ε = 0）時 N 越大越好，期望真實獎勵由 1.9000 升到 3.3382，方向與 LN_Resnet 在 locomotion 的結果相同。ε = 0.01 時，N = 8 的期望真實獎勵最高為 2.6880，N = 256 掉到 0.2552；選到離群樣本的機率由 0.0773 升到 0.9236。ε 越大，最好的 N 越小（ε = 0.05 時 N = 4 最高，2.1504）。
+
+ 所以 Sec. 6.4 的結果是：LN_Resnet 在 locomotion 上 N 越大越好、在 antmaze 上影響小；MLP 則 N 越大越差，antmaze 尤其明顯。C3 的玩具（ε = 0.01）中 N = 8 與 N = 256 的期望真實獎勵為 2.6880 對 0.2552，選到離群樣本的機率 1−(1−ε)N $1-(1-\varepsilon)^N$ 由 0.0773 升到 0.9236。
+
+ 08 · 實作設定
+
+ 實作設定與常見錯誤
+
+ 實作以 jaxrl（JAX + Flax）為基礎（App. D）。critic 與 V 網路沿用 IQL 的參數化，其他架構細節都屬於擴散模型（App. E）。
+
+ 實作設定（App. E、D）
+ 項目值
+
+ critic 與 V 網路同 IQL：2 層 MLP、hidden 256、ReLU
+
+ 學習率／最佳化所有網路 3e-4／Adam；actor 用 cosine decay（長度 = actor 步數）
+
+ batchcritic 256、actor 1024
+
+ τ（expectile）0.7（locomotion）、0.9（antmaze）
+
+ τ（quantile）／α（exponential）0.6／0.8；1.0／0.5（locomotion／antmaze）
+
+ 步數critic 1.5e6（-A）、1e6（-1）；actor 3e6（-A）、2e6（-1）
+
+ 微調預訓練critic 1e6、actor 2e6（App. E 表中標為「Figure 3」，應指 Table 3）
+
+ target EMA0.005
+
+ 擴散模型T = 5、VP 排程、LN_Resnet 3 個 block、hidden 256、dropout 0.1
+
+ N32（antmaze -A）、128（locomotion -A）、64（-1）
+
+ 常見錯誤
+
+ 在 critic 訓練中查詢擴散模型的樣本：IDQL 的 critic 只用資料中的 (s,a) $(s,a)$ ；擴散模型只在評估時出現（Sec. 2）。
+
+ 用 AWR 權重訓練擴散模型：表達力強的模型會提高所有點的概似，作者實驗中沒有幫助（Sec. 4.2、App. F.5）。
+
+ 評估時用重新抽樣而不是 argmax：作者發現 argmax 評估較好，隱含策略抽取較差（Sec. 4.2、6.3）。
+
+ 用一般 MLP 當擴散網路並加大 N：離群點被 critic 高估，N 越大越差（Sec. 5、6.4）。
+
+ 照 DDPM 的 linear 排程配 T = 5：linear 需要太大的 T（App. F.3）。
+
+ 把 Eq. 3 當成要最小化的式子（實作取負號）；把 Eq. 4 的範數照原文寫成未平方（DDPM 為平方誤差）。
+
+ 延伸閱讀：擴散行為複製、DDPM 與 LN_Resnet
+
+ 09 · D4RL 結果
+
+ 每個領域只調一個超參數時，IDQL 的總分最高
+
+ 作者用兩種協定比較 CQL、IQL、DQL（Diffusion-QL）與 IDQL（Sec. 6.1）。「-A」是論文回報的數字，允許任意調參。「-1」是每個領域（locomotion、antmaze）只能選一個主要超參數值：IDQL 在 locomotion 全用 τ = 0.7、antmaze 全用 τ = 0.9，共兩個值。-1 的掃描範圍：CQL 的 λ ∈ {1, 2, 5, 10}、DQL 的 η ∈ {1.0, 2.0, 2.5, 3.0}、IQL 與 IDQL 的 τ ∈ {0.6, 0.7, 0.8, 0.9}。-1 的基線是作者用各自的程式重跑，作者寫這「可能無法公平代表每個演算法」，目的是展示開箱即用的表現並給出公平比較的協定（App. D.2）。
+
+ 注意：IDQL 自己的 -A 與 -1 用相同的 τ（App. E），差別在步數（critic 1.5M／1M、actor 3M／2M）與 N（-A：antmaze 32、locomotion 128；-1：64）。所以 IDQL 從 -A 到 -1 只小幅下降，並不是調參敏感度的證據。
+
+ Table 1 總分（D4RL 正規化分數）
+ 總分CQL-AIQL-ADQL-AIDQL-ACQL-1IQL-1DQL-1IDQL-1
+
+ locomotion-v2698.5692.4791.2739.2674.3629.5741.2711.6
+
+ antmaze-v0303.6378.0418.5474.6180.0368.4216.4439.3
+
+ total1002.11070.41209.71213.8854.3997.9957.41150.9
+
+ training time80m20m240m60m80m20m240m40m
+
+ Table 1 的 total：-A 協定下 IDQL 1213.8、DQL 1209.7、IQL 1070.4、CQL 1002.1；-1 協定下 IDQL 1150.9、IQL 997.9、DQL 957.4、CQL 854.3。訓練時間 IDQL 60 分鐘（-A）／40 分鐘（-1），DQL 240 分鐘、IQL 20 分鐘。作者寫：標準協定下 IDQL 在 locomotion 與最佳先前方法相當、在 antmaze 優於先前方法；-1 協定下 IDQL 只小幅下降，先前方法下降得多、antmaze 尤其明顯；antmaze 上比最佳方法（IQL）高 +70 分，即 -1 協定 antmaze 總分 IDQL 439.3 對 IQL 368.4（Sec. 6.1）。
+
+ 從 -A 到 -1 的變化（由 Table 1 相減）
+ 領域CQLIQLDQLIDQL
+
+ antmaze−123.6−9.6−202.1−35.3
+
+ locomotion−24.2−62.9−50.0−27.6
+
+ total−147.8−72.5−252.3−62.9
+
+ 表格顯示，「antmaze 下降得多」對 CQL 與 DQL 成立，對 IQL 不成立：IQL 的 antmaze 只降 9.6，比 IDQL 的 35.3 少。IDQL 對 IQL 的 antmaze 差距因此由 -A 的 96.6 縮為 -1 的 70.9。-1 協定下 locomotion 由 DQL 最高（741.2 對 711.6），IDQL 是 total 最高；-A 的 locomotion 也由 DQL 最高（791.2 對 739.2）。
+
+ Table 2 加入 %BC、DT、TD3+BC、EQL、SfBC：IDQL 的 total 1213.8 最高，antmaze 474.6 最高（SfBC 445.2、DQL 418.5、EQL 386）。Table 4 是逐任務全表（IDQL 為 10 個 seed 平均）。Table 5 的 Maze2D 上 IDQL 237.5、IQL 94、Diffuser 358.5，作者推測基於模型的規劃在 Maze2D 泛化較好。訓練設定：-A 的 critic 1.5M 步、擴散模型 3M 步，critic 超過 2M 步會略不穩；獎勵處理沿用 IQL，locomotion 標準化、antmaze 減 1（App. D.1）。
+
+ critic 損失的比較
+
+ 論文的 Fig. 2 在一個簡單 bandit 上比較三種損失：值的部分，expectile 隨 τ 平滑上升、quantile 對應累積分布函數、exponential 對齊最大值；隱含策略的部分，expectile 覆蓋範圍廣、quantile 緊密集中、exponential 在最大值附近有覆蓋（Sec. 4.1）。C1 的副圖可以看到同樣的值曲線形狀。實驗上（Sec. 6.3、Fig. 4），expectile 與 quantile 搭配 argmax 抽取都表現好；exponential 不穩定且較差，作者認為 EQL、IVR 的 exponential critic 需要更多調參與技巧。隱含策略抽取不如 argmax，作者認為原因是隱含策略有非零機率選到差的動作。整體以 expectile 加貪婪抽取最強；結論章也寫，原本的 expectile 在現有任務上表現最好（Sec. 7）。
+
+ 表格內部的差異（照原文印出，不推測原因）：Table 1 的 IDQL-A antmaze-medium-play 為 84.5，Table 4 為 84.2，總分 474.6 與 84.2 相符；IQL-A locomotion 印 692.4、列和 692.6；CQL-1 antmaze 印 180.0、列和 179.0；IQL-1 antmaze 印 368.4、列和 367.6；DQL-1 total 印 957.4，741.2 + 216.4 = 957.6。
+
+ 延伸閱讀：IDQL 的實驗與線上微調、離線 RL 基準與比較方法
+
+ 10 · Online 微調
+
+ Offline 預訓練後可以繼續 online 微調
+
+ 兩種微調做法（Sec. 4.2、6.2）：IDQL-Max 凍結擴散模型、用 argmax 動作探索、只微調 Q 與 V；IDQL-Imp 用隱含策略探索、三個網路都微調。設定：critic 預訓練 1M 步、擴散模型 2M 步；online 時每個環境步對 critic 做 1 次梯度更新，若也微調 actor 則做 2 次（App. D.3）。
+
+ Table 3 的總分（offline → online）：IDQL-Max 459.9 → 559.1，IDQL-Imp 462 → 548.2，IQL 408.2 → 473.7，RLPD 0.0 → 571.0；Cal-QL 只有四個任務。作者寫：pre-training 與微調後都大幅優於 IQL，微調上 “remains competitive” with RLPD 與 Cal-QL，且 pre-training 較強，主要增益來自 antmaze-large（Sec. 6.2）。Fig. 9：凍結 actor 只需 100k 個樣本就達到峰值。
+
+ Table 3 總分（antmaze 六個任務，offline → online）
+ 方法offlineonline
+
+ RLPD0.0571.0
+
+ IQL408.2*473.7
+
+ IDQL-Max459.9559.1
+
+ IDQL-Imp462548.2
+
+ * 照原文印出；IQL 六列的 offline 分數相加為 370.1。註：IDQL 兩種做法的總分都低於 RLPD 的 571.0；IDQL-Imp 的 antmaze-umaze-diverse 由 78.4 降到 73.0；RLPD 的 0.0 表示沒有 offline 預訓練，不是分數比較。
+
+ 限制（Sec. 7、App. D.3）：小維度動作空間（例如 locomotion）有過擬合問題，加 dropout 可以緩解，但損及其他環境；Adroit 上 online 微調效果不好，作者推測過度預訓練有害，而且 Adroit 需要大量探索，行為正則化可能有害。
+
+ 11 · 研究脈絡
+
+ 研究脈絡
+
+ IDQL 接上兩條路線。critic 這一側：AWR 以優勢加權回歸抽取策略，IQL 以 expectile 只用資料中的動作學值函數，EQL 與 IVR 同期把 IQL 的 critic 推廣到 soft value 與其他隱含正則化。生成模型這一側：DDPM 之後，Diffuser 用擴散模型生成整條軌跡，ARQ、Diffusion-QL（筆記總覽：Diffusion-QL 的研究脈絡）與 SfBC 把擴散模型放進 offline RL 的策略。IDQL 把擴散模型完全留在 critic 訓練之外，只在評估時重新加權。每張卡片連到對應的研究筆記。
+
+ 擴散模型策略抽取IQLsoft value 與指數型 critic軌跡擴散擴散 × RL擴散 × RL（DQL）基線本文
+
+ 2015擴散模型Deep Unsupervised Learning using Nonequilibrium Thermodynamics
+Sohl-Dickstein et al.
+擴散模型的起源
+arXiv ↗筆記
+2018soft value 與指數型 criticSoft Actor-Critic: Off-Policy Maximum Entropy Deep Reinforcement Learning with a Stochastic Actor
+Haarnoja et al.
+soft policy；隨機 actor 訓練 critic、確定性 actor 評估
+arXiv ↗筆記
+2019策略抽取Advantage-Weighted Regression: Simple and Scalable Off-Policy Reinforcement Learning
+Peng et al.
+IQL 使用的策略抽取方式（AWR）
+arXiv ↗筆記
+2020擴散模型Denoising Diffusion Probabilistic Models
+Ho et al.
+IDQL 行為模型的訓練目標
+arXiv ↗筆記
+2021IQLOffline Reinforcement Learning with Implicit Q-Learning
+Kostrikov et al.
+被重新詮釋的方法（expectile 價值學習加 AWR）
+arXiv ↗筆記
+2021基線A Minimalist Approach to Offline Reinforcement Learning
+Fujimoto & Gu
+TD3+BC；DQL 的基礎，表 2 基線
+arXiv ↗筆記
+2022軌跡擴散Planning with Diffusion for Flexible Behavior Synthesis
+Janner et al.
+以擴散建模軌跡並用梯度引導
+arXiv ↗筆記
+2022擴散 × RLKnow Your Boundaries: The Necessity of Explicit Behavioral Cloning in Offline RL
+Goo & Niekum
+ARQ；擴散行為模型加 AWR 抽取
+arXiv ↗筆記
+2022擴散 × RL（DQL）Diffusion Policies as an Expressive Policy Class for Offline Reinforcement Learning
+Wang et al.
+DQL；擴散 actor，主要比較對象
+arXiv ↗筆記教學
+2022擴散 × RLOffline Reinforcement Learning via High-Fidelity Generative Behavior Modeling
+Chen et al.
+SfBC；擴散行為模型加重要性重新加權
+arXiv ↗筆記
+2023soft value 與指數型 criticExtreme Q-Learning: MaxEnt RL without Entropy
+Garg et al.
+修改 IQL critic 為 soft value；指數型損失
+arXiv ↗筆記
+2023基線Efficient Online Reinforcement Learning with Offline Data
+Ball et al.
+RLPD；線上微調比較對象
+arXiv ↗筆記
+2023soft value 與指數型 criticOffline RL with No OOD Actions: In-Sample Learning via Implicit Value Regularization
+Xu et al.
+另一種 IQL 推廣（behavior-regularized MDP）
+arXiv ↗筆記
+2023本文IDQL: Implicit Q-Learning as an Actor-Critic Method with Diffusion Policies
+Hansen-Estruch et al.
+本論文
+arXiv ↗筆記
+
+ 12 · 延伸閱讀
+
+ 延伸閱讀
+
+ 研究筆記（依總覽的閱讀順序）
+
+ IDQL 的研究脈絡總覽：從 IQL 的隱含價值學習到擴散策略抽取總覽
+
+ MDP、Q 函數與 Bellman backup：value-based RL 的基本記號基本記號
+
+ Offline RL 的分布偏移與 OOD 動作造成的 Q 值高估離線設定
+
+ IQL 的研究脈絡總覽：從 policy constraint 與 value regularization 到 in-sample 的 expectile 學習IQL
+
+ Expectile regression 與 value learning：以非對稱 L2 損失近似資料支撐內的最大值IQL 的核心工具
+
+ Advantage-weighted regression 與策略抽取：AWR、AWAC、CRR原本的策略抽取
+
+ 廣義 IQL 的隱含 actor 與 critic 損失選擇本論文的理論
+
+ EQL 與 IVR：指數型 critic 與隱含價值正則化同期推廣
+
+ 擴散模型作為策略類別：以反向擴散鏈表示 π(a|s)擴散策略
+
+ 以擴散行為模型做策略抽取：SfBC、ARQ、EMaQ 與 IDQL本論文的抽取方法
+
+ 擴散行為複製、DDPM 目標與 LN_Resnet 網路設計擴散模型與網路
+
+ IDQL 的實驗：D4RL 比較、單一超參數設定與線上微調實驗
+
+ 其他相關
+
+ Diffusion-QL 的研究脈絡總覽同批筆記
+
+ Gaussian、CVAE 與 MMD 策略的多峰限制與 2D bandit 示例同批筆記
+
+ DDPM 的訓練與取樣流程DDPM 背景
+
+ 軌跡層級擴散規劃（Diffuser）軌跡擴散
+
+ IQL 互動教學前置教學
+
+ Diffusion-QL 互動教學同批教學
+
+ Philippe Hansen-Estruch, Ilya Kostrikov, Michael Janner, Jakub Grudzien Kuba, Sergey Levine. IDQL: Implicit Q-Learning as an Actor-Critic Method with Diffusion Policies. 2023. arXiv:2304.10573.
+
+ 本頁的方程式與數字取自論文 v2；標示「本頁推導」的內容為本頁自行推導，「推定」為本頁為了玩具元件自選的數值，「程式碼」為取自官方程式碼而非論文文字的內容，三者都不是論文結論。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記
