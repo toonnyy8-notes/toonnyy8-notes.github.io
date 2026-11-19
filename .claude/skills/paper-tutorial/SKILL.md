@@ -49,7 +49,7 @@ prompt 檔中的 `{ID}`（資料庫編號）、`{ARXIV}`、`{TITLE}`、`{SLUG}`�
    - 未完全答對的題目交回 Elephant 補正文，修完只重測那幾題。
    - 完成條件：12/12（或全數 LO）能只從頁面答出。
 6. **上架**
-   - 執行 `python3 .claude/skills/paper-tutorial/scripts/add_tutorial.py {ID} {SLUG} "{TITLE}"`。它併入筆記與 index.json、登錄 `tutorial_list.json`，並重建所有頁面。
+   - 執行 `python3 .claude/skills/paper-tutorial/scripts/add_tutorial.py {ID} {SLUG} "{TITLE}"`。它併入筆記與 index.json、登錄 `tutorial_list.json`、在最新消息加一則公告，並重建所有頁面。
    - commit 與 push 到 `paper-master`。
    - 完成條件：`tutorials/{SLUG}.html` 存在，且關聯圖詳情卡與總覽筆記都連得到它。
 

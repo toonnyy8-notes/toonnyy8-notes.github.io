@@ -27,4 +27,7 @@ else: lst[pos] = entry
 (S / 'tutorial_list.json').write_text(json.dumps(lst, ensure_ascii=False, indent=1))
 for script in ['tutorials.py', 'render.py']:
     subprocess.run([sys.executable, str(S / script)], check=True)
+# announce on the news page (最新消息)
+subprocess.run([sys.executable, str(S / 'news.py'), 'add', 'tutorial', f'互動教學：{title}（No.{pid}）',
+                f'新增互動教學與 {len(meta)} 篇研究筆記。', f'開啟教學=tutorials/{slug}.html', f'論文 No.{pid}=index.html#paper-{pid}'], check=True)
 print(f'published tutorials/{slug}.html with {len(meta)} notes')

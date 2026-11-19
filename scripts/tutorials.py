@@ -114,8 +114,9 @@ main{{max-width:1200px;margin:0 auto;padding:0 24px 120px}}
 @media (max-width:900px){{.hero,.sec{{grid-template-columns:1fr}}.hero>*,.sec>*{{grid-column:1/-1!important}}.hero{{padding:56px 0 40px}}.hero .facts{{justify-self:start}}
   .tlist a{{grid-template-columns:44px 1fr;gap:4px 12px}}.tlist .meta{{grid-column:2}}.hubs{{grid-template-columns:1fr}}main,.top nav{{padding-left:16px;padding-right:16px}}}}
 @media (prefers-reduced-motion:reduce){{*{{transition-duration:.001ms!important}}}}
+@media (max-width:600px){{.top nav{{gap:16px;font-size:13px;white-space:nowrap;overflow-x:auto;scrollbar-width:none}}.top .brand{{font-size:18px}}}}
 </style></head>
-<body><header class="top"><nav aria-label="網站"><a class="brand" href="../index.html">Paper Master</a><a href="../index.html">論文關聯圖</a><a href="index.html" aria-current="page">教學與筆記</a></nav></header>
+<body><header class="top"><nav aria-label="網站"><a class="brand" href="../index.html">Paper Master</a><a href="../index.html">論文關聯圖</a><a href="index.html" aria-current="page">教學與筆記</a><a href="../news.html">最新消息</a></nav></header>
 <main>
 <section class="hero"><h1>教學與筆記</h1>
 <dl class="facts"><dt>{len(inter)}</dt><dd>份互動教學</dd><dt>{len(hubs)}</dt><dd>篇主題總覽</dd><dt>{ntopic}</dt><dd>篇主題筆記</dd></dl>

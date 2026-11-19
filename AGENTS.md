@@ -27,6 +27,8 @@ Paper Master 把「研究手記」Discord 伺服器裡收集的論文，整理�
 
 重新產生的指令與目前的整理方式見 `PAPER-MASTER.md`。互動教學頁的清單在 `scripts/tutorial_list.json`，原始頁面在 `scripts/tutorials_raw/`，每篇教學的設計文件、審查與驗算在 `scripts/tutorial_src/<論文編號>/`。
 
+任何對外可見的變更（新論文、新教學或筆記、介面更新、新文件）都在 `scripts/news.json` 加一則消息（`python3 scripts/news.py add …`），`news.html` 由它產生；`add_tutorial.py` 會自動加教學上架的消息。
+
 ## 步驟 1–4：資料庫與關聯圖
 
 1. **讀取**上面三份清單，依 arXiv ID 或網址合併重複論文，保留所有來源。

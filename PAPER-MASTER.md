@@ -6,6 +6,7 @@
 - `papers.csv`：Excel 可直接開啟（UTF-8 BOM）。欄位：Paper ID、Title、Authors、Year、URL、Source File & Branch、Source Category、Cluster、Core Topic / Summary、Tags、Related Paper IDs
 - `papers.json`：同一份資料，給關聯圖使用
 - `tutorials/`：10 份 Claude 互動教學（加上回到關聯圖的導覽列），以及研究筆記：6 份原始長筆記（`scripts/notes_raw/`）依「高內聚、低耦合」拆成 6 篇總覽＋44 篇主題筆記（`scripts/notes_split/`），每篇連到資料庫中引用的論文
+- `news.html`：最新消息（更新公告、新論文、互動教學、文件），資料在 `scripts/news.json`；新增一則：`python3 scripts/news.py add <update|paper|tutorial|note|doc> "標題" "內文" [連結文字=網址 ...]`
 - `AGENTS.md`：專案設計意圖與各步驟的整理規範
 
 ## 整理方式
@@ -19,7 +20,7 @@
 ## 重新產生
 
 ```sh
-python3 scripts/tutorials.py && python3 scripts/render.py   # 從 scripts/ 的資料重建 tutorials/ 與 index.html
+python3 scripts/tutorials.py && python3 scripts/render.py && python3 scripts/news.py   # 從 scripts/ 的資料重建 tutorials/、index.html、news.html
 ```
 
 資料庫本身（papers.csv／papers.json）由 `scripts/parse.py` 與 `scripts/build.py` 產生，需先把三份清單 md 放在 `scripts/`。新增互動教學用 `.claude/skills/paper-tutorial/`。
