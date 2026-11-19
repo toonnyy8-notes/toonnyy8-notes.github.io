@@ -1,0 +1,534 @@
+擴散模型的曝光偏差
+
+跳到內容
+
+ No. 406
+ 擴散模型的曝光偏差與 Epsilon Scaling
+
+00 摘要01 曝光偏差02 DDPM 取樣03 單步差距04 噪聲排程05 多步累積06 度量 δₜ07 Epsilon Scaling08 λ(t) 的設計09 實驗結果10 作者的解釋11 實作12 研究脈絡13 限制與延伸
+
+00摘要
+01曝光偏差
+02DDPM 取樣
+03單步差距
+04噪聲排程
+05多步累積
+06度量 δₜ
+07Epsilon Scaling
+08λ(t) 的設計
+09實驗結果
+10作者的解釋
+11實作
+12研究脈絡
+13限制與延伸
+
+ No. 406 · 互動教學 · arXiv 2308.15321 · ICLR 2024
+
+ 擴散模型的曝光偏差與 Epsilon Scaling
+
+ 這篇論文分析訓練與取樣時網路輸入的變異數差距，並在取樣時把預測的噪聲除以一個常數來縮小差距。
+
+ Mang Ning、Mingxiao Li、Jianlin Su、Albert Ali Salah、Itir Onal Ertugrul（2024）〈Elucidating the Exposure Bias in Diffusion Models〉
+
+ 01 · 問題訓練時網路看到的是由真實資料加噪的 xₜ，取樣時看到的是自己前幾步產生的 x̂ₜ。兩者分佈不同，稱為曝光偏差。
+
+ 02 · 分析把每一步的 x₀ 預測誤差建模成高斯分佈後，取樣分佈的變異數在每一步都大於訓練分佈。
+
+ 03 · 方法Epsilon Scaling 在取樣時把網路預測的噪聲除以常數 λ（例如 1.017），不需重新訓練。ADM 在 CIFAR-10 以 100 步取樣，FID 由 3.37 降到 2.17。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · 曝光偏差
+
+ 曝光偏差是訓練與取樣時的輸入不一致
+
+ 擴散模型（diffusion model）分成兩個階段。訓練時，把一筆真實資料 x0 $x_0$ ​ 加上高斯噪聲，得到第 t $t$ 步的帶噪樣本 xt $x_t$ ​；t $t$ 越大，噪聲越多，保留的原始資料越少。網路 ϵθ $\epsilon_\theta$ ​ 的工作是看著 xt $x_t$ ​ 預測當初加進去的噪聲。取樣時，從純噪聲 xT $x_T$ ​ 出發，反覆用網路的預測去掉一部分噪聲，一步步走到 t=0 $t=0$ 。本頁以 ᾱₜ 表示第 t $t$ 步保留原始資料的比例（第 02 章給出定義），它隨 t $t$ 增加而變小。
+
+ 兩個階段中，網路的輸入來源不同：訓練時是由真實 x0 $x_0$ ​ 加噪得到的 xt $x_t$ ​；取樣時是網路前幾步產生的 x^t $\hat x_t$ t​。只要網路的預測有誤差，x^t $\hat x_t$ t​ 的分佈就和 xt $x_t$ ​ 不同。這種訓練與推論時輸入不一致的現象稱為曝光偏差（exposure bias）。這個詞來自序列生成：遞迴網路訓練時輸入真實的前一個字，生成時輸入自己產生的字（Ranzato et al.，arXiv 2015，論文引為 2016；Schmidt, 2019）。在擴散模型中，Ning et al.（2023）最早指出這個問題（Sec. 1、Sec. 2）。
+
+ 作者認為擴散模型的曝光偏差「缺乏深入探討」：沒有適當的度量，也沒有明確的誤差分析（Sec. 1）。本文依序回答三件事：取樣時網路實際收到的 x^t $\hat x_t$ t​ 服從什麼分佈（第 03–05 章）、如何量化曝光偏差（第 06 章）、能否不重新訓練就在取樣階段緩解它（第 07–09 章）。
+
+ 延伸閱讀：曝光偏差在序列生成中的來源、擴散模型的曝光偏差
+
+ 02 · DDPM 取樣
+
+ DDPM 取樣先預測 x₀ 再代入後驗
+
+ 本章符號
+
+ βt $\beta_t$ ​：第 t $t$ 步加入的噪聲變異數；αt=1−βt $\alpha_t=1-\beta_t$ ​=1−βt​；αˉt=∏s≤tαs $\bar\alpha_t=\prod_{s\le t}\alpha_s$ t​=∏s≤t​αs​（保留原始資料的比例）。
+
+ β~t=1−αˉt−11−αˉtβt $\tilde\beta_t=\frac{1-\bar\alpha_{t-1}}{1-\bar\alpha_t}\beta_t$ ​t​=1−αˉt​1−αˉt−1​​βt​：後驗變異數。
+
+ c1,t=αˉt−1βt1−αˉt $c_{1,t}=\frac{\sqrt{\bar\alpha_{t-1}}\beta_t}{1-\bar\alpha_t}$ ​=1−αˉt​αˉt−1​​βt​​、c2,t=αt(1−αˉt−1)1−αˉt $c_{2,t}=\frac{\sqrt{\alpha_t}(1-\bar\alpha_{t-1})}{1-\bar\alpha_t}$ ​=1−αˉt​αt​​(1−αˉt−1​)​：本頁為了簡潔引入的係數記號，論文直接寫出分式。
+
+ xθt $x_\theta^t$ t​：由網路換算出的 x0 $x_0$ ​ 預測；T′ $T'$ ：快速取樣的總步數。
+
+ DDPM（Ho et al., 2020）的前向過程可以直接從 x0 $x_0$ ​ 一步抽出 xt $x_t$ ​（Sec. 3.1）：
+
+ q(xt∣x0)=N(xt;αˉt x0,(1−αˉt)I),xt=αˉt x0+1−αˉt ϵ $q(x_t|x_0)=\mathcal N\big(x_t;\sqrt{\bar\alpha_t}\,x_0,(1-\bar\alpha_t)I\big),\qquad x_t=\sqrt{\bar\alpha_t}\,x_0+\sqrt{1-\bar\alpha_t}\,\epsilon$ ​∣x0​)=N(xt​;αˉt​​x0​,(1−αˉt​)I),xt​=αˉt​​x0​+1−αˉt​​ϵ
+Eq. 1
+
+ ϵ∼N(0,I) $\epsilon\sim\mathcal N(0,I)$ 。訓練分佈的變異數是 1−αˉt $1-\bar\alpha_t$ t​。已知 x0 $x_0$ ​ 時，往回一步的後驗也是高斯（Eq. 2–4）：
+
+ q(xt−1∣xt,x0)=N(μ~,β~tI),μ~=c1,t x0+c2,t xt $q(x_{t-1}|x_t,x_0)=\mathcal N\big(\tilde\mu,\tilde\beta_tI\big),\qquad \tilde\mu=c_{1,t}\,x_0+c_{2,t}\,x_t$ ​∣xt​,x0​)=N(μ~​,β~​t​I),μ~​=c1,t​x0​+c2,t​xt​
+Eq. 2–4
+
+ 取樣時不知道 x0 $x_0$ ​，所以網路先給出一個 x0 $x_0$ ​ 的預測 xθt $x_\theta^t$ t​，再代入同一個式子（Eq. 5）。實務上網路預測的是噪聲 ϵθ $\epsilon_\theta$ ​，寫成 Eq. 6 的形式：
+
+ μθ(xt,t)=c1,t xθt+c2,t xt=1αt(xt−βt1−αˉt ϵθ(xt,t)) $\mu_\theta(x_t,t)=c_{1,t}\,x_\theta^t+c_{2,t}\,x_t=\frac{1}{\sqrt{\alpha_t}}\Big(x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\,\epsilon_\theta(x_t,t)\Big)$ ​(xt​,t)=c1,t​xθt​+c2,t​xt​=αt​​1​(xt​−1−αˉt​​βt​​ϵθ​(xt​,t))
+Eq. 5–6
+
+ 兩種寫法等價：由 Eq. 1 可知 xθt=(xt−1−αˉt ϵθ)/αˉt $x_\theta^t=(x_t-\sqrt{1-\bar\alpha_t}\,\epsilon_\theta)/\sqrt{\bar\alpha_t}$ t​=(xt​−1−αˉt​​ϵθ​)/αˉt​​。Song et al.（2021a）強調，pθ(xt−1∣xt) $p_\theta(x_{t-1}|x_t)$ ​(xt−1​∣xt​) 實際上就是 q(xt−1∣xt,xθt) $q(x_{t-1}|x_t,x_\theta^t)$ ​∣xt​,xθt​)。因此 DDPM 取樣的實際流程是：先預測 ϵ $\epsilon$ ，由 Eq. 1 換算 xθt $x_\theta^t$ t​，再把後驗 q(xt−1∣xt,x0) $q(x_{t-1}|x_t,x_0)$ ​∣xt​,x0​) 中的 x0 $x_0$ ​ 換成 xθt $x_\theta^t$ t​，即 q(xt−1∣xt,xθt) $q(x_{t-1}|x_t,x_\theta^t)$ ​∣xt​,xθt​)（Sec. 3.1）。只有 xθt=x0 $x_\theta^t=x_0$ t​=x0​ 時，這個分佈才等於真正的後驗；預測誤差不為 0，所以作者把誤差放進分析。
+
+ 快速取樣使用 respacing（Nichol & Dhariwal, 2021）：訓練用 1000 步，取樣時從中均勻挑出 T′ $T'$ 個時間步，沿用原本的 αˉ $\bar\alpha$ ，再由相鄰兩步的 αˉ $\bar\alpha$ 重新算出 αt=αˉt/αˉt−1 $\alpha_t=\bar\alpha_t/\bar\alpha_{t-1}$ ​=αˉt​/αˉt−1​ 與 βt=1−αt $\beta_t=1-\alpha_t$ ​=1−αt​。本頁的元件都以這個方式計算 T′ $T'$ 步的係數。
+
+ 延伸閱讀：DDPM 反向取樣公式、ε-prediction 與 DDPM、score-based 模型
+
+ 03 · 單步差距
+
+ 預測誤差讓單步取樣的變異數變大
+
+ 本章符號
+
+ et $e_t$ ​：x0 $x_0$ ​ 預測誤差的標準差（每個維度）；ϵ0,ϵ1,ϵ3∼N(0,I) $\epsilon_0,\epsilon_1,\epsilon_3\sim\mathcal N(0,I)$ ​,ϵ1​,ϵ3​∼N(0,I) 彼此獨立。
+
+ 作者沿用 Analytic-DPM（Bao et al., 2022）的作法，把網路的 x0 $x_0$ ​ 預測寫成「真實 x0 $x_0$ ​ 加上高斯誤差」：
+
+ pθ(x0∣xt)=N(xθt;x0,et2I),xθt=x0+et ϵ0 $p_\theta(x_0|x_t)=\mathcal N\big(x_\theta^t;x_0,e_t^2I\big),\qquad x_\theta^t=x_0+e_t\,\epsilon_0$ ​(x0​∣xt​)=N(xθt​;x0​,et2​I),xθt​=x0​+et​ϵ0​
+Eq. 7
+
+ 論文註明，即使平均不是 x0 $x_0$ ​，也不影響後面的變異數差距。推導時誤差 ϵ0 $\epsilon_0$ ​ 與 xt+1 $x_{t+1}$ ​ 中的噪聲 ϵ $\epsilon$ 視為獨立，變異數才能逐項相加 本頁推導（由 App. A.1 的計算方式看出）。這是一個建模選擇：即使網路等於最佳去噪器 E[x0∣xt] $\mathbb E[x_0|x_t]$ ​∣xt​]，xt $x_t$ ​ 也無法唯一決定 x0 $x_0$ ​，所以 et $e_t$ ​ 包含不可約的誤差，不會因為網路更好而降到 0 本頁推導。
+
+ 從真實的 xt+1 $x_{t+1}$ ​ 走一步得到 x^t=μθ(xt+1,t+1)+β~t+1 ϵ1 $\hat x_t=\mu_\theta(x_{t+1},t+1)+\sqrt{\tilde\beta_{t+1}}\,\epsilon_1$ t​=μθ​(xt+1​,t+1)+β~​t+1​​ϵ1​（Eq. 8）。把 Eq. 7 與 Eq. 1 代入並整理（App. A.1）：
+
+ x^t=αˉt x0+1−αˉt+(αˉt βt+11−αˉt+1 et+1)2  ϵ3 $\hat x_t=\sqrt{\bar\alpha_t}\,x_0+\sqrt{1-\bar\alpha_t+\Big(\frac{\sqrt{\bar\alpha_t}\,\beta_{t+1}}{1-\bar\alpha_{t+1}}\,e_{t+1}\Big)^2}\;\epsilon_3$ t​=αˉt​​x0​+1−αˉt​+(1−αˉt+1​αˉt​​βt+1​​et+1​)2​ϵ3​
+Eq. 9
+
+ Table 1：訓練分佈與 DDPM 單步取樣分佈
+ 分佈平均變異數
+
+ q(xt∣x0) $q(x_t|x_0)$ ​∣x0​)（訓練）αˉtx0 $\sqrt{\bar\alpha_t}x_0$ t​​x0​(1−αˉt)I $(1-\bar\alpha_t)I$ t​)I
+
+ qθ(x^t∣xt+1) $q_\theta(\hat x_t|x_{t+1})$ ​(x^t​∣xt+1​)（取樣）αˉtx0 $\sqrt{\bar\alpha_t}x_0$ t​​x0​(1−αˉt+(c1,t+1et+1)2)I $\big(1-\bar\alpha_t+(c_{1,t+1}e_{t+1})^2\big)I$ t​+(c1,t+1​et+1​)2)I
+
+ 化簡的關鍵是恆等式 c2,t+12(1−αˉt+1)+β~t+1=1−αˉt $c_{2,t+1}^2(1-\bar\alpha_{t+1})+\tilde\beta_{t+1}=1-\bar\alpha_t$ 2​(1−αˉt+1​)+β~​t+1​=1−αˉt​（Eq. 14→15）：沒有誤差時，取樣變異數剛好等於訓練變異數。有誤差時，取樣分佈 qθ(x^t∣xt+1) $q_\theta(\hat x_t|x_{t+1})$ ​(x^t​∣xt+1​) 比訓練分佈 q(xt∣x0) $q(x_t|x_0)$ ​∣x0​) 多出 (αˉtβt+11−αˉt+1et+1)2 $\big(\frac{\sqrt{\bar\alpha_t}\beta_{t+1}}{1-\bar\alpha_{t+1}}e_{t+1}\big)^2$ t+1​αˉt​​βt+1​​et+1​)2 的變異數，平均同為 αˉtx0 $\sqrt{\bar\alpha_t}x_0$ t​​x0​（Eq. 9、Table 1）。這個差距在單一步就出現，即使網路拿到的是真實的 xt+1 $x_{t+1}$ ​（Sec. 3.2）。
+
+ DDIM（Song et al., 2021a）是確定性取樣，作者用同樣的方法推得它的差距（App. A.3，Table 8）：DDIM 的變異數多出 (1−αt+1−αˉt+11−αˉt+1)2αˉtet+12 $\big(1-\sqrt{\tfrac{\alpha_{t+1}-\bar\alpha_{t+1}}{1-\bar\alpha_{t+1}}}\big)^2\bar\alpha_te_{t+1}^2$ t+1​αt+1​−αˉt+1​​​)2αˉt​et+12​；因為 αt+1<1 $\alpha_{t+1}<1$ ​<1，根號內小於 1，所以這一項恆為正（Eq. 31）。下面的元件即時計算兩種差距。
+
+ C1單步：訓練分佈與取樣分佈的變異數
+
+ 選一個時間步 t，比較訓練變異數 1−ᾱₜ 與單步取樣多出的差距。縱軸為對數。
+
+ 取樣器
+DDPMDDIM
+
+ 排程
+cosinelinear
+
+ 步數 T′
+102050100
+
+ e（示意值，論文未給）0.10
+
+ 時間步 t2
+
+ ᾱₜ0.99081−ᾱₜ（訓練）0.009152β̃ₜ₊₁0.006516βₜ₊₁0.02213差距 DDPM0.005024取樣變異數0.01418差距／訓練0.5489
+
+ 訓練 1−ᾱₜ差距差距／訓練
+
+ 讀數由本頁依 Eq. 9、Eq. 31 即時計算。e 是示意值；論文的 eₜ 隨 t 改變（Sec. 4.2 指出 t 接近 0 時預測最差），這裡用常數，所以差距隨 t 的變化只來自係數 c₁。空心點表示超出縱軸範圍（小於 10⁻⁸ 或大於 1）。
+
+ t = 2，訓練變異數 0.009152，差距 DDPM 0.005024，差距／訓練 0.5489
+
+ 在常數 e=0.1 $e=0.1$ 、cosine 排程、20 步的設定下，t=1 $t=1$ 的差距約為訓練變異數 4.128×10−5 $4.128\times10^{-5}$ 的 240 倍。這個「末段最大」的形狀來自係數 c1,t+1 $c_{1,t+1}$ ​，不是論文的實測；論文沒有給出 et $e_t$ ​ 的數值。
+
+ 延伸閱讀：預測誤差與取樣變異數
+
+ 04 · 噪聲排程
+
+ 作者認為調整噪聲排程無法抵消差距
+
+ 本章符號
+β˙t $\dot\beta_t$ ​t​：實際取樣時使用的噪聲變異數（Eq. 8 中以 β~t $\tilde\beta_t$ ​t​ 為預設）。
+
+ 直覺的解法是把取樣噪聲變異數設得比 β~t $\tilde\beta_t$ ​t​ 小，抵消多出的項。作者否定這個方向（Sec. 3.2）：
+
+ 作者認為：Nichol & Dhariwal（2021）給出取樣噪聲變異數的範圍 β˙t∈[β~t,βt] $\dot\beta_t\in[\tilde\beta_t,\beta_t]$ ​t​∈[β~​t​,βt​]，下界 β~t $\tilde\beta_t$ ​t​ 對應 q(x0) $q(x_0)$ ​) 為 delta 函數，上界 βt $\beta_t$ ​ 對應各向同性高斯。β~t $\tilde\beta_t$ ​t​ 已是下界，不能再小，所以無法靠調整噪聲排程緩解曝光偏差。
+
+ 這是作者的論證，不是定理：Nichol & Dhariwal 的範圍描述真實資料後驗的變異數，並不是對取樣器的數學限制。在作者採用的範圍內，把 Eq. 8 的 β~t+1 $\tilde\beta_{t+1}$ ​t+1​ 換成 β˙t+1 $\dot\beta_{t+1}$ ​t+1​，變異數變成 1−αˉt+(c1,t+1et+1)2+(β˙t+1−β~t+1) $1-\bar\alpha_t+(c_{1,t+1}e_{t+1})^2+(\dot\beta_{t+1}-\tilde\beta_{t+1})$ t​+(c1,t+1​et+1​)2+(β˙​t+1​−β~​t+1​)，因為 β˙≥β~ $\dot\beta\ge\tilde\beta$ ​≥β~​，差距只會更大 本頁推導。
+
+ 作者也用這個觀點解釋 Analytic-DPM 的一個現象：Bao et al.（2022）推得的最佳變異數 βt⋆ $\beta_t^\star$ ⋆​ 大於 β~t $\tilde\beta_t$ ​t​，但在 1000 步取樣時 FID 反而比用 β~t $\tilde\beta_t$ ​t​ 差。作者認為，長取樣鏈中曝光偏差的負面影響超過了最佳變異數的增益。
+
+ 延伸閱讀：取樣變異數與 noise schedule
+
+ 05 · 多步累積
+
+ 誤差在多步取樣中累積
+
+ 本章符號
+
+ Vt $V_t$ ​：多步取樣得到的 x^t $\hat x_t$ t​ 在 Eq. 7 模型下的變異數（論文寫 βt′ $\beta'_t$ ′​）。
+
+ Δ單步、Δ多步：單步與多步的變異數誤差（論文 Δt $\Delta_t$ ​、Δt′ $\Delta'_t$ ′​，App. A.4），都等於「量到的變異數 − (1−αˉt) $(1-\bar\alpha_t)$ t​)」。
+
+ 第 03 章的差距假設網路拿到真實的 xt+1 $x_{t+1}$ ​。實際取樣時，每一步的輸入都是上一步的輸出。作者在 CIFAR-10 上用 ADM 與 20 步取樣比較兩種量法（App. A.4）：
+
+ Alg. 1：單步
+Alg. 2：多步
+
+ for t = T … 1:
+ 抽 x₀，用 Eq. 1 算出真實 xₜ
+ 走一步得到 x̂ₜ₋₁
+ 收集 x̂ₜ₋₁ − √ᾱₜ₋₁ x₀抽 x₀，用 Eq. 1 算出 x_T
+for t = T … 1:
+ 從上一步的 x̂ₜ 走一步得到 x̂ₜ₋₁
+ 收集 x̂ₜ₋₁ − √ᾱₜ₋₁ x₀
+
+ 每步輸入真實 xₜ只看得到自己產生的 x̂ₜ
+
+ 兩者都重複 50k 次，以 numpy.var 算出樣本變異數，再減去 1−αˉt $1-\bar\alpha_t$ t​。Alg. 1 每步輸入真實 xt $x_t$ ​，Alg. 2 從 xT $x_T$ ​ 連續取樣只看得到 x^t $\hat x_t$ t​；Fig. 1（CIFAR-10、20 步）顯示多步誤差越接近 t=1 $t=1$ 越大，單步誤差接近 0（App. A.4、Sec. 3.2）。讀圖值 推定：多步誤差在 t=2 $t=2$ 約 0.47、t=10 $t=10$ 約 0.265、t=18 $t=18$ 約 0.015；單步誤差全程約 0.01 以下。
+
+ 作者據此結論：單步的誤差在多步取樣中累積，變異數誤差持續增大（論文用 explosion），使取樣分佈偏離訓練分佈（論文稱 sampling drift），根本原因是預測誤差 xθt−x0 $x_\theta^t-x_0$ t​−x0​（Sec. 3.2）。App. A.2 用兩步的推導說明變異數差距會保留下來（Table 7）；論文只以實驗呈現 Fig. 1 的大小，沒有宣稱 Fig. 1 的曲線可由 Eq. 7 推得。
+
+ 本頁推導 在 Eq. 7 模型下，多步變異數有精確的遞迴。把 Table 1 的變異數乘上下一步的係數即可得到：Vt−1=c2,t2Vt+(c1,tet)2+β~t $V_{t-1}=c_{2,t}^2V_t+(c_{1,t}e_t)^2+\tilde\beta_t$ ​=c2,t2​Vt​+(c1,t​et​)2+β~​t​，起點 VT′=1−αˉT′ $V_{T'}=1-\bar\alpha_{T'}$ ​=1−αˉT′​。c2,t $c_{2,t}$ ​ 在取樣末段趨近 0，前一步多出的變異數權重變小，所以最後一步的誤差主要來自該步自己的 c1,tet $c_{1,t}e_t$ ​et​。累積主要出現在取樣中段。
+
+ 進階：本頁推導，可略過（中段累積與 T′ $T'$ ）
+
+ 沒有誤差時，c2,t2(1−αˉt)+β~t=1−αˉt−1 $c_{2,t}^2(1-\bar\alpha_t)+\tilde\beta_t=1-\bar\alpha_{t-1}$ 2​(1−αˉt​)+β~​t​=1−αˉt−1​，遞迴保持 Vt=1−αˉt $V_t=1-\bar\alpha_t$ ​=1−αˉt​。有誤差時，第 t $t$ 步新增 (c1,tet)2 $(c_{1,t}e_t)^2$ ​et​)2，上一步多出的量乘上 c2,t2 $c_{2,t}^2$ 2​。linear 排程、e=0.1 $e=0.1$ 時，中點的多步／單步比值在 T′=10,20,50,100 $T'=10,20,50,100$ =10,20,50,100 為 1.107、1.490、2.763、4.552，但 t=1 $t=1$ 的比值都約為 1。Eq. 7 模型本身不會產生 Fig. 1 那樣末段最大的差距；這不與論文矛盾，因為論文沒有用 Eq. 7 推導 Fig. 1。第 06 章的元件 C2 可以直接比較。
+
+ 附註：Table 7 的交叉項（本頁推導）
+
+ Eq. 22 把同一個 ϵ3 $\epsilon_3$ ​ 的兩個係數寫成「平方和」，而不是「和的平方」，所以 Eq. 23／Table 7 少了一階項 c2,t2f(t) $c_{2,t}^2f(t)$ 2​f(t)，f(t)=(c1,t+1et+1)2 $f(t)=(c_{1,t+1}e_{t+1})^2$ ​et+1​)2。精確的兩步變異數是 1−αˉt−1+(c1,tet)2+c2,t2f(t) $1-\bar\alpha_{t-1}+(c_{1,t}e_t)^2+c_{2,t}^2f(t)$ t−1​+(c1,t​et​)2+c2,t2​f(t)。Monte Carlo（40 萬樣本，linear 排程、T′=20 $T'=20$ =20、e=0.3 $e=0.3$ 、t=5 $t=5$ ）得 0.25333；精確式 0.25347；Eq. 23 為 0.24990。結論「變異數大於 1−αˉt−1 $1-\bar\alpha_{t-1}$ t−1​」不受影響。
+
+ 06 · 度量 δₜ
+
+ δₜ 以變異數差距量化曝光偏差
+
+ 作者提出用多步取樣分佈 qθ(x^t∣xT) $q_\theta(\hat x_t|x_T)$ ​(x^t​∣xT​) 的變異數誤差量化第 t $t$ 步的曝光偏差（Sec. 3.3）。沿用第 05 章的 Vt $V_t$ ​：
+
+ δt=(Vt−1−αˉt)2 $\delta_t=\big(\sqrt{V_t}-\sqrt{1-\bar\alpha_t}\big)^2$ ​=(Vt​​−1−αˉt​​)2
+Sec. 3.3
+
+ 論文寫成 δt=(βt′−βˉt)2 $\delta_t=(\sqrt{\beta'_t}-\sqrt{\bar\beta_t})^2$ ​=(βt′​​−βˉ​t​​)2，其中 βt′=Vt $\beta'_t=V_t$ ′​=Vt​、βˉt=1−αˉt $\bar\beta_t=1-\bar\alpha_t$ ​t​=1−αˉt​。它來自 Fréchet distance：q(xt∣x0) $q(x_t|x_0)$ ​∣x0​) 與 qθ(x^t∣xT) $q_\theta(\hat x_t|x_T)$ ​(x^t​∣xT​) 的 Fréchet distance 為 d2=Nδt $d^2=N\delta_t$ =Nδt​，N $N$ 為 xt $x_t$ ​ 的維度（Dowson & Landau, 1982）。兩個分佈平均相同、共變異數都是單位矩陣的倍數，所以只剩變異數項 本頁推導。量測用 Alg. 3：與 Alg. 2 相同，每個樣本從 x0 $x_0$ ​ 算出 xT $x_T$ ​，一路取樣並收集 x^t−1−αˉt−1x0 $\hat x_{t-1}-\sqrt{\bar\alpha_{t-1}}x_0$ t−1​−αˉt−1​​x0​，用 50,000 個樣本算出樣本變異數再代入定義（App. A.5）。App. A.6 指出，給定已訓練模型，δ1 $\delta_1$ ​ 與 FID 強相關（Fig. 8，CIFAR-10、20 步）。
+
+ C2多步：變異數誤差的累積與 δₜ
+
+ 模式 A 是論文 Eq. 7 的模型；模式 B（進階）是網路完全正確時，用 Alg. 2 的方式會量到的值。
+
+ 網路模型
+A 論文 Eq. 7B 完美網路（進階）
+
+ 排程
+cosinelinear
+
+ 步數 T′
+102050100
+
+ e（示意值）0.10
+
+ Var(x₀)（推定：CIFAR-10 約 0.25）0.25
+
+ 時間步 t1
+
+ 顯示 Fig. 1 讀圖值（推定）
+ 論文的解析模型：每步的 x₀ 預測以真實 x₀ 為中心，誤差彼此獨立。
+
+ Δ單步0.00991Δ多步0.00991Δ多步／Δ單步1δₜ0.008711c₂（下一步權重）0
+
+ Δ單步Δ多步2ᾱₜ·Var(x₀)Fig. 1 讀圖（推定）
+
+ 計算方式
+A：VT′=1−αˉT′ $V_{T'}=1-\bar\alpha_{T'}$ ​=1−αˉT′​，Vs−1=c2,s2Vs+(c1,se)2+β~s $V_{s-1}=c_{2,s}^2V_s+(c_{1,s}e)^2+\tilde\beta_s$ ​=c2,s2​Vs​+(c1,s​e)2+β~​s​。B：ks=αˉsσ02/(αˉsσ02+1−αˉs) $k_s=\sqrt{\bar\alpha_s}\sigma_0^2/(\bar\alpha_s\sigma_0^2+1-\bar\alpha_s)$ ​=αˉs​​σ02​/(αˉs​σ02​+1−αˉs​)，as=c2,s+c1,sks $a_s=c_{2,s}+c_{1,s}k_s$ ​=c2,s​+c1,s​ks​；追蹤 P01=Cov(x0,x^) $P_{01}=\mathrm{Cov}(x_0,\hat x)$ ​=Cov(x0​,x^) 與 P11=Var(x^) $P_{11}=\mathrm{Var}(\hat x)$ ​=Var(x^)：P01←asP01 $P_{01}\leftarrow a_sP_{01}$ ​←as​P01​、P11←as2P11+β~s $P_{11}\leftarrow a_s^2P_{11}+\tilde\beta_s$ ​←as2​P11​+β~​s​，量到的變異數為 P11−2αˉs−1P01+αˉs−1σ02 $P_{11}-2\sqrt{\bar\alpha_{s-1}}P_{01}+\bar\alpha_{s-1}\sigma_0^2$ ​−2αˉs−1​​P01​+αˉs−1​σ02​。單步：(asαˉs−αˉs−1)2σ02+as2(1−αˉs)+β~s $(a_s\sqrt{\bar\alpha_s}-\sqrt{\bar\alpha_{s-1}})^2\sigma_0^2+a_s^2(1-\bar\alpha_s)+\tilde\beta_s$ ​αˉs​​−αˉs−1​​)2σ02​+as2​(1−αˉs​)+β~​s​。
+
+ 讀數由本頁即時計算。A 是 Eq. 7 下的精確遞迴，B 是高斯玩具，兩者都是本頁推導；Fig. 1 讀圖值為推定。B 的值是玩具估計，不是下限。
+
+ 模式 A，t = 1，Δ單步 0.00991，Δ多步 0.00991，δ 0.008711
+
+ 進階：完美網路下的 δₜ（模式 B 的讀法，本頁推導）
+
+ 若資料是平均 0、變異數 σ02 $\sigma_0^2$ 2​ 的高斯，x0 $x_0$ ​ 與 xt $x_t$ ​ 為聯合高斯，最佳預測是線性的：E[x0∣xt]=ktxt $\mathbb E[x_0|x_t]=k_tx_t$ ​∣xt​]=kt​xt​，kt=Cov(x0,xt)/Var(xt)=αˉtσ02/(αˉtσ02+1−αˉt) $k_t=\mathrm{Cov}(x_0,x_t)/\mathrm{Var}(x_t)=\sqrt{\bar\alpha_t}\sigma_0^2/(\bar\alpha_t\sigma_0^2+1-\bar\alpha_t)$ ​=Cov(x0​,xt​)/Var(xt​)=αˉt​​σ02​/(αˉt​σ02​+1−αˉt​)。代入 Eq. 5 後每一步都是 x^t−1=atx^t+β~tz $\hat x_{t-1}=a_t\hat x_t+\sqrt{\tilde\beta_t}z$ t−1​=at​x^t​+β~​t​​z，所以只要追蹤 x^ $\hat x$ 的變異數與它和 x0 $x_0$ ​ 的共變異數兩個數，就能算出 Alg. 2 會量到的值。
+
+ 結果：cosine 排程、20 步、Var(x0)=0.25 $\mathrm{Var}(x_0)=0.25$ ​)=0.25 時，多步誤差在 t=2,10,18 $t=2,10,18$ 為 0.435、0.244、0.009，與 Fig. 1 讀圖值的大小與形狀相近；但同一玩具的單步誤差在中段約 0.06，大於 Fig. 1 的單步曲線。所以只能說 Fig. 1 的多步曲線中有一部分即使網路完美也會出現。
+
+ δₜ 宜用於比較取樣器，不是絕對偏差量 本頁推導
+
+ 0.426完美網路的 δ₁（高斯玩具估計）
+0.39–0.465Fig. 8 實測的 δ₁（CIFAR-10，讀圖推定）
+
+ 網路完美時，Alg. 3 量到的 δt $\delta_t$ ​ 也不是 0。原因是 xT $x_T$ ​ 幾乎不含 x0 $x_0$ ​ 的資訊（αˉT $\bar\alpha_T$ T​ 很小），減去起點的 αˉtx0 $\sqrt{\bar\alpha_t}x_0$ t​​x0​ 後，仍有約 2αˉtVar(x0) $2\bar\alpha_t\mathrm{Var}(x_0)$ t​Var(x0​) 的變異數誤差。高斯玩具（cosine、20 步、Var(x0)=0.25 $\mathrm{Var}(x_0)=0.25$ ​)=0.25）得 δ1=0.426 $\delta_1=0.426$ ​=0.426，與 Fig. 8 實測的 0.39–0.465 同一量級；這不是下限，變異數較小的取樣器可以低於它。所以 δt $\delta_t$ ​ 宜用於比較同一量測方式下的不同取樣器，論文 Fig. 4、8、9、10 正是這樣使用。
+
+ 延伸閱讀：預測誤差與取樣變異數：解析分析與度量 δₜ
+
+ 07 · Epsilon Scaling
+
+ Epsilon Scaling 在取樣時把 ε 除以 λ
+
+ 本章符號
+
+ ε_train：網路在訓練情境（輸入真實 xt $x_t$ ​）的輸出；ε_samp：取樣情境（輸入 x^t $\hat x_t$ t​）的輸出。論文寫 ϵθt $\epsilon_\theta^t$ t​、ϵθs $\epsilon_\theta^s$ s​，上標 t $t$ 代表 training，不是時間步。
+
+ ΔN(t) $\Delta N(t)$ ：兩者的 L2 範數比；λt $\lambda_t$ ​：縮放係數。
+
+ 作者先整理已知的解法（Sec. 3.4）：一是訓練更準確的網路，例如 EDM 以網路與超參數設計把 CIFAR-10 FID 由 3.01 降到 2.51；二是資料增強，讓網路在 xt $x_t$ ​ 周圍學到更密的向量場，例如 Ning et al.（2023）以高斯項擴增每個訓練樣本 xt $x_t$ ​；三是對預測誤差較不敏感的 Poisson Flow 架構。這些方法都需要重新訓練。作者的問題是：能否只在取樣階段、不重新訓練就緩解曝光偏差？
+
+ 觀察來自 Fig. 2（CIFAR-10、20 步、每步 50k 樣本）：固定已訓練網路，ε_train 用真實 xt $x_t$ ​ 收集，ε_samp 在真實取樣過程中收集。每個時間步，取樣時 ε_samp 的 L2 範數都大於 ε_train（Sec. 4.1）。作者推論：x^t $\hat x_t$ t​ 以較大的變異數分布在 xt $x_t$ ​ 周圍，網路在 xt $x_t$ ​ 附近學到的向量場長度偏長。依據是：t=T $t=T$ 時兩者的輸入相同（都是 xT∼N(0,I) $x_T\sim\mathcal N(0,I)$ ​∼N(0,I)），從 T−1 $T-1$ 起 x^t $\hat x_t$ t​ 因前一步的誤差開始偏離，並沿取樣鏈反覆累積。因此作者推論，縮小過長的 ε_samp 可以縮小 x^t $\hat x_t$ t​ 與 xt $x_t$ ​ 的差距。
+
+ 方法只改 Eq. 6 平均中的 ϵ $\epsilon$ 項：
+
+ μθ(xt,t)=1αt(xt−βt1−αˉt ϵθ(xt,t)λt) $\mu_\theta(x_t,t)=\frac{1}{\sqrt{\alpha_t}}\Big(x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\,\frac{\epsilon_\theta(x_t,t)}{\boxed{\lambda_t}}\Big)$ ​(xt​,t)=αt​​1​(xt​−1−αˉt​​βt​​λt​​ϵθ​(xt​,t)​)
+Sec. 4.1
+
+ Epsilon Scaling 只把 ϵ $\epsilon$ 除以 λt $\lambda_t$ ​：μθ=1αt(xt−βt1−αˉtϵθλt) $\mu_\theta=\frac1{\sqrt{\alpha_t}}(x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\frac{\epsilon_\theta}{\lambda_t})$ ​=αt​​1​(xt​−1−αˉt​​βt​​λt​ϵθ​​)，免訓練、不增加計算；依據是 Fig. 2：每個時間步取樣時 ε_samp 的 L2 範數都大於 ε_train。噪聲項 β~tz $\sqrt{\tilde\beta_t}z$ ​t​​z 不變；λ>1 $\lambda>1$ 代表縮小 ϵ $\epsilon$ 。程式上只多一行：
+
+ 取樣迴圈（ADM 風格）
+說明
+
+ eps = model(x, t)網路預測噪聲
+
+ eps = eps / lam唯一改動：lam = b（常數）或 k*t + b
+
+ mean = (x - beta[t] / sqrt(1 - abar[t]) * eps) / sqrt(alpha[t])Eq. 6 的平均
+
+ x = mean + sqrt(beta_tilde[t]) * randn_like(x) if t > 0 else mean噪聲項不變
+
+ Sec. 4.2 把兩個範數的比值記為 ΔN(t) $\Delta N(t)$ 。本頁的操作定義是 ΔN(t)=E∥ϵsamp∥2/E∥ϵtrain∥2 $\Delta N(t)=\sqrt{\mathbb E\|\epsilon_{\text{samp}}\|^2/\mathbb E\|\epsilon_{\text{train}}\|^2}$ ​∥2/E∥ϵtrain​∥2​：N $N$ 維時 L2 範數集中在其均方根附近，所以範數比等於均方範數比的平方根。本頁推導 在 Eq. 7 模型下，兩個期望（每個維度）是 E∥ϵtrain∥2/N=1+αˉtet21−αˉt $\mathbb E\|\epsilon_{\text{train}}\|^2/N=1+\frac{\bar\alpha_te_t^2}{1-\bar\alpha_t}$ ​∥2/N=1+1−αˉt​αˉt​et2​​ 與 E∥ϵsamp∥2/N=Vt+αˉtet21−αˉt $\mathbb E\|\epsilon_{\text{samp}}\|^2/N=\frac{V_t+\bar\alpha_te_t^2}{1-\bar\alpha_t}$ ​∥2/N=1−αˉt​Vt​+αˉt​et2​​。因為 Vt>1−αˉt $V_t>1-\bar\alpha_t$ ​>1−αˉt​，ΔN(t)>1 $\Delta N(t)>1$ ，在 t=T′ $t=T'$ 等於 1，方向與 Fig. 2 一致。量級不一致：cosine、20 步、e=0.1 $e=0.1$ 時 ΔN(1)=1.41 $\Delta N(1)=1.41$ 、ΔN(2)=1.13 $\Delta N(2)=1.13$ ，Fig. 3 左端約 1.19（讀圖）；ΔN(1)≈2 $\Delta N(1)\approx\sqrt2$ ​ 幾乎與 e $e$ 無關，是 c1,1=1 $c_{1,1}=1$ ​=1 的數學結果，不是資料。
+
+ 本頁不以解析玩具示範 Epsilon Scaling 的 FID 或 δt $\delta_t$ ​ 改善。在 Eq. 7 模型或高斯玩具中，常數 λ $\lambda$ 的效果與論文在真實網路上量到的不同；Epsilon Scaling 的效益是論文的實驗結果（Fig. 2、4、5，Table 2–6），第 09 章整理這些數字。
+
+ 延伸閱讀：Epsilon Scaling、曝光偏差的既有緩解方法
+
+ 08 · λ(t) 的設計
+
+ λ(t) 的形狀來自範數比，數值由搜尋決定
+
+ 先說明兩個量的差別。下面 Eq. 10 中的 λt $\lambda_t$ ​，是在「誤差沿取樣鏈線性傳播」的假設下，由範數比推得的每步範數高估比例；實驗表格中的 b $b$ ，是以 FID 搜尋出的取樣超參數。兩者不是同一件事。論文說明理想上應先模擬 ΔN $\Delta N$ 再解 Eq. 10，但實際上直接搜尋，Eq. 10 只提供 λ $\lambda$ 形狀的定性依據。
+
+ ΔN(t)−1≈∫tT(λT−1) dt+∫tT−1(λT−1−1) dt+⋯+∫tt+1(λt+1−1) dt $\Delta N(t)-1\approx\int_t^T(\lambda_T-1)\,dt+\int_t^{T-1}(\lambda_{T-1}-1)\,dt+\dots+\int_t^{t+1}(\lambda_{t+1}-1)\,dt$ T​(λT​−1)dt+∫tT−1​(λT−1​−1)dt+⋯+∫tt+1​(λt+1​−1)dt
+Eq. 10
+
+ ΔN(t)−1 $\Delta N(t)-1$ 是先前各步範數高估在線性傳播假設下的累積：第一項是取樣起點 T $T$ 的誤差從 T $T$ 傳到 t $t$ ，其餘依此類推（Sec. 4.2）。擬合時忽略 t $t$ 接近 0 的區域，因為那裡的 ϵθ $\epsilon_\theta$ ​ 預測很差、loss 比其他時間步大數個數量級，縮放有問題的預測沒有幫助。Fig. 3（CIFAR-10，20 步與 50 步）的兩條曲線大致重疊，讀圖 推定：最左端約 1.19，t=5 $t=5$ 時約 1.02–1.03，之後接近 1。論文寫 ΔN(t) $\Delta N(t)$ 在 t∼(5,T) $t\sim(5,T)$ 可用二次函數擬合，「因此 Eq. 10 的解是線性函數 λ(t)=kt+b $\lambda(t)=kt+b$ 」。
+
+ 實際作法：作者發現 k,b $k,b$ 在不同網路間變化不大，所以直接搜尋，不必模擬；而且 T′ $T'$ 約 50 時 k $k$ 衰減到 0。論文寫二次 ΔN $\Delta N$ 對應線性 λ=kt+b $\lambda=kt+b$ ，但 T′≈50 $T'\approx50$ ≈50 時 k→0 $k\to0$ ，多數實驗用常數 λ=b $\lambda=b$ （ADM CIFAR-10 b=1.017 $b=1.017$ ），b $b$ 以 FID 搜尋、6–10 次試驗（Sec. 4.2、5.1）。
+
+ C3Eq. 10：範數比的形狀決定 λ(t) 的形狀
+
+ 設定 ΔN(t) 在 t = 5 到 20 的形狀，本頁用二階差分反解每一步的 λₜ。
+
+ h = ΔN(5) − 1（推定，讀自 Fig. 3，±0.01）0.020
+
+ 形狀 w：0 = 二次，1 = 三次0.00
+
+ λ₆1.000178λ₁₃1.000178λ₁₉1.000178λ₂₀1.0000892h/15²1.778e-4回代誤差3.8e-15
+
+ ΔN(t) = 1 + F(t)λₜ − 1二次式的常數解 2h/15²
+
+ T′ = 20（Fig. 3 的 20 步曲線）。Eq. 10 的離散形式與二階差分為本頁推導；h 讀自 Fig. 3（推定）。這裡的 λ 是由範數比推得的每步高估比例；論文實際使用的 b 是以 FID 搜尋的取樣超參數，兩者不是同一個量。以預設值反解得 λ − 1 ≈ 1.8×10⁻⁴；ADM-ES 在 CIFAR-10 20 步搜尋到 b − 1 = 0.017。
+
+ h = 0.020，w = 0.00，λ₆ = 1.000178，λ₁₉ = 1.000178
+
+ 本頁推導 為什麼二次對應常數：Eq. 10 的連續形式是 ΔN(t)−1=∫tT(λ(s)−1)(s−t) ds $\Delta N(t)-1=\int_t^T(\lambda(s)-1)(s-t)\,ds$ T​(λ(s)−1)(s−t)ds，對 t $t$ 微分兩次得 ΔN′′(t)=λ(t)−1 $\Delta N''(t)=\lambda(t)-1$ (t)=λ(t)−1；二次式的二階導數是常數，所以二次 ΔN $\Delta N$ 對應常數 λ $\lambda$ ，三次式才對應線性 λ $\lambda$ 。離散版本是 λt−1=F(t−1)−2F(t)+F(t+1) $\lambda_t-1=F(t-1)-2F(t)+F(t+1)$ ​−1=F(t−1)−2F(t)+F(t+1)，F=ΔN−1 $F=\Delta N-1$ 。這與論文「二次 → 線性」的寫法不同，但與論文最後採用的 λ(t)=b $\lambda(t)=b$ 一致。
+
+ 線性排程的 b $b$ 如何決定：App. A.10 建議先找到最佳常數 b∗ $b^*$ ，再保持 ∑λ(t)=∑λ∗(t) $\sum\lambda(t)=\sum\lambda^*(t)$ (t) 搜尋 k $k$ ，b $b$ 由此算出。Table 14 的 ADM-ES* 有四列符合 b=b∗−9.5k $b=b^*-9.5k$ −9.5k（即 t=0,…,19 $t=0,\dots,19$ 時總和守恆），CIFAR-10 列不符合 本頁推導：
+
+ Table 14（ADM，20 步）的 ADM-ES*：表中的 b 與 b* − 9.5k 的比較
+ 資料集b*k表中 bb* − 9.5k
+
+ CIFAR-101.0170.00251.00.99325
+
+ LSUN tower 641.0110.00081.00341.0034
+
+ FFHQ 1281.0080.00041.00421.0042
+
+ ImageNet 641.0060.00021.00411.0041
+
+ ImageNet 1281.0050.000221.002911.00291
+
+ 09 · 實驗結果
+
+ ES 在六種框架上都降低 FID
+
+ 評估指標是 FID，用 50k 個生成樣本、以整個訓練集為參考，計算方式同 ADM；正文聚焦 T′≤100 $T'\le100$ ≤100（Sec. 5）。主要數字：
+
+ ADM（Table 2）：ES 在 ADM CIFAR-10 100 步的 FID 由 3.37 降到 2.17；50 步 4.43→2.49；20 步 10.36→5.15（線性排程 ES* 為 4.31）。FFHQ 128 的改善為 7.75、16.65（100、50 步）；論文寫 20 步改善 34.52，這個數字等於 59.35−24.83（ADM-ES*），ADM-ES 是 59.35−26.14=33.21 本頁推導。ImageNet 64 不使用 classifier guidance，ImageNet 128 使用 guidance scale 0.5。
+
+ 與其他隨機取樣器比較（Table 3）：ADM-ES 100 步 2.17、50 步 2.49；EDM (VP) 511 步 2.27、EDM (VE) 2047 步 2.23、Improved SDE 1023 步 2.35、Restart 115 步 2.21、SA-Solver 95 步 2.63、ADM-IP 100 步 2.38。作者稱相對 EDM 與 Improved SDE 快 5 到 20 倍。
+
+ DDIM／DDPM（Table 4）：η=0 $\eta=0$ 為 DDIM，η=1 $\eta=1$ 為 DDPM。CelebA 的 DDPM 改善 47.7%、63.1%、60.7%（20、50、100 步），DDIM 的改善較小。
+
+ EDM（Table 5，CIFAR-10，VP）：EDM 的網路輸出不是 ϵ $\epsilon$ ，但每步可以取出 ϵ $\epsilon$ 再縮放。35 步 Euler：無條件 3.81→2.80、有條件 3.74→2.59；Heun 的增益較小（無條件 1.97→1.95）。
+
+ 綜合來看，步數少（FID 絕對改善較大）、隨機取樣（DDPM η=1 $\eta=1$ ）、Euler（相對 Heun）的增益較大（Tables 2、4、5）。LDM、DiT、PFGM++ 與 T′>100 $T'>100$ >100 的結果見下面的元件。ES 對 precision 與 recall 的影響小：ADM-ES 的 recall 較高、precision 略低（Table 13）。
+
+ C4實驗結果瀏覽器
+
+ 選一張表與子集，比較基準與 Epsilon Scaling 的 FID（越低越好）。
+
+ ADM（Table 2）DDIM·DDPM（Table 4）EDM（Table 5）LDM（Table 6）DiT（Table 19）PFGM++（Tables 9–10）長取樣鏈（Tables 11–12）敏感度（Tables 17–18）
+
+ CIFAR-10 32×32LSUN tower 64FFHQ 128ImageNet 64ImageNet 128
+
+ 以表格顯示
+
+ 基準ESES*（線性 λ）
+
+ 數值照錄論文（Tables 2、4–6、9–12、14–19）；改善率由本頁計算。窄螢幕的長條圖省略 b 值，勾選「以表格顯示」可看完整數字。
+
+ ES 也降低了 δt $\delta_t$ ​：Fig. 4 顯示 ADM-ES 在 t=1 $t=1$ 的 δt $\delta_t$ ​ 低於 ADM。Fig. 4 的圖說是 LSUN tower 64×64（正文寫 CIFAR-10）；CIFAR-10 與 FFHQ 128 的結果在 Fig. 9、Fig. 10。Fig. 5（LSUN tower 64×64）顯示套用 ES 後，取樣時的 ∥ϵθ∥ $\|\epsilon_\theta\|$ ​∥ 更接近訓練時的值；前提是 ∥ϵθ(xt)∥ $\|\epsilon_\theta(x_t)\|$ ​(xt​)∥ 在 xt $x_t$ ​ 附近局部單調（Sec. 5.2）。
+
+ 限制：ES 只修正 ϵ $\epsilon$ 的大小、不修正方向，所以無法使 δt=0 $\delta_t=0$ ​=0，也無法把取樣軌跡完全推到訓練時的向量場上（Sec. 5.2）。
+
+ 10 · 作者的解釋
+
+ 作者對增益差異的解釋
+
+ DDIM 增益較小。作者認為有兩個原因：短取樣鏈下確定性取樣本身的 FID 優勢，以及 DDPM 的噪聲項能主動修正先前步驟的誤差（Karras et al., 2022）（Sec. 5.3）。
+
+ Heun 增益較小。作者認為一是 Heun 等高階解算器的截斷誤差較小；二是 Heun 的校正步修正前一個 Euler 步的預測誤差，使取樣軌跡更接近訓練時的向量場。Fig. 6（CIFAR-10，21 步）中 Heun 的訓練與取樣範數差距小於 Euler（Sec. 5.4）。
+
+ 定性樣本。相同 seed 下，ADM-ES 修正了 ADM 的過曝、欠曝、粗糙背景與細節缺陷（Fig. 7，FFHQ 128，100 步）；兩者到達相同或相近的 mode，作者認為 ES 把取樣軌跡引到相鄰但較好的機率路徑（Sec. 5.6）。
+
+ 11 · 實作
+
+ 實作設定與常見錯誤
+
+ Epsilon Scaling 只在取樣迴圈多一行 eps = eps / lam（第 07 章）。App. A.10 的搜尋建議：
+
+ 常數 b $b$ 由粗到細搜尋，步長依序 0.001、0.0005、0.0001。
+
+ 一般而言，最佳 b $b$ 隨步數 T′ $T'$ 增加而下降。
+
+ 得到 b∗ $b^*$ 後，保持 ∑λ(t)=∑λ∗(t) $\sum\lambda(t)=\sum\lambda^*(t)$ (t) 搜尋 k $k$ ，b $b$ 由此算出而不搜尋。
+
+ 搜尋時用 10k 樣本算 FID，最終報告用 50k。
+
+ App. A.11 用 Table 17、18 說明結果對 b $b$ 不敏感。所有掃描點都低於基準，但掃描範圍很窄（最佳值 ±0.002），「wide range」是作者相對於基準增益的說法；EDM 35 步只比基準低約 0.02。
+
+ Tables 17–18：不同 b 下的 FID（CIFAR-10）
+ 設定基準掃描的 bFID 範圍
+
+ ADM-ES，100 步3.371.015–1.0192.17–2.31
+
+ ADM-ES，50 步4.431.015–1.0192.49–2.55
+
+ EDM-ES Heun，35 步1.971.0005–1.00081.947–1.953
+
+ EDM-ES Heun，13 步7.161.004–1.0076.54–6.60
+
+ 常見錯誤
+
+ 縮放方向：λ>1 $\lambda>1$ 是縮小 ϵ $\epsilon$ ；只改 Eq. 6 平均中的 ϵ $\epsilon$ ，不動噪聲項。
+
+ b $b$ 不一定大於 1：EDM Heun 21 步為 0.9985／0.9983（Table 16），PFGM++ 21 步為 0.970／0.996（Tables 9–10），DiT 為 0.965–0.995（Table 19）。
+
+ b $b$ 依資料集、步數、模型而定，且一般隨 T′ $T'$ 增加而下降；DDPM（η=1 $\eta=1$ ）用的 b $b$ （1.03–1.06）遠大於 DDIM（1.001–1.0052）（Table 15）。
+
+ 線性排程的 t $t$ 索引：論文沒有寫明；Table 14 的算術與 t=0,…,T′−1 $t=0,\dots,T'-1$ −1 一致 推定，且 CIFAR-10 列不符合 ∑λ $\sum\lambda$ 守恆的規則。
+
+ EDM：先由網路輸出取出 ϵ $\epsilon$ 再縮放（Sec. 5.4）。論文實驗用 VP 設定，x=s(t)(y+σn) $x=s(t)(y+\sigma n)$ ，所以 ϵ^=(x/s(t)−Dθ(x/s(t);σ))/σ $\hat\epsilon=\big(x/s(t)-D_\theta(x/s(t);\sigma)\big)/\sigma$ =(x/s(t)−Dθ​(x/s(t);σ))/σ 本頁推導。
+
+ 快速取樣用 respacing；擬合 ΔN $\Delta N$ 時忽略 t $t$ 接近 0 的區域。
+
+ 搜尋 λ $\lambda$ 時用 10k 樣本算 FID，報告時用 50k。
+
+ 程式碼：github.com/forever208/ADM-ES。
+
+ 12 · 研究脈絡
+
+ 研究脈絡
+
+ 「曝光偏差」一詞來自序列生成（Ranzato et al.；Schmidt）。擴散模型這一側，DDPM 與 DDIM 給出取樣公式，Improved DDPM、Analytic-DPM 與 EDM 研究取樣變異數與排程。曝光偏差的緩解分成需要重新訓練的（DDPM-IP、誤差傳播的上界最佳化）與免訓練的（shifted time steps），本文屬於後者。每張卡片連到對應的研究筆記。
+
+ 擴散模型基礎曝光偏差的起源取樣變異數既有緩解方法本文
+
+ 2015擴散模型基礎Deep Unsupervised Learning using Nonequilibrium Thermodynamics
+Sohl-Dickstein et al.
+擴散模型的起點
+arXiv ↗筆記
+2015曝光偏差的起源Sequence Level Training with Recurrent Neural Networks
+Ranzato et al.
+本論文引用作為 exposure bias 一詞的出處
+arXiv ↗筆記
+2019擴散模型基礎Generative Modeling by Estimating Gradients of the Data Distribution
+Song & Ermon
+score-based 生成模型
+arXiv ↗筆記
+2019曝光偏差的起源Generalization in Generation: A closer look at Exposure Bias
+Schmidt
+exposure bias 的進一步分析，本論文一併引用
+arXiv ↗筆記
+2020擴散模型基礎Denoising Diffusion Probabilistic Models
+Ho et al.
+DDPM；本論文第 2 節的記號與 ε 預測
+arXiv ↗筆記
+2020擴散模型基礎Denoising Diffusion Implicit Models
+Song et al.
+DDIM 取樣器，附錄推導其取樣分佈
+arXiv ↗筆記
+2021取樣變異數Improved Denoising Diffusion Probabilistic Models
+Nichol & Dhariwal
+取樣變異數範圍 [β̃_t, β_t] 與 respacing
+arXiv ↗筆記
+2022取樣變異數Analytic-DPM
+Bao et al.
+高斯近似預測誤差與最優取樣變異數
+arXiv ↗筆記
+2022取樣變異數Elucidating the Design Space of Diffusion-Based Generative Models
+Karras et al.
+EDM；以更準確網路降低誤差，表 3 比較對象
+arXiv ↗筆記
+2023既有緩解方法Input Perturbation Reduces Exposure Bias in Diffusion Models
+Ning et al.
+首次指出擴散模型曝光偏差，以輸入擾動訓練緩解
+arXiv ↗筆記
+2023既有緩解方法Alleviating Exposure Bias in Diffusion Models through Sampling with Shifted Time Steps
+Li et al.
+免重訓、調整時間步選擇
+arXiv ↗筆記
+2023既有緩解方法On Error Propagation of Diffusion Models
+Li & van der Schaar
+估計累積誤差上界
+arXiv ↗筆記
+2023本文Elucidating the Exposure Bias in Diffusion Models
+Ning et al.
+本論文：解析分析、度量 δ_t、Epsilon Scaling
+arXiv ↗筆記
+
+ 13 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ Epsilon Scaling 只修正 ϵ $\epsilon$ 的大小，不修正方向（Sec. 5.2）。理論分析依賴 Eq. 7 的高斯、獨立誤差模型；λ $\lambda$ 由 FID 搜尋決定，Eq. 10 只提供定性依據。另外，即使網路完美，Alg. 3 量到的 δt $\delta_t$ ​ 也不為 0 本頁推導，所以 δt $\delta_t$ ​ 應用於比較。
+
+ 研究筆記（依閱讀順序）
+
+ 擴散模型曝光偏差分析與 Epsilon Scaling：研究脈絡總覽總覽
+
+ 曝光偏差在序列生成中的來源：Ranzato 等人與 Schmidt詞的來源
+
+ DDPM 反向取樣公式：後驗、ε 預測與 DDIM取樣公式
+
+ 取樣變異數與 noise schedule：Improved DDPM、Analytic-DPM、EDM變異數下界與高斯近似
+
+ 曝光偏差的既有緩解方法：DDPM-IP、shifted time steps 與誤差傳播分析既有方法
+
+ 預測誤差與取樣變異數：曝光偏差的解析分析與度量 δₜ本論文第 3 節
+
+ Epsilon Scaling：不需重新訓練的曝光偏差緩解方法本論文第 4、5 節
+
+ ε-prediction 與 DDPM、score-based 模型站內既有筆記
+
+ 擴散模型的 exposure bias站內筆記（No. 405）
+
+ DDPM-IP：訓練時的輸入擾動站內筆記（No. 405）
+
+ Diffusion Forcing：per-token 獨立噪聲的因果序列擴散站內既有筆記
+
+ Mang Ning, Mingxiao Li, Jianlin Su, Albert Ali Salah, Itir Onal Ertugrul. Elucidating the Exposure Bias in Diffusion Models. ICLR 2024. arXiv:2308.15321.
+
+ 本頁的方程式與數字取自論文 v6；標示「本頁推導」的內容為本頁自行推導，並非論文結論；標示「推定」的值為讀圖或校準值。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記

@@ -1,0 +1,1269 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>擴散模型的曝光偏差</title>
+<meta name="description" content="圖解 Ning 等人的 ICLR 2024 論文：以高斯誤差模型推得擴散模型取樣分佈的變異數大於訓練分佈，提出曝光偏差度量 δₜ，並以免訓練的 Epsilon Scaling 在取樣時把預測的噪聲除以常數 λ。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+/* ---- No. 406 additions ---- */
+.seg button[aria-checked=true]{background:var(--accent-soft);color:var(--ink)}
+.chip[aria-checked=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+details.sym,details.adv,details.calc{max-width:700px;margin:0 0 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.adv{border-style:dashed}
+details.calc{margin:14px 0 0;max-width:none}
+details.sym>summary,details.adv>summary,details.calc>summary{cursor:pointer;list-style:none;padding:12px 20px;min-height:44px;font:500 14px/1.4 var(--f-body);color:var(--ink-2);display:flex;align-items:center;gap:10px}
+details.sym>summary::-webkit-details-marker,details.adv>summary::-webkit-details-marker,details.calc>summary::-webkit-details-marker{display:none}
+details.sym>summary::before,details.adv>summary::before,details.calc>summary::before{content:"";flex:none;width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details[open].sym>summary::before,details[open].adv>summary::before,details[open].calc>summary::before{transform:rotate(45deg)}
+details.sym .qa,details.adv .qa,details.calc .qa{padding:0 20px 14px;font-size:15px;line-height:1.75}
+details.sym ul{margin:0;padding-left:1.2em}
+blockquote.author{max-width:700px;margin:0 0 20px;padding:4px 0 4px 18px;border-left:2px solid var(--line);color:var(--ink-2)}
+blockquote.author p{margin:0}
+dl.ro{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:0;padding:10px 14px;border-radius:10px;background:var(--surface-2);font:400 13px/1.6 var(--f-mono);color:var(--ink-2)}
+dl.ro dt{margin:0;font-family:var(--f-body)}
+dl.ro dd{margin:0;color:var(--ink);text-align:right}
+dl.ro dd.acc{color:var(--accent)}
+.pipes{margin:32px 0 0;max-width:720px;overflow-x:auto}
+.pipes svg{width:100%;min-width:640px;height:auto;display:block}
+svg .pbox{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+svg .pbox.acc-b{stroke:var(--accent);stroke-width:2}
+svg .acc-thin{stroke:var(--accent);stroke-width:2.5;fill:none}
+svg .mk{stroke:var(--surface);stroke-width:1.5}
+svg .mk.train,svg .mk.single{fill:var(--c-par)}
+svg .mk.gap,svg .mk.multi,svg .mk.lam{fill:var(--accent)}
+svg .mk.ratio{fill:var(--ink-3)}
+svg .mk-h{fill:var(--surface);stroke-width:2}
+svg .mk-h.train,svg .mk-h.single{stroke:var(--c-par)}
+svg .mk-h.gap,svg .mk-h.multi{stroke:var(--accent)}
+svg .mk-h.ratio{stroke:var(--ink-3)}
+svg .mk-h.fig1{stroke:var(--ink)}
+svg .bar-tr{fill:var(--c-par);opacity:.85}
+svg .bar-gap{fill:url(#hatch-acc);stroke:var(--accent);stroke-width:1}
+svg .b4-base{fill:var(--surface-2);stroke:var(--ink);stroke-width:1.2}
+svg .b4-es{fill:var(--accent)}
+svg .b4-star{fill:url(#hatch-acc);stroke:var(--accent);stroke-width:1.2}
+.lg.accd::before{border-top:2px dashed var(--accent)}
+.lg.dia::before{width:9px;height:9px;border:2px solid var(--ink);transform:rotate(45deg);margin:0 6px}
+.lg.base::before{width:14px;height:12px;border:1.5px solid var(--ink);background:var(--surface-2)}
+.lg.hatch::before{width:14px;height:12px;border:1.5px solid var(--accent);background:linear-gradient(135deg,transparent 42%,var(--accent) 42% 58%,transparent 58%)}
+#c4-sub{gap:8px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><pattern id="hatch-acc" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="var(--surface)"/><line x1="0" y1="0" x2="0" y2="6" stroke="var(--accent)" stroke-width="2.5"/></pattern></defs></svg>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 406</span>
+  <span class="ttl">擴散模型的曝光偏差與 Epsilon Scaling</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 406</b> · 互動教學 · arXiv 2308.15321 · ICLR 2024</div>
+  <h1>擴散模型的曝光偏差與 <span class="lat">Epsilon Scaling</span></h1>
+  <p class="dek">這篇論文分析訓練與取樣時網路輸入的變異數差距，並在取樣時把預測的噪聲除以一個常數來縮小差距。</p>
+  <p class="byline">Mang Ning、Mingxiao Li、Jianlin Su、Albert Ali Salah、Itir Onal Ertugrul（2024）〈Elucidating the Exposure Bias in Diffusion Models〉</p>
+  <figure class="pipes" aria-label="兩條管線示意：訓練時網路的輸入是由真實資料加噪的 x_t，取樣時是網路自己產生的 x̂_t">
+    <svg viewBox="0 0 720 190" role="img" aria-label="上列：訓練，x₀ 加噪得到 xₜ，送入 ε_θ。下列：取樣，從 x_T 出發，經網路一步步產生 x̂_{T−1} 到 x̂ₜ，再送入 ε_θ。兩個 ε_θ 的輸入不同。">
+      <text class="al" x="8" y="22">訓練</text>
+      <rect class="pbox" x="60" y="34" width="84" height="40" rx="10"/><text class="labm" x="102" y="59" text-anchor="middle">x₀</text>
+      <line class="ink" x1="144" y1="54" x2="300" y2="54"/><path class="ink-f" d="M300 54l-9-5v10z"/><text class="tk" x="222" y="46" text-anchor="middle">加噪（Eq. 1）</text>
+      <rect class="pbox" x="304" y="34" width="84" height="40" rx="10"/><text class="labm" x="346" y="59" text-anchor="middle">xₜ</text>
+      <line class="ink" x1="388" y1="54" x2="552" y2="54"/><path class="ink-f" d="M552 54l-9-5v10z"/>
+      <rect class="pbox acc-b" x="556" y="34" width="100" height="40" rx="10"/><text class="labm" x="606" y="59" text-anchor="middle">ε_θ</text>
+      <text class="al" x="8" y="122">取樣</text>
+      <rect class="pbox" x="60" y="134" width="84" height="40" rx="10"/><text class="labm" x="102" y="159" text-anchor="middle">x_T</text>
+      <line class="ink" x1="144" y1="154" x2="300" y2="154"/><path class="ink-f" d="M300 154l-9-5v10z"/><text class="tk" x="222" y="146" text-anchor="middle">網路逐步去噪</text>
+      <rect class="pbox" x="304" y="134" width="84" height="40" rx="10"/><text class="labm" x="346" y="159" text-anchor="middle">x̂ₜ</text>
+      <line class="ink" x1="388" y1="154" x2="552" y2="154"/><path class="ink-f" d="M552 154l-9-5v10z"/>
+      <rect class="pbox acc-b" x="556" y="134" width="100" height="40" rx="10"/><text class="labm" x="606" y="159" text-anchor="middle">ε_θ</text>
+      <line class="ref" x1="606" y1="76" x2="606" y2="132"/><text class="lab" x="618" y="108">輸入不同</text>
+    </svg>
+  </figure>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 問題</span><p>訓練時網路看到的是由真實資料加噪的 xₜ，取樣時看到的是自己前幾步產生的 x̂ₜ。兩者分佈不同，稱為曝光偏差。</p></div>
+    <div class="fact"><span class="n">02 · 分析</span><p>把每一步的 x₀ 預測誤差建模成高斯分佈後，取樣分佈的變異數在每一步都大於訓練分佈。</p></div>
+    <div class="fact"><span class="n">03 · 方法</span><p>Epsilon Scaling 在取樣時把網路預測的噪聲除以常數 λ（例如 1.017），不需重新訓練。ADM 在 CIFAR-10 以 100 步取樣，FID 由 3.37 降到 2.17。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2308.15321">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-406">在關聯圖中查看</a>
+    <a class="btn" href="exposure-bias-elucidation-overview.html">研究筆記總覽</a>
+  </div>
+</section>
+
+<!-- S1 -->
+<section class="ch" id="bias" data-toc="01" data-tt="曝光偏差">
+  <div class="ch-num">01 · 曝光偏差</div>
+  <h2>曝光偏差是訓練與取樣時的輸入不一致</h2>
+  <div class="prose">
+    <p>擴散模型（diffusion model）分成兩個階段。訓練時，把一筆真實資料 $x_0$ 加上高斯噪聲，得到第 $t$ 步的帶噪樣本 $x_t$；$t$ 越大，噪聲越多，保留的原始資料越少。網路 $\epsilon_\theta$ 的工作是看著 $x_t$ 預測當初加進去的噪聲。取樣時，從純噪聲 $x_T$ 出發，反覆用網路的預測去掉一部分噪聲，一步步走到 $t=0$。本頁以 ᾱₜ 表示第 $t$ 步保留原始資料的比例（第 02 章給出定義），它隨 $t$ 增加而變小。</p>
+    <p>兩個階段中，網路的輸入來源不同：<b>訓練時是由真實 $x_0$ 加噪得到的 $x_t$；取樣時是網路前幾步產生的 $\hat x_t$。</b>只要網路的預測有誤差，$\hat x_t$ 的分佈就和 $x_t$ 不同。這種訓練與推論時輸入不一致的現象稱為<b>曝光偏差（exposure bias）</b>。這個詞來自序列生成：遞迴網路訓練時輸入真實的前一個字，生成時輸入自己產生的字（Ranzato et al.，arXiv 2015，論文引為 2016；Schmidt, 2019）。在擴散模型中，Ning et al.（2023）最早指出這個問題（Sec. 1、Sec. 2）。</p>
+    <p>作者認為擴散模型的曝光偏差「缺乏深入探討」：沒有適當的度量，也沒有明確的誤差分析（Sec. 1）。本文依序回答三件事：取樣時網路實際收到的 $\hat x_t$ 服從什麼分佈（第 03–05 章）、如何量化曝光偏差（第 06 章）、能否不重新訓練就在取樣階段緩解它（第 07–09 章）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">訓練與取樣時，$\epsilon_\theta$ 的輸入各是什麼？</p>
+    <p class="a">訓練時是由真實 $x_0$ 加噪得到的 $x_t$；取樣時是網路前幾步產生的 $\hat x_t$。兩者不一致即曝光偏差（Sec. 1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="exposure-bias-seq2seq-origin.html">曝光偏差在序列生成中的來源</a>、<a href="diffusion-exposure-bias.html">擴散模型的曝光偏差</a></p>
+</section>
+
+<!-- S2 -->
+<section class="ch" id="sampler" data-toc="02" data-tt="DDPM 取樣">
+  <div class="ch-num">02 · DDPM 取樣</div>
+  <h2>DDPM 取樣先預測 x₀ 再代入後驗</h2>
+  <details class="sym"><summary>本章符號</summary><div class="qa"><ul>
+    <li>$\beta_t$：第 $t$ 步加入的噪聲變異數；$\alpha_t=1-\beta_t$；$\bar\alpha_t=\prod_{s\le t}\alpha_s$（保留原始資料的比例）。</li>
+    <li>$\tilde\beta_t=\frac{1-\bar\alpha_{t-1}}{1-\bar\alpha_t}\beta_t$：後驗變異數。</li>
+    <li>$c_{1,t}=\frac{\sqrt{\bar\alpha_{t-1}}\beta_t}{1-\bar\alpha_t}$、$c_{2,t}=\frac{\sqrt{\alpha_t}(1-\bar\alpha_{t-1})}{1-\bar\alpha_t}$：本頁為了簡潔引入的係數記號，論文直接寫出分式。</li>
+    <li>$x_\theta^t$：由網路換算出的 $x_0$ 預測；$T'$：快速取樣的總步數。</li>
+  </ul></div></details>
+  <div class="prose">
+    <p>DDPM（Ho et al., 2020）的前向過程可以直接從 $x_0$ 一步抽出 $x_t$（Sec. 3.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$q(x_t|x_0)=\mathcal N\big(x_t;\sqrt{\bar\alpha_t}\,x_0,(1-\bar\alpha_t)I\big),\qquad x_t=\sqrt{\bar\alpha_t}\,x_0+\sqrt{1-\bar\alpha_t}\,\epsilon$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="prose">
+    <p>$\epsilon\sim\mathcal N(0,I)$。訓練分佈的變異數是 $1-\bar\alpha_t$。已知 $x_0$ 時，往回一步的後驗也是高斯（Eq. 2–4）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$q(x_{t-1}|x_t,x_0)=\mathcal N\big(\tilde\mu,\tilde\beta_tI\big),\qquad \tilde\mu=c_{1,t}\,x_0+c_{2,t}\,x_t$$</div><span class="eq-n">Eq. 2–4</span></div>
+  <div class="prose">
+    <p>取樣時不知道 $x_0$，所以網路先給出一個 $x_0$ 的預測 $x_\theta^t$，再代入同一個式子（Eq. 5）。實務上網路預測的是噪聲 $\epsilon_\theta$，寫成 Eq. 6 的形式：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mu_\theta(x_t,t)=c_{1,t}\,x_\theta^t+c_{2,t}\,x_t=\frac{1}{\sqrt{\alpha_t}}\Big(x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\,\epsilon_\theta(x_t,t)\Big)$$</div><span class="eq-n">Eq. 5–6</span></div>
+  <div class="prose">
+    <p>兩種寫法等價：由 Eq. 1 可知 $x_\theta^t=(x_t-\sqrt{1-\bar\alpha_t}\,\epsilon_\theta)/\sqrt{\bar\alpha_t}$。Song et al.（2021a）強調，$p_\theta(x_{t-1}|x_t)$ 實際上就是 $q(x_{t-1}|x_t,x_\theta^t)$。因此 DDPM 取樣的實際流程是：<b>先預測 $\epsilon$，由 Eq. 1 換算 $x_\theta^t$，再把後驗 $q(x_{t-1}|x_t,x_0)$ 中的 $x_0$ 換成 $x_\theta^t$，即 $q(x_{t-1}|x_t,x_\theta^t)$</b>（Sec. 3.1）。只有 $x_\theta^t=x_0$ 時，這個分佈才等於真正的後驗；預測誤差不為 0，所以作者把誤差放進分析。</p>
+    <p>快速取樣使用 respacing（Nichol &amp; Dhariwal, 2021）：訓練用 1000 步，取樣時從中均勻挑出 $T'$ 個時間步，沿用原本的 $\bar\alpha$，再由相鄰兩步的 $\bar\alpha$ 重新算出 $\alpha_t=\bar\alpha_t/\bar\alpha_{t-1}$ 與 $\beta_t=1-\alpha_t$。本頁的元件都以這個方式計算 $T'$ 步的係數。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$p_\theta(x_{t-1}|x_t)$ 實際上如何參數化？</p>
+    <p class="a">先預測 $\epsilon$，由 Eq. 1 換算 $x_\theta^t$，再把後驗 $q(x_{t-1}|x_t,x_0)$ 中的 $x_0$ 換成 $x_\theta^t$，即 $q(x_{t-1}|x_t,x_\theta^t)$（Sec. 3.1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="ddpm-reverse-sampling-formulation.html">DDPM 反向取樣公式</a>、<a href="eps-prediction-ddpm-score.html">ε-prediction 與 DDPM、score-based 模型</a></p>
+</section>
+
+<!-- S3 -->
+<section class="ch" id="gap" data-toc="03" data-tt="單步差距">
+  <div class="ch-num">03 · 單步差距</div>
+  <h2>預測誤差讓單步取樣的變異數變大</h2>
+  <details class="sym"><summary>本章符號</summary><div class="qa"><ul>
+    <li>$e_t$：$x_0$ 預測誤差的標準差（每個維度）；$\epsilon_0,\epsilon_1,\epsilon_3\sim\mathcal N(0,I)$ 彼此獨立。</li>
+  </ul></div></details>
+  <div class="prose">
+    <p>作者沿用 Analytic-DPM（Bao et al., 2022）的作法，把網路的 $x_0$ 預測寫成「真實 $x_0$ 加上高斯誤差」：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$p_\theta(x_0|x_t)=\mathcal N\big(x_\theta^t;x_0,e_t^2I\big),\qquad x_\theta^t=x_0+e_t\,\epsilon_0$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="prose">
+    <p>論文註明，即使平均不是 $x_0$，也不影響後面的變異數差距。推導時誤差 $\epsilon_0$ 與 $x_{t+1}$ 中的噪聲 $\epsilon$ 視為獨立，變異數才能逐項相加 <span class="tag">本頁推導</span>（由 App. A.1 的計算方式看出）。這是一個建模選擇：即使網路等於最佳去噪器 $\mathbb E[x_0|x_t]$，$x_t$ 也無法唯一決定 $x_0$，所以 $e_t$ 包含不可約的誤差，不會因為網路更好而降到 0 <span class="tag">本頁推導</span>。</p>
+    <p>從真實的 $x_{t+1}$ 走一步得到 $\hat x_t=\mu_\theta(x_{t+1},t+1)+\sqrt{\tilde\beta_{t+1}}\,\epsilon_1$（Eq. 8）。把 Eq. 7 與 Eq. 1 代入並整理（App. A.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\hat x_t=\sqrt{\bar\alpha_t}\,x_0+\sqrt{1-\bar\alpha_t+\Big(\frac{\sqrt{\bar\alpha_t}\,\beta_{t+1}}{1-\bar\alpha_{t+1}}\,e_{t+1}\Big)^2}\;\epsilon_3$$</div><span class="eq-n">Eq. 9</span></div>
+  <div class="tscroll" style="max-width:700px"><table>
+    <caption>Table 1：訓練分佈與 DDPM 單步取樣分佈</caption>
+    <thead><tr><th>分佈</th><th>平均</th><th>變異數</th></tr></thead><tbody>
+    <tr><td>$q(x_t|x_0)$（訓練）</td><td>$\sqrt{\bar\alpha_t}x_0$</td><td>$(1-\bar\alpha_t)I$</td></tr>
+    <tr><td>$q_\theta(\hat x_t|x_{t+1})$（取樣）</td><td>$\sqrt{\bar\alpha_t}x_0$</td><td>$\big(1-\bar\alpha_t+(c_{1,t+1}e_{t+1})^2\big)I$</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>化簡的關鍵是恆等式 $c_{2,t+1}^2(1-\bar\alpha_{t+1})+\tilde\beta_{t+1}=1-\bar\alpha_t$（Eq. 14→15）：沒有誤差時，取樣變異數剛好等於訓練變異數。有誤差時，<b>取樣分佈 $q_\theta(\hat x_t|x_{t+1})$ 比訓練分佈 $q(x_t|x_0)$ 多出 $\big(\frac{\sqrt{\bar\alpha_t}\beta_{t+1}}{1-\bar\alpha_{t+1}}e_{t+1}\big)^2$ 的變異數，平均同為 $\sqrt{\bar\alpha_t}x_0$</b>（Eq. 9、Table 1）。這個差距在單一步就出現，即使網路拿到的是真實的 $x_{t+1}$（Sec. 3.2）。</p>
+    <p>DDIM（Song et al., 2021a）是確定性取樣，作者用同樣的方法推得它的差距（App. A.3，Table 8）：<b>DDIM 的變異數多出 $\big(1-\sqrt{\tfrac{\alpha_{t+1}-\bar\alpha_{t+1}}{1-\bar\alpha_{t+1}}}\big)^2\bar\alpha_te_{t+1}^2$；因為 $\alpha_{t+1}<1$，根號內小於 1，所以這一項恆為正</b>（Eq. 31）。下面的元件即時計算兩種差距。</p>
+  </div>
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>單步：訓練分佈與取樣分佈的變異數</h3></div>
+    <p class="plate-lead">選一個時間步 t，比較訓練變異數 1−ᾱₜ 與單步取樣多出的差距。縱軸為對數。</p>
+    <div class="pg side">
+      <div class="fig"><div id="c1-fig"><svg role="img" aria-label="單步變異數圖"></svg></div><div id="c1-bar"><svg role="img" aria-label="訓練與取樣變異數長條"></svg></div></div>
+      <div class="ctl">
+        <div><div class="lbl">取樣器</div><div class="seg" id="c1-smp" role="radiogroup" aria-label="取樣器"><button data-v="ddpm">DDPM</button><button data-v="ddim">DDIM</button></div></div>
+        <div><div class="lbl">排程</div><div class="seg" id="c1-sch" role="radiogroup" aria-label="排程"><button data-v="cosine">cosine</button><button data-v="linear">linear</button></div></div>
+        <div><div class="lbl">步數 T′</div><div class="seg" id="c1-T" role="radiogroup" aria-label="步數"><button data-v="10">10</button><button data-v="20">20</button><button data-v="50">50</button><button data-v="100">100</button></div></div>
+        <div class="rng"><label class="lbl" for="c1-e">e（示意值，論文未給）<output id="c1-eo">0.10</output></label><input id="c1-e" type="range" min="0" max="0.5" step="0.01" value="0.1"></div>
+        <div class="rng"><label class="lbl" for="c1-t">時間步 t<output id="c1-to">2</output></label><input id="c1-t" type="range" min="1" max="19" step="1" value="2"></div>
+        <dl class="ro" id="c1-ro"></dl>
+      </div>
+    </div>
+    <div class="legend"><span class="lg par">訓練 1−ᾱₜ</span><span class="lg accd">差距</span><span class="lg ref">差距／訓練</span></div>
+    <p class="plate-f">讀數由本頁依 Eq. 9、Eq. 31 即時計算。e 是示意值；論文的 eₜ 隨 t 改變（Sec. 4.2 指出 t 接近 0 時預測最差），這裡用常數，所以差距隨 t 的變化只來自係數 c₁。空心點表示超出縱軸範圍（小於 10⁻⁸ 或大於 1）。</p>
+    <p class="sr" aria-live="polite" id="c1-live"></p>
+  </div>
+  <div class="prose">
+    <p>在常數 $e=0.1$、cosine 排程、20 步的設定下，$t=1$ 的差距約為訓練變異數 $4.128\times10^{-5}$ 的 240 倍。這個「末段最大」的形狀來自係數 $c_{1,t+1}$，不是論文的實測；論文沒有給出 $e_t$ 的數值。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 7 模型下，$q_\theta(\hat x_t|x_{t+1})$ 比 $q(x_t|x_0)$ 多出多少變異數？平均呢？</p>
+    <p class="a">多出 $\big(\frac{\sqrt{\bar\alpha_t}\beta_{t+1}}{1-\bar\alpha_{t+1}}e_{t+1}\big)^2$，平均同為 $\sqrt{\bar\alpha_t}x_0$（Eq. 9、Table 1）；網路拿到真實 $x_{t+1}$ 時就已出現。</p>
+    <p class="q">DDIM 的差距項是什麼？為什麼恆為正？</p>
+    <p class="a">$\big(1-\sqrt{\tfrac{\alpha_{t+1}-\bar\alpha_{t+1}}{1-\bar\alpha_{t+1}}}\big)^2\bar\alpha_te_{t+1}^2$；$\alpha_{t+1}<1$ 使根號內小於 1（Eq. 31、Table 8）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="prediction-error-variance-analysis.html">預測誤差與取樣變異數</a></p>
+</section>
+
+<!-- S4 -->
+<section class="ch" id="schedule-noise" data-toc="04" data-tt="噪聲排程">
+  <div class="ch-num">04 · 噪聲排程</div>
+  <h2>作者認為調整噪聲排程無法抵消差距</h2>
+  <details class="sym"><summary>本章符號</summary><div class="qa"><ul><li>$\dot\beta_t$：實際取樣時使用的噪聲變異數（Eq. 8 中以 $\tilde\beta_t$ 為預設）。</li></ul></div></details>
+  <div class="prose">
+    <p>直覺的解法是把取樣噪聲變異數設得比 $\tilde\beta_t$ 小，抵消多出的項。作者否定這個方向（Sec. 3.2）：</p>
+  </div>
+  <blockquote class="author"><p><b>作者認為：</b>Nichol &amp; Dhariwal（2021）給出取樣噪聲變異數的範圍 $\dot\beta_t\in[\tilde\beta_t,\beta_t]$，下界 $\tilde\beta_t$ 對應 $q(x_0)$ 為 delta 函數，上界 $\beta_t$ 對應各向同性高斯。$\tilde\beta_t$ 已是下界，不能再小，所以無法靠調整噪聲排程緩解曝光偏差。</p></blockquote>
+  <div class="prose">
+    <p>這是作者的論證，不是定理：Nichol &amp; Dhariwal 的範圍描述真實資料後驗的變異數，並不是對取樣器的數學限制。在作者採用的範圍內，把 Eq. 8 的 $\tilde\beta_{t+1}$ 換成 $\dot\beta_{t+1}$，變異數變成 $1-\bar\alpha_t+(c_{1,t+1}e_{t+1})^2+(\dot\beta_{t+1}-\tilde\beta_{t+1})$，因為 $\dot\beta\ge\tilde\beta$，差距只會更大 <span class="tag">本頁推導</span>。</p>
+    <p>作者也用這個觀點解釋 Analytic-DPM 的一個現象：Bao et al.（2022）推得的最佳變異數 $\beta_t^\star$ 大於 $\tilde\beta_t$，但在 1000 步取樣時 FID 反而比用 $\tilde\beta_t$ 差。作者認為，長取樣鏈中曝光偏差的負面影響超過了最佳變異數的增益。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">作者為什麼認為不能把取樣噪聲變異數調小來抵消差距？</p>
+    <p class="a">作者引用 Nichol &amp; Dhariwal（2021）：取樣噪聲變異數 $\dot\beta_t\in[\tilde\beta_t,\beta_t]$，$\tilde\beta_t$ 是下界（$q(x_0)$ 為 delta 函數時），所以不能再小；這是作者的論證（Sec. 3.2）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="diffusion-sampling-variance-schedule.html">取樣變異數與 noise schedule</a></p>
+</section>
+
+<!-- S5 -->
+<section class="ch" id="accum" data-toc="05" data-tt="多步累積">
+  <div class="ch-num">05 · 多步累積</div>
+  <h2>誤差在多步取樣中累積</h2>
+  <details class="sym"><summary>本章符號</summary><div class="qa"><ul>
+    <li>$V_t$：多步取樣得到的 $\hat x_t$ 在 Eq. 7 模型下的變異數（論文寫 $\beta'_t$）。</li>
+    <li>Δ單步、Δ多步：單步與多步的變異數誤差（論文 $\Delta_t$、$\Delta'_t$，App. A.4），都等於「量到的變異數 − $(1-\bar\alpha_t)$」。</li>
+  </ul></div></details>
+  <div class="prose">
+    <p>第 03 章的差距假設網路拿到真實的 $x_{t+1}$。實際取樣時，每一步的輸入都是上一步的輸出。作者在 CIFAR-10 上用 ADM 與 20 步取樣比較兩種量法（App. A.4）：</p>
+  </div>
+  <div class="algo">
+    <div class="row hd"><div>Alg. 1：單步</div><div class="ex-h">Alg. 2：多步</div></div>
+    <div class="row"><code>for t = T … 1:
+  抽 x₀，用 Eq. 1 算出真實 xₜ
+  走一步得到 x̂ₜ₋₁
+  收集 x̂ₜ₋₁ − √ᾱₜ₋₁ x₀</code><div class="ex"><code style="padding:0">抽 x₀，用 Eq. 1 算出 x_T
+for t = T … 1:
+  從上一步的 x̂ₜ 走一步得到 x̂ₜ₋₁
+  收集 x̂ₜ₋₁ − √ᾱₜ₋₁ x₀</code></div></div>
+    <div class="row"><code>每步輸入真實 xₜ</code><div class="ex">只看得到自己產生的 x̂ₜ</div></div>
+  </div>
+  <div class="prose">
+    <p>兩者都重複 50k 次，以 <code>numpy.var</code> 算出樣本變異數，再減去 $1-\bar\alpha_t$。<b>Alg. 1 每步輸入真實 $x_t$，Alg. 2 從 $x_T$ 連續取樣只看得到 $\hat x_t$；Fig. 1（CIFAR-10、20 步）顯示多步誤差越接近 $t=1$ 越大，單步誤差接近 0</b>（App. A.4、Sec. 3.2）。讀圖值 <span class="tag">推定</span>：多步誤差在 $t=2$ 約 0.47、$t=10$ 約 0.265、$t=18$ 約 0.015；單步誤差全程約 0.01 以下。</p>
+    <p>作者據此結論：單步的誤差在多步取樣中累積，變異數誤差持續增大（論文用 explosion），使取樣分佈偏離訓練分佈（論文稱 sampling drift），根本原因是預測誤差 $x_\theta^t-x_0$（Sec. 3.2）。App. A.2 用兩步的推導說明變異數差距會保留下來（Table 7）；論文只以實驗呈現 Fig. 1 的大小，沒有宣稱 Fig. 1 的曲線可由 Eq. 7 推得。</p>
+    <p><span class="tag">本頁推導</span> 在 Eq. 7 模型下，多步變異數有精確的遞迴。把 Table 1 的變異數乘上下一步的係數即可得到：$V_{t-1}=c_{2,t}^2V_t+(c_{1,t}e_t)^2+\tilde\beta_t$，起點 $V_{T'}=1-\bar\alpha_{T'}$。<b>$c_{2,t}$ 在取樣末段趨近 0，前一步多出的變異數權重變小，所以最後一步的誤差主要來自該步自己的 $c_{1,t}e_t$</b>。累積主要出現在取樣中段。</p>
+  </div>
+  <details class="adv"><summary>進階：本頁推導，可略過（中段累積與 $T'$）</summary><div class="qa">
+    <p>沒有誤差時，$c_{2,t}^2(1-\bar\alpha_t)+\tilde\beta_t=1-\bar\alpha_{t-1}$，遞迴保持 $V_t=1-\bar\alpha_t$。有誤差時，第 $t$ 步新增 $(c_{1,t}e_t)^2$，上一步多出的量乘上 $c_{2,t}^2$。linear 排程、$e=0.1$ 時，中點的多步／單步比值在 $T'=10,20,50,100$ 為 1.107、1.490、2.763、4.552，但 $t=1$ 的比值都約為 1。Eq. 7 模型本身不會產生 Fig. 1 那樣末段最大的差距；這不與論文矛盾，因為論文沒有用 Eq. 7 推導 Fig. 1。第 06 章的元件 C2 可以直接比較。</p>
+  </div></details>
+  <details class="adv"><summary>附註：Table 7 的交叉項（本頁推導）</summary><div class="qa">
+    <p>Eq. 22 把同一個 $\epsilon_3$ 的兩個係數寫成「平方和」，而不是「和的平方」，所以 Eq. 23／Table 7 少了一階項 $c_{2,t}^2f(t)$，$f(t)=(c_{1,t+1}e_{t+1})^2$。精確的兩步變異數是 $1-\bar\alpha_{t-1}+(c_{1,t}e_t)^2+c_{2,t}^2f(t)$。Monte Carlo（40 萬樣本，linear 排程、$T'=20$、$e=0.3$、$t=5$）得 0.25333；精確式 0.25347；Eq. 23 為 0.24990。結論「變異數大於 $1-\bar\alpha_{t-1}$」不受影響。</p>
+  </div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Alg. 1 與 Alg. 2 的差別？Fig. 1 顯示什麼？</p>
+    <p class="a">Alg. 1 每步輸入真實 $x_t$，Alg. 2 從 $x_T$ 連續取樣只看得到 $\hat x_t$；Fig. 1（CIFAR-10、20 步）多步誤差越接近 $t=1$ 越大，單步接近 0（App. A.4、Sec. 3.2）。</p>
+    <p class="q">Eq. 7 模型下多步變異數的遞迴是什麼？為什麼最後一步幾乎不累積？（本頁推導）</p>
+    <p class="a">$V_{t-1}=c_{2,t}^2V_t+(c_{1,t}e_t)^2+\tilde\beta_t$；$c_{2,t}$ 在末段趨近 0，前一步多出的變異數權重變小，最後一步的誤差主要來自該步自己的 $c_{1,t}e_t$。</p>
+  </div></details>
+</section>
+
+<!-- S6 -->
+<section class="ch" id="metric" data-toc="06" data-tt="度量 δₜ">
+  <div class="ch-num">06 · 度量 δₜ</div>
+  <h2>δₜ 以變異數差距量化曝光偏差</h2>
+  <div class="prose">
+    <p>作者提出用多步取樣分佈 $q_\theta(\hat x_t|x_T)$ 的變異數誤差量化第 $t$ 步的曝光偏差（Sec. 3.3）。沿用第 05 章的 $V_t$：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\delta_t=\big(\sqrt{V_t}-\sqrt{1-\bar\alpha_t}\big)^2$$</div><span class="eq-n">Sec. 3.3</span></div>
+  <div class="prose">
+    <p>論文寫成 $\delta_t=(\sqrt{\beta'_t}-\sqrt{\bar\beta_t})^2$，其中 $\beta'_t=V_t$、$\bar\beta_t=1-\bar\alpha_t$。<b>它來自 Fréchet distance：$q(x_t|x_0)$ 與 $q_\theta(\hat x_t|x_T)$ 的 Fréchet distance 為 $d^2=N\delta_t$，$N$ 為 $x_t$ 的維度</b>（Dowson &amp; Landau, 1982）。兩個分佈平均相同、共變異數都是單位矩陣的倍數，所以只剩變異數項 <span class="tag">本頁推導</span>。量測用 Alg. 3：與 Alg. 2 相同，每個樣本從 $x_0$ 算出 $x_T$，一路取樣並收集 $\hat x_{t-1}-\sqrt{\bar\alpha_{t-1}}x_0$，用 50,000 個樣本算出樣本變異數再代入定義（App. A.5）。<b>App. A.6 指出，給定已訓練模型，$\delta_1$ 與 FID 強相關</b>（Fig. 8，CIFAR-10、20 步）。</p>
+  </div>
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>多步：變異數誤差的累積與 δₜ</h3></div>
+    <p class="plate-lead">模式 A 是論文 Eq. 7 的模型；模式 B（進階）是網路完全正確時，用 Alg. 2 的方式會量到的值。</p>
+    <div class="pg side">
+      <div class="fig"><div id="c2-fig"><svg role="img" aria-label="變異數誤差圖"></svg></div><div id="c2-fig2"><svg role="img" aria-label="δₜ 圖"></svg></div></div>
+      <div class="ctl">
+        <div><div class="lbl">網路模型</div><div class="seg" id="c2-mode" role="radiogroup" aria-label="網路模型"><button data-v="A">A 論文 Eq. 7</button><button data-v="B">B 完美網路（進階）</button></div></div>
+        <div><div class="lbl">排程</div><div class="seg" id="c2-sch" role="radiogroup" aria-label="排程"><button data-v="cosine">cosine</button><button data-v="linear">linear</button></div></div>
+        <div><div class="lbl">步數 T′</div><div class="seg" id="c2-T" role="radiogroup" aria-label="步數"><button data-v="10">10</button><button data-v="20">20</button><button data-v="50">50</button><button data-v="100">100</button></div></div>
+        <div class="rng" id="c2-ew"><label class="lbl" for="c2-e">e（示意值）<output id="c2-eo">0.10</output></label><input id="c2-e" type="range" min="0" max="0.5" step="0.01" value="0.1"></div>
+        <div class="rng hide" id="c2-vw"><label class="lbl" for="c2-v">Var(x₀)（推定：CIFAR-10 約 0.25）<output id="c2-vo">0.25</output></label><input id="c2-v" type="range" min="0.05" max="1" step="0.05" value="0.25"></div>
+        <div class="rng"><label class="lbl" for="c2-t">時間步 t<output id="c2-to">1</output></label><input id="c2-t" type="range" min="1" max="19" step="1" value="1"></div>
+        <label class="chk" id="c2-fw"><input type="checkbox" id="c2-f1" checked>顯示 Fig. 1 讀圖值（推定）</label>
+        <p class="cap" id="c2-cap"></p>
+        <dl class="ro" id="c2-ro"></dl>
+      </div>
+    </div>
+    <div class="legend"><span class="lg par">Δ單步</span><span class="lg acc">Δ多步</span><span class="lg ref" id="c2-lgref">2ᾱₜ·Var(x₀)</span><span class="lg dia">Fig. 1 讀圖（推定）</span></div>
+    <details class="calc"><summary>計算方式</summary><div class="qa"><p>A：$V_{T'}=1-\bar\alpha_{T'}$，$V_{s-1}=c_{2,s}^2V_s+(c_{1,s}e)^2+\tilde\beta_s$。B：$k_s=\sqrt{\bar\alpha_s}\sigma_0^2/(\bar\alpha_s\sigma_0^2+1-\bar\alpha_s)$，$a_s=c_{2,s}+c_{1,s}k_s$；追蹤 $P_{01}=\mathrm{Cov}(x_0,\hat x)$ 與 $P_{11}=\mathrm{Var}(\hat x)$：$P_{01}\leftarrow a_sP_{01}$、$P_{11}\leftarrow a_s^2P_{11}+\tilde\beta_s$，量到的變異數為 $P_{11}-2\sqrt{\bar\alpha_{s-1}}P_{01}+\bar\alpha_{s-1}\sigma_0^2$。單步：$(a_s\sqrt{\bar\alpha_s}-\sqrt{\bar\alpha_{s-1}})^2\sigma_0^2+a_s^2(1-\bar\alpha_s)+\tilde\beta_s$。</p></div></details>
+    <p class="plate-f">讀數由本頁即時計算。A 是 Eq. 7 下的精確遞迴，B 是高斯玩具，兩者都是本頁推導；Fig. 1 讀圖值為推定。B 的值是玩具估計，不是下限。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <details class="adv"><summary>進階：完美網路下的 δₜ（模式 B 的讀法，本頁推導）</summary><div class="qa">
+    <p>若資料是平均 0、變異數 $\sigma_0^2$ 的高斯，$x_0$ 與 $x_t$ 為聯合高斯，最佳預測是線性的：$\mathbb E[x_0|x_t]=k_tx_t$，$k_t=\mathrm{Cov}(x_0,x_t)/\mathrm{Var}(x_t)=\sqrt{\bar\alpha_t}\sigma_0^2/(\bar\alpha_t\sigma_0^2+1-\bar\alpha_t)$。代入 Eq. 5 後每一步都是 $\hat x_{t-1}=a_t\hat x_t+\sqrt{\tilde\beta_t}z$，所以只要追蹤 $\hat x$ 的變異數與它和 $x_0$ 的共變異數兩個數，就能算出 Alg. 2 會量到的值。</p>
+    <p>結果：cosine 排程、20 步、$\mathrm{Var}(x_0)=0.25$ 時，多步誤差在 $t=2,10,18$ 為 0.435、0.244、0.009，與 Fig. 1 讀圖值的大小與形狀相近；但同一玩具的單步誤差在中段約 0.06，大於 Fig. 1 的單步曲線。所以只能說 Fig. 1 的多步曲線中有一部分即使網路完美也會出現。</p>
+  </div></details>
+  <div class="callout">
+    <p class="ct">δₜ 宜用於比較取樣器，不是絕對偏差量 <span class="tag">本頁推導</span></p>
+    <div class="cv"><div><span class="num">0.426</span><span class="cl">完美網路的 δ₁（高斯玩具估計）</span></div><div><span class="num">0.39–0.465</span><span class="cl">Fig. 8 實測的 δ₁（CIFAR-10，讀圖推定）</span></div></div>
+    <p><b>網路完美時，Alg. 3 量到的 $\delta_t$ 也不是 0。</b>原因是 $x_T$ 幾乎不含 $x_0$ 的資訊（$\bar\alpha_T$ 很小），減去起點的 $\sqrt{\bar\alpha_t}x_0$ 後，仍有約 $2\bar\alpha_t\mathrm{Var}(x_0)$ 的變異數誤差。高斯玩具（cosine、20 步、$\mathrm{Var}(x_0)=0.25$）得 $\delta_1=0.426$，與 Fig. 8 實測的 0.39–0.465 同一量級；這不是下限，變異數較小的取樣器可以低於它。所以 $\delta_t$ 宜用於比較同一量測方式下的不同取樣器，論文 Fig. 4、8、9、10 正是這樣使用。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$\delta_t$ 的定義、它與 Fréchet distance 的關係？</p>
+    <p class="a">$\delta_t=(\sqrt{V_t}-\sqrt{1-\bar\alpha_t})^2$（論文寫 $\beta'_t$、$\bar\beta_t$）；Fréchet distance $d^2=N\delta_t$，$N$ 為維度；$\delta_1$ 與 FID 強相關（Sec. 3.3、App. A.6）。</p>
+    <p class="q">網路完美時，Alg. 3 量到的 $\delta_t$ 是否為 0？為什麼？（本頁推導）</p>
+    <p class="a">不是。$x_T$ 幾乎不含 $x_0$ 的資訊，減去起點的 $\sqrt{\bar\alpha_t}x_0$ 後仍有約 $2\bar\alpha_t\mathrm{Var}(x_0)$ 的變異數誤差；所以 $\delta_t$ 宜用於比較取樣器，不是絕對偏差量。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="prediction-error-variance-analysis.html">預測誤差與取樣變異數：解析分析與度量 δₜ</a></p>
+</section>
+
+<!-- S7 -->
+<section class="ch" id="es" data-toc="07" data-tt="Epsilon Scaling">
+  <div class="ch-num">07 · Epsilon Scaling</div>
+  <h2>Epsilon Scaling 在取樣時把 ε 除以 λ</h2>
+  <details class="sym"><summary>本章符號</summary><div class="qa"><ul>
+    <li>ε_train：網路在訓練情境（輸入真實 $x_t$）的輸出；ε_samp：取樣情境（輸入 $\hat x_t$）的輸出。論文寫 $\epsilon_\theta^t$、$\epsilon_\theta^s$，上標 $t$ 代表 training，不是時間步。</li>
+    <li>$\Delta N(t)$：兩者的 L2 範數比；$\lambda_t$：縮放係數。</li>
+  </ul></div></details>
+  <div class="prose">
+    <p>作者先整理已知的解法（Sec. 3.4）：一是訓練更準確的網路，例如 EDM 以網路與超參數設計把 CIFAR-10 FID 由 3.01 降到 2.51；二是資料增強，讓網路在 $x_t$ 周圍學到更密的向量場，例如 Ning et al.（2023）以高斯項擴增每個訓練樣本 $x_t$；三是對預測誤差較不敏感的 Poisson Flow 架構。這些方法都需要重新訓練。作者的問題是：能否只在取樣階段、不重新訓練就緩解曝光偏差？</p>
+    <p>觀察來自 Fig. 2（CIFAR-10、20 步、每步 50k 樣本）：固定已訓練網路，ε_train 用真實 $x_t$ 收集，ε_samp 在真實取樣過程中收集。<b>每個時間步，取樣時 ε_samp 的 L2 範數都大於 ε_train</b>（Sec. 4.1）。作者推論：$\hat x_t$ 以較大的變異數分布在 $x_t$ 周圍，網路在 $x_t$ 附近學到的向量場長度偏長。依據是：$t=T$ 時兩者的輸入相同（都是 $x_T\sim\mathcal N(0,I)$），從 $T-1$ 起 $\hat x_t$ 因前一步的誤差開始偏離，並沿取樣鏈反覆累積。因此作者推論，縮小過長的 ε_samp 可以縮小 $\hat x_t$ 與 $x_t$ 的差距。</p>
+    <p>方法只改 Eq. 6 平均中的 $\epsilon$ 項：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mu_\theta(x_t,t)=\frac{1}{\sqrt{\alpha_t}}\Big(x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\,\frac{\epsilon_\theta(x_t,t)}{\boxed{\lambda_t}}\Big)$$</div><span class="eq-n">Sec. 4.1</span></div>
+  <div class="prose">
+    <p><b>Epsilon Scaling 只把 $\epsilon$ 除以 $\lambda_t$：$\mu_\theta=\frac1{\sqrt{\alpha_t}}(x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\frac{\epsilon_\theta}{\lambda_t})$，免訓練、不增加計算；依據是 Fig. 2：每個時間步取樣時 ε_samp 的 L2 範數都大於 ε_train。</b>噪聲項 $\sqrt{\tilde\beta_t}z$ 不變；$\lambda>1$ 代表縮小 $\epsilon$。程式上只多一行：</p>
+  </div>
+  <div class="algo"><div class="row hd"><div>取樣迴圈（ADM 風格）</div><div class="ex-h">說明</div></div>
+    <div class="row"><code>eps = model(x, t)</code><div class="ex">網路預測噪聲</div></div>
+    <div class="row"><code>eps = eps / lam</code><div class="ex">唯一改動：lam = b（常數）或 k*t + b</div></div>
+    <div class="row"><code>mean = (x - beta[t] / sqrt(1 - abar[t]) * eps) / sqrt(alpha[t])</code><div class="ex">Eq. 6 的平均</div></div>
+    <div class="row"><code>x = mean + sqrt(beta_tilde[t]) * randn_like(x) if t &gt; 0 else mean</code><div class="ex">噪聲項不變</div></div>
+  </div>
+  <div class="prose">
+    <p>Sec. 4.2 把兩個範數的比值記為 $\Delta N(t)$。本頁的操作定義是 $\Delta N(t)=\sqrt{\mathbb E\|\epsilon_{\text{samp}}\|^2/\mathbb E\|\epsilon_{\text{train}}\|^2}$：$N$ 維時 L2 範數集中在其均方根附近，所以範數比等於均方範數比的平方根。<span class="tag">本頁推導</span> 在 Eq. 7 模型下，兩個期望（每個維度）是 $\mathbb E\|\epsilon_{\text{train}}\|^2/N=1+\frac{\bar\alpha_te_t^2}{1-\bar\alpha_t}$ 與 $\mathbb E\|\epsilon_{\text{samp}}\|^2/N=\frac{V_t+\bar\alpha_te_t^2}{1-\bar\alpha_t}$。因為 $V_t>1-\bar\alpha_t$，$\Delta N(t)>1$，在 $t=T'$ 等於 1，方向與 Fig. 2 一致。量級不一致：cosine、20 步、$e=0.1$ 時 $\Delta N(1)=1.41$、$\Delta N(2)=1.13$，Fig. 3 左端約 1.19（讀圖）；$\Delta N(1)\approx\sqrt2$ 幾乎與 $e$ 無關，是 $c_{1,1}=1$ 的數學結果，不是資料。</p>
+    <p>本頁不以解析玩具示範 Epsilon Scaling 的 FID 或 $\delta_t$ 改善。在 Eq. 7 模型或高斯玩具中，常數 $\lambda$ 的效果與論文在真實網路上量到的不同；Epsilon Scaling 的效益是論文的實驗結果（Fig. 2、4、5，Table 2–6），第 09 章整理這些數字。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">ES 改了取樣公式的哪一項？依據什麼觀察？</p>
+    <p class="a">$\mu_\theta=\frac1{\sqrt{\alpha_t}}(x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\frac{\epsilon_\theta}{\lambda_t})$，只把 $\epsilon$ 除以 $\lambda_t$，免訓練、不增加計算；依據 Fig. 2：每個時間步取樣時 ε_samp 的 L2 範數都大於 ε_train（Sec. 4.1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="epsilon-scaling-method.html">Epsilon Scaling</a>、<a href="exposure-bias-prior-mitigations.html">曝光偏差的既有緩解方法</a></p>
+</section>
+
+<!-- S8 -->
+<section class="ch" id="lambda" data-toc="08" data-tt="λ(t) 的設計">
+  <div class="ch-num">08 · λ(t) 的設計</div>
+  <h2>λ(t) 的形狀來自範數比，數值由搜尋決定</h2>
+  <div class="prose">
+    <p>先說明兩個量的差別。下面 Eq. 10 中的 $\lambda_t$，是在「誤差沿取樣鏈線性傳播」的假設下，由範數比推得的每步範數高估比例；實驗表格中的 $b$，是以 FID 搜尋出的取樣超參數。兩者不是同一件事。論文說明理想上應先模擬 $\Delta N$ 再解 Eq. 10，但實際上直接搜尋，Eq. 10 只提供 $\lambda$ 形狀的定性依據。</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\Delta N(t)-1\approx\int_t^T(\lambda_T-1)\,dt+\int_t^{T-1}(\lambda_{T-1}-1)\,dt+\dots+\int_t^{t+1}(\lambda_{t+1}-1)\,dt$$</div><span class="eq-n">Eq. 10</span></div>
+  <div class="prose">
+    <p><b>$\Delta N(t)-1$ 是先前各步範數高估在線性傳播假設下的累積</b>：第一項是取樣起點 $T$ 的誤差從 $T$ 傳到 $t$，其餘依此類推（Sec. 4.2）。擬合時忽略 $t$ 接近 0 的區域，因為那裡的 $\epsilon_\theta$ 預測很差、loss 比其他時間步大數個數量級，縮放有問題的預測沒有幫助。Fig. 3（CIFAR-10，20 步與 50 步）的兩條曲線大致重疊，讀圖 <span class="tag">推定</span>：最左端約 1.19，$t=5$ 時約 1.02–1.03，之後接近 1。論文寫 $\Delta N(t)$ 在 $t\sim(5,T)$ 可用二次函數擬合，「因此 Eq. 10 的解是線性函數 $\lambda(t)=kt+b$」。</p>
+    <p>實際作法：作者發現 $k,b$ 在不同網路間變化不大，所以直接搜尋，不必模擬；而且 $T'$ 約 50 時 $k$ 衰減到 0。<b>論文寫二次 $\Delta N$ 對應線性 $\lambda=kt+b$，但 $T'\approx50$ 時 $k\to0$，多數實驗用常數 $\lambda=b$（ADM CIFAR-10 $b=1.017$），$b$ 以 FID 搜尋、6–10 次試驗</b>（Sec. 4.2、5.1）。</p>
+  </div>
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>Eq. 10：範數比的形狀決定 λ(t) 的形狀</h3></div>
+    <p class="plate-lead">設定 ΔN(t) 在 t = 5 到 20 的形狀，本頁用二階差分反解每一步的 λₜ。</p>
+    <div class="pg two">
+      <div class="fig" id="c3-fig"><svg role="img" aria-label="ΔN(t) 曲線"></svg></div>
+      <div class="fig" id="c3-fig2"><svg role="img" aria-label="λₜ − 1"></svg></div>
+    </div>
+    <div class="pg two" style="margin-top:16px">
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c3-h">h = ΔN(5) − 1（推定，讀自 Fig. 3，±0.01）<output id="c3-ho">0.020</output></label><input id="c3-h" type="range" min="0" max="0.1" step="0.001" value="0.02"></div>
+        <div class="rng"><label class="lbl" for="c3-w">形狀 w：0 = 二次，1 = 三次<output id="c3-wo">0.00</output></label><input id="c3-w" type="range" min="0" max="1" step="0.05" value="0"></div>
+      </div>
+      <dl class="ro" id="c3-ro"></dl>
+    </div>
+    <div class="legend"><span class="lg par">ΔN(t) = 1 + F(t)</span><span class="lg acc">λₜ − 1</span><span class="lg ref">二次式的常數解 2h/15²</span></div>
+    <p class="plate-f">T′ = 20（Fig. 3 的 20 步曲線）。Eq. 10 的離散形式與二階差分為本頁推導；h 讀自 Fig. 3（推定）。這裡的 λ 是由範數比推得的每步高估比例；論文實際使用的 b 是以 FID 搜尋的取樣超參數，兩者不是同一個量。以預設值反解得 λ − 1 ≈ 1.8×10⁻⁴；ADM-ES 在 CIFAR-10 20 步搜尋到 b − 1 = 0.017。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+  <div class="prose">
+    <p><span class="tag">本頁推導</span> 為什麼二次對應常數：Eq. 10 的連續形式是 $\Delta N(t)-1=\int_t^T(\lambda(s)-1)(s-t)\,ds$，對 $t$ 微分兩次得 $\Delta N''(t)=\lambda(t)-1$；二次式的二階導數是常數，所以<b>二次 $\Delta N$ 對應常數 $\lambda$</b>，三次式才對應線性 $\lambda$。離散版本是 $\lambda_t-1=F(t-1)-2F(t)+F(t+1)$，$F=\Delta N-1$。這與論文「二次 → 線性」的寫法不同，但與論文最後採用的 $\lambda(t)=b$ 一致。</p>
+    <p>線性排程的 $b$ 如何決定：App. A.10 建議先找到最佳常數 $b^*$，再保持 $\sum\lambda(t)=\sum\lambda^*(t)$ 搜尋 $k$，$b$ 由此算出。Table 14 的 ADM-ES* 有四列符合 $b=b^*-9.5k$（即 $t=0,\dots,19$ 時總和守恆），CIFAR-10 列不符合 <span class="tag">本頁推導</span>：</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table>
+    <caption>Table 14（ADM，20 步）的 ADM-ES*：表中的 b 與 b* − 9.5k 的比較</caption>
+    <thead><tr><th>資料集</th><th class="num">b*</th><th class="num">k</th><th class="num">表中 b</th><th class="num">b* − 9.5k</th></tr></thead><tbody>
+    <tr class="hl"><td>CIFAR-10</td><td class="num">1.017</td><td class="num">0.0025</td><td class="num">1.0</td><td class="num">0.99325</td></tr>
+    <tr><td>LSUN tower 64</td><td class="num">1.011</td><td class="num">0.0008</td><td class="num">1.0034</td><td class="num">1.0034</td></tr>
+    <tr><td>FFHQ 128</td><td class="num">1.008</td><td class="num">0.0004</td><td class="num">1.0042</td><td class="num">1.0042</td></tr>
+    <tr><td>ImageNet 64</td><td class="num">1.006</td><td class="num">0.0002</td><td class="num">1.0041</td><td class="num">1.0041</td></tr>
+    <tr><td>ImageNet 128</td><td class="num">1.005</td><td class="num">0.00022</td><td class="num">1.00291</td><td class="num">1.00291</td></tr>
+    </tbody></table></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 10 的意義？論文最後用什麼排程、怎麼決定 $b$？</p>
+    <p class="a">$\Delta N(t)-1$ 是先前各步範數高估在線性傳播假設下的累積；論文寫二次 $\Delta N$ 對應線性 $\lambda=kt+b$，但 $T'\approx50$ 時 $k\to0$，多數實驗用常數 $\lambda=b$（ADM CIFAR-10 $b=1.017$），$b$ 以 FID 搜尋、6–10 次試驗（Sec. 4.2、5.1）。本頁推導：$\Delta N''=\lambda-1$，二次 $\Delta N$ 對應常數 $\lambda$。</p>
+  </div></details>
+</section>
+
+<!-- S9 -->
+<section class="ch" id="results" data-toc="09" data-tt="實驗結果">
+  <div class="ch-num">09 · 實驗結果</div>
+  <h2>ES 在六種框架上都降低 FID</h2>
+  <div class="prose">
+    <p>評估指標是 FID，用 50k 個生成樣本、以整個訓練集為參考，計算方式同 ADM；正文聚焦 $T'\le100$（Sec. 5）。主要數字：</p>
+    <ul>
+      <li><b>ADM（Table 2）：ES 在 ADM CIFAR-10 100 步的 FID 由 3.37 降到 2.17</b>；50 步 4.43→2.49；20 步 10.36→5.15（線性排程 ES* 為 4.31）。FFHQ 128 的改善為 7.75、16.65（100、50 步）；論文寫 20 步改善 34.52，這個數字等於 59.35−24.83（ADM-ES*），ADM-ES 是 59.35−26.14=33.21 <span class="tag">本頁推導</span>。ImageNet 64 不使用 classifier guidance，ImageNet 128 使用 guidance scale 0.5。</li>
+      <li><b>與其他隨機取樣器比較（Table 3）：</b>ADM-ES 100 步 2.17、50 步 2.49；EDM (VP) 511 步 2.27、EDM (VE) 2047 步 2.23、Improved SDE 1023 步 2.35、Restart 115 步 2.21、SA-Solver 95 步 2.63、ADM-IP 100 步 2.38。作者稱相對 EDM 與 Improved SDE 快 5 到 20 倍。</li>
+      <li><b>DDIM／DDPM（Table 4）：</b>$\eta=0$ 為 DDIM，$\eta=1$ 為 DDPM。CelebA 的 DDPM 改善 47.7%、63.1%、60.7%（20、50、100 步），DDIM 的改善較小。</li>
+      <li><b>EDM（Table 5，CIFAR-10，VP）：</b>EDM 的網路輸出不是 $\epsilon$，但每步可以取出 $\epsilon$ 再縮放。35 步 Euler：無條件 3.81→2.80、有條件 3.74→2.59；Heun 的增益較小（無條件 1.97→1.95）。</li>
+    </ul>
+    <p>綜合來看，<b>步數少（FID 絕對改善較大）、隨機取樣（DDPM $\eta=1$）、Euler（相對 Heun）的增益較大</b>（Tables 2、4、5）。LDM、DiT、PFGM++ 與 $T'>100$ 的結果見下面的元件。ES 對 precision 與 recall 的影響小：ADM-ES 的 recall 較高、precision 略低（Table 13）。</p>
+  </div>
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>實驗結果瀏覽器</h3></div>
+    <p class="plate-lead">選一張表與子集，比較基準與 Epsilon Scaling 的 FID（越低越好）。</p>
+    <div class="ctl" style="gap:10px">
+      <div class="seg" id="c4-tab" role="radiogroup" aria-label="表格"></div>
+      <div class="ctl-row" id="c4-sub" role="radiogroup" aria-label="子集"></div>
+      <label class="chk"><input type="checkbox" id="c4-tbl">以表格顯示</label>
+    </div>
+    <div class="fig" id="c4-fig" style="margin-top:12px"><svg role="img" aria-label="FID 長條圖"></svg></div>
+    <div id="c4-table"></div>
+    <div class="legend" id="c4-lg"><span class="lg base">基準</span><span class="lg acc">ES</span><span class="lg hatch">ES*（線性 λ）</span></div>
+    <p class="plate-f" id="c4-note">數值照錄論文（Tables 2、4–6、9–12、14–19）；改善率由本頁計算。窄螢幕的長條圖省略 b 值，勾選「以表格顯示」可看完整數字。</p>
+  </div>
+  <div class="prose">
+    <p>ES 也降低了 $\delta_t$：Fig. 4 顯示 ADM-ES 在 $t=1$ 的 $\delta_t$ 低於 ADM。Fig. 4 的圖說是 LSUN tower 64×64（正文寫 CIFAR-10）；CIFAR-10 與 FFHQ 128 的結果在 Fig. 9、Fig. 10。Fig. 5（LSUN tower 64×64）顯示套用 ES 後，取樣時的 $\|\epsilon_\theta\|$ 更接近訓練時的值；前提是 $\|\epsilon_\theta(x_t)\|$ 在 $x_t$ 附近局部單調（Sec. 5.2）。</p>
+    <p>限制：<b>ES 只修正 $\epsilon$ 的大小、不修正方向，所以無法使 $\delta_t=0$</b>，也無法把取樣軌跡完全推到訓練時的向量場上（Sec. 5.2）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">ES 在 ADM CIFAR-10 100 步的 FID？哪些設定增益較大？ES 的限制？</p>
+    <p class="a">3.37→2.17（Table 2）；步數少（FID 絕對改善較大）、隨機取樣（DDPM $\eta=1$）、Euler（相對 Heun）增益較大（Tables 2、4、5）；只修正 $\epsilon$ 的大小、不修正方向，無法使 $\delta_t=0$（Sec. 5.2）。</p>
+  </div></details>
+</section>
+
+<!-- S10 -->
+<section class="ch" id="why" data-toc="10" data-tt="作者的解釋">
+  <div class="ch-num">10 · 作者的解釋</div>
+  <h2>作者對增益差異的解釋</h2>
+  <blockquote class="author"><p><b>DDIM 增益較小。</b>作者認為有兩個原因：短取樣鏈下確定性取樣本身的 FID 優勢，以及 DDPM 的噪聲項能主動修正先前步驟的誤差（Karras et al., 2022）（Sec. 5.3）。</p></blockquote>
+  <blockquote class="author"><p><b>Heun 增益較小。</b>作者認為一是 Heun 等高階解算器的截斷誤差較小；二是 Heun 的校正步修正前一個 Euler 步的預測誤差，使取樣軌跡更接近訓練時的向量場。Fig. 6（CIFAR-10，21 步）中 Heun 的訓練與取樣範數差距小於 Euler（Sec. 5.4）。</p></blockquote>
+  <blockquote class="author"><p><b>定性樣本。</b>相同 seed 下，ADM-ES 修正了 ADM 的過曝、欠曝、粗糙背景與細節缺陷（Fig. 7，FFHQ 128，100 步）；兩者到達相同或相近的 mode，作者認為 ES 把取樣軌跡引到相鄰但較好的機率路徑（Sec. 5.6）。</p></blockquote>
+</section>
+
+<!-- S11 -->
+<section class="ch" id="impl" data-toc="11" data-tt="實作">
+  <div class="ch-num">11 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="prose">
+    <p>Epsilon Scaling 只在取樣迴圈多一行 <code>eps = eps / lam</code>（第 07 章）。App. A.10 的搜尋建議：</p>
+    <ol>
+      <li>常數 $b$ 由粗到細搜尋，步長依序 0.001、0.0005、0.0001。</li>
+      <li>一般而言，最佳 $b$ 隨步數 $T'$ 增加而下降。</li>
+      <li>得到 $b^*$ 後，保持 $\sum\lambda(t)=\sum\lambda^*(t)$ 搜尋 $k$，$b$ 由此算出而不搜尋。</li>
+      <li>搜尋時用 10k 樣本算 FID，最終報告用 50k。</li>
+    </ol>
+    <p>App. A.11 用 Table 17、18 說明結果對 $b$ 不敏感。所有掃描點都低於基準，但掃描範圍很窄（最佳值 ±0.002），「wide range」是作者相對於基準增益的說法；EDM 35 步只比基準低約 0.02。</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table>
+    <caption>Tables 17–18：不同 b 下的 FID（CIFAR-10）</caption>
+    <thead><tr><th>設定</th><th class="num">基準</th><th>掃描的 b</th><th>FID 範圍</th></tr></thead><tbody>
+    <tr><td>ADM-ES，100 步</td><td class="num">3.37</td><td>1.015–1.019</td><td>2.17–2.31</td></tr>
+    <tr><td>ADM-ES，50 步</td><td class="num">4.43</td><td>1.015–1.019</td><td>2.49–2.55</td></tr>
+    <tr><td>EDM-ES Heun，35 步</td><td class="num">1.97</td><td>1.0005–1.0008</td><td>1.947–1.953</td></tr>
+    <tr><td>EDM-ES Heun，13 步</td><td class="num">7.16</td><td>1.004–1.007</td><td>6.54–6.60</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <h3>常見錯誤</h3>
+    <ol>
+      <li>縮放方向：$\lambda>1$ 是縮小 $\epsilon$；只改 Eq. 6 平均中的 $\epsilon$，不動噪聲項。</li>
+      <li>$b$ 不一定大於 1：EDM Heun 21 步為 0.9985／0.9983（Table 16），PFGM++ 21 步為 0.970／0.996（Tables 9–10），DiT 為 0.965–0.995（Table 19）。</li>
+      <li>$b$ 依資料集、步數、模型而定，且一般隨 $T'$ 增加而下降；DDPM（$\eta=1$）用的 $b$（1.03–1.06）遠大於 DDIM（1.001–1.0052）（Table 15）。</li>
+      <li>線性排程的 $t$ 索引：論文沒有寫明；Table 14 的算術與 $t=0,\dots,T'-1$ 一致 <span class="tag">推定</span>，且 CIFAR-10 列不符合 $\sum\lambda$ 守恆的規則。</li>
+      <li>EDM：先由網路輸出取出 $\epsilon$ 再縮放（Sec. 5.4）。論文實驗用 VP 設定，$x=s(t)(y+\sigma n)$，所以 $\hat\epsilon=\big(x/s(t)-D_\theta(x/s(t);\sigma)\big)/\sigma$ <span class="tag">本頁推導</span>。</li>
+      <li>快速取樣用 respacing；擬合 $\Delta N$ 時忽略 $t$ 接近 0 的區域。</li>
+      <li>搜尋 $\lambda$ 時用 10k 樣本算 FID，報告時用 50k。</li>
+    </ol>
+    <p>程式碼：<a href="https://github.com/forever208/ADM-ES">github.com/forever208/ADM-ES</a>。</p>
+  </div>
+</section>
+
+<!-- S12 -->
+<section class="ch" id="history" data-toc="12" data-tt="研究脈絡">
+  <div class="ch-num">12 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>「曝光偏差」一詞來自序列生成（Ranzato et al.；Schmidt）。擴散模型這一側，DDPM 與 DDIM 給出取樣公式，Improved DDPM、Analytic-DPM 與 EDM 研究取樣變異數與排程。曝光偏差的緩解分成需要重新訓練的（DDPM-IP、誤差傳播的上界最佳化）與免訓練的（shifted time steps），本文屬於後者。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S13 -->
+<section class="ch" id="next" data-toc="13" data-tt="限制與延伸">
+  <div class="ch-num">13 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>Epsilon Scaling 只修正 $\epsilon$ 的大小，不修正方向（Sec. 5.2）。理論分析依賴 Eq. 7 的高斯、獨立誤差模型；$\lambda$ 由 FID 搜尋決定，Eq. 10 只提供定性依據。另外，即使網路完美，Alg. 3 量到的 $\delta_t$ 也不為 0 <span class="tag">本頁推導</span>，所以 $\delta_t$ 應用於比較。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="exposure-bias-elucidation-overview.html">擴散模型曝光偏差分析與 Epsilon Scaling：研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="exposure-bias-seq2seq-origin.html">曝光偏差在序列生成中的來源：Ranzato 等人與 Schmidt</a><span>詞的來源</span></div></li>
+    <li><div><a href="ddpm-reverse-sampling-formulation.html">DDPM 反向取樣公式：後驗、ε 預測與 DDIM</a><span>取樣公式</span></div></li>
+    <li><div><a href="diffusion-sampling-variance-schedule.html">取樣變異數與 noise schedule：Improved DDPM、Analytic-DPM、EDM</a><span>變異數下界與高斯近似</span></div></li>
+    <li><div><a href="exposure-bias-prior-mitigations.html">曝光偏差的既有緩解方法：DDPM-IP、shifted time steps 與誤差傳播分析</a><span>既有方法</span></div></li>
+    <li><div><a href="prediction-error-variance-analysis.html">預測誤差與取樣變異數：曝光偏差的解析分析與度量 δₜ</a><span>本論文第 3 節</span></div></li>
+    <li><div><a href="epsilon-scaling-method.html">Epsilon Scaling：不需重新訓練的曝光偏差緩解方法</a><span>本論文第 4、5 節</span></div></li>
+    <li><div><a href="eps-prediction-ddpm-score.html">ε-prediction 與 DDPM、score-based 模型</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="diffusion-exposure-bias.html">擴散模型的 exposure bias</a><span>站內筆記（No. 405）</span></div></li>
+    <li><div><a href="input-perturbation-ddpm-ip.html">DDPM-IP：訓練時的輸入擾動</a><span>站內筆記（No. 405）</span></div></li>
+    <li><div><a href="diffusion-forcing.html">Diffusion Forcing：per-token 獨立噪聲的因果序列擴散</a><span>站內既有筆記</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Mang Ning, Mingxiao Li, Jianlin Su, Albert Ali Salah, Itir Onal Ertugrul. Elucidating the Exposure Bias in Diffusion Models. ICLR 2024. <a href="https://arxiv.org/abs/2308.15321">arXiv:2308.15321</a>.</p>
+  <p>本頁的方程式與數字取自論文 v6；標示「本頁推導」的內容為本頁自行推導，並非論文結論；標示「推定」的值為讀圖或校準值。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[
+ {
+  "year": "2015",
+  "title": "Deep Unsupervised Learning using Nonequilibrium Thermodynamics",
+  "authors_short": "Sohl-Dickstein et al.",
+  "arxiv": "1503.03585",
+  "role": "擴散模型的起點",
+  "source": "abstract"
+ },
+ {
+  "year": "2015",
+  "title": "Sequence Level Training with Recurrent Neural Networks",
+  "authors_short": "Ranzato et al.",
+  "arxiv": "1511.06732",
+  "role": "本論文引用作為 exposure bias 一詞的出處",
+  "source": "2308.15321 的敘述"
+ },
+ {
+  "year": "2019",
+  "title": "Generative Modeling by Estimating Gradients of the Data Distribution",
+  "authors_short": "Song & Ermon",
+  "arxiv": "1907.05600",
+  "role": "score-based 生成模型",
+  "source": "2308.15321 的敘述"
+ },
+ {
+  "year": "2019",
+  "title": "Generalization in Generation: A closer look at Exposure Bias",
+  "authors_short": "Schmidt",
+  "arxiv": "1910.00292",
+  "role": "exposure bias 的進一步分析，本論文一併引用",
+  "source": "2308.15321 的敘述"
+ },
+ {
+  "year": "2020",
+  "title": "Denoising Diffusion Probabilistic Models",
+  "authors_short": "Ho et al.",
+  "arxiv": "2006.11239",
+  "role": "DDPM；本論文第 2 節的記號與 ε 預測",
+  "source": "2308.15321 的敘述"
+ },
+ {
+  "year": "2020",
+  "title": "Denoising Diffusion Implicit Models",
+  "authors_short": "Song et al.",
+  "arxiv": "2010.02502",
+  "role": "DDIM 取樣器，附錄推導其取樣分佈",
+  "source": "2308.15321 的敘述"
+ },
+ {
+  "year": "2021",
+  "title": "Improved Denoising Diffusion Probabilistic Models",
+  "authors_short": "Nichol & Dhariwal",
+  "arxiv": "2102.09672",
+  "role": "取樣變異數範圍 [β̃_t, β_t] 與 respacing",
+  "source": "2308.15321 的敘述"
+ },
+ {
+  "year": "2022",
+  "title": "Analytic-DPM",
+  "authors_short": "Bao et al.",
+  "arxiv": "2201.06503",
+  "role": "高斯近似預測誤差與最優取樣變異數",
+  "source": "2308.15321 的敘述"
+ },
+ {
+  "year": "2022",
+  "title": "Elucidating the Design Space of Diffusion-Based Generative Models",
+  "authors_short": "Karras et al.",
+  "arxiv": "2206.00364",
+  "role": "EDM；以更準確網路降低誤差，表 3 比較對象",
+  "source": "2308.15321 的敘述"
+ },
+ {
+  "year": "2023",
+  "title": "Input Perturbation Reduces Exposure Bias in Diffusion Models",
+  "authors_short": "Ning et al.",
+  "arxiv": "2301.11706",
+  "role": "首次指出擴散模型曝光偏差，以輸入擾動訓練緩解",
+  "source": "2308.15321 的敘述"
+ },
+ {
+  "year": "2023",
+  "title": "Alleviating Exposure Bias in Diffusion Models through Sampling with Shifted Time Steps",
+  "authors_short": "Li et al.",
+  "arxiv": "2305.15583",
+  "role": "免重訓、調整時間步選擇",
+  "source": "2308.15321 的敘述"
+ },
+ {
+  "year": "2023",
+  "title": "On Error Propagation of Diffusion Models",
+  "authors_short": "Li & van der Schaar",
+  "arxiv": "2308.05021",
+  "role": "估計累積誤差上界",
+  "source": "2308.15321 的敘述"
+ },
+ {
+  "year": "2023",
+  "title": "Elucidating the Exposure Bias in Diffusion Models",
+  "authors_short": "Ning et al.",
+  "arxiv": "2308.15321",
+  "role": "本論文：解析分析、度量 δ_t、Epsilon Scaling",
+  "source": "abstract"
+ }
+]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+const lgs=(d0,d1,r0,r1)=>{const a=Math.log(d0),b=Math.log(d1);return v=>r0+(Math.log(v)-a)/(b-a)*(r1-r0)};
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+const f2=v=>(Math.abs(v)<0.005?0:v).toFixed(2),f3=v=>(Math.abs(v)<0.0005?0:v).toFixed(3);
+const fmtNum=x=>x.toLocaleString('zh-TW',{minimumFractionDigits:3,maximumFractionDigits:3});
+function fmtK(k){if(k<=0.999)return k.toFixed(3);const s=k.toFixed(8);let i=s.indexOf('.')+1;while(i<s.length&&s[i]==='9')i++;return s.slice(0,Math.min(i+1,s.indexOf('.')+7))}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function frame(svg,o){
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m=o.m,x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=m.t;
+  const X=(o.xlog?lgs:lin)(o.x[0],o.x[1],x0,x1),Y=lin(o.y[0],o.y[1],y0,y1);
+  const g=el('g',null,svg);
+  (o.yt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.yf?o.yf(v):String(v)),yy=Y(val);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},g);tx(g,x0-8,yy+4,lab,{class:'tk','text-anchor':'end'})});
+  (o.xt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.xf?o.xf(v):String(v)),xx=X(val);el('line',{x1:xx,x2:xx,y1:y0,y2:y0+4,class:'axl'},g);tx(g,xx,y0+18,lab,{class:'tk','text-anchor':'middle'})});
+  el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  if(o.xl)tx(g,(x0+x1)/2,o.H-4,o.xl,{class:'al','text-anchor':'middle'});
+  if(o.yl)tx(g,4,12,o.yl,{class:'al'});
+  return {X,Y,g,x0,x1,y0,y1};
+}
+function arrow(g,x0,y0,x1,y1,cls,dash){const dx=x1-x0,dy=y1-y0,L=Math.hypot(dx,dy);if(L<2)return;const ux=dx/L,uy=dy/L,h=Math.min(10,L*.6);
+  el('line',{x1:x0,y1:y0,x2:x1-ux*h*.7,y2:y1-uy*h*.7,class:cls+(dash?' dash':'')},g);
+  el('path',{d:`M${x1} ${y1}L${x1-ux*h-uy*h*.45} ${y1-uy*h+ux*h*.45}L${x1-ux*h+uy*h*.45} ${y1-uy*h-ux*h*.45}Z`,class:cls+'-f'},g)}
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+
+
+/* ---------- shared math (design §4.0; same as verify/check.py) ---------- */
+const T0=1000,ABF={};
+function abarFull(kind){if(ABF[kind])return ABF[kind];const a=new Float64Array(T0);let p=1;
+  if(kind==='linear'){for(let i=0;i<T0;i++){p*=1-(1e-4+(0.02-1e-4)*i/(T0-1));a[i]=p}}
+  else{const f=u=>Math.cos((u/T0+0.008)/1.008*Math.PI/2)**2;for(let i=0;i<T0;i++){p*=1-Math.min(1-f(i+1)/f(i),0.999);a[i]=p}}
+  return ABF[kind]=a}
+function respace(kind,Tp){const ab=abarFull(kind),A=new Float64Array(Tp+1);A[0]=1;for(let t=1;t<=Tp;t++)A[t]=ab[Math.round((t-1)*999/(Tp-1))];return A}
+// step s: x_s -> x_{s-1}
+function coefs(A,s){const al=A[s]/A[s-1],be=1-al;return{alpha:al,beta:be,c1:Math.sqrt(A[s-1])*be/(1-A[s]),c2:Math.sqrt(al)*(1-A[s-1])/(1-A[s]),bt:(1-A[s-1])*be/(1-A[s])}}
+const sq=v=>Math.sqrt(Math.max(0,v));
+// C1: arrays indexed by displayed t (1..Tp-1)
+function c1Calc(kind,Tp,e){const A=respace(kind,Tp),n=Tp;const r={A,train:new Float64Array(n),ddpm:new Float64Array(n),ddim:new Float64Array(n),bt:new Float64Array(n),beta:new Float64Array(n)};
+  for(let t=1;t<Tp;t++){const c=coefs(A,t+1);r.train[t]=1-A[t];r.ddpm[t]=(c.c1*e)**2;r.ddim[t]=(1-sq((c.alpha-A[t+1])/(1-A[t+1])))**2*A[t]*e*e;r.bt[t]=c.bt;r.beta[t]=c.beta}
+  return r}
+// C2 mode A (Eq. 7 exact recursion)
+function c2Paper(A,e){const Tp=A.length-1,V=new Float64Array(Tp+1),single=new Float64Array(Tp+1),multi=new Float64Array(Tp+1),delta=new Float64Array(Tp+1);V[Tp]=1-A[Tp];
+  for(let s=Tp;s>=1;s--){const c=coefs(A,s);V[s-1]=c.c2*c.c2*V[s]+(c.c1*e)**2+c.bt;single[s-1]=(c.c1*e)**2}
+  for(let t=0;t<=Tp;t++){multi[t]=V[t]-(1-A[t]);delta[t]=(sq(V[t])-sq(1-A[t]))**2}
+  return{V,single,multi,delta}}
+// Eq. 7 model norm ratio (S7 prose numbers; selfTest only)
+function dNPaper(A,e,t){const V=c2Paper(A,e).V;return Math.sqrt((V[t]+A[t]*e*e)/(1-A[t]+A[t]*e*e))}
+// C2 mode B (perfect Gaussian denoiser, Alg. 1 / Alg. 2)
+function c2Perfect(A,v0){const Tp=A.length-1,single=new Float64Array(Tp+1),multi=new Float64Array(Tp+1),delta=new Float64Array(Tp+1);
+  let P01=Math.sqrt(A[Tp])*v0,P11=A[Tp]*v0+1-A[Tp];
+  for(let s=Tp;s>=1;s--){const c=coefs(A,s),k=Math.sqrt(A[s])*v0/(A[s]*v0+1-A[s]),a=c.c2+c.c1*k;
+    const sv=(a*Math.sqrt(A[s])-Math.sqrt(A[s-1]))**2*v0+a*a*(1-A[s])+c.bt;
+    P01=a*P01;P11=a*a*P11+c.bt;const t=s-1,bb=1-A[t],bh=P11-2*Math.sqrt(A[t])*P01+A[t]*v0;
+    single[t]=sv-bb;multi[t]=bh-bb;delta[t]=(sq(bh)-sq(bb))**2}
+  return{single,multi,delta}}
+// C3: Eq. 10 inversion, T'=20 fixed
+const C3T=20;
+function eq10F(h,w){const F={};for(let t=5;t<=C3T;t++){const u=(C3T-t)/(C3T-5);F[t]=h*((1-w)*u*u+w*u*u*u)}F[C3T+1]=0;return F}
+function eq10Invert(h,w){const F=eq10F(h,w),lam={};for(let t=6;t<=C3T;t++)lam[t]=1+F[t-1]-2*F[t]+F[t+1];return{F,lam}}
+function eq10Forward(lam){const F={};for(let t=5;t<=C3T;t++){let s0=0;for(let s=Math.max(t+1,6);s<=C3T;s++)s0+=(lam[s]-1)*(s-t);F[t]=s0}return F}
+
+/* ---------- UI helpers ---------- */
+function radiogroup(box,val,onChange){const bs=$$('button',box);
+  const set=(v,focus)=>{bs.forEach(b=>{const on=b.dataset.v===String(v);b.setAttribute('aria-checked',String(on));b.tabIndex=on?0:-1;if(on&&focus)b.focus()})};
+  bs.forEach((b,i)=>{b.type='button';b.setAttribute('role','radio');b.addEventListener('click',()=>{set(b.dataset.v);onChange(b.dataset.v)});
+    b.addEventListener('keydown',e=>{const d={ArrowRight:1,ArrowDown:1,ArrowLeft:-1,ArrowUp:-1}[e.key];if(!d)return;e.preventDefault();const nb=bs[(i+d+bs.length)%bs.length];set(nb.dataset.v,true);onChange(nb.dataset.v)})});
+  set(val);return set}
+function sched(fn){let raf=0;return()=>{if(raf)return;raf=requestAnimationFrame(()=>{raf=0;fn()})}}
+const fe=v=>{if(!isFinite(v))return '—';if(v===0)return '0';const a=Math.abs(v);return(a>=1e-3&&a<1e4)?(+v.toPrecision(4)).toString():v.toExponential(3)};
+function ro(node,rows){node.innerHTML=rows.map(([k,v,acc])=>`<dt>${k}</dt><dd${acc?' class="acc"':''}>${v}</dd>`).join('')}
+function chartW(box){return widthOf(box,260,620)}
+function vline(G,x,cls){el('line',{x1:x,x2:x,y1:G.y1,y2:G.y0,class:cls||'cur'},G.g)}
+function marker(G,x,y,shape,cls,hollow){const r=4.5;let e;
+  if(shape==='sq')e=el('rect',{x:x-r,y:y-r,width:2*r,height:2*r},G.g);
+  else if(shape==='tri')e=el('path',{d:`M${x} ${y-r-1}L${x+r+1} ${y+r}L${x-r-1} ${y+r}Z`},G.g);
+  else if(shape==='dia')e=el('path',{d:`M${x} ${y-6}L${x+6} ${y}L${x} ${y+6}L${x-6} ${y}Z`},G.g);
+  else e=el('circle',{cx:x,cy:y,r},G.g);
+  e.setAttribute('class',hollow?'mk-h '+cls:'mk '+cls)}
+
+/* ---------- C1 ---------- */
+const c1s={smp:'ddpm',kind:'cosine',Tp:20,e:0.1,t:2};
+function renderC1(){const s=c1s,r=c1Calc(s.kind,s.Tp,s.e),Tp=s.Tp,gap=s.smp==='ddpm'?r.ddpm:r.ddim;
+  const box=$('#c1-fig'),W=chartW(box),H=Math.round(Math.min(300,W*0.62));
+  const xt=Tp<=20?[1,5,10,15,19].filter(v=>v<Tp):[1,Math.round(Tp/4),Math.round(Tp/2),Math.round(3*Tp/4),Tp-1];
+  const G=frame($('svg',box),{W,H,m:{l:52,r:14,t:32,b:40},x:[Tp-1,1],y:[-8,0],xt,yt:[[0,'1'],[-2,'10⁻²'],[-4,'10⁻⁴'],[-6,'10⁻⁶'],[-8,'10⁻⁸']],xl:'t（← 取樣方向）',yl:'變異數（對數）'});
+  const Ly=v=>G.Y(Math.max(-8,Math.min(0,Math.log10(v))));
+  const series=[['train',t=>r.train[t],'par','circ'],['gap',t=>gap[t],'acc dash','sq'],['ratio',t=>gap[t]/r.train[t],'ref','tri']];
+  series.forEach(([id,f,cls,shp])=>{if(s.e===0&&id!=='train')return;const pts=[];for(let t=1;t<Tp;t++)pts.push([G.X(t),Ly(Math.max(f(t),1e-300))]);el('path',{d:lp(pts),class:cls.replace('acc dash','acc-thin dash')},G.g);
+    for(let t=1;t<Tp;t++){if(Tp>20&&t%5&&t!==1&&t!==s.t)continue;const v=f(t),out=v<1e-8||v>1;marker(G,G.X(t),Ly(Math.max(v,1e-300)),shp,id,out)}});
+  vline(G,G.X(s.t));
+  if(s.e===0)tx(G.g,(G.x0+G.x1)/2,G.y1+14,'e = 0：沒有預測誤差，差距為 0',{class:'lab','text-anchor':'middle'});
+  // bars
+  const bb=$('#c1-bar'),BW=chartW(bb),BH=96,t=s.t,tr=r.train[t],g=gap[t],mx=(tr+g)*1.1||1;
+  const sv=$('svg',bb);sv.textContent='';sv.setAttribute('viewBox',`0 0 ${BW} ${BH}`);sv.setAttribute('width',BW);sv.setAttribute('height',BH);
+  const X=lin(0,mx,70,BW-10);
+  tx(sv,0,30,'訓練',{class:'al'});el('rect',{x:70,y:16,width:Math.max(1,X(tr)-70),height:20,class:'bar-tr'},sv);
+  tx(sv,0,70,'取樣',{class:'al'});el('rect',{x:70,y:56,width:Math.max(1,X(tr)-70),height:20,class:'bar-tr'},sv);
+  el('rect',{x:X(tr),y:56,width:Math.max(0,X(tr+g)-X(tr)),height:20,class:'bar-gap'},sv);
+  tx(sv,Math.min(BW-4,X(tr+g)+4),92,'斜線段 = 差距',{class:'tk','text-anchor':X(tr+g)>BW-90?'end':'start'});
+  const lab=s.smp==='ddpm'?'差距 DDPM':'差距 DDIM';
+  ro($('#c1-ro'),[['ᾱₜ',fe(r.A[t])],['1−ᾱₜ（訓練）',fe(tr)],['β̃ₜ₊₁',fe(r.bt[t])],['βₜ₊₁',fe(r.beta[t])],[lab,fe(g),1],['取樣變異數',fe(tr+g)],['差距／訓練',fe(g/tr)]]);
+  $('svg',box).setAttribute('aria-label',`單步變異數，${s.smp.toUpperCase()}，${s.kind}，T′=${Tp}，e=${s.e.toFixed(2)}`);
+  announce('c1',`t = ${t}，訓練變異數 ${fe(tr)}，${lab} ${fe(g)}，差距／訓練 ${fe(g/tr)}`)}
+function initC1(){const R=sched(renderC1);
+  radiogroup($('#c1-smp'),c1s.smp,v=>{c1s.smp=v;R()});radiogroup($('#c1-sch'),c1s.kind,v=>{c1s.kind=v;R()});
+  radiogroup($('#c1-T'),c1s.Tp,v=>{c1s.Tp=+v;const ti=$('#c1-t');ti.max=c1s.Tp-1;if(c1s.t>c1s.Tp-1){c1s.t=c1s.Tp-1;ti.value=c1s.t}$('#c1-to').textContent=c1s.t;R()});
+  $('#c1-e').addEventListener('input',e=>{c1s.e=+e.target.value;$('#c1-eo').textContent=c1s.e.toFixed(2);e.target.setAttribute('aria-valuetext','e = '+c1s.e.toFixed(2));R()});
+  $('#c1-t').addEventListener('input',e=>{c1s.t=+e.target.value;$('#c1-to').textContent=c1s.t;e.target.setAttribute('aria-valuetext','t = '+c1s.t);R()});
+  renderC1()}
+
+/* ---------- C2 ---------- */
+const c2s={mode:'A',kind:'cosine',Tp:20,e:0.1,v0:0.25,t:1,fig1:true};
+const FIG1_READ=[[2,.47],[10,.265],[18,.015]];
+function renderC2(){const s=c2s,A=respace(s.kind,s.Tp),Tp=s.Tp,r=s.mode==='A'?c2Paper(A,s.e):c2Perfect(A,s.v0);
+  const box=$('#c2-fig'),W=chartW(box),H=Math.round(Math.min(280,W*0.58));
+  let ymax=1;if(s.mode==='A'){let m=0;for(let t=1;t<Tp;t++)m=Math.max(m,r.single[t],r.multi[t]);ymax=m>0?m*1.15:1}
+  const yt=[0,ymax/2,ymax].map(v=>[v,fe(v)]);
+  const xt=Tp<=20?[1,5,10,15,19].filter(v=>v<Tp):[1,Math.round(Tp/4),Math.round(Tp/2),Math.round(3*Tp/4),Tp-1];
+  const G=frame($('svg',box),{W,H,m:{l:56,r:14,t:32,b:40},x:[Tp-1,1],y:[0,ymax],xt,yt,xl:'t（← 取樣方向）',yl:'變異數誤差'});
+  const Yc=v=>G.Y(Math.max(0,Math.min(ymax,v)));
+  if(s.mode==='B'){const pts=[];for(let t=1;t<Tp;t++)pts.push([G.X(t),Yc(2*A[t]*s.v0)]);el('path',{d:lp(pts),class:'ref'},G.g)}
+  [['single','par','circ'],['multi','acc','sq']].forEach(([k,cls,shp])=>{const pts=[];for(let t=1;t<Tp;t++)pts.push([G.X(t),Yc(r[k][t])]);el('path',{d:lp(pts),class:cls==='acc'?'acc-thin':cls},G.g);
+    for(let t=1;t<Tp;t++){if(Tp>20&&t%5&&t!==1&&t!==s.t)continue;marker(G,G.X(t),Yc(r[k][t]),shp,k,false)}});
+  const showF=s.fig1&&Tp===20;$('#c2-fw').classList.toggle('hide',Tp!==20);
+  if(showF)FIG1_READ.forEach(([t,v])=>{const over=v>ymax;const y=over?G.y1:G.Y(v);marker(G,G.X(t),y,'dia','fig1',true);if(over){const nearR=G.X(t)>G.x1-50;tx(G.g,G.X(t)+(nearR?-9:9),G.y1+4,'↑ '+v,{class:'tk','text-anchor':nearR?'end':'start'})}});
+  vline(G,G.X(s.t));
+  // delta
+  const b2=$('#c2-fig2'),H2=Math.round(Math.min(200,W*0.4));let dm=0;for(let t=1;t<Tp;t++)dm=Math.max(dm,r.delta[t]);dm=dm>0?dm*1.15:1;
+  const G2=frame($('svg',b2),{W,H:H2,m:{l:56,r:14,t:32,b:40},x:[Tp-1,1],y:[0,dm],xt,yt:[[0,'0'],[dm/2,fe(dm/2)],[dm,fe(dm)]],xl:'t（← 取樣方向）',yl:'δₜ'});
+  const p2=[];for(let t=1;t<Tp;t++)p2.push([G2.X(t),G2.Y(r.delta[t])]);el('path',{d:lp(p2),class:'ink'},G2.g);vline(G2,G2.X(s.t));
+  const t=s.t,rat=r.single[t]<1e-15?'—':fe(r.multi[t]/r.single[t]);
+  const rows=[['Δ單步',fe(r.single[t])],['Δ多步',fe(r.multi[t]),1],['Δ多步／Δ單步',rat],['δₜ',fe(r.delta[t])]];
+  if(s.mode==='A')rows.push(['c₂（下一步權重）',fe(coefs(A,t).c2)]);else rows.push(['2ᾱₜ·Var(x₀)',fe(2*A[t]*s.v0)]);
+  ro($('#c2-ro'),rows);
+  $('#c2-cap').textContent=s.mode==='A'?'論文的解析模型：每步的 x₀ 預測以真實 x₀ 為中心，誤差彼此獨立。':'網路等於高斯資料的最佳去噪器，用 Alg. 2 的方式量測：從 x_T 出發，減去起點 x₀ 的 √ᾱₜ x₀。';
+  $('#c2-ew').classList.toggle('hide',s.mode!=='A');$('#c2-vw').classList.toggle('hide',s.mode!=='B');$('#c2-lgref').classList.toggle('hide',s.mode!=='B');
+  announce('c2',`模式 ${s.mode}，t = ${t}，Δ單步 ${fe(r.single[t])}，Δ多步 ${fe(r.multi[t])}，δ ${fe(r.delta[t])}`)}
+function initC2(){const R=sched(renderC2);
+  radiogroup($('#c2-mode'),c2s.mode,v=>{c2s.mode=v;R()});radiogroup($('#c2-sch'),c2s.kind,v=>{c2s.kind=v;R()});
+  radiogroup($('#c2-T'),c2s.Tp,v=>{c2s.Tp=+v;const ti=$('#c2-t');ti.max=c2s.Tp-1;if(c2s.t>c2s.Tp-1){c2s.t=c2s.Tp-1;ti.value=c2s.t}$('#c2-to').textContent=c2s.t;R()});
+  $('#c2-e').addEventListener('input',e=>{c2s.e=+e.target.value;$('#c2-eo').textContent=c2s.e.toFixed(2);e.target.setAttribute('aria-valuetext','e = '+c2s.e.toFixed(2));R()});
+  $('#c2-v').addEventListener('input',e=>{c2s.v0=+e.target.value;$('#c2-vo').textContent=c2s.v0.toFixed(2);e.target.setAttribute('aria-valuetext','Var(x₀) = '+c2s.v0.toFixed(2));R()});
+  $('#c2-t').addEventListener('input',e=>{c2s.t=+e.target.value;$('#c2-to').textContent=c2s.t;e.target.setAttribute('aria-valuetext','t = '+c2s.t);R()});
+  $('#c2-f1').addEventListener('change',e=>{c2s.fig1=e.target.checked;R()});
+  renderC2()}
+
+/* ---------- C3 ---------- */
+const c3s={h:0.02,w:0};
+function renderC3(){const{F,lam}=eq10Invert(c3s.h,c3s.w),Fb=eq10Forward(lam);let err=0;for(let t=5;t<=C3T;t++)err=Math.max(err,Math.abs(Fb[t]-F[t]));
+  const b1=$('#c3-fig'),W=chartW(b1),H=Math.round(Math.min(240,W*0.66));const ym=Math.max(0.01,c3s.h)*1.15;
+  const G=frame($('svg',b1),{W,H,m:{l:56,r:14,t:32,b:40},x:[C3T,5],y:[1,1+ym],xt:[5,10,15,20],yt:[[1,'1'],[1+ym/2,(1+ym/2).toFixed(3)],[1+ym,(1+ym).toFixed(3)]],xl:'t（← 取樣方向）',yl:'ΔN(t)'});
+  const p=[];for(let t=5;t<=C3T;t++)p.push([G.X(t),G.Y(1+F[t])]);el('path',{d:lp(p),class:'par'},G.g);
+  const b2=$('#c3-fig2');let lm=0;for(let t=6;t<=C3T;t++)lm=Math.max(lm,lam[t]-1);lm=lm>0?lm*1.2:1e-4;
+  const G2=frame($('svg',b2),{W,H,m:{l:64,r:14,t:32,b:40},x:[C3T,5],y:[0,lm],xt:[5,10,15,20],yt:[[0,'0'],[lm/2,(lm/2).toExponential(1)],[lm,lm.toExponential(1)]],xl:'t（← 取樣方向）',yl:'λₜ − 1'});
+  const ref=2*c3s.h/225;if(ref<=lm)el('line',{x1:G2.x0,x2:G2.x1,y1:G2.Y(ref),y2:G2.Y(ref),class:'ref'},G2.g);
+  const q=[];for(let t=6;t<=C3T;t++)q.push([G2.X(t),G2.Y(lam[t]-1)]);el('path',{d:lp(q),class:'acc-thin'},G2.g);for(let t=6;t<=C3T;t++)marker(G2,G2.X(t),G2.Y(lam[t]-1),'circ','lam',false);
+  ro($('#c3-ro'),[['λ₆',lam[6].toFixed(6)],['λ₁₃',lam[13].toFixed(6)],['λ₁₉',lam[19].toFixed(6),1],['λ₂₀',lam[20].toFixed(6)],['2h/15²',ref.toExponential(3)],['回代誤差',err.toExponential(1)]]);
+  announce('c3',`h = ${c3s.h.toFixed(3)}，w = ${c3s.w.toFixed(2)}，λ₆ = ${lam[6].toFixed(6)}，λ₁₉ = ${lam[19].toFixed(6)}`)}
+function initC3(){const R=sched(renderC3);
+  $('#c3-h').addEventListener('input',e=>{c3s.h=+e.target.value;$('#c3-ho').textContent=c3s.h.toFixed(3);e.target.setAttribute('aria-valuetext','h = '+c3s.h.toFixed(3));R()});
+  $('#c3-w').addEventListener('input',e=>{c3s.w=+e.target.value;$('#c3-wo').textContent=c3s.w.toFixed(2);e.target.setAttribute('aria-valuetext','w = '+c3s.w.toFixed(2));R()});
+  renderC3()}
+
+/* ---------- C4 ---------- */
+const S=(name,Ts,base,es,b,extra)=>({name,rows:Ts.map((T,i)=>Object.assign({T,base:base[i],es:es[i],b:b?b[i]:null},extra&&extra[i]?{esStar:extra[i]}:{}))});
+const ADM5=['CIFAR-10 32×32','LSUN tower 64','FFHQ 128','ImageNet 64','ImageNet 128'];
+const ADMd={b100:[3.37,3.59,14.52,2.71,3.55],e100:[2.17,2.91,6.77,2.39,3.37],k100:[1.017,1.006,1.005,1.006,1.004],b50:[4.43,7.28,26.15,3.75,5.15],e50:[2.49,3.68,9.50,3.07,4.33],k50:[1.017,1.007,1.007,1.006,1.004],
+  b20:[10.36,23.92,59.35,10.96,12.48],e20:[5.15,8.22,26.14,7.52,9.95],k20:[1.017,1.011,1.008,1.006,1.005],st:[[4.31,0.0025,1.0],[7.60,0.0008,1.0034],[24.83,0.0004,1.0042],[7.37,0.0002,1.0041],[9.86,0.00022,1.00291]]};
+const col=(arrs,i)=>arrs.map(a=>a[i]);
+const RESULTS=[
+ {id:'adm',label:'ADM（Table 2）',subsets:ADM5.map((n,i)=>S(n,[100,50,20],col([ADMd.b100,ADMd.b50,ADMd.b20],i),col([ADMd.e100,ADMd.e50,ADMd.e20],i),col([ADMd.k100,ADMd.k50,ADMd.k20],i),[null,null,{fid:ADMd.st[i][0],k:ADMd.st[i][1],b:ADMd.st[i][2]}]))},
+ {id:'ddim',label:'DDIM·DDPM（Table 4）',subsets:[
+   S('CIFAR-10 η=0（DDIM）',[100,50,20],[4.06,4.82,8.21],[3.38,4.17,6.54],[1.0014,1.0030,1.0052]),S('CIFAR-10 η=1（DDPM）',[100,50,20],[6.73,10.29,20.15],[4.01,4.57,7.78],[1.03,1.04,1.05]),
+   S('CelebA η=0（DDIM）',[100,50,20],[5.67,6.88,10.43],[5.05,6.20,10.38],[1.003,1.004,1.001]),S('CelebA η=1（DDPM）',[100,50,20],[11.33,15.09,22.61],[4.45,5.57,11.83],[1.04,1.05,1.06])]},
+ {id:'edm',label:'EDM（Table 5）',nfe:true,subsets:[
+   S('無條件 Heun',[35,21,13],[1.97,2.33,7.16],[1.95,2.24,6.54],[1.0005,0.9985,1.0060]),S('無條件 Euler',[35,21,13],[3.81,6.29,12.28],[2.80,4.32,8.39],[1.0034,1.0043,1.0048]),
+   S('有條件 Heun',[35,21,13],[1.82,2.17,6.69],[1.80,2.08,6.16],[1.0006,0.9983,1.0070]),S('有條件 Euler',[35,21,13],[3.74,5.91,10.66],[2.59,3.74,6.59],[1.0035,1.0045,1.0051])]},
+ {id:'ldm',label:'LDM（Table 6）',subsets:[S('FFHQ 256',[100,50,20],[10.90,14.34,33.13],[9.83,11.57,20.91],[1.00015,1.0016,1.007]),S('CelebA-HQ 256',[100,50,20],[9.31,13.95,29.62],[7.36,9.16,15.68],[1.0009,1.003,1.010])]},
+ {id:'dit',label:'DiT（Table 19）',subsets:[S('ImageNet 256',[20,50,100],[12.95,3.71,2.57],[10.00,3.30,2.52],[0.965,0.989,0.995])]},
+ {id:'pfgm',label:'PFGM++（Tables 9–10）',subsets:[S('D = 128',[9,13,21,35],[37.82,7.55,2.34,1.92],[17.91,4.51,2.31,1.91],[1.008,1.016,0.970,1.00045]),S('D = 2048',[9,13,21,35],[37.16,7.34,2.31,1.91],[17.27,4.88,2.20,1.90],[1.007,1.015,0.996,1.0007])]},
+ {id:'long',label:'長取樣鏈（Tables 11–12）',subsets:[S('Analytic-DDPM',[20,50,100,200,400,1000],[14.61,7.25,5.40,4.01,3.62,4.03],[11.02,5.03,4.09,3.39,3.14,3.42],null),S('ADM',[200,300,1000],[3.04,2.95,3.01],[2.15,2.14,2.21],null)]},
+ {id:'sens',label:'敏感度（Tables 17–18）',sens:true,subsets:[
+   {name:'Table 17 · ADM-ES 100 步',base:3.37,points:[[1.015,2.20],[1.016,2.18],[1.017,2.17],[1.018,2.21],[1.019,2.31]]},
+   {name:'Table 17 · ADM-ES 50 步',base:4.43,points:[[1.015,2.53],[1.016,2.51],[1.017,2.49],[1.018,2.53],[1.019,2.55]]},
+   {name:'Table 18 · EDM-ES Heun 35 步',base:1.97,points:[[1.0005,1.948],[1.0006,1.947],[1.0007,1.949],[1.0008,1.953]]},
+   {name:'Table 18 · EDM-ES Heun 13 步',base:7.16,points:[[1.004,6.60],[1.005,6.55],[1.006,6.54],[1.007,6.55]]}]}];
+const c4s={tab:'adm',sub:0,table:false};
+const pct=(b,e)=>(100*(b-e)/b).toFixed(1)+'%';
+function renderC4(){const tb=RESULTS.find(r=>r.id===c4s.tab),sub=tb.subsets[c4s.sub],fig=$('#c4-fig'),tw=$('#c4-table');
+  fig.classList.toggle('hide',c4s.table);tw.classList.toggle('hide',!c4s.table);$('#c4-lg').classList.toggle('hide',!!tb.sens||c4s.table);
+  if(c4s.table){tw.innerHTML=tb.sens
+    ?`<div class="tscroll"><table><caption>${sub.name}（基準 ${sub.base}）</caption><thead><tr><th class="num">b</th><th class="num">FID</th><th class="num">比基準低</th></tr></thead><tbody>${sub.points.map(([b,f])=>`<tr><td class="num">${b}</td><td class="num">${f}</td><td class="num">${(sub.base-f).toFixed(3)}</td></tr>`).join('')}</tbody></table></div>`
+    :`<div class="tscroll"><table><caption>${tb.label} · ${sub.name}</caption><thead><tr><th class="num">${tb.nfe?'NFE':'T′'}</th><th class="num">基準</th><th class="num">ES</th><th class="num">改善率</th><th class="num">b</th></tr></thead><tbody>${sub.rows.map(r=>`<tr><td class="num">${r.T}</td><td class="num">${r.base}</td><td class="num">${r.es}</td><td class="num">${pct(r.base,r.es)}</td><td class="num">${r.b??'論文未列'}</td></tr>`+(r.esStar?`<tr><td class="num">${r.T}</td><td class="num">${r.base}</td><td class="num">${r.esStar.fid}（ES*）</td><td class="num">${pct(r.base,r.esStar.fid)}</td><td class="num">k=${r.esStar.k}, b=${r.esStar.b}</td></tr>`:'')).join('')}</tbody></table></div>`;return}
+  const W=widthOf(fig,280,900),svg=$('svg',fig);
+  if(tb.sens){const H=260,ps=sub.points,lo=Math.min(...ps.map(p=>p[1])),hi=Math.max(...ps.map(p=>p[1]),sub.base),pad=(hi-lo)*0.12||0.05;
+    const G=frame(svg,{W,H,m:{l:56,r:18,t:32,b:42},x:[ps[0][0],ps[ps.length-1][0]],y:[lo-pad,hi+pad],xt:ps.map(p=>[p[0],String(p[0])]),yt:[[lo,lo.toFixed(2)],[hi,hi.toFixed(2)]],xl:'b',yl:'FID（縱軸不從 0 起）'});
+    el('line',{x1:G.x0,x2:G.x1,y1:G.Y(sub.base),y2:G.Y(sub.base),class:'ref'},G.g);tx(G.g,G.x1,G.Y(sub.base)-6,'b = 1（基準）'+sub.base,{class:'lab','text-anchor':'end'});
+    el('path',{d:lp(ps.map(p=>[G.X(p[0]),G.Y(p[1])])),class:'acc-thin'},G.g);ps.forEach(p=>{marker(G,G.X(p[0]),G.Y(p[1]),'circ','lam',false);tx(G.g,G.X(p[0]),G.Y(p[1])+18,String(p[1]),{class:'tk','text-anchor':'middle'})});
+    svg.setAttribute('aria-label',`${sub.name}：FID ${ps.map(p=>p[1]).join('、')}，基準 ${sub.base}`);return}
+  const rows=sub.rows,n=rows.length,H=280,mx=Math.max(...rows.map(r=>r.base))*1.15;
+  const G=frame(svg,{W,H,m:{l:48,r:12,t:32,b:64},x:[0,n],y:[0,mx],xt:[],yt:[[0,'0'],[mx/2,(mx/2).toFixed(1)],[mx,mx.toFixed(1)]],yl:'FID'});
+  const gw=(G.x1-G.x0)/n;
+  rows.forEach((r,i)=>{const bars=[['base',r.base],['es',r.es]].concat(r.esStar?[['star',r.esStar.fid]]:[]),bw=Math.min(40,(gw-16)/bars.length),x0=G.x0+i*gw+(gw-bw*bars.length)/2;
+    const narrow=gw<150;
+    bars.forEach(([k,v],j)=>{const x=x0+j*bw;el('rect',{x:x+1,y:G.Y(v),width:bw-2,height:G.y0-G.Y(v),class:'b4-'+k},G.g);if(bw>=30||j===0)tx(G.g,x+bw/2,G.Y(v)-5,String(v),{class:'tk','text-anchor':'middle'})});
+    const cx=G.x0+i*gw+gw/2;tx(G.g,cx,G.y0+17,(tb.nfe?'NFE ':(narrow?'':'T′ = '))+r.T,{class:'lab','text-anchor':'middle'});
+    tx(G.g,cx,G.y0+33,'−'+pct(r.base,r.es),{class:'tk','text-anchor':'middle'});
+    if(r.esStar)tx(G.g,cx,G.y0+49,'ES* −'+pct(r.base,r.esStar.fid),{class:'tk','text-anchor':'middle'});
+    else if(!narrow)tx(G.g,cx,G.y0+49,r.b==null?'b：論文未列':'b = '+r.b,{class:'tk','text-anchor':'middle'})});
+
+  svg.setAttribute('aria-label',`${tb.label} ${sub.name}：`+rows.map(r=>`${r.T} 步 基準 ${r.base}、ES ${r.es}`).join('；'))}
+function c4subs(){const tb=RESULTS.find(r=>r.id===c4s.tab),box=$('#c4-sub');box.innerHTML='';
+  tb.subsets.forEach((s,i)=>{const b=document.createElement('button');b.className='chip';b.dataset.v=String(i);b.textContent=s.name;box.appendChild(b)});
+  radiogroup(box,c4s.sub,v=>{c4s.sub=+v;renderC4()})}
+function initC4(){const tab=$('#c4-tab');RESULTS.forEach(r=>{const b=document.createElement('button');b.dataset.v=r.id;b.textContent=r.label;tab.appendChild(b)});
+  radiogroup(tab,c4s.tab,v=>{c4s.tab=v;c4s.sub=0;c4subs();renderC4()});c4subs();
+  $('#c4-tbl').addEventListener('change',e=>{c4s.table=e.target.checked;renderC4()});renderC4()}
+
+/* ---------- timeline ---------- */
+const TL_GROUP={'1503.03585':['base','ddpm-reverse-sampling-formulation'],'1907.05600':['base','ddpm-reverse-sampling-formulation'],'2006.11239':['base','ddpm-reverse-sampling-formulation'],'2010.02502':['base','ddpm-reverse-sampling-formulation'],
+ '1511.06732':['orig','exposure-bias-seq2seq-origin'],'1910.00292':['orig','exposure-bias-seq2seq-origin'],
+ '2102.09672':['var','diffusion-sampling-variance-schedule'],'2201.06503':['var','diffusion-sampling-variance-schedule'],'2206.00364':['var','diffusion-sampling-variance-schedule'],
+ '2301.11706':['mit','exposure-bias-prior-mitigations'],'2305.15583':['mit','exposure-bias-prior-mitigations'],'2308.05021':['mit','exposure-bias-prior-mitigations'],
+ '2308.15321':['me','epsilon-scaling-method']};
+const TL_NAME={base:'擴散模型基礎',orig:'曝光偏差的起源',var:'取樣變異數',mit:'既有緩解方法',me:'本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  data=data.map((e,i)=>({e,i})).sort((a,b)=>(+a.e.year||0)-(+b.e.year||0)||a.i-b.i).map(o=>o.e);
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const slug=g[1];const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${slug?`<a href="${slug}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+
+/* ---------- toc, theme ---------- */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));
+  addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+/* ---------- self test (design §5 acceptance tables; tol: rel 1e-3 + abs 1e-12) ---------- */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(x,ref,rel)=>Math.abs(x-ref)<=(rel??1e-3)*Math.abs(ref)+1e-12;const chk=(x,ref,m,rel)=>ok(near(x,ref,rel),`${m}: ${x} vs ${ref}`);
+  ['cosine','linear'].forEach(k=>{const A=respace(k,20);for(let s=1;s<=20;s++){const c=coefs(A,s);ok(Math.abs(c.c2*c.c2*(1-A[s])+c.bt-(1-A[s-1]))<1e-12,'identity '+k+' s='+s)}});
+  const c1=c1Calc('cosine',20,0.1);
+  [[1,.99996,4.128e-5,9.910e-3,8.707e-3,.00004,.00911],[2,.99085,.00915,5.024e-3,2.128e-3,.00652,.02213],[5,.88812,.11188,1.287e-3,4.031e-4,.04259,.06435],[10,.53434,.46566,4.239e-4,1.242e-4,.13116,.15440],[18,.02654,.97346,1.487e-4,6.598e-5,.72874,.74351]]
+   .forEach(([t,ab,tr,g,gd,bt,be])=>{chk(c1.A[t],ab,'C1 abar t='+t,1e-4);chk(c1.train[t],tr,'C1 train t='+t,t===1?2e-3:1e-3);chk(c1.ddpm[t],g,'C1 gap t='+t);chk(c1.ddim[t],gd,'C1 ddim t='+t);if(t>1){chk(c1.bt[t],bt,'C1 bt t='+t);chk(c1.beta[t],be,'C1 beta t='+t)}});
+  chk(c1.ddpm[1]/c1.train[1],240,'C1 ratio t=1',5e-3);
+  const L1=c1Calc('linear',20,0.1);chk(L1.ddpm[1],9.941e-3,'C1 lin t=1');chk(L1.ddim[1],8.951e-3,'C1 lin ddim t=1');chk(L1.ddpm[10],1.974e-4,'C1 lin t=10');
+  const pa=(k,e,rows)=>{const A=respace(k,20),r=c2Paper(A,e);rows.forEach(([t,s,m,d,dn])=>{chk(r.single[t],s,`C2A ${k} e=${e} single t=${t}`);chk(r.multi[t],m,`C2A ${k} e=${e} multi t=${t}`);chk(r.delta[t],d,`C2A ${k} e=${e} delta t=${t}`);chk(dNPaper(A,e,t),dn,`dN ${k} t=${t}`)})};
+  pa('cosine',0.1,[[1,9.910e-3,9.910e-3,8.711e-3,1.4096],[2,5.024e-3,5.313e-3,6.054e-4,1.1308],[5,1.287e-3,1.935e-3,8.292e-6,1.0080],[10,4.239e-4,9.148e-4,4.489e-7,1.0010],[19,6.807e-5,6.807e-5,1.166e-9,1.0000]]);
+  pa('cosine',0.3,[[1,8.919e-2,8.919e-2,8.544e-2,1.4109],[5,1.158e-2,1.741e-2,6.294e-4,1.0444]]);
+  pa('linear',0.1,[[1,9.941e-3,9.941e-3,8.137e-3,1.4087],[10,1.974e-4,2.941e-4,2.406e-8,1.0002]]);
+  [[10,5,1.107],[20,10,1.490],[50,25,2.763],[100,50,4.552]].forEach(([Tp,m,v])=>{const r=c2Paper(respace('linear',Tp),0.1);chk(r.multi[m]/r.single[m],v,'C2A ratio T='+Tp)});
+  const pb=(k,v0,rows)=>{const r=c2Perfect(respace(k,20),v0);rows.forEach(([t,s,m,d])=>{const rel=x=>Math.max(1e-3,5e-5/Math.max(Math.abs(x),1e-9));chk(r.single[t],s,`C2B ${k} ${v0} single t=${t}`,rel(s));chk(r.multi[t],m,`C2B ${k} ${v0} multi t=${t}`,rel(m));if(d>0)chk(r.delta[t],d,`C2B ${k} ${v0} delta t=${t}`,rel(d))})};
+  pb('cosine',.25,[[1,.0089,.4347,.4263],[2,.0258,.4353,.3260],[5,.0614,.4032,.1469],[10,.0536,.2444,.0257],[18,.0062,.0091,0]]);
+  pb('cosine',.5,[[1,.0091,.8892,.8772],[2,.0274,.8863,.7235],[5,.0792,.8104,.3917],[10,.0916,.4886,.0867],[18,.0124,.0183,.0001]]);
+  pb('linear',.25,[[1,.0303,.4005,.3880],[2,.0765,.3966,.2238],[5,.0874,.2735,.0375],[10,.0172,.0434,.0005]]);
+  chk(c2Perfect(respace('cosine',50),.25).multi[1],.4683,'C2B T=50 t=1');chk(c2Perfect(respace('cosine',100),.25).multi[1],.4826,'C2B T=100 t=1');
+  [[.02,0,1.000178,1.000178,1.000178,1.000089],[.02,1,1.000498,1.000249,1.000036,1.000006],[.02,.5,1.000338,1.000213,1.000107,1.000047],[.1,0,1.000889,1.000889,1.000889,1.000444]].forEach(([h,w,a,b,c,d])=>{
+    const{F,lam}=eq10Invert(h,w),Fb=eq10Forward(lam);[[6,a],[13,b],[19,c],[20,d]].forEach(([t,v])=>ok(Math.abs(lam[t]-v)<=1e-6,`C3 h=${h} w=${w} lam${t}=${lam[t]}`));
+    let err=0;for(let t=5;t<=C3T;t++)err=Math.max(err,Math.abs(Fb[t]-F[t]));ok(err<1e-12,'C3 roundtrip '+err)});
+  const adm=RESULTS[0].subsets[2].rows;chk(adm[0].base-adm[0].es,7.75,'FFHQ 100');chk(adm[1].base-adm[1].es,16.65,'FFHQ 50');chk(adm[2].base-adm[2].es,33.21,'FFHQ 20 ES');chk(adm[2].base-adm[2].esStar.fid,34.52,'FFHQ 20 ES*');
+  const cel=RESULTS[1].subsets[3].rows;[[2,47.7],[1,63.1],[0,60.7]].forEach(([i,v])=>ok(pct(cel[i].base,cel[i].es)===v.toFixed(1)+'%','CelebA DDPM '+cel[i].T));
+  ok(c4s.tab==='adm'&&c4s.sub===0&&!$('#c4-tbl').checked,'C4 defaults');
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ---------- boot ---------- */
+initTheme();initToc();initC1();initC2();initC3();initC4();renderTimeline();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{renderC1();renderC2();renderC3();renderC4()})});
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false})}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath()});
+if(/[?&]test\b/.test(location.search))selfTest();
+})();
+</script>
+</body>
+</html>
