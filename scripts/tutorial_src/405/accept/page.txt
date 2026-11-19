@@ -1,0 +1,601 @@
+DDPM 的輸入擾動
+
+跳到內容
+
+ No. 405
+ 訓練時擾動輸入，減少擴散模型的曝光偏差
+
+00 摘要01 前向過程02 取樣03 曝光偏差04 取樣步數05 DDPM-IP06 輸入與目標07 選擇 γ08 加噪觀點09 其他平滑方法10 實驗結果11 實作12 研究脈絡13 限制與延伸
+
+00摘要
+01前向過程
+02取樣
+03曝光偏差
+04取樣步數
+05DDPM-IP
+06輸入與目標
+07選擇 γ
+08加噪觀點
+09其他平滑方法
+10實驗結果
+11實作
+12研究脈絡
+13限制與延伸
+
+ No. 405 · 互動教學 · arXiv 2301.11706 · ICML 2023
+
+ 訓練時擾動輸入，減少擴散模型的曝光偏差
+
+ 這篇論文指出 DDPM 訓練與取樣時的網路輸入不一致，並在訓練時給輸入多加一份高斯噪聲來縮小這個差距。
+
+ DDPM（Denoising Diffusion Probabilistic Model）先把影像逐步加噪成純噪聲，再訓練網路逐步去噪來生成影像。
+Mang Ning、Enver Sangineto、Angelo Porrello、Simone Calderara、Rita Cucchiara（2023）〈Input Perturbation Reduces Exposure Bias in Diffusion Models〉
+
+ 01 · 輸入不一致訓練時，去噪網路的輸入由真實影像加噪得到；生成時，輸入是網路自己前一步的結果。兩者不一致，誤差會沿著生成步驟累積。
+
+ 02 · 一處修改DDPM-IP 在訓練時給網路輸入多加一份小噪聲，要網路預測的目標不變。生成的步驟完全不改，訓練也不增加計算量。
+
+ 03 · 結果在五個影像資料集上，品質指標在每個測試的步數都改善；用 60–200 步就能得到與原模型 1,000 步相當或略好的品質。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · 前向過程
+
+ 前向過程把影像逐步加噪，網路學習預測噪聲
+
+ 本論文處理影像，每個像素值先線性縮放到 [−1,1] $[-1,1]$ （Sec. 3）。給定一張真實影像 x0 $x_0$ ​ 與一組預先固定的噪聲排程 β1,…,βT $\beta_1,\dots,\beta_T$ ​,…,βT​，DDPM 的前向過程是一條馬可夫鏈，每一步加一點高斯噪聲：
+
+ q(xt∣xt−1)=N(xt;1−βt xt−1, βtI) $q(x_t\mid x_{t-1})=\mathcal N\big(x_t;\sqrt{1-\beta_t}\,x_{t-1},\ \beta_tI\big)$ ​∣xt−1​)=N(xt​;1−βt​​xt−1​, βt​I)
+Eq. 1
+
+ 這裡 t∈{1,…,T} $t\in\{1,\dots,T\}$ ，t $t$ 越大噪聲越多；本論文訓練一律用 T=1,000 $T=1{,}000$ 。定義 αt=1−βt $\alpha_t=1-\beta_t$ ​=1−βt​ 與累乘 αˉt=∏i≤tαi $\bar\alpha_t=\prod_{i\le t}\alpha_i$ t​=∏i≤t​αi​，任一步的 xt $x_t$ ​ 可以直接由 x0 $x_0$ ​ 算出：
+
+ xt=αˉt x0+1−αˉt ϵ,ϵ∼N(0,I) $x_t=\sqrt{\bar\alpha_t}\,x_0+\sqrt{1-\bar\alpha_t}\,\epsilon,\qquad \epsilon\sim\mathcal N(0,I)$ ​=αˉt​​x0​+1−αˉt​​ϵ,ϵ∼N(0,I)
+Eq. 4
+
+ 所以 xt $x_t$ ​ 由真實影像 x0 $x_0$ ​ 加噪得到：xt=αˉtx0+1−αˉtϵ $x_t=\sqrt{\bar\alpha_t}x_0+\sqrt{1-\bar\alpha_t}\epsilon$ ​=αˉt​​x0​+1−αˉt​​ϵ。αˉt $\bar\alpha_t$ t​ 從接近 1 遞減到接近 0，xT $x_T$ ​ 幾乎是純噪聲。Ho 等人（2020）不直接預測反向過程的均值，而是訓練一個網路 ϵθ(xt,t) $\epsilon_\theta(x_t,t)$ ​(xt​,t) 預測生成 xt $x_t$ ​ 的噪聲 ϵ $\epsilon$ ，用 L2 損失回歸 ϵ $\epsilon$ ：
+
+ L(θ)=Ex0, ϵ, t∼U{1,…,T}∥ϵ−ϵθ(xt,t)∥2 $L(\theta)=\mathbb E_{x_0,\ \epsilon,\ t\sim\mathcal U\{1,\dots,T\}}\big\|\epsilon-\epsilon_\theta(x_t,t)\big\|^2$ ​, ϵ, t∼U{1,…,T}​​ϵ−ϵθ​(xt​,t)​2
+Eq. 5
+
+ 論文特別指出：Eq. 5 中的 xt $x_t$ ​ 與 ϵ $\epsilon$ 都是真值（由真實影像與實際抽出的噪聲算出），只有 ϵθ(xt,t) $\epsilon_\theta(x_t,t)$ ​(xt​,t) 是網路的預測。訓練流程寫成 Alg. 1：
+
+ Alg. 1 · DDPM 標準訓練
+說明
+
+ 1: repeat重複直到收斂。
+
+ 2: x0 ~ q(x0), t ~ U({1,…,T}), ε ~ N(0, I)抽一張真實影像、一個步數、一份噪聲。
+
+ 3: compute x_t using Eq. 4由真值算出網路輸入。
+
+ 4: gradient step on ∇θ ‖ε − εθ(x_t, t)‖²輸入是真值 xt $x_t$ ​，目標是 ϵ $\epsilon$ 。
+
+ 5: until converged
+
+ 細節：cosine 噪聲排程
+
+ 本論文的 ADM 模型使用 cosine 排程（Tab. 9；公式出自 Nichol & Dhariwal 2021）：αˉ(u)=cos⁡2 ⁣(u+0.0081.008⋅π2) $\bar\alpha(u)=\cos^2\!\big(\tfrac{u+0.008}{1.008}\cdot\tfrac\pi2\big)$ (u)=cos2(1.008u+0.008​⋅2π​)（再除以 u=0 $u=0$ 的值），βt=min⁡ ⁣(1−αˉ(t/T)/αˉ((t−1)/T), 0.999) $\beta_t=\min\!\big(1-\bar\alpha(t/T)/\bar\alpha((t-1)/T),\,0.999\big)$ ​=min(1−αˉ(t/T)/αˉ((t−1)/T),0.999)，再以 αˉt=∏i≤t(1−βi) $\bar\alpha_t=\prod_{i\le t}(1-\beta_i)$ t​=∏i≤t​(1−βi​) 累乘。本頁的元件都用這個排程：β1=4.13×10−5 $\beta_1=4.13\times10^{-5}$ ​=4.13×10−5、αˉ500=0.4938 $\bar\alpha_{500}=0.4938$ 500​=0.4938、β1000=0.999 $\beta_{1000}=0.999$ ​=0.999、αˉ1000=2.43×10−9 $\bar\alpha_{1000}=2.43\times10^{-9}$ 1000​=2.43×10−9。
+
+ 延伸閱讀：DDPM 的訓練與取樣流程、ε-prediction 與 DDPM、score-based 模型
+
+ 02 · 取樣
+
+ 取樣從純噪聲出發，逐步去噪
+
+ 生成時從 x^T∼N(0,I) $\hat x_T\sim\mathcal N(0,I)$ T​∼N(0,I) 出發，由 t=T $t=T$ 走到 t=1 $t=1$ 。符號加上「帽子」表示由模型產生，不是真值。每一步把目前的 x^t $\hat x_t$ t​ 交給網路，再依網路的噪聲預測往前走一步（Alg. 2）：
+
+ x^t−1=1αt(x^t−1−αt1−αˉt ϵθ(x^t,t))+σtz $\hat x_{t-1}=\frac1{\sqrt{\alpha_t}}\Big(\hat x_t-\frac{1-\alpha_t}{\sqrt{1-\bar\alpha_t}}\,\epsilon_\theta(\hat x_t,t)\Big)+\sigma_tz$ t−1​=αt​​1​(x^t​−1−αˉt​​1−αt​​ϵθ​(x^t​,t))+σt​z
+Alg. 2 第 4 行
+
+ t>1 $t>1$ 時 z∼N(0,I) $z\sim\mathcal N(0,I)$ ，t=1 $t=1$ 時 z=0 $z=0$ ，最後輸出 x^0 $\hat x_0$ 0​。從 Eq. 4 也可以反解出網路對乾淨影像的估計：
+
+ x^0=x^t−1−αˉt ϵθ(x^t,t)αˉt $\hat x_0=\frac{\hat x_t-\sqrt{1-\bar\alpha_t}\,\epsilon_\theta(\hat x_t,t)}{\sqrt{\bar\alpha_t}}$ 0​=αˉt​​x^t​−1−αˉt​​ϵθ​(x^t​,t)​
+由 Eq. 4 解出
+
+ 把這個 x^0 $\hat x_0$ 0​ 代回，Alg. 2 第 4 行可以改寫成 Ho 等人（2020）的後驗均值形式：x^t−1=ct(1)x^0+ct(2)x^t+σtz $\hat x_{t-1}=c^{(1)}_t\hat x_0+c^{(2)}_t\hat x_t+\sigma_tz$ t−1​=ct(1)​x^0​+ct(2)​x^t​+σt​z，其中 ct(1)=αˉt−1βt1−αˉt $c^{(1)}_t=\frac{\sqrt{\bar\alpha_{t-1}}\beta_t}{1-\bar\alpha_t}$ (1)​=1−αˉt​αˉt−1​​βt​​、ct(2)=αt(1−αˉt−1)1−αˉt $c^{(2)}_t=\frac{\sqrt{\alpha_t}(1-\bar\alpha_{t-1})}{1-\bar\alpha_t}$ (2)​=1−αˉt​αt​​(1−αˉt−1​)​（αˉ0=1 $\bar\alpha_0=1$ 0​=1）。字面意義是：每一步先估計 x0 $x_0$ ​，再把 x^t $\hat x_t$ t​ 往這個估計移動一小步。這個寫法與 Alg. 2 代數上相同，S03 的互動元件會用到它。
+
+ 細節：σt 的記號〈本頁判讀〉
+
+ 論文 Eq. 3 寫反向轉移為 N(xt−1;μθ(xt,t),σtI) $\mathcal N(x_{t-1};\mu_\theta(x_t,t),\sigma_tI)$ ​;μθ​(xt​,t),σt​I)，並定義 σt=1−αˉt−11−αˉtβt $\sigma_t=\frac{1-\bar\alpha_{t-1}}{1-\bar\alpha_t}\beta_t$ ​=1−αˉt​1−αˉt−1​​βt​；照這個寫法 σt $\sigma_t$ ​ 是變異數。Alg. 2 卻寫 σtz $\sigma_tz$ ​z，兩處用同一個符號。本頁依 Ho 等人（2020）的讀法：記 β~t=1−αˉt−11−αˉtβt $\tilde\beta_t=\frac{1-\bar\alpha_{t-1}}{1-\bar\alpha_t}\beta_t$ ​t​=1−αˉt​1−αˉt−1​​βt​ 為變異數，Alg. 2 乘的是標準差 β~t $\sqrt{\tilde\beta_t}$ ​t​​。論文沒有說明 ADM 是否改用學習的變異數，本頁不推測。
+
+ 符號表
+
+ 本頁符號
+ 符號意義
+
+ x0 $x_0$ ​真實影像，像素縮放到 [−1,1] $[-1,1]$ 
+
+ T $T$ 、t $t$ 擴散步數（訓練 T=1,000 $T=1{,}000$ ）、步數索引，t $t$ 越大越吵
+
+ βt,αt,αˉt $\beta_t,\alpha_t,\bar\alpha_t$ ​,αt​,αˉt​噪聲排程、1−βt $1-\beta_t$ ​、累乘
+
+ ϵ $\epsilon$ 生成 xt $x_t$ ​ 的標準高斯噪聲，也是回歸目標
+
+ xt $x_t$ ​、x^t $\hat x_t$ t​訓練時由真值算出的輸入、取樣時由前一步算出的輸入
+
+ ϵθ $\epsilon_\theta$ ​噪聲預測網路
+
+ β~t $\tilde\beta_t$ ​t​反向過程的固定變異數
+
+ ξ $\xi$ 、γ $\gamma$ 、yt $y_t$ ​額外的噪聲、擾動強度、擾動後的輸入（S05）
+
+ ϵ′ $\epsilon'$ DDPM-y 的目標（S06）
+
+ et $e_t$ ​、νt $\nu_t$ ​預測誤差 x^0−x0 $\hat x_0-x_0$ 0​−x0​ 與其標準差（S07）
+
+ T′ $T'$ 取樣步數（S04）
+
+ 延伸閱讀：DDPM 的訓練與取樣流程
+
+ 03 · 曝光偏差
+
+ 取樣時的輸入來自模型自己的預測
+
+ 比較 Alg. 1 第 4 行與 Alg. 2 第 4 行：訓練時網路的輸入是 ϵθ(xt,t) $\epsilon_\theta(x_t,t)$ ​(xt​,t)，xt $x_t$ ​ 是由真值算出的 xt $x_t$ ​；取樣時網路的輸入是 ϵθ(x^t,t) $\epsilon_\theta(\hat x_t,t)$ ​(x^t​,t)，x^t $\hat x_t$ t​ 是由上一步預測算出的 x^t $\hat x_t$ t​（第 t+1 $t+1$ 步的輸出）。訓練資料中不包含網路自己的預測誤差，所以前面步驟的誤差會成為後面步驟的輸入，沿取樣鏈累積（Sec. 1、Sec. 4）。
+
+ 這與自回歸文字生成的曝光偏差（exposure bias）相同：以「前一個字用真值」的方式訓練（稱為 teacher forcing，也就是訓練時以真值作為前一步輸入），生成時卻只能用自己產生的字，模型從未接觸自己的預測（Ranzato et al. 2016；Rennie et al. 2017；Bengio et al. 2015）。
+
+ 為了量化這個效應，作者使用 ADM。ADM 是 Dhariwal & Nichol（2021）提出的 U-Net 擴散模型，也是本論文的基準；以本論文方法訓練的 ADM 稱為 ADM-IP。品質用 FID（Fréchet Inception Distance）衡量：把兩組影像送進 Inception 網路取特徵，各以一個高斯（均值、共變異數）近似，計算兩個高斯的 Fréchet 距離，越低越好。一維、零均值的情形下，這個距離化為 (σ1−σ2)2 $(\sigma_1-\sigma_2)^2$ ​−σ2​)2，σ1,σ2 $\sigma_1,\sigma_2$ ​,σ2​ 是兩組樣本的標準差。
+
+ Tab. 1 的協定：從真實 x0 $x_0$ ​ 用 Eq. 4 算 xt $x_t$ ​，從 xt $x_t$ ​（而不是隨機的 xT $x_T$ ​）執行 t $t$ 步反向過程（Alg. 2），以 FID 比較 q(x0) $q(x_0)$ ​) 與 q(x^0) $q(\hat x_0)$ 0​)。t $t$ 小時網路應該能「找回」通往 x0 $x_0$ ​ 的路徑。模型是以 T=1,000 $T=1{,}000$ 訓練的 ADM，資料為 ImageNet 32×32，FID 用 5 萬個樣本計算。ADM 的 FID 由 100 步 0.983 增加到 1,000 步 3.544，反向步數越多，FID 越高：
+
+ Tab. 1（ADM 列，ImageNet 32×32）：從真實 x_t 出發做 t 步反向過程後的 FID
+ 反向步數 t1003005007001,000
+
+ ADM0.9831.8082.5873.1053.544
+
+ 下面的互動元件用一個可以手算的玩具呈現「推論輸入逐步偏離訓練分布」本頁玩具。資料是一維高斯 x0∼N(0,s2) $x_0\sim\mathcal N(0,s^2)$ ​∼N(0,s2)，此時最佳的 x0 $x_0$ ​ 預測是線性的：E[x0∣xt]=gtxt $\mathbb E[x_0\mid x_t]=g_tx_t$ ​∣xt​]=gt​xt​，gt=αˉts2αˉts2+1−αˉt $g_t=\frac{\sqrt{\bar\alpha_t}s^2}{\bar\alpha_ts^2+1-\bar\alpha_t}$ ​=αˉt​s2+1−αˉt​αˉt​​s2​。「不完美的網路」定義為 x^0=(1+ρ)gtx^t $\hat x_0=(1+\rho)g_t\hat x_t$ 0​=(1+ρ)gt​x^t​：每一步都把預測高估（ρ>0 $\rho>0$ ）或低估（ρ<0 $\rho<0$ ）同一個比例。取樣用 S02 的後驗均值形式，所以 x^t−1=Atx^t+β~tz $\hat x_{t-1}=A_t\hat x_t+\sqrt{\tilde\beta_t}z$ t−1​=At​x^t​+β~​t​​z，At=ct(1)(1+ρ)gt+ct(2) $A_t=c^{(1)}_t(1+\rho)g_t+c^{(2)}_t$ ​=ct(1)​(1+ρ)gt​+ct(2)​，各步的變異數可以逐步精確算出。距離用上面的一維 FID 公式。
+
+ 這個誤差模型是固定比例的偏差，不是論文 Sec. 5.3 的零平均高斯誤差，也不是 DDPM-IP 在訓練時模擬的東西。它只示範「訓練時沒看過的偏差會經由取樣鏈傳遞並累積」，不用來支持 DDPM-IP 的作用機制。
+
+ C1推論輸入偏離訓練分布
+本頁玩具
+
+ 左圖：一次取樣中，推論輸入的標準差 ÷ 訓練輸入的標準差，τ 是取樣鏈目前的步數索引。右圖：從不同起點 t₀ 出發，終點與資料分布的距離。
+
+ 比例偏差 ρ0.020
+
+ 資料標準差 s0.50
+
+ 起點 t₀300
+
+ 分布距離（Tab. 1 協定）逐樣本 L1（Tab. 6 協定）
+
+ 完美網路（ρ = 0）
+
+ 目前的 ρ完美網路 ρ = 0
+起點 t₀ = 300
+一維 FD（ρ = 0.020）= 7.07×10⁻³
+一維 FD（完美網路）= 3.28×10⁻⁶
+終點比值 r₀ = 1.1682（完美網路 0.9964）
+
+ 零平均誤差在這個玩具中會怎樣〈本頁推導〉
+
+ 若每次呼叫的 x0 $x_0$ ​ 預測加上獨立的 N(0,ν2) $\mathcal N(0,\nu^2)$ ) 誤差（零平均），取樣鏈的係數會讓先前的誤差衰減，距離不隨起點增加：s=0.5 $s=0.5$ 、ν=0.1 $\nu=0.1$ 時，起點 t0=10,100,300,1000 $t_0=10,100,300,1000$ ​=10,100,300,1000 的一維 FD 為 2.72,3.11,2.88,2.82×10−4 $2.72,3.11,2.88,2.82\times10^{-4}$ 。所以本元件改用固定比例偏差示範累積。
+
+ 讀數由本頁依 Alg. 2（後驗均值形式）與一維高斯閉式即時計算，每次 O(T)。本頁玩具：誤差模型為固定比例偏差 ρ，非論文的誤差模型。
+
+ 起點 300，ρ 0.020，一維 FD 7.07×10⁻³，終點比值 1.168
+
+ 兩種量測不一樣〈本頁推導〉
+
+ ≈ 4×10⁻⁶完美網路，分布距離（Tab. 1 協定，玩具 s = 0.5）
+
+ 0.399完美網路，逐樣本 L1（Tab. 6 協定，t = 1,000）
+
+ 論文附錄 A.1 另用確定性取樣（Alg. 4：去掉 σtz $\sigma_tz$ ​z）量測，以平均逐像素 L1 距離 δˉt=∥x0−x^0∥1/M $\bar\delta_t=\|x_0-\hat x_0\|_1/M$ t​=∥x0​−x^0​∥1​/M 表示（上界 2）；ADM 在 100、300、600、1,000 步分別為 0.0539、0.1074、0.1821、0.8165（Tab. 6）。這個量在網路完美時也明顯不為 0：xt $x_t$ ​ 已遺失部分 x0 $x_0$ ​ 的資訊，只用均值的確定性鏈輸出偏向分布的模態／平均（論文寫 target the mode），不是原圖。玩具中完美網路的 L1 在 t=100,300,600,1000 $t=100,300,600,1000$ 為 0.128、0.288、0.375、0.399，鏈越長越接近與 x0 $x_0$ ​ 無關的輸出。分布距離（Tab. 1 協定）在網路完美時接近 0，只剩高斯近似與有限樣本誤差：玩具中只剩固定變異數 β~t $\tilde\beta_t$ ​t​ 造成的 4.0×10−6 $4.0\times10^{-6}$ ，真實 FID 還有 5 萬樣本的估計誤差。論文把兩種量的增長都歸為誤差累積。
+
+ 延伸閱讀：擴散模型的 exposure bias、Teacher forcing、scheduled sampling 與序列生成的 exposure bias
+
+ 04 · 取樣步數
+
+ 較少取樣步數有時反而較好
+
+ 以 T=1,000 $T=1{,}000$ 步訓練的模型也可以用較少的 T′ $T'$ 步取樣。論文採用 respacing（Nichol & Dhariwal 2021，論文只引用）：從 1..T $1..T$ 中選 T′ $T'$ 個時間點，用這些點的 αˉ $\bar\alpha$ 重算每一步的 β $\beta$ ，讓較短的鏈與原本的 αˉ $\bar\alpha$ 一致。下表是 Tab. 3 中 ADM（不含本論文方法）的 FID。Tab. 3 的格點只有 80、100、300、1,000 步。
+
+ Tab. 3（ADM 列）：各資料集在不同取樣步數 T′ 的 FID，粗體為格點內最低
+ T′CIFAR10ImageNet 32LSUN tower 64CelebA 64FFHQ 128
+
+ 1,0002.993.603.391.609.65
+
+ 3002.953.583.311.829.55
+
+ 1003.374.263.503.0214.52
+
+ 803.634.614.173.7517.00
+
+ 以 1,000 步訓練的 ADM，在 Tab. 3 格點內通常在 300 步最好：CIFAR10、ImageNet 32、LSUN、FFHQ 這 4 個資料集為 300 步，CelebA 為 1,000 步；100 步從未是格點內最佳。論文原句是「most of the best results are obtained in the range from 100 to 300 sampling steps」，Nichol & Dhariwal（2021）也觀察到類似現象，但沒有解釋。
+
+ 作者認為，步數多使反向過程更接近高斯，但也累積更多預測誤差，較少步數是兩者的折衷（Sec. 4，論文用語 presumably）。第一個因素的意思是：反向轉移 q(xt−1∣xt) $q(x_{t-1}\mid x_t)$ ​∣xt​) 只在 βt $\beta_t$ ​ 很小時近似高斯（Sec. 1 引 Xiao et al. 2022）；步數少時每一步跨過的噪聲量大，用高斯近似的誤差變大。第二個因素就是 S03 的曝光偏差：C1 的右圖顯示鏈越長，偏差累積越多。這是作者的解釋，論文沒有另外證明。
+
+ 延伸閱讀：生成品質改進與 DDIM 取樣、減少取樣步數與加速訓練的相關工作
+
+ 05 · DDPM-IP
+
+ DDPM-IP 只在訓練時擾動網路輸入
+
+ 作者的解法是在訓練時明確模擬預測誤差。他們假設第 t+1 $t+1$ 步的預測誤差相對於真值 xt $x_t$ ​ 是高斯分布（S07 會說明如何驗證），並用第二個、與 ϵ $\epsilon$ 獨立的標準高斯噪聲 ξ∼N(0,I) $\xi\sim\mathcal N(0,I)$ 建立擾動後的輸入 yt $y_t$ ​：
+
+ yt=αˉt x0+1−αˉt (ϵ+γtξ) $y_t=\sqrt{\bar\alpha_t}\,x_0+\sqrt{1-\bar\alpha_t}\,(\epsilon+\gamma_t\xi)$ ​=αˉt​​x0​+1−αˉt​​(ϵ+γt​ξ)
+Eq. 6
+
+ 選擇一組隨 t $t$ 變化的 γt $\gamma_t$ ​ 等於再調一套噪聲排程，代價很高。作者因此取 γ0=⋯=γT=γ $\gamma_0=\dots=\gamma_T=\gamma$ ​=⋯=γT​=γ，並承認這「很可能不是最佳」。全文使用的形式是常數 γ $\gamma$ ：
+
+ yt=αˉt x0+1−αˉt (ϵ+γξ),γ=0.1 $y_t=\sqrt{\bar\alpha_t}\,x_0+\sqrt{1-\bar\alpha_t}\,(\epsilon+\gamma\xi),\qquad \gamma=0.1$ ​=αˉt​​x0​+1−αˉt​​(ϵ+γξ),γ=0.1
+Eq. 6，常數 γ
+
+ Alg. 3 與 Alg. 1 的差別只有三行：第 3 行多抽 ξ∼N(0,I) $\xi\sim\mathcal N(0,I)$ ，與 ϵ $\epsilon$ 獨立；第 4 行用 Eq. 6 算 yt $y_t$ ​，取代 xt $x_t$ ​；第 5 行的梯度步以 yt $y_t$ ​ 為輸入，梯度為 ∇θ∥ϵ−ϵθ(yt,t)∥2 $\nabla_\theta\|\epsilon-\epsilon_\theta(y_t,t)\|^2$ ​∥ϵ−ϵθ​(yt​,t)∥2，目標仍是 ϵ $\epsilon$ 。γ=0.1 $\gamma=0.1$ 對所有 t $t$ 與所有資料集固定。推論用原本的 Alg. 2，不做任何改變；每次訓練迭代的計算量也與原本相同。
+
+ Alg. 3 · DDPM-IP 訓練（標「改」為與 Alg. 1 不同的行）
+說明
+
+ 1: repeat
+
+ 2: x0 ~ q(x0), t ~ U({1,…,T})與 Alg. 1 相同。
+
+ 3: ε ~ N(0, I), ξ ~ N(0, I)多抽一份獨立噪聲 ξ $\xi$ 。
+
+ 4: compute y_t using Eq. 6輸入改為 yt $y_t$ ​。
+
+ 5: gradient step on ∇θ ‖ε − εθ(y_t, t)‖²目標仍是 ϵ $\epsilon$ ，不含 ξ $\xi$ 。
+
+ 6: until converged
+
+ 寫成程式碼大約是三行本頁寫法：
+
+ noise_in = eps + gamma * randn_like(eps)對應 Alg. 3 第 3 行抽 ξ $\xi$ ；只用在輸入。
+
+ y_t = sqrt(abar_t) * x0 + sqrt(1 - abar_t) * noise_in對應第 4 行，Eq. 6。
+
+ loss = mse(eps, net(y_t, t))對應第 5 行，目標仍是 eps。
+
+ 延伸閱讀：DDPM-IP：訓練時的輸入擾動
+
+ 06 · 輸入與目標
+
+ 噪聲只加在輸入，不加在目標
+
+ 先求 yt $y_t$ ​ 的分布（App. A.2）。給定 x0 $x_0$ ​，yt=xt+1−αˉt γξ $y_t=x_t+\sqrt{1-\bar\alpha_t}\,\gamma\xi$ ​=xt​+1−αˉt​​γξ，是兩個獨立高斯 xt $x_t$ ​ 與 ξ $\xi$ 的線性組合；兩個獨立高斯的線性組合仍是高斯，均值與變異數分別相加（Eq. 12）。因此
+
+ q(yt∣x0)=N(yt; αˉt x0, (1−αˉt)(1+γ2)I) $q(y_t\mid x_0)=\mathcal N\big(y_t;\ \sqrt{\bar\alpha_t}\,x_0,\ (1-\bar\alpha_t)(1+\gamma^2)I\big)$ ​∣x0​)=N(yt​; αˉt​​x0​, (1−αˉt​)(1+γ2)I)
+Eq. 7
+
+ 也就是說，q(yt∣x0) $q(y_t\mid x_0)$ ​∣x0​) 是 N(αˉtx0,(1−αˉt)(1+γ2)I) $\mathcal N(\sqrt{\bar\alpha_t}x_0,(1-\bar\alpha_t)(1+\gamma^2)I)$ t​​x0​,(1−αˉt​)(1+γ2)I)，因為 yt=xt+1−αˉtγξ $y_t=x_t+\sqrt{1-\bar\alpha_t}\gamma\xi$ ​=xt​+1−αˉt​​γξ 是兩個獨立高斯的線性組合。同一個分布也能用標準 DDPM 的形式產生：取 ϵ′∼N(0,I) $\epsilon'\sim\mathcal N(0,I)$ ∼N(0,I)，
+
+ yt=αˉt x0+1−αˉt1+γ2 ϵ′ $y_t=\sqrt{\bar\alpha_t}\,x_0+\sqrt{1-\bar\alpha_t}\sqrt{1+\gamma^2}\,\epsilon'$ ​=αˉt​​x0​+1−αˉt​​1+γ2​ϵ′
+Eq. 8
+
+ 以 Alg. 1 搭配 Eq. 8 訓練（輸入 yt $y_t$ ​、目標 ϵ′ $\epsilon'$ ）稱為 DDPM-y。對同一個 yt $y_t$ ​，把 Eq. 6 與 Eq. 8 對齊可解出 ϵ′=(ϵ+γξ)/1+γ2 $\epsilon'=(\epsilon+\gamma\xi)/\sqrt{1+\gamma^2}$ =(ϵ+γξ)/1+γ2​本頁推導；只要 ξ≠0 $\xi\ne0$ =0，就有 ϵ′≠ϵ $\epsilon'\ne\epsilon$ =ϵ。每一維的期望差 E(ϵ−ϵ′)2=2−2/1+γ2 $\mathbb E(\epsilon-\epsilon')^2=2-2/\sqrt{1+\gamma^2}$ )2=2−2/1+γ2​，γ=0.1 $\gamma=0.1$ 時為 0.0099。三種訓練的（輸入, 目標）是：DDPM (xt,ϵ) $(x_t,\epsilon)$ ​,ϵ)、DDPM-y (yt,ϵ′) $(y_t,\epsilon')$ ​,ϵ′)、DDPM-IP (yt,ϵ) $(y_t,\epsilon)$ ​,ϵ)（Fig. 1）。DDPM-IP 與 DDPM-y 兩者輸入分布相同（都是 yt $y_t$ ​），但 DDPM-IP 目標為 ϵ $\epsilon$ ，DDPM-y 目標為 ϵ′ $\epsilon'$ 。
+
+ C2三種訓練的輸入與目標
+
+ 二維只是為了畫圖，每個像素各自獨立。點選下方表格的一列，圖中對應的輸入與目標會加粗。
+
+ 實線圓：x_t 的分布虛線圓：y_t 的分布（Eq. 7）x_t → y_t 的擾動
+
+ 步數 t500
+
+ 擾動強度 γ0.10
+
+ γ = 0.1（論文）γ = 0.5γ = 1.0重新抽樣
+
+ 模型輸入目標
+
+ DDPMx_tε
+ DDPM-yy_tε′
+ DDPM-IPy_tε
+
+ √(1−ᾱ) = 0.711（x_t 的標準差）
+√((1−ᾱ)(1+γ²)) = 0.715（y_t 的標準差）
+‖y_t − x_t‖ = 0.103
+‖ε − ε′‖ = 0.137
+每維 E(ε − ε′)² = 2 − 2/√(1+γ²) = 0.0099
+
+ 論文只用 γ = 0.1；較大的 γ 只為了看清楚。讀數由本頁依 Eq. 4、6、7、8 即時計算；ε′ 的表示式為本頁推導（由 Eq. 6 與 Eq. 8 相等解出）。x₀、ε、ξ 與 200 個點雲樣本由固定 seed 的 mulberry32 產生。
+
+ t 500，γ 0.10，ε 與 ε′ 距離 0.137
+
+ Tab. 7 比較三者（CIFAR10）。表中的 sFID 是以空間特徵取代池化特徵的 FID 變體，較重視影像的空間結構，同樣越低越好。CIFAR10 1,000 步的 FID：DDPM 2.99、DDPM-y 3.25、DDPM-IP 2.76。DDPM-y 比 DDPM 還差（App. A.3），所以 DDPM-IP 的效果不是來自「換一個噪聲變異數」。
+
+ Tab. 7（CIFAR10）：FID / sFID
+ 模型輸入目標80 步100 步300 步1,000 步
+
+ DDPMxt $x_t$ ​ϵ $\epsilon$ 3.63 / 5.973.37 / 5.662.95 / 4.952.99 / 4.76
+
+ DDPM-yyt $y_t$ ​ϵ′ $\epsilon'$ 4.24 / 6.513.90 / 6.233.21 / 5.393.25 / 5.04
+
+ DDPM-IPyt $y_t$ ​ϵ $\epsilon$ 2.93 / 4.692.70 / 4.512.67 / 4.142.76 / 4.05
+
+ 作者的解釋（Sec. 1、5.2）：DDPM-IP 把「實際產生 yt $y_t$ ​ 的噪聲 ϵ′ $\epsilon'$ 」與「要預測的目標 ϵ $\epsilon$ 」分開；為了完成這個任務，網路必須讓預測函數平滑，縮小 ϵθ(xt,t) $\epsilon_\theta(x_t,t)$ ​(xt​,t) 與 ϵθ(yt,t) $\epsilon_\theta(y_t,t)$ ​(yt​,t) 的差。作者把它類比為鄰域風險最小化（Vicinal Risk Minimization, VRM；Chapelle et al. 2000：在每個訓練樣本周圍定義一個鄰域，在鄰域內擾動樣本、保持類別標籤不變）與 Mixup（Zhang et al. 2018：以兩個訓練樣本的凸組合作為新輸入、標籤也取同比例組合的資料擴增）。
+
+ 延伸閱讀：Vicinal risk、Mixup 與預測函數的平滑性正則化
+
+ 07 · 選擇 γ
+
+ γ = 0.1 來自預訓練模型的誤差估計
+
+ 作者用以 Alg. 1 訓練的 ADM（CIFAR10 與 ImageNet 32）估計實際的預測誤差（Sec. 5.3）。給定 t $t$ 與網路的預測 ϵ^=ϵθ(x^t,t) $\hat\epsilon=\epsilon_\theta(\hat x_t,t)$ =ϵθ​(x^t​,t)，在 Eq. 4 中以 ϵ^ $\hat\epsilon$ 取代 ϵ $\epsilon$ 解出 x^0 $\hat x_0$ 0​（S02 的式子），定義預測誤差 et=x^0−x0 $e_t=\hat x_0-x_0$ ​=x^0​−x0​。用 x^0 $\hat x_0$ 0​ 而不是 x^t $\hat x_t$ t​ 來比較，是因為前者與縮放因子 1−αˉt $\sqrt{1-\bar\alpha_t}$ t​​ 無關，統計比較容易。
+
+ 結果是預訓練 ADM 的誤差 et=x^0−x0 $e_t=\hat x_0-x_0$ ​=x^0​−x0​ 近似 N(0,νt2I) $\mathcal N(0,\nu_t^2I)$ 2​I)，νt $\nu_t$ ​ 是標準差。Fig. 2 中兩個資料集的 νt $\nu_t$ ​ 曲線很接近；論文只寫兩條曲線（藍、橘）的平均 νt $\nu_t$ ​ 為 0.20／0.19，依圖例順序對應為 ImageNet 32 0.20、CIFAR10 0.19本頁判讀。作者也對每個像素的誤差做常態性檢驗（Shapiro–Wilk），只有少數情形不符合常態（App. A.5）。
+
+ 細節：常態性檢驗的設定（App. A.5）
+
+ 資料為 ImageNet 32。以步長 10 均勻選出 100 個 t $t$ ；每個 t $t$ 用 1 萬張影像與所有像素算出均值 μt $\mu_t$ ​ 與變異數 νt2 $\nu_t^2$ 2​，把誤差標準化；每個像素隨機取 50 個標準化值做 Shapiro–Wilk 檢驗，信心水準 95%（p < 0.05 時拒絕常態假設）。
+
+ 最直接的做法是令 γt=νt $\gamma_t=\nu_t$ ​=νt​，但 γt=νt $\gamma_t=\nu_t$ ​=νt​ 需要兩階段訓練：先訓練一個基準模型估計 νt $\nu_t$ ​，再從頭訓練。作者改用常數 γ $\gamma$ ，在 CIFAR10 與 ImageNet 32 上於 [0,0.2] $[0,0.2]$ 範圍做網格搜尋選出 0.1。這個範圍是 νt∈[0,Et[νt]]=[0,0.2] $\nu_t\in[0,\mathbb E_t[\nu_t]]=[0,0.2]$ ​∈[0,Et​[νt​]]=[0,0.2]，論文描述為涵蓋取樣軌跡後半段的一小段值，理由是 Karras et al.（2022）指出軌跡後段對結果影響最大。論文沒有列出網格點；Fig. 4（CIFAR10，100 步取樣）顯示了 γ=0.05 $\gamma=0.05$ 、0.1、0.2 三條訓練曲線。之後所有資料集、所有基準模型都固定用 γ=0.1 $\gamma=0.1$ 。
+
+ 延伸閱讀：DDPM-IP：訓練時的輸入擾動
+
+ 08 · 加噪觀點
+
+ 從網路的角度，IP 等於對資料加噪
+
+ 把 Eq. 6 重新整理本頁推導：
+
+ yt=αˉt(x0+γ1−αˉtαˉt ξ)+1−αˉt ϵ $y_t=\sqrt{\bar\alpha_t}\Big(x_0+\gamma\sqrt{\tfrac{1-\bar\alpha_t}{\bar\alpha_t}}\,\xi\Big)+\sqrt{1-\bar\alpha_t}\,\epsilon$ ​=αˉt​​(x0​+γαˉt​1−αˉt​​​ξ)+1−αˉt​​ϵ
+本頁推導
+
+ 目標仍是 ϵ $\epsilon$ ，所以從網路的角度，DDPM-IP 等於把 x0 $x_0$ ​ 換成加了高斯噪聲的 x0+γ(1−αˉt)/αˉt ξ $x_0+\gamma\sqrt{(1-\bar\alpha_t)/\bar\alpha_t}\,\xi$ ​+γ(1−αˉt​)/αˉt​​ξ 之後，再做標準 DDPM 訓練；資料分布與一個標準差隨 t $t$ 變化的高斯做卷積。這是 VRM「在樣本附近擾動輸入、保持目標」的具體形式。
+
+ 尺度要分兩個空間說。在網路實際看到的 xt $x_t$ ​ 空間，額外噪聲的標準差是 γ1−αˉt≤γ $\gamma\sqrt{1-\bar\alpha_t}\le\gamma$ t​​≤γ；在 xt $x_t$ ​ 空間總噪聲功率是 1+γ2 $1+\gamma^2$ 倍（Eq. 7），γ=0.1 $\gamma=0.1$ 時為 1.01 倍，每個 t $t$ 都相同。換算成資料單位（x0 $x_0$ ​ 空間）則是 γ(1−αˉt)/αˉt $\gamma\sqrt{(1-\bar\alpha_t)/\bar\alpha_t}$ t​)/αˉt​​：γ=0.1 $\gamma=0.1$ 時 t=100,500,900 $t=100,500,900$ 為 0.0169、0.1012、0.6365，t→T $t\to T$ 時發散。發散只來自除以很小的 αˉt $\sqrt{\bar\alpha_t}$ t​​（換單位），不代表網路的輸入變得很吵。論文的 νt $\nu_t$ ​ 定義在 x0 $x_0$ ​ 空間，γ $\gamma$ 則作用在 xt $x_t$ ​ 空間，兩者單位不同，不能直接比大小。
+
+ 作者說 IP 讓預測函數「平滑」。平滑可以用 Lipschitz 常數描述：若對所有 x,y $x,y$ 有 ∥f(x)−f(y)∥≤K∥x−y∥ $\|f(x)-f(y)\|\le K\|x-y\|$ ，K $K$ 稱為 Lipschitz 常數；K $K$ 越小，輸入的小變動造成的輸出變動越小（Eq. 9 的形式）。一維線性函數 f(x)=cx $f(x)=cx$ 的 Lipschitz 常數就是斜率 ∣c∣ $|c|$ 。
+
+ 線性高斯玩具本頁玩具：一維資料 x0∼N(0,s2) $x_0\sim\mathcal N(0,s^2)$ ​∼N(0,s2)，網路限制為 ϵθ(x,t)=c x $\epsilon_\theta(x,t)=c\,x$ ​(x,t)=cx，最小平方解 c=E[目標⋅輸入]/E[輸入2] $c=\mathbb E[\text{目標}\cdot\text{輸入}]/\mathbb E[\text{輸入}^2]$ ]。DDPM 得 ct=1−αˉtαˉts2+1−αˉt $c_t=\frac{\sqrt{1-\bar\alpha_t}}{\bar\alpha_ts^2+1-\bar\alpha_t}$ ​=αˉt​s2+1−αˉt​1−αˉt​​​；DDPM-IP 得 ctIP=1−αˉtαˉts2+(1−αˉt)(1+γ2) $c^{IP}_t=\frac{\sqrt{1-\bar\alpha_t}}{\bar\alpha_ts^2+(1-\bar\alpha_t)(1+\gamma^2)}$ IP​=αˉt​s2+(1−αˉt​)(1+γ2)1−αˉt​​​；DDPM-y 得 cty=1+γ2 ctIP $c^{y}_t=\sqrt{1+\gamma^2}\,c^{IP}_t$ y​=1+γ2​ctIP​。比值 ctIP/ct $c^{IP}_t/c_t$ IP​/ct​ 介於 1/(1+γ2) $1/(1+\gamma^2)$ ) 與 1 之間。
+
+ C3兩個空間的尺度與玩具的斜率
+本頁推導本頁玩具
+
+ 由上而下：網路看到的輸入、換算成資料單位、線性高斯玩具的斜率比。點選任一圖可移動 t。
+
+ 擾動強度 γ0.10
+
+ γ = 0.1（論文）
+
+ 資料標準差 s0.50
+
+ 步數 t500
+
+ x_t 空間額外噪聲x₀ 空間加噪IP 斜率比DDPM-y 斜率比
+
+ t = 500，ᾱ_t = 0.49384
+x_t 空間額外噪聲 = 0.071145
+總噪聲功率 = 原本的 1+γ² = 1.010 倍（每個 t 相同）
+x₀ 空間加噪 = 0.10124
+c_t = 1.1300，c_t^IP = 1.1210，c_t^y = 1.1265
+IP 斜率比 = 0.99202，DDPM-y 斜率比 = 0.99697
+
+ 本頁推導：加噪等式由 Eq. 6 重新整理；斜率是一維高斯資料的最小平方解。玩具只示範平滑的方向；DDPM-y 斜率幾乎不變卻較差（Tab. 7），所以斜率不能解釋 IP 的效果。
+
+ t 500，IP 斜率比 0.99202，DDPM-y 斜率比 0.99697
+
+ 這個玩具能說明與不能說明的事：γ=0.1 $\gamma=0.1$ 、s=0.5 $s=0.5$ 時，IP 的斜率比在 t=100,500,900 $t=100,500,900$ 為 0.99897、0.99202、0.99016，確實較小（Lipschitz 常數較小，最多約 1%），方向與作者「IP 讓預測函數平滑」一致。但 DDPM-y 的斜率比為 1.00395、0.99697、0.99510，與 DDPM 相差不到 0.5%，有些 t $t$ 也較小，而 Tab. 7 中 DDPM-y 比 DDPM 差。所以斜率不能解釋 IP 的效果；玩具只示範平滑的方向，不支撐作者的機制解釋。
+
+ 延伸閱讀：Vicinal risk、Mixup 與預測函數的平滑性正則化
+
+ 09 · 其他平滑方法
+
+ 梯度懲罰與權重衰減也能平滑預測函數
+
+ 作者另外提出兩種不擾動輸入、直接要求 ϵθ $\epsilon_\theta$ ​ 滿足 Lipschitz 條件（S08 的定義，K $K$ 要小）的方法（Sec. 5.4）：
+
+ ∥ϵθ(x,t)−ϵθ(y,t)∥≤K∥x−y∥,∀(x,y) $\|\epsilon_\theta(x,t)-\epsilon_\theta(y,t)\|\le K\|x-y\|,\quad\forall(x,y)$ ​(x,t)−ϵθ​(y,t)∥≤K∥x−y∥,∀(x,y)
+Eq. 9
+
+ 兩者都沿用 Alg. 1，只在第 4 行的損失加上正則項。梯度懲罰（ADM-GP）加 λGP∥∂ϵθ/∂x∥F2 $\lambda_{GP}\|\partial\epsilon_\theta/\partial x\|_F^2$ ​∥∂ϵθ​/∂x∥F2​，即 Jacobian 的 Frobenius 範數平方，λGP=10−6 $\lambda_{GP}=10^{-6}$ ​=10−6；它每個訓練步需要一次前向與兩次反向傳播，所以 GP 每步需一次前向兩次反向，很慢。權重衰減（ADM-WD）加 λWD∥θ∥2 $\lambda_{WD}\|\theta\|^2$ ​∥θ∥2，λWD=0.03 $\lambda_{WD}=0.03$ ​=0.03：
+
+ LGP=∥ϵ−ϵθ(xt,t)∥2+λGP∥∂ϵθ(xt,t)∂x∥F2,LWD=∥ϵ−ϵθ(xt,t)∥2+λWD∥θ∥2 $L_{GP}=\|\epsilon-\epsilon_\theta(x_t,t)\|^2+\lambda_{GP}\Big\|\frac{\partial\epsilon_\theta(x_t,t)}{\partial x}\Big\|_F^2,\qquad L_{WD}=\|\epsilon-\epsilon_\theta(x_t,t)\|^2+\lambda_{WD}\|\theta\|^2$ ​=∥ϵ−ϵθ​(xt​,t)∥2+λGP​​∂x∂ϵθ​(xt​,t)​​F2​,LWD​=∥ϵ−ϵθ​(xt​,t)∥2+λWD​∥θ∥2
+Eq. 10、11
+
+ 權重衰減與 Lipschitz 常數的關係來自 App. A.6 的近似論證：對單層 f(x)=ReLU(Wx+b) $f(x)=\mathrm{ReLU}(Wx+b)$ 做一階 Taylor 展開，ReLU 的導數不超過 1，得到 ∥W(x1−x2)∥≤K∥x1−x2∥ $\|W(x_1-x_2)\|\le K\|x_1-x_2\|$ ​−x2​)∥≤K∥x1​−x2​∥；譜範數 ∥W∥2 $\|W\|_2$ ​ 可當作 K $K$ ，再以 Frobenius 範數 ∥W∥F $\|W\|_F$ ​ 作上界，最小化 ∥W∥F2 $\|W\|_F^2$ 2​ 就是權重衰減。這是近似論證，不是嚴格證明。
+
+ Tab. 2（CIFAR10，1,000 步取樣）
+ 模型FIDsFID
+
+ ADM（基準）2.994.76
+ADM-GP2.804.41
+ADM-WD2.824.61
+ADM-IP2.764.05
+
+ CIFAR10 FID：ADM 2.99、GP 2.80、WD 2.82、IP 2.76。三種方法都優於基準；IP 最好且無額外成本，GP 太慢、無法擴展到較大資料集，因此後文只用 IP（Sec. 6.1）。作者也用 ADM-IP 重做 Tab. 1：差距隨鏈長增加，差值為 0.011、0.214、0.389、0.566、0.802本頁推導。100 步的 0.011 小於 FID 有限樣本誤差的合理範圍，不當成效果；300 步以上差距逐漸擴大。
+
+ Tab. 1（全表，ImageNet 32×32）
+ 反向步數 t1003005007001,000
+
+ ADM0.9831.8082.5873.1053.544
+ADM-IP0.9721.5942.1982.5392.742
+
+ 延伸閱讀：Vicinal risk、Mixup 與預測函數的平滑性正則化
+
+ 10 · 實驗結果
+
+ ADM-IP 在五個資料集上 FID 都較低，且可用較少步數
+
+ 先定義本節用到的詞。sFID 見 S06。Recall 與 Precision（Kynkäänniemi et al. 2019）：Recall 衡量生成樣本覆蓋真實分布的程度（多樣性），Precision 衡量生成樣本落在真實分布內的程度（真實度）。DDIM（Song et al. 2021a）是一種非馬可夫的取樣法，可以用比訓練少很多的步數取樣；η 是 DDIM 取樣的隨機程度，η = 0 為確定性取樣。
+
+ 實驗在 CIFAR10、ImageNet 32、LSUN tower 64、CelebA 64、FFHQ 128 上做無條件生成，每個模型生成 5 萬個樣本，以完整訓練集計算參考統計（LSUN tower 用 5 萬個訓練樣本）。訓練一律 T=1,000 $T=1{,}000$ ，T′<T $T'<T$ <T 用 respacing；ADM 與 ADM-IP 的超參數相同，ADM-IP 固定 γ=0.1 $\gamma=0.1$ （Sec. 6.2、App. A.7）。
+
+ C4結果瀏覽器
+
+ 切換分頁檢視論文的五張表；讀數由表格數字即時計算。步數軸是等距的類別刻度。
+
+ ADM vs ADM-IP（Tab. 3）
+ 加速（Tab. 4）
+ DDIM（Tab. 5）
+ DDPM-y（Tab. 7）
+ 曝光偏差（Tab. 1）
+
+ CIFAR10ImageNet 32LSUN tower 64CelebA 64FFHQ 128
+FIDsFID
+
+ CIFAR10（FID；空心圓 ADM，實心方形 ADM-IP）
+Tab. 3 格點內最佳 T′：ADM 300，ADM-IP 300（以 FID）
+增益（ADM − ADM-IP）：80 步 0.70、100 步 0.67、300 步 0.28、1000 步 0.23
+格點內 ADM-IP FID 不高於 ADM 1,000 步的最小 T′：80（12.5 倍）
+
+ CelebA 的 ADM-IP 另以 900 步得到 1.27（Sec. 6.2，不在格點內）；Tab. 4 另用 60 與 200 步。
+
+ 以表格檢視同一份數字
+Tab. 3 · CIFAR10T′ADM FIDADM sFIDADM-IP FIDADM-IP sFID
+10002.994.762.764.05
+3002.954.952.674.14
+1003.375.662.704.51
+803.635.972.934.69
+
+ 數字照錄論文 Tab. 1、3、4、5、7；導出量（最佳步數、增益、加速倍數、節省比例）由本頁即時計算。
+
+ CIFAR10（FID；空心圓 ADM，實心方形 ADM-IP）Tab. 3 格點內最佳 T′：ADM 300，ADM-IP 300（以 FID）增益（ADM − ADM-IP）：80 步 0.70、100 步 0.67、300 步 0.28、1000 步 0.23格點內 ADM-IP FID 不高於 ADM 1,00
+
+ Tab. 3 中，在每個資料集與每個測試的取樣步數，ADM-IP 的 FID 與 sFID 都低於 ADM。LSUN tower 在 80 步時 sFID 改善超過 5（12.60 → 6.93）；FFHQ 128 在 1,000 步時 FID 與 sFID 各改善近 7 點（9.65 → 2.98、12.53 → 5.59）。另外，CelebA 64 的 ADM-IP 以 900 步取樣得到 FID 1.27，是該資料集無條件生成的新紀錄；900 步不在 Tab. 3 的格點內，訓練長度也未寫明。
+
+ 收斂速度（Fig. 3、Tab. 4）：LSUN 與 CelebA 上，ADM-IP 分別在 22 萬與 30 萬次迭代收斂，ADM 約在 30 萬與 48 萬次飽和。CelebA 上 ADM-IP 在 12 萬次迭代已達 FID 1.51，優於 ADM 收斂時的 1.6（作者稱 4 倍訓練加速）；FFHQ 上 ADM 收斂（42 萬次）時 FID 14.52，ADM-IP 6 萬次迭代即為 8.81（Fig. 3 的 FFHQ 用 100 步取樣）。作者把較快收斂歸因於正則化引入的歸納偏差：定義域中相近的點應有相近的輸出。
+
+ Tab. 4 中，ADM-IP 以 60–200 步得到相當或略低的 FID（作者稱取樣加速 5–16.7 倍），訓練迭代也較少。例如 CelebA 為 300K 對 480K 次迭代，節省 37.5%，FID 1.53 對 1.60；這一列的 ADM-IP 用 200 步，與上一段的 1.27 是不同設定。Tab. 4 各列的 FID 差距只有 0.03–0.93（ImageNet 32 為 3.50 對 3.53），所以本頁說「相當或略低」。單次訓練迭代與單步取樣，兩個模型耗時相同。
+
+ Recall 與 Precision（App. A.4，1,000 步）兩者無顯著差異，例如 CIFAR10 為 0.600 / 0.690 對 0.606 / 0.696，作者據此說明 IP 不影響樣本多樣性。DDIM（Tab. 5，CIFAR10，γ = 0.1 不另調）上，DDIM-IP 在所有步數都較好，DDIM 步數越少增益越大：η = 0.5 時 10 步 17.24 → 10.06，1,000 步 4.45 → 3.56；η = 0 時 10 步 14.21 → 10.54。論文內文寫 η = 0.5、10 步的增益為 7.16，表中相減為 7.18。
+
+ 延伸閱讀：影像生成評估指標的演進、生成品質改進與 DDIM 取樣
+
+ 11 · 實作
+
+ 實作設定與常見錯誤
+
+ ADM 與 ADM-IP 使用 Dhariwal & Nichol（2021）的超參數（LSUN tower 改用 64×64）。共同設定：BigGAN 式上下取樣、學習率 1e-4、AdamW、16 位元混合精度與 loss scaling（權重、EMA、optimizer 狀態保持 32 位元）、EMA 0.9999；PyTorch 1.8、V100 16G。
+
+ Tab. 9（ADM 與 ADM-IP 相同）
+ 項目CIFAR10ImageNet 32LSUN tower 64CelebA 64FFHQ 128
+
+ 模型大小57M57M295M295M543M
+
+ channels / res blocks128 / 3128 / 3192 / 3192 / 3256 / 3
+
+ channel mult1,2,2,21,2,2,21,2,3,41,2,3,41,1,2,3,4
+
+ heads ch. / attention res.32 / 16,832 / 16,864 / 32,16,864 / 32,16,864 / 32,16,8
+
+ dropout0.30.30.10.10.1
+
+ batch128512256256128
+
+ 訓練迭代540K5000K340K540K480K
+
+ 訓練影像數50K1281K708K203K70K
+
+ 擴散步數皆為 1,000、cosine 排程。Tab. 9 的「訓練迭代」是總訓練量；Tab. 4 的 500K、480K 等是收斂點，CIFAR10 與 CelebA 的 540K 與 Tab. 4 不同，論文未說明兩者關係。DDIM 實驗（Tab. 10）沿用 Song et al. 的公開設定：linear 排程、channels 128、mult 1,2,2,2、2 個 res blocks、attention 16、dropout 0.1、fixed large variance、EMA 0.9999、batch 128、1,600K 次迭代、Adam、學習率 2e-4。
+
+ 常見錯誤
+
+ 把 ξ $\xi$ 也放進目標（回歸 ϵ+γξ $\epsilon+\gamma\xi$ 或 ϵ′ $\epsilon'$ ）：這就變成 DDPM-y，Tab. 7 顯示比原始 DDPM 更差。
+
+ 推論時也加擾動：Alg. 3 只改訓練，推論用原本的 Alg. 2。
+
+ 對每個資料集重新調 γ $\gamma$ ，或讓 γ $\gamma$ 隨 t $t$ 變化：論文所有結果都是常數 γ=0.1 $\gamma=0.1$ ；作者承認依資料集調整可能更好，但刻意不做（Sec. 5.3）。
+
+ Eq. 3 與 Alg. 2 的 σt $\sigma_t$ ​本頁判讀：Eq. 3 的 σt=β~t $\sigma_t=\tilde\beta_t$ ​=β~​t​ 是變異數，Alg. 2 寫 σtz $\sigma_tz$ ​z；依 Ho et al.（2020），Alg. 2 應乘標準差 β~t $\sqrt{\tilde\beta_t}$ ​t​​。
+
+ T′<T $T'<T$ <T 時直接跳步：論文用 respacing（方法出自 Nichol & Dhariwal 2021，依選出的時間點重算 β $\beta$ ），不是在原排程上跳過某些 t $t$ 卻沿用原本的 βt $\beta_t$ ​。
+
+ ξ $\xi$ 與 ϵ $\epsilon$ 必須獨立，每次迭代重新抽樣（Alg. 3 第 3 行）。
+
+ 把 Tab. 6 的 L1 當成純粹的曝光偏差本頁推導：即使網路完美也不為 0（S03）。
+
+ 12 · 研究脈絡
+
+ 研究脈絡
+
+ 擴散模型的基礎（2015、2020）確立了以長取樣鏈逐步去噪的做法；後續工作改進品質並嘗試減少步數（2021–2022）。另一方面，序列生成在 2015–2019 年間已經討論 teacher forcing 造成的曝光偏差，並提出 scheduled sampling 等對策。本文把曝光偏差的概念帶到擴散模型，並借用 Mixup 一類「擾動輸入、保持目標」的正則化，提出訓練時的輸入擾動。每張卡片連到對應的研究筆記。
+
+ 擴散基礎品質與取樣序列的曝光偏差平滑與正則化本文
+
+ 2015擴散基礎Deep Unsupervised Learning using Nonequilibrium Thermodynamics
+Sohl-Dickstein et al.
+擴散模型的提出
+arXiv ↗筆記
+2015序列的曝光偏差Scheduled Sampling for Sequence Prediction with Recurrent Neural Networks
+Bengio et al.
+Teacher forcing 的出處
+arXiv ↗筆記
+2015序列的曝光偏差Sequence Level Training with Recurrent Neural Networks
+Ranzato et al.
+exposure bias 問題（序列生成）
+arXiv ↗筆記
+2016序列的曝光偏差Self-critical Sequence Training for Image Captioning
+Rennie et al.
+說明 teacher forcing 造成誤差累積
+arXiv ↗筆記
+2017平滑與正則化mixup: Beyond Empirical Risk Minimization
+Zhang et al.
+與 input perturbation 相似的正則化
+arXiv ↗筆記
+2019序列的曝光偏差Generalization in Generation: A closer look at Exposure Bias
+Schmidt
+exposure bias 的分析
+arXiv ↗筆記
+2019擴散基礎Generative Modeling by Estimating Gradients of the Data Distribution
+Song & Ermon
+score-based 生成模型
+arXiv ↗筆記
+2020擴散基礎Denoising Diffusion Probabilistic Models
+Ho et al.
+DDPM 標準訓練與取樣演算法
+arXiv ↗筆記
+2020品質與取樣Denoising Diffusion Implicit Models
+Song et al.
+少於訓練步數的取樣；DDIM-IP 實驗
+arXiv ↗筆記
+2020擴散基礎Score-Based Generative Modeling through Stochastic Differential Equations
+Song et al.
+擴散模型改進
+arXiv ↗筆記
+2021品質與取樣Improved Denoising Diffusion Probabilistic Models
+Nichol & Dhariwal
+觀察到較少取樣步數可更好但未解釋
+arXiv ↗筆記
+2021品質與取樣Diffusion Models Beat GANs on Image Synthesis
+Dhariwal & Nichol
+ADM，本論文的基準模型
+arXiv ↗筆記
+2022品質與取樣Elucidating the Design Space of Diffusion-Based Generative Models
+Karras et al.
+推論軌跡後段影響最大，用於選 γ 範圍
+arXiv ↗筆記
+2023本文Input Perturbation Reduces Exposure Bias in Diffusion Models
+Ning et al.
+本論文：DDPM-IP
+arXiv ↗筆記
+
+ 13 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 訓練 DDPM 的成本很高，論文只用低解析度資料集，擴展到更高解析度與更大的骨幹網路留待未來（Sec. 7）。作者指出最好的結果出現在解析度最高的 FFHQ 128，並推測這種正則化在高維輸入特別有效。論文只測試影像，但方法本身沒有影像專屬的假設。
+
+ 研究筆記（依閱讀順序）
+
+ Input Perturbation（DDPM-IP）的研究脈絡總覽總覽
+
+ DDPM 的訓練與取樣流程前向與反向過程、Alg. 1、2
+
+ 生成品質改進與 DDIM 取樣少步取樣反而較好的既有觀察
+
+ 減少取樣步數與加速訓練的相關工作本論文宣稱與之正交
+
+ Teacher forcing、scheduled sampling 與序列生成的 exposure bias曝光偏差一詞的來源
+
+ 擴散模型的 exposure bias誤差如何沿取樣鏈累積與如何量測
+
+ Vicinal risk、Mixup 與預測函數的平滑性正則化論文用來解釋方法的概念
+
+ DDPM-IP：訓練時的輸入擾動Alg. 3、γ 的選擇
+
+ 影像生成評估指標的演進站內既有筆記（FID 背景）
+
+ Mang Ning, Enver Sangineto, Angelo Porrello, Simone Calderara, Rita Cucchiara. Input Perturbation Reduces Exposure Bias in Diffusion Models. ICML 2023. arXiv:2301.11706.
+
+ 本頁的方程式與數字取自論文 v3；標示「本頁推導」「本頁玩具」「本頁判讀」的內容為本頁自行推導、建立或判讀，並非論文結論。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記

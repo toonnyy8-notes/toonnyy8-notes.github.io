@@ -23,7 +23,7 @@ s = re.sub(r'<(br|/p|/h\d|/li|/tr|/div|/section|/summary)[^>]*>', '\n', s)
 s = html.unescape(re.sub(r'<[^>]+>', '', s))
 s = re.sub(r'\n\s*\n+', '\n\n', re.sub(r'[ \t]+', ' ', s)).strip()
 (d / 'accept/page.txt').write_text(s)
-qs = [f'{c[1].strip()} | {c[3].strip()}' for c in (l.split('|') for l in (d / 'design.md').read_text().splitlines())
+qs = [f'{c[1].strip()} | {c[3].strip()}' for c in (re.split(r'\s\|\s', ' '+l.strip()+' ') for l in (d / 'design.md').read_text().splitlines())
       if len(c) > 4 and re.match(r'\s*LO\d+\s*$', c[1])]
 (d / 'accept/questions.txt').write_text('\n'.join(qs) + '\n')
 print(f'page.txt {len(s)} chars, {len(qs)} questions')

@@ -1,0 +1,327 @@
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+const lgs=(d0,d1,r0,r1)=>{const a=Math.log(d0),b=Math.log(d1);return v=>r0+(Math.log(v)-a)/(b-a)*(r1-r0)};
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+const sci=v=>v===0?'0':v.toExponential(2).replace('e-','×10⁻').replace('e+','×10^').replace(/\^?(\d+)$/,(m,d)=>d.split('').map(c=>'⁰¹²³⁴⁵⁶⁷⁸⁹'[+c]).join(''));
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+let clipN=0;
+function frame(svg,o){
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m=o.m,x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=o.yl?Math.max(m.t,32):m.t;
+  const X=(o.xlog?lgs:lin)(o.x[0],o.x[1],x0,x1),Y=(o.ylog?lgs:lin)(o.y[0],o.y[1],y0,y1);
+  const g=el('g',null,svg);
+  (o.yt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.yf?o.yf(v):String(v)),yy=Y(val);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},g);tx(g,x0-8,yy+4,lab,{class:'tk','text-anchor':'end'})});
+  (o.xt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.xf?o.xf(v):String(v)),xx=X(val);el('line',{x1:xx,x2:xx,y1:y0,y2:y0+4,class:'axl'},g);tx(g,xx,y0+18,lab,{class:'tk','text-anchor':'middle'})});
+  el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  if(o.xl)tx(g,(x0+x1)/2,o.H-4,o.xl,{class:'al','text-anchor':'middle'});
+  if(o.yl)tx(g,4,12,o.yl,{class:'al'});
+  const id='clp'+(++clipN);const cp=el('clipPath',{id},el('defs',null,svg));el('rect',{x:x0,y:y1-2,width:x1-x0,height:y0-y1+4},cp);
+  const pg=el('g',{'clip-path':`url(#${id})`},svg);
+  return {X,Y,g,pg,x0,x1,y0,y1};
+}
+function arrow(g,x0,y0,x1,y1,cls,dash){const dx=x1-x0,dy=y1-y0,L=Math.hypot(dx,dy);if(L<2)return;const ux=dx/L,uy=dy/L,h=Math.min(10,L*.6);
+  el('line',{x1:x0,y1:y0,x2:x1-ux*h*.7,y2:y1-uy*h*.7,class:cls+(dash?' dash':'')},g);
+  el('path',{d:`M${x1} ${y1}L${x1-ux*h-uy*h*.45} ${y1-uy*h+ux*h*.45}L${x1-ux*h+uy*h*.45} ${y1-uy*h-ux*h*.45}Z`,class:cls.split(' ')[0]+'-f'},g)}
+function marker(g,x,y,kind,cls){if(kind==='sq')el('rect',{x:x-4.5,y:y-4.5,width:9,height:9,class:cls},g);else if(kind==='tri')el('path',{d:`M${x} ${y-5.5}L${x+5} ${y+4}L${x-5} ${y+4}Z`,class:cls},g);else el('circle',{cx:x,cy:y,r:4.5,class:cls},g)}
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+function onRange(id,fn){const r=$(id);r.addEventListener('input',fn);r.addEventListener('change',fn);return r}
+let rafQ=new Map();function queue(key,fn){if(rafQ.has(key))return;rafQ.set(key,requestAnimationFrame(()=>{rafQ.delete(key);fn()}))}
+
+/* ---------- shared math: cosine schedule, clipped, cumulative product ---------- */
+const T=1000,BETA=new Float64Array(T+1),ABAR=new Float64Array(T+1);
+(function cosineSchedule(){const f=u=>Math.cos((u+0.008)/1.008*Math.PI/2)**2;ABAR[0]=1;
+  for(let t=1;t<=T;t++){BETA[t]=Math.min(1-f(t/T)/f((t-1)/T),0.999);ABAR[t]=ABAR[t-1]*(1-BETA[t])}})();
+function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function gauss(r){const u1=r(),u2=r();return Math.sqrt(-2*Math.log(1-u1))*Math.cos(2*Math.PI*u2)}
+
+/* ---------- C1 math (design 4.1) ---------- */
+function c1Steps(s,rho){const s2=s*s,A=new Float64Array(T+1),BT=new Float64Array(T+1);
+  for(let t=1;t<=T;t++){const be=BETA[t],a=ABAR[t],ap=ABAR[t-1];const c1=Math.sqrt(ap)*be/(1-a),c2=Math.sqrt(1-be)*(1-ap)/(1-a),g=Math.sqrt(a)*s2/(a*s2+1-a);
+    A[t]=c1*(1+rho)*g+c2;BT[t]=(1-ap)/(1-a)*be}return{A,BT}}
+function c1Curve(s,rho){const s2=s*s,{A,BT}=c1Steps(s,rho),G=new Float64Array(T+1),N=new Float64Array(T+1);G[0]=1;
+  for(let t=1;t<=T;t++){N[t]=N[t-1]+(t>1?BT[t]*G[t-1]*G[t-1]:0);G[t]=G[t-1]*A[t]}
+  const fd=new Float64Array(T),l1=new Float64Array(T);
+  for(let t0=1;t0<=T;t0++){const a=ABAR[t0],vin=a*s2+1-a,m=Math.sqrt(a)*s2,v=G[t0]*G[t0]*vin+N[t0];
+    fd[t0-1]=(Math.sqrt(v)-s)**2;const mse=Math.max(0,G[t0]*G[t0]*vin-2*G[t0]*m+s2);l1[t0-1]=Math.sqrt(2/Math.PI)*Math.sqrt(mse)}
+  return{fd,l1}}
+function c1Path(s,rho,t0){const s2=s*s,{A,BT}=c1Steps(s,rho),r=new Float64Array(t0+1);let v=ABAR[t0]*s2+1-ABAR[t0];r[t0]=1;
+  for(let t=t0;t>=1;t--){v=A[t]*A[t]*v+(t>1?BT[t]:0);const at=ABAR[t-1];r[t-1]=Math.sqrt(v)/Math.sqrt(at*s2+1-at)}return r}
+
+/* ---------- C2 / C3 math ---------- */
+function c2Calc(t,g,x0,eps,xi){const a=ABAR[t],sg=Math.sqrt(1+g*g),sa=Math.sqrt(a),sb=Math.sqrt(1-a);
+  const xt=[0,1].map(i=>sa*x0[i]+sb*eps[i]),yt=[0,1].map(i=>xt[i]+sb*g*xi[i]),epsP=[0,1].map(i=>(eps[i]+g*xi[i])/sg),ytY=[0,1].map(i=>sa*x0[i]+sb*sg*epsP[i]);
+  return{xt,yt,ytY,epsP,dist:Math.hypot(eps[0]-epsP[0],eps[1]-epsP[1]),stdX:sb,stdY:Math.sqrt((1-a)*(1+g*g)),expD2:2-2/sg}}
+function c3Calc(t,g,s){const a=ABAR[t],s2=s*s,den=a*s2+(1-a)*(1+g*g),c=Math.sqrt(1-a)/(a*s2+1-a),cip=Math.sqrt(1-a)/den,cy=Math.sqrt(1+g*g)*cip;
+  return{abar:a,extraXt:g*Math.sqrt(1-a),noiseX0:g*Math.sqrt((1-a)/a),c,cip,cy,ratioIP:cip/c,ratioY:cy/c}}
+
+/* ---------- chain diagram ---------- */
+function drawChain(box,perturb){const svg=$('svg',box),W=widthOf(box,300,700),H=150;svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const n=W<460?5:7,X=i=>24+i*(W-48)/(n-1),labs=n===7?['T','…','t+1','t','t−1','…','0']:['T','t+1','t','t−1','0'];
+  const sub=(g,x,y,s,hat)=>{const t=el('text',{x,y,'text-anchor':'middle',class:'labm'},g);t.textContent=hat?'x̂':'x';const ts=el('tspan',{dy:4,'font-size':'11'},t);ts.textContent=s};
+  tx(svg,4,16,perturb?'訓練（DDPM-IP）：輸入由 x₀、ε 與額外的 γξ 算出':'訓練：每個輸入都由真值 x₀ 與 ε 算出',{class:'al'});
+  tx(svg,4,92,'生成：每個輸入由前一步的結果算出',{class:'al'});
+  for(let i=0;i<n;i++){const x=X(i);if(labs[i]==='…'){tx(svg,x,48,'…',{class:'lab','text-anchor':'middle'});tx(svg,x,124,'…',{class:'lab','text-anchor':'middle'});if(i<n-1)arrow(el('g',null,svg),x+12,120,X(i+1)-10,120,'ink');continue}
+    el('circle',{cx:x,cy:44,r:7,class:'nd-t'},svg);if(perturb)el('circle',{cx:x,cy:44,r:12,class:'nd-p'},svg);sub(svg,x,70,labs[i],false);
+    el('circle',{cx:x,cy:120,r:7,class:'nd-s'},svg);sub(svg,x,146,labs[i],true);
+    if(i<n-1){const g=el('g',null,svg);arrow(g,x+10,120,X(i+1)-(labs[i+1]==='…'?14:10),120,'ink')}}}
+
+/* ---------- C1 widget ---------- */
+const c1={rho:.02,s:.5,t0:300,mode:'fd',zeroCache:new Map()};
+function c1Zero(s){const k=s.toFixed(2);if(!c1.zeroCache.has(k))c1.zeroCache.set(k,c1Curve(s,0));return c1.zeroCache.get(k)}
+function renderC1(){const {rho,s,t0,mode}=c1;$('#c1-rho-o').textContent=rho.toFixed(3);$('#c1-s-o').textContent=s.toFixed(2);$('#c1-t0-o').textContent=t0;
+  $('#c1-perfect').setAttribute('aria-pressed',String(rho===0));
+  const cur=c1Curve(s,rho),zero=c1Zero(s),pc=c1Path(s,rho,t0),pz=c1Path(s,0,t0);
+  // left
+  const LB=$('#c1-left'),W=widthOf(LB,280,520),H=260,svg=$('svg',LB);
+  const xt=t0===1?[1,0]:[t0,Math.round(t0/2),0];
+  const F=frame(svg,{W,H,m:{l:46,r:16,t:20,b:40},x:[t0===1?1:t0,0],y:[.6,1.7],yt:[.6,.8,1,1.2,1.4,1.6],yf:v=>v.toFixed(1),xt,xl:'τ（取樣方向 →）',yl:'推論 std ÷ 訓練 std'});
+  el('line',{x1:F.x0,x2:F.x1,y1:F.Y(1),y2:F.Y(1),class:'ref'},F.g);tx(F.g,F.x0+4,F.Y(1)+16,'與訓練分布一致（= 1）',{class:'tk'});
+  const pts=(r)=>{const a=[];const st=Math.max(1,Math.floor(t0/400));for(let tau=t0;tau>=0;tau-=st)a.push([F.X(tau),F.Y(r[tau])]);if(a.length&&(t0%st))a.push([F.X(0),F.Y(r[0])]);return a};
+  el('path',{d:lp(pts(pz)),class:'ref'},F.pg);el('path',{d:lp(pts(pc)),class:'acc'},F.pg);
+  marker(F.pg,F.X(0),F.Y(pz[0]),'c','hollow');marker(F.pg,F.X(0),F.Y(pc[0]),'c','acc-f');
+  if(t0===1)tx(F.g,(F.x0+F.x1)/2,F.y1+16,'起點 t₀ = 1：只有一步',{class:'clipnote','text-anchor':'middle'});
+  const lo=Math.min(...pc),hi=Math.max(...pc);if(lo<.6||hi>1.7)tx(F.g,F.x0+4,F.y1+12,'部分曲線超出範圍',{class:'clipnote'});
+  svg.setAttribute('aria-label',`起點 ${t0}，ρ = ${rho.toFixed(3)}：終點比值 ${pc[0].toFixed(4)}；完美網路 ${pz[0].toFixed(4)}`);
+  // right
+  const RB=$('#c1-right'),W2=widthOf(RB,280,520),svg2=$('svg',RB),A=mode==='fd'?cur.fd:cur.l1,Z=mode==='fd'?zero.fd:zero.l1;
+  let mx=0;for(let i=0;i<T;i++){if(A[i]>mx)mx=A[i];if(Z[i]>mx)mx=Z[i]}const top=Math.max(1.1*mx,1e-3);
+  const yt=[0,top/2,top].map(v=>[v,mode==='fd'?(v===0?'0':v.toExponential(1)):v.toFixed(2)]);
+  const F2=frame(svg2,{W:W2,H,m:{l:56,r:16,t:20,b:40},x:[1,1000],y:[0,top],yt,xt:W2<380?[1,500,1000]:[1,250,500,750,1000],xl:'起點 t₀（反向步數）',yl:mode==='fd'?'終點的一維 FD':'逐樣本 L1'});
+  const step=2,line=arr=>{const a=[];for(let i=0;i<T;i+=step)a.push([F2.X(i+1),F2.Y(arr[i])]);a.push([F2.X(1000),F2.Y(arr[T-1])]);return a};
+  el('path',{d:lp(line(Z)),class:'ref'},F2.pg);el('path',{d:lp(line(A)),class:'acc'},F2.pg);
+  el('line',{x1:F2.X(t0),x2:F2.X(t0),y1:F2.y0,y2:F2.y1,class:'cur'},F2.g);
+  marker(F2.pg,F2.X(t0),F2.Y(A[t0-1]),'c','acc-f');marker(F2.pg,F2.X(t0),F2.Y(Z[t0-1]),'c','hollow');
+  tx(F2.g,F2.x1-4,F2.Y(A[T-1])-8,'ρ = '+rho.toFixed(3),{class:'lab','text-anchor':'end'});
+  tx(F2.g,F2.x1-4,Math.min(F2.y0-6,F2.Y(Z[T-1])-6),mode==='fd'?'完美網路：約 '+sci(Z[T-1]):'完美網路',{class:'tk','text-anchor':'end'});
+  svg2.setAttribute('aria-label',`${mode==='fd'?'一維 FD':'L1'}：起點 ${t0} 時 ${A[t0-1].toExponential(3)}`);
+  const fmt=v=>mode==='fd'?sci(v):v.toFixed(4);
+  $('#c1-ro').innerHTML=`起點 t₀ = <b>${t0}</b><br>${mode==='fd'?'一維 FD':'L1'}（ρ = ${rho.toFixed(3)}）= <b class="acc">${fmt(A[t0-1])}</b><br>${mode==='fd'?'一維 FD':'L1'}（完美網路）= <b>${fmt(Z[t0-1])}</b><br>終點比值 r₀ = <b>${pc[0].toFixed(4)}</b>（完美網路 ${pz[0].toFixed(4)}）`;
+  announce('c1',`起點 ${t0}，ρ ${rho.toFixed(3)}，${mode==='fd'?'一維 FD':'L1'} ${fmt(A[t0-1])}，終點比值 ${pc[0].toFixed(3)}`)}
+function initC1(){const q=()=>queue('c1',renderC1);
+  onRange('#c1-rho',e=>{c1.rho=Math.round(+e.target.value*1000)/1000;q()});onRange('#c1-s',e=>{c1.s=+e.target.value;q()});onRange('#c1-t0',e=>{c1.t0=+e.target.value;q()});
+  $$('#c1-mode button').forEach(b=>b.addEventListener('click',()=>{c1.mode=b.dataset.v;$$('#c1-mode button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));q()}));
+  $('#c1-perfect').addEventListener('click',()=>{c1.rho=0;$('#c1-rho').value=0;q()});
+  $('#c1-right svg').addEventListener('click',e=>{const svg=e.currentTarget,r=svg.getBoundingClientRect(),W=+svg.getAttribute('width');const x=(e.clientX-r.left)*W/r.width;const t=Math.round(1+(x-56)/(W-72)*999);if(t>=1&&t<=1000){c1.t0=t;$('#c1-t0').value=t;q()}});
+  renderC1()}
+
+/* ---------- C2 widget ---------- */
+const c2={seed:11,t:500,g:.1,sel:null,x0:[0,0],eps:[0,0],xi:[0,0],cloud:[]};
+function c2sample(){const r=mulberry32(c2.seed);c2.x0=[.6*gauss(r),.6*gauss(r)];c2.eps=[gauss(r),gauss(r)];c2.xi=[gauss(r),gauss(r)];c2.cloud=[];
+  for(let i=0;i<200;i++)c2.cloud.push({e:[gauss(r),gauss(r)],x:[gauss(r),gauss(r)]})}
+function renderC2(){const {t,g,sel}=c2;$('#c2-t-o').textContent=t;$('#c2-g-o').textContent=g.toFixed(2);
+  $$('#c2 .chip').forEach(b=>b.setAttribute('aria-pressed',String(Math.abs(+b.dataset.g-g)<1e-9)));
+  $$('.c2tab button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.m===sel)));
+  const R=c2Calc(t,g,c2.x0,c2.eps,c2.xi),a=ABAR[t],sa=Math.sqrt(a),sb=Math.sqrt(1-a);
+  const bx=$('#c2-in'),W=widthOf(bx,260,440),H=Math.min(W,340),svg=$('svg',bx);
+  const F=frame(svg,{W,H,m:{l:34,r:12,t:22,b:30},x:[-3,3],y:[-3,3],yt:[-3,0,3],xt:[-3,0,3],yl:'輸入空間'});
+  const c=[sa*c2.x0[0],sa*c2.x0[1]],px=F.X(1)-F.X(0);
+  c2.cloud.forEach(p=>el('circle',{cx:F.X(c[0]+sb*(p.e[0]+g*p.x[0])),cy:F.Y(c[1]+sb*(p.e[1]+g*p.x[1])),r:2.2,class:'ptl'},F.pg));
+  el('circle',{cx:F.X(c[0]),cy:F.Y(c[1]),r:R.stdX*px,class:'ink'},F.pg);
+  el('circle',{cx:F.X(c[0]),cy:F.Y(c[1]),r:R.stdY*px,class:'perp dash'},F.pg);
+  el('path',{d:`M${F.X(c[0])-6} ${F.Y(c[1])}h12M${F.X(c[0])} ${F.Y(c[1])-6}v12`,class:'ink'},F.pg);
+  const hx=sel==='ddpm',hy=sel==='ddpmy'||sel==='ip';
+  arrow(F.pg,F.X(R.xt[0]),F.Y(R.xt[1]),F.X(R.yt[0]),F.Y(R.yt[1]),'acc');
+  el('circle',{cx:F.X(R.xt[0]),cy:F.Y(R.xt[1]),r:hx?7:5,class:'ink-f'},F.pg);
+  el('rect',{x:F.X(R.yt[0])-(hy?7:5),y:F.Y(R.yt[1])-(hy?7:5),width:hy?14:10,height:hy?14:10,class:'hollow'+(hy?' hl':'')},F.pg);
+  {const dx=R.yt[0]-R.xt[0],dy=R.yt[1]-R.xt[1],L=Math.hypot(dx,dy)||1,ux=dx/L,uy=dy/L;tx(F.g,F.X(R.xt[0])-ux*16,F.Y(R.xt[1])+uy*16+4,'x_t',{class:'lab','text-anchor':'middle'});tx(F.g,F.X(R.yt[0])+ux*18,F.Y(R.yt[1])-uy*18+4,'y_t',{class:'lab','text-anchor':'middle'})}
+  svg.setAttribute('aria-label',`輸入空間：x_t 標準差 ${R.stdX.toFixed(3)}，y_t 標準差 ${R.stdY.toFixed(3)}`);
+  const bx2=$('#c2-tg'),svg2=$('svg',bx2);const F2=frame(svg2,{W,H,m:{l:34,r:12,t:22,b:30},x:[-3,3],y:[-3,3],yt:[-3,0,3],xt:[-3,0,3],yl:'目標空間'});
+  const he=sel==='ddpm'||sel==='ip',hp=sel==='ddpmy';
+  arrow(F2.pg,F2.X(0),F2.Y(0),F2.X(c2.eps[0]),F2.Y(c2.eps[1]),'par'+(he?' hl':''));
+  arrow(F2.pg,F2.X(0),F2.Y(0),F2.X(R.epsP[0]),F2.Y(R.epsP[1]),'perp'+(hp?' hl':''),true);
+  el('line',{x1:F2.X(c2.eps[0]),y1:F2.Y(c2.eps[1]),x2:F2.X(R.epsP[0]),y2:F2.Y(R.epsP[1]),class:'proj'},F2.pg);
+  {const up=F2.Y(c2.eps[1])<=F2.Y(R.epsP[1]),ex=F2.X(c2.eps[0]),ey=F2.Y(c2.eps[1]),px=F2.X(R.epsP[0]),py=F2.Y(R.epsP[1]),anc=ex>(F2.x0+F2.x1)/2?'end':'start',off=anc==='end'?-8:8;tx(F2.g,ex+off,Math.min(ey,py)-12+(up?0:28+Math.abs(ey-py)),'ε：DDPM、DDPM-IP',{class:'lab','text-anchor':anc});tx(F2.g,px+off,Math.max(ey,py)+20-(up?0:28+Math.abs(ey-py)),'ε′：DDPM-y',{class:'lab','text-anchor':anc})}
+  svg2.setAttribute('aria-label',`目標空間：ε 與 ε′ 的距離 ${R.dist.toFixed(3)}`);
+  $('#c2-ro').innerHTML=(g===0?'<b>γ = 0：三種訓練相同</b><br>':'')+`√(1−ᾱ) = <b>${R.stdX.toFixed(3)}</b>（x_t 的標準差）<br>√((1−ᾱ)(1+γ²)) = <b>${R.stdY.toFixed(3)}</b>（y_t 的標準差）<br>‖y_t − x_t‖ = <b>${Math.hypot(R.yt[0]-R.xt[0],R.yt[1]-R.xt[1]).toFixed(3)}</b><br>‖ε − ε′‖ = <b class="acc">${R.dist.toFixed(3)}</b><br>每維 E(ε − ε′)² = 2 − 2/√(1+γ²) = <b>${R.expD2.toFixed(4)}</b>`;
+  announce('c2',`t ${t}，γ ${g.toFixed(2)}，ε 與 ε′ 距離 ${R.dist.toFixed(3)}`)}
+function initC2(){c2sample();const q=()=>queue('c2',renderC2);
+  onRange('#c2-t',e=>{c2.t=+e.target.value;q()});onRange('#c2-g',e=>{c2.g=+e.target.value;q()});
+  $$('#c2 .chip').forEach(b=>b.addEventListener('click',()=>{c2.g=+b.dataset.g;$('#c2-g').value=c2.g;q()}));
+  $('#c2-re').addEventListener('click',()=>{c2.seed++;c2sample();q()});
+  $$('.c2tab button').forEach(b=>b.addEventListener('click',()=>{c2.sel=c2.sel===b.dataset.m?null:b.dataset.m;q()}));
+  renderC2()}
+
+/* ---------- C3 widget ---------- */
+const c3={g:.1,s:.5,t:500};
+function renderC3(){const {g,s,t}=c3;$('#c3-g-o').textContent=g.toFixed(2);$('#c3-s-o').textContent=s.toFixed(2);$('#c3-t-o').textContent=t;
+  $('#c3-g01').setAttribute('aria-pressed',String(Math.abs(g-.1)<1e-9));
+  const W=widthOf($('#c3-a'),260,620),H=170,m={l:52,r:14,t:20,b:36},xt=W<380?[1,500,1000]:[1,250,500,750,1000];
+  const cur=(F)=>el('line',{x1:F.X(t),x2:F.X(t),y1:F.y0,y2:F.y1,class:'cur'},F.g);
+  // a: x_t space
+  const Fa=frame($('#c3-a svg'),{W,H,m,x:[1,1000],y:[0,1.1],yt:[0,.5,1],yf:v=>v.toFixed(1),xt,xl:'t',yl:'網路看到的輸入（x_t 空間）'});
+  const pa=[],pb=[];for(let k=1;k<=T;k+=3){pa.push([Fa.X(k),Fa.Y(Math.sqrt(1-ABAR[k]))]);pb.push([Fa.X(k),Fa.Y(g*Math.sqrt(1-ABAR[k]))])}
+  el('path',{d:lp(pa),class:'ref'},Fa.pg);el('path',{d:lp(pb),class:'par'},Fa.pg);cur(Fa);
+  tx(Fa.g,Fa.X(480),Fa.Y(Math.sqrt(1-ABAR[480]))-10,'原本噪聲 √(1−ᾱ)',{class:'tk','text-anchor':'end'});tx(Fa.g,Fa.x1-2,Math.max(Fa.y1+12,Fa.Y(g)-8),'額外噪聲 γ√(1−ᾱ)',{class:'lab','text-anchor':'end'});
+  // b: x0 space (log)
+  const Fb=frame($('#c3-b svg'),{W,H,m,x:[1,1000],y:[1e-3,100],ylog:true,yt:[[1e-3,'0.001'],[1e-2,'0.01'],[1e-1,'0.1'],[1,'1'],[10,'10'],[100,'100']],xt,xl:'t',yl:'換算成資料單位（x₀ 空間）'});
+  if(g===0)tx(Fb.g,(Fb.x0+Fb.x1)/2,(Fb.y0+Fb.y1)/2,'γ = 0：沒有擾動',{class:'lab','text-anchor':'middle'});
+  else{const p=[];for(let k=1;k<=T;k++){const v=g*Math.sqrt((1-ABAR[k])/ABAR[k]);if(v>1e-3)p.push([Fb.X(k),Fb.Y(Math.min(v,200))])}el('path',{d:lp(p),class:'perp dash'},Fb.pg);
+    tx(Fb.g,Fb.x1-2,Fb.y1+12,'→ ∞：只因除以很小的 √ᾱ',{class:'clipnote','text-anchor':'end'})}
+  el('line',{x1:Fb.x0,x2:Fb.x1,y1:Fb.Y(.2),y2:Fb.Y(.2),class:'ref'},Fb.g);tx(Fb.g,Fb.x0+4,Fb.Y(.2)-6,'論文 Fig. 2：ν_t 平均約 0.2（同為 x₀ 空間）',{class:'tk'});cur(Fb);
+  // c: slopes
+  const Fc=frame($('#c3-c svg'),{W,H,m,x:[1,1000],y:[.4,1.1],yt:[.4,.6,.8,1],yf:v=>v.toFixed(1),xt,xl:'t',yl:'線性高斯玩具的斜率比'});
+  el('line',{x1:Fc.x0,x2:Fc.x1,y1:Fc.Y(1),y2:Fc.Y(1),class:'grid'},Fc.g);tx(Fc.g,Fc.x1-4,Fc.Y(1)-6,'DDPM（= 1）',{class:'tk','text-anchor':'end'});
+  const lb=1/(1+g*g);el('line',{x1:Fc.x0,x2:Fc.x1,y1:Fc.Y(lb),y2:Fc.Y(lb),class:'ref'},Fc.pg);tx(Fc.g,Fc.x0+4,Math.min(Fc.y0-4,Fc.Y(lb)+14),'IP 的下界 1/(1+γ²)',{class:'tk'});
+  const pi=[],py=[];for(let k=1;k<=T;k+=3){const r=c3Calc(k,g,s);pi.push([Fc.X(k),Fc.Y(r.ratioIP)]);py.push([Fc.X(k),Fc.Y(r.ratioY)])}
+  el('path',{d:lp(py),class:'ink dot'},Fc.pg);el('path',{d:lp(pi),class:'acc'},Fc.pg);cur(Fc);
+  const r=c3Calc(t,g,s);marker(Fc.pg,Fc.X(t),Fc.Y(r.ratioIP),'sq','acc-f');marker(Fc.pg,Fc.X(t),Fc.Y(r.ratioY),'tri','hollow');
+  const f5=v=>v.toPrecision(5);
+  $('#c3-ro').innerHTML=`t = <b>${t}</b>，ᾱ_t = <b>${f5(r.abar)}</b><br>x_t 空間額外噪聲 = <b>${f5(r.extraXt)}</b><br>總噪聲功率 = 原本的 1+γ² = <b>${(1+g*g).toFixed(3)}</b> 倍（每個 t 相同）<br>x₀ 空間加噪 = <b>${r.noiseX0>1e4?'> 10⁴':f5(r.noiseX0)}</b><br>c_t = ${f5(r.c)}，c_t^IP = ${f5(r.cip)}，c_t^y = ${f5(r.cy)}<br>IP 斜率比 = <b class="acc">${f5(r.ratioIP)}</b>，DDPM-y 斜率比 = <b>${f5(r.ratioY)}</b>`;
+  ['a','b','c'].forEach(k=>$(`#c3-${k} svg`).setAttribute('aria-label',`t = ${t}，γ = ${g.toFixed(2)}：x_t 空間額外噪聲 ${f5(r.extraXt)}，x₀ 空間加噪 ${f5(r.noiseX0)}，IP 斜率比 ${f5(r.ratioIP)}，DDPM-y 斜率比 ${f5(r.ratioY)}`));
+  announce('c3',`t ${t}，IP 斜率比 ${f5(r.ratioIP)}，DDPM-y 斜率比 ${f5(r.ratioY)}`)}
+function initC3(){const q=()=>queue('c3',renderC3);
+  onRange('#c3-g',e=>{c3.g=+e.target.value;q()});onRange('#c3-s',e=>{c3.s=+e.target.value;q()});onRange('#c3-t',e=>{c3.t=+e.target.value;q()});
+  $('#c3-g01').addEventListener('click',()=>{c3.g=.1;$('#c3-g').value=.1;q()});
+  ['a','b','c'].forEach(k=>$(`#c3-${k} svg`).addEventListener('click',e=>{const svg=e.currentTarget,rc=svg.getBoundingClientRect(),W=+svg.getAttribute('width');const x=(e.clientX-rc.left)*W/rc.width;const t=Math.round(1+(x-52)/(W-66)*999);if(t>=1&&t<=1000){c3.t=t;$('#c3-t').value=t;q()}}));
+  renderC3()}
+
+/* ---------- C4 data (paper tables) ---------- */
+const DS=['CIFAR10','ImageNet 32','LSUN tower 64','CelebA 64','FFHQ 128'];
+const TAB3={'CIFAR10':{1000:[2.99,4.76,2.76,4.05],300:[2.95,4.95,2.67,4.14],100:[3.37,5.66,2.70,4.51],80:[3.63,5.97,2.93,4.69]},
+ 'ImageNet 32':{1000:[3.60,3.30,2.87,2.39],300:[3.58,3.48,2.74,2.58],100:[4.26,4.48,3.24,3.13],80:[4.61,4.76,3.57,3.33]},
+ 'LSUN tower 64':{1000:[3.39,7.96,2.68,6.04],300:[3.31,8.39,2.60,5.98],100:[3.50,11.10,2.79,6.56],80:[4.17,12.60,2.95,6.93]},
+ 'CelebA 64':{1000:[1.60,3.80,1.31,3.38],300:[1.82,4.25,1.43,3.36],100:[3.02,5.76,2.21,4.33],80:[3.75,6.80,2.67,4.69]},
+ 'FFHQ 128':{1000:[9.65,12.53,2.98,5.59],300:[9.55,12.60,3.74,5.97],100:[14.52,16.02,5.94,7.90],80:[17.00,18.02,6.89,8.79]}};
+const TAB4={'CIFAR10':[500,1000,2.99,460,80,2.93],'ImageNet 32':[4500,1000,3.53,4000,80,3.50],'LSUN tower 64':[300,1000,3.39,220,60,3.31],'CelebA 64':[480,1000,1.60,300,200,1.53],'FFHQ 128':[420,1000,9.65,180,60,8.72]};
+const TAB5={0:{DDIM:[14.21,7.50,5.17,4.66,4.29],IP:[10.54,5.70,4.66,4.52,4.27]},0.5:{DDIM:[17.24,8.87,5.59,4.88,4.45],IP:[10.06,5.53,3.95,3.66,3.56]}};
+const TAB7={DDPM:[[3.63,5.97],[3.37,5.66],[2.95,4.95],[2.99,4.76]],'DDPM-y':[[4.24,6.51],[3.90,6.23],[3.21,5.39],[3.25,5.04]],'DDPM-IP':[[2.93,4.69],[2.70,4.51],[2.67,4.14],[2.76,4.05]]};
+const TAB1={ADM:[0.983,1.808,2.587,3.105,3.544],'ADM-IP':[0.972,1.594,2.198,2.539,2.742]};
+const TPS=[80,100,300,1000];
+function c4derived(ds){const r=TAB3[ds],best=col=>TPS.reduce((b,k)=>r[k][col]<r[b][col]?k:b,TPS[0]);const ref=r[1000][0];const minT=TPS.filter(k=>r[k][2]<=ref)[0]??null;
+  const t4=TAB4[ds];return{bestA:best(0),bestI:best(2),minT,speed:t4[1]/t4[4],save:100*(1-t4[3]/t4[0]),fidGap:t4[2]-t4[5]}}
+const c4={tab:'t3',ds:'CIFAR10',met:0,eta:.5,focus:null};
+function catChart(svg,W,cats,series,ylab,focus){const narrow=W<480,H=270;let lo=Infinity,hi=-Infinity;series.forEach(s=>s.vals.forEach(v=>{lo=Math.min(lo,v);hi=Math.max(hi,v)}));
+  const pad=(hi-lo)*.15||.5,y0=Math.max(0,lo-pad),y1=hi+pad;const n=cats.length;
+  const ticks=[y0,(y0+y1)/2,y1].map(v=>[v,v.toFixed(2)]);
+  const F=frame(svg,{W,H,m:{l:48,r:20,t:24,b:40},x:[-.5,n-.5],y:[y0,y1],yt:ticks,xt:cats.map((c,i)=>[i,String(c)]),xl:'取樣步數（等距的類別刻度）',yl:ylab});
+  series.forEach((s,si)=>{el('path',{d:lp(s.vals.map((v,i)=>[F.X(i),F.Y(v)])),class:s.cls},F.pg);
+    s.vals.forEach((v,i)=>{marker(F.pg,F.X(i),F.Y(v),s.mk,s.mcls);if(!narrow||i===focus)tx(F.g,F.X(i)+(si%2?8:-8),F.Y(v)+(si%2?14:-8),v.toFixed(s.dp||2),{class:'tk','text-anchor':si%2?'start':'end'})});
+    tx(F.g,F.X(n-1)+6,F.Y(s.vals[n-1])+(si===0?-14:si===1?16:28),'',{class:'lab'})});
+  if(focus!=null)el('line',{x1:F.X(focus),x2:F.X(focus),y1:F.y0,y2:F.y1,class:'cur'},F.g);
+  return F}
+function tableHTML(head,rows,cap){return `<div class="tscroll" tabindex="0" aria-label="${cap}，可橫向捲動"><table><caption>${cap}</caption><thead><tr>${head.map((h,i)=>`<th${i?' class="num"':''}>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map((c,i)=>`<td${i?' class="num"':''}>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`}
+function seg(id,opts,cur,cb,label){const d=document.createElement('div');d.className='seg';d.id=id;d.setAttribute('role','group');d.setAttribute('aria-label',label);
+  opts.forEach(([v,l])=>{const b=document.createElement('button');b.type='button';b.textContent=l;b.setAttribute('aria-pressed',String(v===cur));b.addEventListener('click',()=>cb(v));d.appendChild(b)});return d}
+function renderC4(){const box=$('#c4-fig'),svg=$('svg',box),W=widthOf(box,300,900),opts=$('#c4-opts'),ro=$('#c4-ro'),note=$('#c4-note'),tb=$('#c4-tab');opts.textContent='';
+  $$('#c4-tabs [role=tab]').forEach(b=>{const on=b.dataset.v===c4.tab;b.setAttribute('aria-selected',String(on));b.tabIndex=on?0:-1});$('#c4-panel').setAttribute('aria-labelledby','c4t-'+c4.tab);
+  const narrow=W<480,foc=c4.focus;
+  const mkLines=(cats,series,ylab)=>{const f=foc==null?cats.length-1:Math.min(foc,cats.length-1);catChart(svg,W,cats,series,ylab,narrow?f:null);return f};
+  if(c4.tab==='t3'){opts.appendChild(seg('c4-ds',DS.map(d=>[d,d]),c4.ds,v=>{c4.ds=v;renderC4()},'資料集'));opts.appendChild(seg('c4-met',[[0,'FID'],[1,'sFID']],c4.met,v=>{c4.met=v;renderC4()},'指標'));
+    const r=TAB3[c4.ds],m=c4.met,name=m?'sFID':'FID';mkLines(TPS,[{vals:TPS.map(k=>r[k][m]),cls:'ref',mk:'c',mcls:'hollow'},{vals:TPS.map(k=>r[k][m+2]),cls:'acc',mk:'sq',mcls:'acc-f'}],name);
+    const d=c4derived(c4.ds);ro.innerHTML=`${c4.ds}（${name}；空心圓 ADM，實心方形 ADM-IP）<br>Tab. 3 格點內最佳 T′：ADM <b>${d.bestA}</b>，ADM-IP <b class="acc">${d.bestI}</b>（以 FID）<br>增益（ADM − ADM-IP）：${TPS.map(k=>`${k} 步 <b>${(r[k][m]-r[k][m+2]).toFixed(2)}</b>`).join('、')}<br>格點內 ADM-IP FID 不高於 ADM 1,000 步的最小 T′：<b>${d.minT}</b>（${(1000/d.minT).toFixed(1)} 倍）`;
+    note.textContent='CelebA 的 ADM-IP 另以 900 步得到 1.27（Sec. 6.2，不在格點內）；Tab. 4 另用 60 與 200 步。';
+    tb.innerHTML=tableHTML(['T′','ADM FID','ADM sFID','ADM-IP FID','ADM-IP sFID'],TPS.slice().reverse().map(k=>[k,...r[k].map(v=>v.toFixed(2))]),'Tab. 3 · '+c4.ds)}
+  else if(c4.tab==='t4'){svg.textContent='';const rowH=58,H=24+DS.length*rowH+8;svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+    const defs=el('defs',null,svg),pat=el('pattern',{id:'hatch',width:6,height:6,patternUnits:'userSpaceOnUse',patternTransform:'rotate(45)'},defs);el('line',{x1:0,y1:0,x2:0,y2:6,class:'hatch-l'},pat);
+    const lx=narrow?8:120,bw=(W-lx-80)/2-10;
+    tx(svg,lx,14,'訓練迭代（各列以 ADM = 100%）',{class:'tk'});tx(svg,lx+bw+20,14,'取樣步數（各列以 ADM = 100%）',{class:'tk'});
+    DS.forEach((ds,i)=>{const t=TAB4[ds],y=24+i*rowH;tx(svg,narrow?8:8,y+(narrow?10:24),ds,{class:'lab'});const oy=narrow?14:0;
+      [[0,3,'K'],[1,4,'']].forEach(([a,b,u],j)=>{const x=lx+j*(bw+20),ww=bw-40;el('rect',{x,y:y+oy+4,width:ww,height:12,class:'bar-a'},svg);el('rect',{x,y:y+oy+20,width:ww*t[b]/t[a],height:12,class:'bar-i',stroke:'var(--accent)'},svg);
+        tx(svg,x+ww+4,y+oy+15,t[a]+u,{class:'tk'});tx(svg,x+ww*t[b]/t[a]+4,y+oy+31,t[b]+u,{class:'tk'})})});
+    svg.setAttribute('aria-label','Tab. 4 長條圖：灰色實心為 ADM，斜線為 ADM-IP');
+    ro.innerHTML=DS.map(ds=>{const d=c4derived(ds),t=TAB4[ds];return `${ds}：取樣加速 <b>${d.speed.toFixed(1)}</b> 倍，訓練節省 <b>${d.save.toFixed(1)}%</b>，FID ${t[2].toFixed(2)} → ${t[5].toFixed(2)}（差 ${d.fidGap.toFixed(2)}）`}).join('<br>');
+    note.textContent='灰色實心：ADM；斜線：ADM-IP。單次訓練迭代與單步取樣兩者耗時相同（Tab. 4 註）。';
+    tb.innerHTML=tableHTML(['資料集','ADM 迭代','ADM 步數','ADM FID','ADM-IP 迭代','ADM-IP 步數','ADM-IP FID'],DS.map(ds=>[ds,...TAB4[ds].map((v,i)=>i%3===0?v+'K':i%3===2?v.toFixed(2):v)]),'Tab. 4')}
+  else if(c4.tab==='t5'){opts.appendChild(seg('c4-eta',[[0,'η = 0'],[.5,'η = 0.5']],c4.eta,v=>{c4.eta=v;renderC4()},'DDIM 的 η'));const r=TAB5[c4.eta],cats=[10,20,50,100,1000];
+    mkLines(cats,[{vals:r.DDIM,cls:'ref',mk:'c',mcls:'hollow'},{vals:r.IP,cls:'acc',mk:'sq',mcls:'acc-f'}],'FID');
+    ro.innerHTML=`η = ${c4.eta}（空心圓 DDIM，實心方形 DDIM-IP）<br>增益：${cats.map((k,i)=>`${k} 步 <b>${(r.DDIM[i]-r.IP[i]).toFixed(2)}</b>`).join('、')}`;
+    note.textContent='論文內文寫 η = 0.5、10 步的增益為 7.16，表中相減為 7.18。';
+    tb.innerHTML=tableHTML(['模型',...cats.map(String)],[['DDIM',...r.DDIM.map(v=>v.toFixed(2))],['DDIM-IP',...r.IP.map(v=>v.toFixed(2))]],'Tab. 5 · η = '+c4.eta)}
+  else if(c4.tab==='t7'){opts.appendChild(seg('c4-met7',[[0,'FID'],[1,'sFID']],c4.met,v=>{c4.met=v;renderC4()},'指標'));const m=c4.met;
+    mkLines(TPS,[{vals:TAB7.DDPM.map(v=>v[m]),cls:'ref',mk:'c',mcls:'hollow'},{vals:TAB7['DDPM-y'].map(v=>v[m]),cls:'ink dot',mk:'tri',mcls:'hollow'},{vals:TAB7['DDPM-IP'].map(v=>v[m]),cls:'acc',mk:'sq',mcls:'acc-f'}],m?'sFID':'FID');
+    ro.innerHTML=`CIFAR10（空心圓 DDPM，空心三角 DDPM-y，實心方形 DDPM-IP）<br>${TPS.map((k,i)=>`${k} 步：${TAB7.DDPM[i][m]} / ${TAB7['DDPM-y'][i][m]} / <b class="acc">${TAB7['DDPM-IP'][i][m]}</b>`).join('<br>')}`;
+    note.textContent='DDPM-y 在每一欄都最差（App. A.3）。';
+    tb.innerHTML=tableHTML(['模型',...TPS.map(String)],Object.keys(TAB7).map(k=>[k,...TAB7[k].map(v=>v[m].toFixed(2))]),'Tab. 7 · '+(m?'sFID':'FID'))}
+  else{const cats=[100,300,500,700,1000];mkLines(cats,[{vals:TAB1.ADM,cls:'ref',mk:'c',mcls:'hollow',dp:3},{vals:TAB1['ADM-IP'],cls:'acc',mk:'sq',mcls:'acc-f',dp:3}],'FID');
+    ro.innerHTML=`ImageNet 32（空心圓 ADM，實心方形 ADM-IP）<br>差值：${cats.map((k,i)=>`${k} 步 <b>${(TAB1.ADM[i]-TAB1['ADM-IP'][i]).toFixed(3)}</b>`).join('、')}`;
+    note.textContent='100 步的差距 0.011 小於有限樣本誤差的合理範圍，不當成效果。';
+    tb.innerHTML=tableHTML(['模型',...cats.map(String)],Object.keys(TAB1).map(k=>[k,...TAB1[k].map(v=>v.toFixed(3))]),'Tab. 1')}
+  if(c4.tab!=='t4')svg.setAttribute('aria-label','結果折線圖，數值見下方讀數與表格');
+  if(typeof renderMathInElement==='function')renderMath(tb);
+  announce('c4',ro.textContent.slice(0,160))}
+function initC4(){const tabs=$$('#c4-tabs [role=tab]');
+  tabs.forEach((b,i)=>{b.addEventListener('click',()=>{c4.tab=b.dataset.v;c4.focus=null;renderC4()});
+    b.addEventListener('keydown',e=>{let j=null;if(e.key==='ArrowRight')j=(i+1)%tabs.length;else if(e.key==='ArrowLeft')j=(i-1+tabs.length)%tabs.length;else if(e.key==='Home')j=0;else if(e.key==='End')j=tabs.length-1;
+      if(j!=null){e.preventDefault();c4.tab=tabs[j].dataset.v;c4.focus=null;renderC4();tabs[j].focus()}})});
+  $('#c4-fig svg').addEventListener('click',e=>{if(c4.tab==='t4')return;const svg=e.currentTarget,rc=svg.getBoundingClientRect(),W=+svg.getAttribute('width');const x=(e.clientX-rc.left)*W/rc.width;const n=c4.tab==='t5'||c4.tab==='t1'?5:4;const i=Math.round((x-48)/(W-68)*n-.5);if(i>=0&&i<n){c4.focus=i;renderC4()}});
+  renderC4()}
+
+/* ---------- timeline ---------- */
+const TL_GROUP={'1503.03585':['base','ddpm-training-and-sampling-recap'],'2006.11239':['base','ddpm-training-and-sampling-recap'],'1907.05600':['base','ddpm-training-and-sampling-recap'],'2011.13456':['base','ddpm-training-and-sampling-recap'],
+ '2102.09672':['qual','ddpm-quality-and-ddim-sampling'],'2105.05233':['qual','ddpm-quality-and-ddim-sampling'],'2010.02502':['qual','ddpm-quality-and-ddim-sampling'],'2206.00364':['qual','ddpm-quality-and-ddim-sampling'],
+ '1506.03099':['seq','teacher-forcing-and-scheduled-sampling'],'1511.06732':['seq','teacher-forcing-and-scheduled-sampling'],'1612.00563':['seq','teacher-forcing-and-scheduled-sampling'],'1910.00292':['seq','teacher-forcing-and-scheduled-sampling'],
+ '1710.09412':['reg','vicinal-risk-and-smoothness-regularization'],'2301.11706':['me','input-perturbation-ddpm-ip']};
+const TL_NAME={base:'擴散基礎',qual:'品質與取樣',seq:'序列的曝光偏差',reg:'平滑與正則化',me:'本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  if(!data.some(e=>e.arxiv==='2301.11706'))data.push({year:2023,title:'Input Perturbation Reduces Exposure Bias in Diffusion Models',authors_short:'本論文',arxiv:'2301.11706',role:'指出 DDPM 訓練與取樣的輸入不一致，並在訓練時擾動網路輸入。'});
+  data=data.map((e,i)=>({e,i})).sort((a,b)=>(+a.e.year||0)-(+b.e.year||0)||a.i-b.i).map(o=>o.e);
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${g[1]?`<a href="${g[1]}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}});
+  renderMath(track)}
+
+/* ---------- toc, theme, appbar ---------- */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));
+  addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+/* ---------- self test (design 5 / 6.4) ---------- */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const rel=(a,b,r)=>Math.abs(a-b)<=r*Math.abs(b)+1e-12,abs=(a,b,t)=>Math.abs(a-b)<=t;
+  ok(rel(BETA[1],4.128e-5,1e-3),'beta_1');ok(rel(ABAR[1],0.999959,1e-6),'abar_1');ok(rel(ABAR[100],0.972093,1e-6),'abar_100');ok(rel(ABAR[300],0.786911,1e-6),'abar_300');
+  ok(rel(ABAR[500],0.493844,1e-6),'abar_500');ok(rel(ABAR[999],2.4288e-6,1e-4),'abar_999');ok(rel(ABAR[1000],2.429e-9,1e-3),'abar_1000 (cumulative)');ok(BETA[1000]===0.999,'beta_1000');
+  const fdTab={'0.5|0':[3.100e-8,9.534e-7,3.277e-6,3.899e-6,4.012e-6,4.029e-6],'0.5|0.02':[1.101e-3,5.050e-3,7.069e-3,7.346e-3,7.382e-3,7.385e-3],'0.5|-0.02':[1.008e-3,4.122e-3,5.647e-3,5.859e-3,5.889e-3,5.891e-3],
+    '0.5|0.05':[7.517e-3,3.931e-2,5.816e-2,6.096e-2,6.135e-2,6.138e-2],'1|0.02':[4.446e-3,2.163e-2,3.578e-2,4.091e-2,4.238e-2,4.258e-2],'0.2|0.02':[1.641e-4,5.661e-4,6.168e-4,6.185e-4,6.186e-4,6.186e-4]};
+  const tt=[10,100,300,500,700,1000];
+  for(const k in fdTab){const [s,r]=k.split('|').map(Number),c=c1Curve(s,r);fdTab[k].forEach((v,i)=>ok(rel(c.fd[tt[i]-1],v,1e-3),`C1 FD s=${s} rho=${r} t0=${tt[i]}: ${c.fd[tt[i]-1].toExponential(4)}`))}
+  const l1Tab={'0.5|0':[.1280,.2877,.3754,.3989],'0.5|0.02':[.1395,.2921,.3764,.3989],'0.5|0.05':[.1997,.3220,.3831,.3989],'1|0.02':[.1771,.3935,.6561,.7979]},tl=[100,300,600,1000];
+  for(const k in l1Tab){const [s,r]=k.split('|').map(Number),c=c1Curve(s,r);l1Tab[k].forEach((v,i)=>ok(rel(c.l1[tl[i]-1],v,1e-3),`C1 L1 s=${s} rho=${r} t0=${tl[i]}`))}
+  const rTab=[[300,0,[.9981,.9974,.9967,.9964]],[300,.02,[1.0252,1.0462,1.0956,1.1682]],[300,.05,[1.0674,1.1245,1.2637,1.4823]],[300,-.02,[.9719,.9512,.9071,.8497]],[1000,.02,[1.0288,1.0496,1.0991,1.1719]]];
+  rTab.forEach(([t0,r,v])=>{const p=c1Path(.5,r,t0);[100,50,10,0].forEach((tau,i)=>ok(abs(p[tau],v[i],1.5e-4),`C1 r t0=${t0} rho=${r} tau=${tau}: ${p[tau].toFixed(5)}`))});
+  ok(abs(c1Path(.5,0,1000)[0],.99599,2e-5),'C1 r t0=1000 rho=0');ok(abs(c1Path(.5,.05,1000)[0],1.4955,1.5e-4),'C1 r t0=1000 rho=.05');
+  const x0=[.6,-.3],eps=[.8,1.1],xi=[-1.2,.5];
+  [[.1,[.9054,.6073],[.6766,1.1443],.1311,.7150,.0099],[.5,[.5639,.7496],[.1789,1.2075],.6303,.7954,.2111],[1,[.1371,.9275],[-.2828,1.1314],1.0833,1.0061,.5858]].forEach(([g,yt,ep,d,sy,e2])=>{const R=c2Calc(500,g,x0,eps,xi);
+    ok(abs(R.xt[0],.9908,1e-4)&&abs(R.xt[1],.5718,1e-4),'C2 x_t');ok(abs(R.yt[0],yt[0],1e-4)&&abs(R.yt[1],yt[1],1e-4),'C2 y_t g='+g);ok(abs(R.epsP[0],ep[0],1e-4)&&abs(R.epsP[1],ep[1],1e-4),'C2 eps\' g='+g);
+    ok(abs(R.dist,d,1e-4),'C2 dist g='+g);ok(abs(R.stdX,.7114,1e-4)&&abs(R.stdY,sy,1e-4),'C2 std g='+g);ok(abs(R.expD2,e2,1e-4),'C2 E g='+g);ok(Math.abs(R.ytY[0]-R.yt[0])<1e-12&&Math.abs(R.ytY[1]-R.yt[1])<1e-12,'C2 DDPM-y reconstruction g='+g)});
+  [[.1,100,.972093,.0167055,.0169436,.616596,.615962,.998971],[.1,500,.49384,.07114,.10124,1.12997,1.12096,.99202],[.1,900,.02409,.09879,.63646,1.00606,.99616,.99016],[.1,999,2.4288e-6,.1,64.166,1,.9901,.9901],[.5,500,.49384,.35572,.50619,1.12997,.94087,.83265],[1,500,.49384,.71145,1.01239,1.12997,.6264,.55435],[1,900,.02409,.98788,6.36459,1.00606,.50458,.50154]].forEach(([g,t,a,p,b,c,ci,r])=>{const R=c3Calc(t,g,.5);
+    ok(rel(R.abar,a,1e-4)&&rel(R.extraXt,p,1e-4)&&rel(R.noiseX0,b,1e-4)&&rel(R.c,c,1e-4)&&rel(R.cip,ci,1e-4)&&rel(R.ratioIP,r,1e-4),`C3 g=${g} t=${t}`)});
+  [[100,1.00395],[500,.99697],[900,.99510]].forEach(([t,v])=>ok(rel(c3Calc(t,.1,.5).ratioY,v,1e-4),'C3 DDPM-y t='+t));
+  const exp4={'CIFAR10':[300,300,80,12.5,8.0],'ImageNet 32':[300,300,80,12.5,11.1],'LSUN tower 64':[300,300,80,16.7,26.7],'CelebA 64':[1000,1000,300,5.0,37.5],'FFHQ 128':[300,1000,80,16.7,57.1]};
+  for(const ds in exp4){const d=c4derived(ds),e=exp4[ds];ok(d.bestA===e[0]&&d.bestI===e[1]&&d.minT===e[2]&&abs(d.speed,e[3],.05)&&abs(d.save,e[4],.05),'C4 '+ds)}
+  ok(abs(TAB5[.5].DDIM[0]-TAB5[.5].IP[0],7.18,.005),'Tab5 gain 7.18');ok(abs(TAB1.ADM[4]-TAB1['ADM-IP'][4],.802,.0005),'Tab1 gap');
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ---------- boot ---------- */
+function renderMath(node){if(typeof renderMathInElement!=='function')return;renderMathInElement(node||document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false})}
+function drawChains(){drawChain($('#chain-hero'),false);drawChain($('#chain-bias'),false);drawChain($('#chain-ip'),true)}
+initTheme();initToc();drawChains();initC1();initC2();initC3();initC4();renderTimeline();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{drawChains();renderC1();renderC2();renderC3();renderC4()})});
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',()=>renderMath());else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath()});
+if(/[?&]test\b/.test(location.search))selfTest();
+})();
+</script>
+</body>
+</html>
