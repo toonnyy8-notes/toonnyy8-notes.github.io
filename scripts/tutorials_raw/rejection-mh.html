@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>拒絕取樣與 Metropolis–Hastings 入門</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* 版面：單欄閱讀，正文約 68 字寬；示範區塊較寬。每個示範 = 圖 + 控制列 + 參數 + 數字讀數 */
+  --bg:#f3f5f8;
+  --surface:#ffffff;
+  --ink:#17202a;
+  --muted:#586474;
+  --line:#d5dbe3;
+  --accent:#2a57c1;
+  --accent-soft:#e2eafb;
+  --ok:#1b7c45;
+  --ok-soft:rgba(27,124,69,.13);
+  --bad:#cf4e0c;
+  --bad-soft:rgba(207,78,12,.10);
+  --bad-strong:rgba(207,78,12,.45);
+  --target-fill:rgba(23,32,42,.06);
+  --hist:rgba(42,87,193,.30);
+  --code-bg:#eef1f5;
+  --font-display:"Noto Serif TC","Songti TC","PMingLiU",serif;
+  --font-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#10151b; --surface:#19212a; --ink:#e5eaf0; --muted:#9ba6b3; --line:#2e3946;
+    --accent:#86a7ff; --accent-soft:#1e2a44;
+    --ok:#4fc483; --ok-soft:rgba(79,196,131,.16);
+    --bad:#ff8b4d; --bad-soft:rgba(255,139,77,.12); --bad-strong:rgba(255,139,77,.50);
+    --target-fill:rgba(229,234,240,.07); --hist:rgba(134,167,255,.32); --code-bg:#212b36;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#10151b; --surface:#19212a; --ink:#e5eaf0; --muted:#9ba6b3; --line:#2e3946;
+  --accent:#86a7ff; --accent-soft:#1e2a44;
+  --ok:#4fc483; --ok-soft:rgba(79,196,131,.16);
+  --bad:#ff8b4d; --bad-soft:rgba(255,139,77,.12); --bad-strong:rgba(255,139,77,.50);
+  --target-fill:rgba(229,234,240,.07); --hist:rgba(134,167,255,.32); --code-bg:#212b36;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:17px;line-height:1.8}
+main{max-width:1000px;margin:0 auto;padding:40px 20px 80px}
+.prose{max-width:720px;margin:0 auto}
+h1,h2,h3{font-family:var(--font-display);text-wrap:balance;line-height:1.35;margin:0}
+h1{font-size:2.1rem;margin-bottom:.6rem}
+h2{font-size:1.55rem;margin:3.2rem 0 .8rem;padding-top:1.2rem;border-top:1px solid var(--line)}
+h3{font-size:1.18rem;margin:2rem 0 .5rem}
+h2 .num{color:var(--accent);font-family:var(--font-mono);font-size:1rem;margin-right:.6rem;vertical-align:.15em}
+p{margin:.7rem 0}
+.lede{color:var(--muted);font-size:1.05rem}
+a{color:var(--accent)}
+code,.mono{font-family:var(--font-mono);font-size:.88em}
+code{background:var(--code-bg);padding:.05em .35em;border-radius:4px}
+ul,ol{padding-left:1.4em;margin:.6rem 0}
+li{margin:.25rem 0}
+.toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:4px 24px;margin:1.4rem 0 0;padding:16px 20px;background:var(--surface);border:1px solid var(--line);border-radius:10px;font-size:.95rem;list-style:none}
+.toc li{margin:0}
+.toc a{text-decoration:none;color:var(--ink)}
+.toc a:hover{color:var(--accent);text-decoration:underline}
+.toc .mono{color:var(--accent);margin-right:.5em}
+.algo{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;padding:14px 20px;margin:1.2rem 0}
+.algo .algo-title{font-weight:700;margin-bottom:.3rem}
+.algo ol{margin:.3rem 0}
+.note{background:var(--accent-soft);border-radius:8px;padding:12px 18px;margin:1.2rem 0}
+.math-block{overflow-x:auto;margin:.9rem 0}
+math{font-size:1.08em}
+math[display="block"]{margin:.4rem 0}
+.katex-display{overflow-x:auto;overflow-y:hidden;padding:.2rem 0}
+
+/* demo */
+.demo{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 20px 16px;margin:1.6rem 0;display:flex;flex-direction:column;gap:12px}
+.demo-title{font-weight:700;font-size:1rem;display:flex;gap:.6em;align-items:baseline;flex-wrap:wrap}
+.demo-title .tag{font-family:var(--font-mono);font-size:.75rem;color:var(--accent);border:1px solid var(--accent);border-radius:999px;padding:0 .6em;font-weight:400}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:.85rem;color:var(--muted);line-height:1.5}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{display:inline-block;width:18px;height:0;border-top:2px solid var(--ink)}
+.sw.dash{border-top:2px dashed var(--accent)}
+.sw.box{height:10px;border:none;border-radius:2px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--ok)}
+.xmark{color:var(--bad);font-weight:700;font-family:var(--font-mono)}
+.plot-label{font-size:.85rem;color:var(--muted);margin-bottom:-6px}
+canvas{display:block;width:100%;touch-action:manipulation}
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button,select{font:inherit;font-size:.92rem;line-height:1.2;border-radius:7px;cursor:pointer}
+button{background:var(--accent);color:var(--surface);border:1px solid var(--accent);padding:7px 14px;font-weight:500}
+button:hover{filter:brightness(1.08)}
+button.ghost{background:transparent;color:var(--accent)}
+button.chip{background:transparent;color:var(--ink);border:1px solid var(--line);padding:5px 12px}
+button.chip[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+select{background:var(--surface);color:var(--ink);border:1px solid var(--line);padding:6px 8px}
+button:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.controls label{font-size:.88rem;color:var(--muted)}
+.params{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px 22px}
+.param{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;font-size:.9rem}
+.param label{color:var(--muted);white-space:nowrap}
+.param output{font-family:var(--font-mono);font-size:.85rem;min-width:4.2em;text-align:right;font-variant-numeric:tabular-nums}
+.param.check{grid-template-columns:auto 1fr}
+input[type=range]{width:100%;accent-color:var(--accent)}
+input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.stat{background:var(--bg);border-radius:8px;padding:8px 12px;line-height:1.35}
+.stat .k{font-size:.78rem;color:var(--muted)}
+.stat .v{font-family:var(--font-mono);font-size:1.02rem;font-variant-numeric:tabular-nums;font-weight:600}
+.stat .v small{font-weight:400;color:var(--muted);font-size:.78rem}
+.steptext{font-family:var(--font-mono);font-size:.84rem;line-height:1.65;background:var(--bg);border-radius:8px;padding:10px 14px;margin:0;min-height:3.4em;overflow-wrap:anywhere}
+.steptext .acc{color:var(--ok);font-weight:600}
+.steptext .rej{color:var(--bad);font-weight:600}
+.warn{margin:0;padding:10px 14px;border-radius:8px;background:var(--bad-soft);color:var(--ink);border-left:4px solid var(--bad);font-size:.92rem}
+.try{font-size:.95rem;margin:0;color:var(--ink)}
+.try strong{color:var(--accent)}
+table{border-collapse:collapse;width:100%;font-size:.93rem}
+th,td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{font-weight:700;background:var(--bg)}
+td.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;text-align:right}
+.table-wrap{overflow-x:auto}
+tr.balanced td.diff{color:var(--ok);font-weight:600}
+details{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 16px;margin:.6rem 0}
+summary{cursor:pointer;font-weight:500}
+details[open] summary{margin-bottom:.4rem}
+.refs{font-size:.9rem;color:var(--muted)}
+.refs li{margin:.35rem 0}
+footer{max-width:720px;margin:3rem auto 0;color:var(--muted);font-size:.85rem}
+@media (max-width:520px){
+  body{font-size:16px}
+  h1{font-size:1.7rem}
+  .demo{padding:14px 12px}
+  main{padding:28px 16px 60px}
+}
+@media (prefers-reduced-motion: reduce){
+  *{scroll-behavior:auto!important}
+}
+</style>
+</head>
+<body>
+<main>
+<div class="prose">
+  <h1>拒絕取樣與 Metropolis–Hastings 入門</h1>
+  <p class="lede">這份教學說明兩種從機率分佈抽樣的方法。每個方法都附有可以操作的圖：你可以一步一步執行演算法，看到每一步用到的數字；也可以讓它連續執行，看樣本的直方圖如何接近目標分佈。</p>
+  <ol class="toc">
+    <li><a href="#s1"><span class="mono">1</span>問題：要抽什麼樣本</a></li>
+    <li><a href="#s2"><span class="mono">2</span>拒絕取樣</a></li>
+    <li><a href="#s3"><span class="mono">3</span>拒絕取樣在高維的問題</a></li>
+    <li><a href="#s4"><span class="mono">4</span>Metropolis–Hastings</a></li>
+    <li><a href="#s5"><span class="mono">5</span>為什麼 MH 是對的：細緻平衡</a></li>
+    <li><a href="#s6"><span class="mono">6</span>兩種方法比較</a></li>
+    <li><a href="#s7"><span class="mono">7</span>與本專案論文的關係</a></li>
+    <li><a href="#s8"><span class="mono">8</span>自我檢查</a></li>
+  </ol>
+
+  <!-- ============ 1 ============ -->
+  <h2 id="s1"><span class="num">1</span>問題：要抽什麼樣本</h2>
+  <p>「從分佈 \(p\) 抽樣」的意思是：寫一個程式，每次執行輸出一個數 \(x\)，而且輸出落在任一區間 \([a,b]\) 的機率等於 \(\int_a^b p(x)\,dx\)。</p>
+  <p>檢查一個抽樣程式是否正確的直接方法是：抽很多個樣本，畫出直方圖，並把縱軸換算成密度（每格的個數 ÷ 總數 ÷ 格寬）。樣本越多，直方圖越接近 \(p(x)\) 的曲線。</p>
+</div>
+
+<figure class="demo" id="demo-intro">
+  <div class="demo-title"><span class="tag">示範 1</span>樣本越多，直方圖越接近密度曲線</div>
+  <div class="legend">
+    <span><i class="sw"></i>p(x)</span>
+    <span><i class="sw box" style="background:var(--hist)"></i>樣本的直方圖（換算成密度）</span>
+  </div>
+  <canvas id="c-intro" aria-label="目標分佈 p(x) 的曲線與樣本直方圖"></canvas>
+  <div class="controls">
+    <button type="button" data-n="10">抽 10 個</button>
+    <button type="button" data-n="100">抽 100 個</button>
+    <button type="button" data-n="1000">抽 1000 個</button>
+    <button type="button" class="ghost" id="intro-reset">清除</button>
+    <span class="mono" style="color:var(--muted)">目前樣本數：<b id="intro-n">0</b></span>
+  </div>
+</figure>
+
+<div class="prose">
+  <p>這份教學從頭到尾使用同一個目標分佈：兩個常態分佈形狀的峰相加。</p>
+  <div class="math-block">\[\tilde p(x) = 0.6\,e^{-(x+1.5)^2/(2\cdot 0.6^2)} + 0.4\,e^{-(x-2)^2/(2\cdot 0.9^2)},\qquad p(x)=\frac{\tilde p(x)}{Z},\qquad Z=\int \tilde p(x)\,dx \approx 1.805\]</div>
+  <p>\(\tilde p\) 稱為<strong>未正規化密度</strong>：形狀和 \(p\) 相同，但總面積不是 1。\(Z\) 稱為<strong>正規化常數</strong>。</p>
+  <p>這個例子裡 \(Z\) 算得出來，示範 1 也是用「先隨機選一個峰，再從那個峰的常態分佈抽」的方式直接抽樣。實際問題常常只能算出 \(\tilde p(x)\)，算不出 \(Z\)，也沒有現成的抽樣方法。例如：</p>
+  <ul>
+    <li>貝氏統計的後驗分佈：\(p(\theta\mid D)\propto p(D\mid\theta)\,p(\theta)\)。對每個 \(\theta\)，右邊都能計算；但 \(Z=\int p(D\mid\theta)p(\theta)\,d\theta\) 是高維積分。</li>
+    <li>統計物理：\(p(x)\propto e^{-E(x)}\)。能量 \(E(x)\) 能計算，\(Z\) 是對所有狀態求和或積分。</li>
+  </ul>
+  <p>下面兩種方法都只需要一件事：<strong>給定 \(x\)，能算出 \(\tilde p(x)\)</strong>。兩者都不需要知道 \(Z\)。</p>
+
+  <!-- ============ 2 ============ -->
+  <h2 id="s2"><span class="num">2</span>拒絕取樣（rejection sampling）</h2>
+  <h3>2.1 出發點：曲線下方的均勻點</h3>
+  <p>先看一個事實：<strong>如果在 \(\tilde p\) 的曲線與 \(x\) 軸之間的區域內均勻地選一個點 \((x,y)\)，那麼這個點的橫座標 \(x\) 服從 \(p\)。</strong></p>
+  <p>理由：\(x\) 落在 \([a,b]\) 的機率，等於區域中 \(a\le x\le b\) 那一段的面積除以整個區域的面積，也就是 \(\int_a^b\tilde p\,dx \,/\, Z = \int_a^b p\,dx\)。</p>
+  <p>但是「在 \(\tilde p\) 下方均勻選點」本身並不容易做到。</p>
+
+  <h3>2.2 做法：在較大的區域選點，再丟掉多出來的點</h3>
+  <p>找一個容易抽樣的分佈 \(q\)（例如常態分佈），稱為<strong>提議分佈</strong>（proposal），再找一個常數 \(M\)，使得</p>
+  <div class="math-block">\[\tilde p(x)\le M\,q(x)\quad\text{對所有 } x \text{ 成立。}\]</div>
+  <p>也就是 \(M q\) 的曲線完全位於 \(\tilde p\) 的曲線上方。在 \(Mq\) 下方均勻選點很容易：先從 \(q\) 抽 \(x\)，再在 \(0\) 到 \(Mq(x)\) 之間均勻抽 \(y\)。如果這個點也落在 \(\tilde p\) 下方（\(y\le\tilde p(x)\)）就保留，否則丟掉。保留下來的點在 \(\tilde p\) 下方均勻分佈，所以依 2.1，它們的 \(x\) 服從 \(p\)。</p>
+
+  <div class="algo">
+    <div class="algo-title">演算法：拒絕取樣（產生一個樣本）</div>
+    <ol>
+      <li>從 \(q\) 抽 \(x\)。</li>
+      <li>從 \(\text{Uniform}(0,1)\) 抽 \(u\)。</li>
+      <li>若 \(u\le \dfrac{\tilde p(x)}{M q(x)}\)，輸出 \(x\)（<strong>接受</strong>）。否則丟掉 \(x\)（<strong>拒絕</strong>），回到第 1 步。</li>
+    </ol>
+    <p style="margin:.3rem 0 0;font-size:.93rem;color:var(--muted)">第 3 步裡的 \(u\cdot Mq(x)\) 就是 2.2 的 \(y\)：\(u\le\tilde p(x)/(Mq(x))\) 與 \(u\cdot Mq(x)\le\tilde p(x)\) 是同一個條件。</p>
+  </div>
+</div>
+
+<figure class="demo" id="demo-rs">
+  <div class="demo-title"><span class="tag">示範 2</span>拒絕取樣</div>
+  <div class="legend">
+    <span><i class="sw"></i>\(\tilde p(x)\) 目標（未正規化）</span>
+    <span><i class="sw dash"></i>\(M\,q(x)\) 包絡</span>
+    <span><i class="dot"></i>接受的點</span>
+    <span><span class="xmark">×</span>拒絕的點</span>
+    <span><i class="sw box" style="background:var(--bad-strong)"></i>\(Mq\) 低於 \(\tilde p\) 的地方（不應出現）</span>
+  </div>
+  <div class="plot-label">上圖：每個點的橫座標是從 q 抽出的 x，縱座標是 u·M·q(x)</div>
+  <canvas id="c-rs-top" aria-label="拒絕取樣：目標曲線、包絡曲線與嘗試的點"></canvas>
+  <div class="plot-label">下圖：被接受的 x 的直方圖，與正規化後的 p(x)</div>
+  <canvas id="c-rs-bot" aria-label="被接受樣本的直方圖"></canvas>
+  <div class="controls">
+    <button type="button" id="rs-step">單步</button>
+    <button type="button" id="rs-play">播放</button>
+    <label for="rs-speed">速度</label>
+    <select id="rs-speed">
+      <option value="3">每秒 3 次嘗試</option>
+      <option value="30" selected>每秒 30 次嘗試</option>
+      <option value="600">每秒 600 次嘗試</option>
+    </select>
+    <button type="button" class="ghost" id="rs-1000">立即嘗試 1000 次</button>
+    <button type="button" class="ghost" id="rs-reset">清除</button>
+  </div>
+  <div class="params">
+    <div class="param"><label for="rs-mu">q 的中心 μ</label><input type="range" id="rs-mu" min="-3" max="3" step="0.1" value="0"><output id="rs-mu-o" for="rs-mu"></output></div>
+    <div class="param"><label for="rs-sigma">q 的標準差 σ</label><input type="range" id="rs-sigma" min="1" max="4" step="0.05" value="2.5"><output id="rs-sigma-o" for="rs-sigma"></output></div>
+    <div class="param"><label for="rs-M">常數 M</label><input type="range" id="rs-M" min="0" max="1000" step="1" value="500"><output id="rs-M-o" for="rs-M"></output></div>
+    <div class="param check"><input type="checkbox" id="rs-auto" checked><label for="rs-auto">M 自動設為最小可行值</label></div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="k">嘗試次數</div><div class="v" id="rs-tried">0</div></div>
+    <div class="stat"><div class="k">接受的樣本數</div><div class="v" id="rs-acc">0</div></div>
+    <div class="stat"><div class="k">實際接受率</div><div class="v" id="rs-rate">–</div></div>
+    <div class="stat"><div class="k">理論接受率</div><div class="v" id="rs-theory">–</div></div>
+    <div class="stat"><div class="k">最小可行 M</div><div class="v" id="rs-mmin">–</div></div>
+  </div>
+  <p class="steptext" id="rs-text" aria-live="polite"></p>
+  <p class="warn" id="rs-warn" hidden>目前的 M 太小：有些 x 的 M·q(x) 低於 p̃(x)（上圖深色區域）。這些位置的接受機率本應大於 1，但機率最多只能是 1，所以這裡的樣本會被少收。下圖的直方圖在這些位置會低於曲線，輸出的分佈不再是 p。</p>
+  <p class="try"><strong>試試看：</strong>按幾次「單步」，對照上面的數字。把 M 調大，接受率下降，但直方圖仍然貼合曲線。把 M 調到小於最小可行值，看直方圖在哪裡出錯。移動 μ 或改變 σ，最小可行 M 會跟著改變。</p>
+</figure>
+
+<div class="prose">
+  <h3>2.3 接受率</h3>
+  <p>每次嘗試的點在 \(Mq\) 下方均勻分佈，所以被接受的機率是兩塊面積的比：</p>
+  <div class="math-block">\[P(\text{接受}) = \frac{\tilde p \text{ 下方的面積}}{Mq \text{ 下方的面積}} = \frac{Z}{M}.\]</div>
+  <p>（\(q\) 是機率密度，面積為 1，所以 \(Mq\) 下方的面積是 \(M\)。）平均每得到一個樣本需要嘗試 \(M/Z\) 次。因此 \(M\) 要盡量小，但必須滿足 \(\tilde p\le Mq\)。最小可行值是 \(M=\max_x \tilde p(x)/q(x)\)。</p>
+
+  <h3>2.4 為什麼輸出的分佈正好是 \(p\)</h3>
+  <p>對任一集合 \(A\)，一次嘗試「抽到的 \(x\) 在 \(A\) 中而且被接受」的機率是</p>
+  <div class="math-block">\[P(x\in A,\ \text{接受}) = \int_A q(x)\cdot\frac{\tilde p(x)}{M q(x)}\,dx = \frac{1}{M}\int_A \tilde p(x)\,dx.\]</div>
+  <p>取 \(A\) 為整條實數線，得到 \(P(\text{接受})=Z/M\)。兩式相除：</p>
+  <div class="math-block">\[P(x\in A \mid \text{接受}) = \frac{1}{Z}\int_A\tilde p(x)\,dx = \int_A p(x)\,dx.\]</div>
+  <p>注意 \(q(x)\) 在第一式中消掉了，這一步需要 \(\tilde p(x)/(Mq(x))\le 1\)，否則它不能當作機率。</p>
+  <div class="note">
+    <strong>重點整理</strong>
+    <ul>
+      <li>每個被接受的樣本都精確服從 \(p\)，而且樣本彼此獨立。</li>
+      <li>代價是可能要嘗試很多次，平均 \(M/Z\) 次。</li>
+      <li>\(q\) 的尾巴不能比 \(\tilde p\) 的尾巴細。否則 \(x\) 很大時 \(\tilde p(x)/q(x)\) 會無限增大，找不到有限的 \(M\)。示範 2 中 σ 最小設為 1，就是因為目標的右峰標準差是 0.9。</li>
+    </ul>
+  </div>
+
+  <!-- ============ 3 ============ -->
+  <h2 id="s3"><span class="num">3</span>拒絕取樣在高維的問題</h2>
+  <p>用一個能算出答案的例子。在 \(d\) 維空間中：</p>
+  <ul>
+    <li>目標 \(p=\mathcal N(0, I_d)\)，標準常態分佈。</li>
+    <li>提議 \(q=\mathcal N(0, s^2 I_d)\)，其中 \(s>1\)，也就是比目標稍微寬一點。</li>
+  </ul>
+  <p>兩者的比值是</p>
+  <div class="math-block">\[\frac{p(x)}{q(x)} = s^d\exp\!\Big(-\tfrac{\|x\|^2}{2}\big(1-\tfrac{1}{s^2}\big)\Big)\le s^d,\]</div>
+  <p>最大值出現在 \(x=0\)。所以最小可行 \(M=s^d\)，接受率是 \(1/M=s^{-d}\)。接受率隨維度 \(d\) <strong>指數下降</strong>：即使 \(q\) 和 \(p\) 只差一點（\(s=1.1\)），\(d=100\) 時平均每個樣本也要嘗試約一萬四千次。</p>
+</div>
+
+<figure class="demo" id="demo-dim">
+  <div class="demo-title"><span class="tag">示範 3</span>平均每個樣本需要的嘗試次數 \(s^d\)</div>
+  <canvas id="c-dim" aria-label="嘗試次數隨維度變化的圖，縱軸為對數刻度"></canvas>
+  <div class="params">
+    <div class="param"><label for="dim-s">提議寬度 s</label><input type="range" id="dim-s" min="1.01" max="2" step="0.01" value="1.1"><output id="dim-s-o" for="dim-s"></output></div>
+    <div class="param"><label for="dim-d">維度 d</label><input type="range" id="dim-d" min="1" max="100" step="1" value="50"><output id="dim-d-o" for="dim-d"></output></div>
+  </div>
+  <p class="steptext" id="dim-text" aria-live="polite"></p>
+  <p class="try">縱軸是對數刻度（每一格乘 10），所以圖上的直線代表指數成長。</p>
+</figure>
+
+<div class="prose">
+  <p>這是高維問題中常改用 Markov chain Monte Carlo（例如下面的 Metropolis–Hastings）的主要原因：它不需要一個在整個空間都蓋住 \(\tilde p\) 的包絡。</p>
+
+  <!-- ============ 4 ============ -->
+  <h2 id="s4"><span class="num">4</span>Metropolis–Hastings（MH）</h2>
+  <h3>4.1 想法</h3>
+  <p>MH 不直接產生獨立的樣本。它產生一串數 \(x_0, x_1, x_2,\dots\)，其中每個 \(x_{t+1}\) 只由 \(x_t\) 和新抽的亂數決定。這種序列稱為<strong>馬可夫鏈</strong>（Markov chain）。轉移規則經過設計，使得鏈執行夠久以後：</p>
+  <ul>
+    <li>\(x_t\) 的分佈接近 \(p\)；</li>
+    <li>序列中落在任一區間的比例，接近該區間在 \(p\) 下的機率。</li>
+  </ul>
+
+  <h3>4.2 演算法</h3>
+  <p>先看最常見的版本，稱為隨機漫步 Metropolis（random-walk Metropolis）。</p>
+  <div class="algo">
+    <div class="algo-title">演算法：隨機漫步 Metropolis</div>
+    <p style="margin:.2rem 0">選一個起點 \(x_0\)。對 \(t=0,1,2,\dots\) 重複：</p>
+    <ol>
+      <li><strong>提議</strong>：\(x' = x_t + \sigma\varepsilon\)，其中 \(\varepsilon\sim\mathcal N(0,1)\)。\(\sigma\) 稱為步長。</li>
+      <li><strong>計算接受機率</strong>：\(\alpha = \min\!\left(1,\ \dfrac{\tilde p(x')}{\tilde p(x_t)}\right)\)。</li>
+      <li>抽 \(u\sim\text{Uniform}(0,1)\)。若 \(u\le\alpha\)，令 \(x_{t+1}=x'\)（<strong>接受</strong>）；否則令 \(x_{t+1}=x_t\)（<strong>拒絕</strong>：留在原地，這一步仍然記錄一次 \(x_t\)）。</li>
+    </ol>
+  </div>
+  <p>第 2 步只用到 \(\tilde p\) 的比值，\(Z\) 在分子與分母中相消，所以不需要 \(Z\)。</p>
+  <p>用文字描述第 2、3 步：如果提議點的密度比目前位置高，一定移過去；如果比較低，就以「提議點密度 ÷ 目前密度」作為移過去的機率。</p>
+  <p>當提議分佈 \(q(x'\mid x)\) 不對稱時，接受機率要用一般形式：</p>
+  <div class="math-block">\[\alpha(x\to x') = \min\!\left(1,\ \frac{\tilde p(x')\,q(x\mid x')}{\tilde p(x)\,q(x'\mid x)}\right).\]</div>
+  <p>隨機漫步的提議滿足 \(q(x'\mid x)=q(x\mid x')\)，兩個 \(q\) 相消，就得到上面的簡化形式。</p>
+  <p>與拒絕取樣的差別：拒絕取樣被拒絕時，這次嘗試直接丟掉；MH 被拒絕時，把目前的 \(x_t\) <strong>再記錄一次</strong>。這個重複記錄是演算法的一部分，不記錄的話輸出的分佈就不是 \(p\)（第 5 節會說明原因）。</p>
+</div>
+
+<figure class="demo" id="demo-mh">
+  <div class="demo-title"><span class="tag">示範 4</span>隨機漫步 Metropolis</div>
+  <div class="legend">
+    <span><i class="sw"></i>\(\tilde p(x)\)</span>
+    <span><i class="sw box" style="background:var(--hist)"></i>鏈的所有位置的直方圖（換算成與 \(\tilde p\) 同樣的高度單位）</span>
+    <span><i class="sw dash"></i>提議分佈 \(q(\cdot\mid x_t)\) 的形狀（高度未按比例）</span>
+    <span>▲ 目前位置 \(x_t\)</span>
+    <span><i class="sw" style="border-color:var(--ok)"></i>/<i class="sw" style="border-color:var(--bad)"></i>最近一次提議 \(x'\)：接受／拒絕</span>
+  </div>
+  <canvas id="c-mh-top" aria-label="MH：目標曲線、目前位置、提議與直方圖"></canvas>
+  <div class="plot-label">軌跡圖：橫軸與上圖相同，縱軸是步數，最上面是最新一步。垂直線段表示那幾步被拒絕、停在原地。</div>
+  <canvas id="c-mh-trace" aria-label="MH 軌跡圖"></canvas>
+  <div class="controls">
+    <button type="button" id="mh-step">單步</button>
+    <button type="button" id="mh-play">播放</button>
+    <label for="mh-speed">速度</label>
+    <select id="mh-speed">
+      <option value="3">每秒 3 步</option>
+      <option value="30" selected>每秒 30 步</option>
+      <option value="600">每秒 600 步</option>
+      <option value="3000">每秒 3000 步</option>
+    </select>
+    <button type="button" class="ghost" id="mh-1000">立即執行 1000 步</button>
+    <button type="button" class="ghost" id="mh-reset">從 x₀ 重新開始</button>
+  </div>
+  <div class="controls" role="group" aria-label="步長預設值">
+    <span style="font-size:.88rem;color:var(--muted)">步長預設：</span>
+    <button type="button" class="chip" data-sigma="0.1">σ = 0.1（太小）</button>
+    <button type="button" class="chip" data-sigma="2.5">σ = 2.5（適中）</button>
+    <button type="button" class="chip" data-sigma="30">σ = 30（太大）</button>
+  </div>
+  <div class="params">
+    <div class="param"><label for="mh-sigma">步長 σ</label><input type="range" id="mh-sigma" min="0" max="1000" step="1"><output id="mh-sigma-o" for="mh-sigma"></output></div>
+    <div class="param"><label for="mh-x0">起點 x₀</label><input type="range" id="mh-x0" min="-6" max="6" step="0.1" value="5.5"><output id="mh-x0-o" for="mh-x0"></output></div>
+    <div class="param check"><input type="checkbox" id="mh-burn"><label for="mh-burn">直方圖與統計不計前 200 步（burn-in）</label></div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="k">步數</div><div class="v" id="mh-steps">0</div></div>
+    <div class="stat"><div class="k">接受率</div><div class="v" id="mh-rate">–</div></div>
+    <div class="stat"><div class="k">落在左峰（x &lt; 0.25）的比例</div><div class="v" id="mh-left">–</div></div>
+    <div class="stat"><div class="k">相鄰樣本相關係數</div><div class="v" id="mh-rho">–</div></div>
+  </div>
+  <p class="steptext" id="mh-text" aria-live="polite"></p>
+  <p class="try"><strong>試試看：</strong>起點 x₀ = 5.5 在右峰的尾端，鏈的前幾十步會從尾端走向峰，這段稱為 burn-in（暖機期），可以勾選選項把它排除。接著比較三個步長預設值：σ = 0.1 時幾乎每步都接受，但每步只移動一點，鏈長時間停在同一個峰，「左峰比例」和正確值差很多；σ = 30 時提議常落在密度接近 0 的地方，大多被拒絕，軌跡圖出現長的垂直線段；σ = 2.5 時鏈能在兩個峰之間來回。</p>
+</figure>
+
+<div class="prose">
+  <h3>4.3 步長與接受率</h3>
+  <ul>
+    <li><strong>σ 太小</strong>：接受率接近 1，但相鄰樣本幾乎相同，要很多步才能走遍整個分佈。</li>
+    <li><strong>σ 太大</strong>：接受率接近 0，鏈大部分時間停在原地。</li>
+    <li>兩種情況下相鄰樣本都高度相關（示範 4 的「相鄰樣本相關係數」接近 1）。相關性高時，\(N\) 個樣本提供的資訊少於 \(N\) 個獨立樣本。</li>
+  </ul>
+  <p>所以「接受率高」不等於「鏈的效果好」。有一些理論結果可作參考：對某一類高維目標，隨機漫步 Metropolis 在接受率約 0.234 時效率最高；一維常態目標約為 0.44（Roberts, Gelman &amp; Gilks, 1997）。這些結果有特定的前提條件。</p>
+
+  <!-- ============ 5 ============ -->
+  <h2 id="s5"><span class="num">5</span>為什麼 MH 是對的：細緻平衡</h2>
+  <p>用離散狀態寫，比較容易看清楚（連續時把 \(\sum\) 換成 \(\int\)）。令 \(T(x\to x')\) 為鏈從 \(x\) 走到 \(x'\) 的機率。</p>
+  <h3>5.1 平穩分佈</h3>
+  <p>如果「\(x_t\) 服從 \(p\)」可以推出「\(x_{t+1}\) 也服從 \(p\)」，就稱 \(p\) 是這條鏈的<strong>平穩分佈</strong>（stationary distribution）：</p>
+  <div class="math-block">\[\sum_x p(x)\,T(x\to x') = p(x')\quad\text{對所有 } x'.\]</div>
+  <h3>5.2 細緻平衡</h3>
+  <p>一個容易檢查的充分條件是<strong>細緻平衡</strong>（detailed balance）：</p>
+  <div class="math-block">\[p(x)\,T(x\to x') = p(x')\,T(x'\to x)\quad\text{對所有 } x, x'.\]</div>
+  <p>左邊是「現在在 \(x\)、下一步到 \(x'\)」的機率，右邊是反方向的機率。細緻平衡要求每一對狀態之間，兩個方向的機率流量相等。把兩邊對 \(x\) 求和：</p>
+  <div class="math-block">\[\sum_x p(x)\,T(x\to x') = \sum_x p(x')\,T(x'\to x) = p(x')\sum_x T(x'\to x) = p(x').\]</div>
+  <p>最後一步用到「從 \(x'\) 出發，走到所有狀態的機率總和為 1」。所以細緻平衡推出平穩。</p>
+  <h3>5.3 MH 滿足細緻平衡</h3>
+  <p>對 \(x\ne x'\)，從 \(x\) 走到 \(x'\) 需要先提議 \(x'\)、再接受，所以 \(T(x\to x')=q(x'\mid x)\,\alpha(x\to x')\)。代入 \(\alpha\) 的定義：</p>
+  <div class="math-block">\[p(x)\,q(x'\mid x)\,\min\!\left(1,\frac{p(x')\,q(x\mid x')}{p(x)\,q(x'\mid x)}\right) = \min\!\big(p(x)\,q(x'\mid x),\ p(x')\,q(x\mid x')\big).\]</div>
+  <p>右邊交換 \(x\) 與 \(x'\) 後不變，所以 \(p(x)T(x\to x') = p(x')T(x'\to x)\)。\(x=x'\) 時兩邊相同，自動成立。被拒絕的機率全部算在 \(T(x\to x)\) 裡，這就是被拒絕時必須再記錄一次 \(x_t\) 的原因：少了這一項，\(T\) 就不是上面分析的轉移規則。</p>
+  <p>平穩只說明「到了 \(p\) 就會留在 \(p\)」。要保證從任何起點出發都會收斂到 \(p\)，還需要鏈能走到所有 \(p>0\) 的地方（不可約），而且沒有固定週期（非週期）。隨機漫步提議在一般情況下滿足這兩個條件。</p>
+  <p>下面的示範用 6 個狀態把這件事算出來。長條圖是 \(\pi_t\)：如果同時執行無限多條鏈，第 \(t\) 步時處在每個狀態的比例。開始時全部在狀態 1。每按一次「前進」，計算 \(\pi_{t+1}(j)=\sum_i \pi_t(i)\,T(i\to j)\)。</p>
+</div>
+
+<figure class="demo" id="demo-db">
+  <div class="demo-title"><span class="tag">示範 5</span>6 個狀態的 MH：分佈如何收斂，流量如何變成相等</div>
+  <p style="margin:0;font-size:.9rem;color:var(--muted)">目標權重 \(\tilde p = (1, 4, 2, 6, 3, 1)\)。提議：各以 1/2 的機率提議左邊或右邊的相鄰狀態（提議到範圍外則拒絕）。接受機率 \(\min(1, \tilde p_j/\tilde p_i)\)。</p>
+  <div class="legend">
+    <span><i class="sw box" style="background:var(--accent)"></i>\(\pi_t\)（目前分佈）</span>
+    <span><i class="sw box" style="background:transparent;border:1.5px dashed var(--ink);height:10px"></i>目標 \(p\)</span>
+  </div>
+  <canvas id="c-db" aria-label="六個狀態的分佈長條圖"></canvas>
+  <div class="controls">
+    <button type="button" id="db-step">前進 1 步</button>
+    <button type="button" id="db-step10">前進 10 步</button>
+    <button type="button" id="db-play">播放</button>
+    <button type="button" class="ghost" id="db-reset">重設為 t = 0</button>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="k">步數 t</div><div class="v" id="db-t">0</div></div>
+    <div class="stat"><div class="k">與目標的總變差距離</div><div class="v" id="db-tv">–</div></div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>相鄰狀態</th><th>向右流量 \(\pi_t(i)\,T(i\to i{+}1)\)</th><th>向左流量 \(\pi_t(i{+}1)\,T(i{+}1\to i)\)</th><th>差</th></tr></thead>
+      <tbody id="db-table"></tbody>
+    </table>
+  </div>
+  <p class="try"><strong>試試看：</strong>從 t = 0 開始按「前進 1 步」。一開始所有機率都在狀態 1，流量只有向右；隨著 t 增加，每一列的兩個流量越來越接近，差小於 0.0001 時以綠色顯示。全部相等時，\(\pi_t\) 就等於目標 \(p\)，之後不再改變。</p>
+</figure>
+
+<div class="prose">
+  <!-- ============ 6 ============ -->
+  <h2 id="s6"><span class="num">6</span>兩種方法比較</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>拒絕取樣</th><th>Metropolis–Hastings</th></tr></thead>
+      <tbody>
+        <tr><td>需要計算的量</td><td>\(\tilde p(x)\)，以及蓋住 \(\tilde p\) 的 \(Mq\)</td><td>\(\tilde p(x)\)（只用比值）</td></tr>
+        <tr><td>需要 \(Z\)？</td><td>不需要</td><td>不需要</td></tr>
+        <tr><td>需要 \(M\)？</td><td>需要，而且必須真的滿足 \(\tilde p\le Mq\)</td><td>不需要</td></tr>
+        <tr><td>樣本之間</td><td>彼此獨立</td><td>相鄰樣本相關</td></tr>
+        <tr><td>每個樣本的分佈</td><td>精確等於 \(p\)</td><td>\(x_t\) 的分佈隨 \(t\) 增加而接近 \(p\)；有限步數時有誤差</td></tr>
+        <tr><td>被拒絕時</td><td>丟掉，重新嘗試</td><td>留在原地，再記錄一次目前的值</td></tr>
+        <tr><td>主要困難</td><td>找 \(M\)；高維時接受率指數下降</td><td>選步長；在多個峰之間不易移動；判斷何時已經收斂</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============ 7 ============ -->
+  <h2 id="s7"><span class="num">7</span>與本專案論文的關係</h2>
+  <p>本專案的論文是 Chen, Chewi, Daskalakis &amp; Rakhlin，《High-Accuracy Sampling for Diffusion Models and Log-Concave Distributions》。這一節說明上面兩種方法在論文中的位置。</p>
+  <ul>
+    <li><strong>兩種方法都要計算 \(\tilde p(x)\) 的值。</strong>論文把「能查詢密度的值」稱為零階 oracle（zeroth-order oracle）。</li>
+    <li><strong>擴散模型只提供 score</strong> \(\nabla\log\, p_t(x)\)，也就是密度對數的梯度，論文稱為一階 oracle（first-order oracle）。它不提供 \(p_t(x)\) 的值，所以無法直接算出拒絕取樣的 \(\tilde p(x)/(Mq(x))\)，也無法算出 MH 的 \(\alpha\)。</li>
+    <li><strong>MALA</strong>（Metropolis-adjusted Langevin algorithm）是 MH 的一種，提議用到梯度：
+      <span class="math-block" style="display:block">\[x' = x + \eta\,\nabla\log\,\tilde p(x) + \sqrt{2\eta}\,\xi,\qquad \xi\sim\mathcal N(0,I).\]</span>
+      這個提議不對稱，要用 4.2 的一般形式計算 \(\alpha\)，所以仍然需要 \(\tilde p\) 的值。先前一些高精度的擴散取樣方法使用這類零階步驟，論文要避開這個需求。詳細說明見<a href="https://claude.ai/artifact/VPXfAcbGFY1ZcvuF3SeSra">《MALA 入門》</a>。</li>
+    <li><strong>論文的 FORS</strong>（First-Order Rejection Sampling）保留拒絕取樣的結構：從一個 Gaussian 提議 \(q\) 抽 \(x\)，再以某個機率接受。目標寫成 \(\nu(x)\propto q(x)\,e^{w(x)}\)，接受機率是 \(e^{w(x)-B}\)，\(B\) 是常數。FORS 不計算 \(w(x)\) 的值，而是：
+      <ol>
+        <li>用微積分基本定理，把 \(w(x)\) 寫成梯度沿一條路徑的積分，再用隨機選的路徑點得到 \(w(x)\) 的無偏估計 \(W\)（每個 \(W\) 只需要一次梯度查詢）；</li>
+        <li>用 Bernoulli factory（Poisson 化的 Taylor 級數）把多個 \(W\) 組合成一個「以機率 \(e^{w(x)-B}\) 為真」的隨機事件。</li>
+      </ol>
+      為了讓機率合法，\(W\) 會被截斷到 \([-B,B]\)，近似誤差只來自截斷。</li>
+    <li><strong>第 3 節的維度問題在論文中也存在。</strong>FORS 的成本含 \(e^{2B}\) 因子，所以接受率必須保持在常數等級，這要求提議 \(q\) 與目標足夠接近。論文的做法是把步長 \(\eta\) 取得夠小，使每一步的目標（例如 backward kernel）接近一個 Gaussian；步長要求隨維度變嚴格，複雜度中的 \(d\) 或 \(\sqrt d\) 依賴與此有關。</li>
+  </ul>
+  <p>詳細的符號與定義見專案中的筆記《專有名詞與數學觀念筆記》第三、四節。</p>
+
+  <!-- ============ 8 ============ -->
+  <h2 id="s8"><span class="num">8</span>自我檢查</h2>
+  <p>先自己回答，再點開看答案。</p>
+  <details><summary>1. 拒絕取樣中，把 M 從 5 改成 10（兩者都滿足 \(\tilde p\le Mq\)），輸出的分佈會改變嗎？接受率呢？</summary>
+    <p>輸出分佈不變，仍然是 \(p\)（2.4 的推導對任何滿足條件的 \(M\) 都成立）。接受率 \(Z/M\) 變成原來的一半。</p></details>
+  <details><summary>2. 為什麼 MH 不需要知道 \(Z\)？</summary>
+    <p>接受機率只用到 \(\tilde p(x')/\tilde p(x_t)\)。若 \(p=\tilde p/Z\)，則 \(p(x')/p(x_t)=\tilde p(x')/\tilde p(x_t)\)，\(Z\) 相消。</p></details>
+  <details><summary>3. MH 被拒絕時，為什麼要再記錄一次 \(x_t\)？</summary>
+    <p>細緻平衡的證明裡，被拒絕的機率全部屬於 \(T(x\to x)\)。如果拒絕時不記錄，實際產生的序列就是另一條轉移規則不同的鏈，它的平穩分佈一般不是 \(p\)。</p></details>
+  <details><summary>4. 第 3 節的例子中，若 \(s=1.05\)、\(d=200\)，拒絕取樣平均每個樣本要嘗試幾次？</summary>
+    <p>\(1.05^{200}\approx 1.7\times10^4\) 次。可以在示範 3 中把 s 設為 1.05 驗證趨勢（滑桿最高到 d = 100，這時約為 131 次）。</p></details>
+  <details><summary>5. MH 的接受率是 0.99，代表這條鏈很好嗎？</summary>
+    <p>不一定。步長太小時接受率也會接近 1，但每一步幾乎不動，相鄰樣本高度相關，可能長時間停在同一個峰（示範 4 的 σ = 0.1）。</p></details>
+  <details><summary>6. 為什麼拒絕取樣的提議分佈 \(q\) 的尾巴不能比目標細？</summary>
+    <p>若 \(q\) 的尾巴下降得比 \(\tilde p\) 快，則 \(|x|\to\infty\) 時 \(\tilde p(x)/q(x)\to\infty\)，不存在有限的 \(M\) 使 \(\tilde p\le Mq\) 對所有 \(x\) 成立。</p></details>
+
+  <h3>參考資料</h3>
+  <ul class="refs">
+    <li>C. P. Robert &amp; G. Casella (2004). <i>Monte Carlo Statistical Methods</i>, 2nd ed., Springer. 第 2.3 節（拒絕取樣）、第 7 章（Metropolis–Hastings）。</li>
+    <li>L. Devroye (1986). <i>Non-Uniform Random Variate Generation</i>. Springer. 第 II 章。</li>
+    <li>G. O. Roberts, A. Gelman &amp; W. R. Gilks (1997). Weak convergence and optimal scaling of random walk Metropolis algorithms. <i>Annals of Applied Probability</i> 7(1).</li>
+    <li>S. Chewi (2026). <i>Log-Concave Sampling</i>（書稿）。</li>
+    <li>S. Chen, S. Chewi, C. Daskalakis &amp; A. Rakhlin. <i>High-Accuracy Sampling for Diffusion Models and Log-Concave Distributions</i>. ICML 2026.</li>
+  </ul>
+</div>
+<footer>示範中的亂數每次重新整理頁面都不同，所以數字會略有差異。</footer>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<script>
+(function(){
+"use strict";
+// ---------- math rendering ----------
+try{
+  if(window.renderMathInElement){
+    renderMathInElement(document.body,{
+      delimiters:[{left:"\\[",right:"\\]",display:true},{left:"\\(",right:"\\)",display:false}],
+      output:"mathml",throwOnError:false,strict:false
+    });
+  }
+}catch(e){}
+
+// ---------- theme tokens ----------
+const T={};
+const MONO='"JetBrains Mono", ui-monospace, Menlo, monospace';
+const SANS='"Noto Sans TC", "PingFang TC", system-ui, sans-serif';
+function readTokens(){
+  const cs=getComputedStyle(document.documentElement);
+  ["bg","surface","ink","muted","line","accent","accent-soft","ok","ok-soft","bad","bad-soft","bad-strong","target-fill","hist"].forEach(k=>{T[k]=cs.getPropertyValue("--"+k).trim();});
+}
+readTokens();
+
+// ---------- target distribution ----------
+const COMPS=[{a:0.6,m:-1.5,s:0.6},{a:0.4,m:2,s:0.9}];
+const SQ2PI=Math.sqrt(2*Math.PI);
+const Z=COMPS.reduce((t,c)=>t+c.a*c.s*SQ2PI,0);
+function pt(x){let v=0;for(const c of COMPS){const z=(x-c.m)/c.s;v+=c.a*Math.exp(-0.5*z*z);}return v;}
+function pn(x){return pt(x)/Z;}
+function normpdf(x,m,s){const z=(x-m)/s;return Math.exp(-0.5*z*z)/(s*SQ2PI);}
+function randn(){let u=0;while(u===0)u=Math.random();const v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+function erf(x){const s=Math.sign(x);x=Math.abs(x);const t=1/(1+0.3275911*x);const y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-x*x);return s*y;}
+function Phi(x){return 0.5*(1+erf(x/Math.SQRT2));}
+const LEFT_CUT=0.25;
+const LEFT_TRUE=COMPS.reduce((t,c)=>t+(c.a*c.s*SQ2PI/Z)*Phi((LEFT_CUT-c.m)/c.s),0);
+function sampleExact(){let r=Math.random()*Z;for(const c of COMPS){const w=c.a*c.s*SQ2PI;if(r<w)return c.m+c.s*randn();r-=w;}const c=COMPS[COMPS.length-1];return c.m+c.s*randn();}
+
+function f3(v){return (Math.abs(v)<1e-3&&v!==0)?v.toExponential(2):v.toFixed(3);}
+function sgn(v,d){return v.toFixed(d).replace("-","−");}
+function pct(v){return (v*100).toFixed(v<0.01?2:1)+"%";}
+function big(v){
+  if(v<1e5)return v.toLocaleString("en-US",{maximumFractionDigits:v<100?1:0});
+  const e=Math.floor(Math.log10(v));const m=v/Math.pow(10,e);
+  return m.toFixed(2)+" × 10<sup>"+e+"</sup>";
+}
+
+// ---------- plotting helper ----------
+function Plot(canvas,o){
+  this.c=canvas;this.g=canvas.getContext("2d");
+  this.height=o.height;this.xmin=o.xmin??-6;this.xmax=o.xmax??6;this.ymin=o.ymin??0;this.ymax=o.ymax??1;
+  this.padL=o.padL??40;this.padR=o.padR??14;this.padT=o.padT??12;this.padB=o.padB??28;
+  this.w=300;this.h=o.height;
+}
+Plot.prototype.resize=function(){
+  const dpr=window.devicePixelRatio||1;const w=Math.max(220,this.c.clientWidth||this.c.parentNode.clientWidth);
+  this.w=w;this.h=this.height;this.c.width=Math.round(w*dpr);this.c.height=Math.round(this.h*dpr);
+  this.c.style.height=this.h+"px";this.g.setTransform(dpr,0,0,dpr,0,0);
+};
+Plot.prototype.X=function(x){return this.padL+(x-this.xmin)/(this.xmax-this.xmin)*(this.w-this.padL-this.padR);};
+Plot.prototype.Y=function(y){return this.h-this.padB-(y-this.ymin)/(this.ymax-this.ymin)*(this.h-this.padT-this.padB);};
+Plot.prototype.invX=function(px){return this.xmin+(px-this.padL)/(this.w-this.padL-this.padR)*(this.xmax-this.xmin);};
+Plot.prototype.clear=function(){this.g.clearRect(0,0,this.w,this.h);};
+Plot.prototype.clipOn=function(){const g=this.g;g.save();g.beginPath();g.rect(this.padL,this.padT-4,this.w-this.padL-this.padR,this.h-this.padT-this.padB+4);g.clip();};
+Plot.prototype.clipOff=function(){this.g.restore();};
+Plot.prototype.xAxis=function(step){
+  const g=this.g,y0=this.Y(this.ymin);
+  g.strokeStyle=T.line;g.lineWidth=1;g.beginPath();g.moveTo(this.padL,Math.round(y0)+.5);g.lineTo(this.w-this.padR,Math.round(y0)+.5);g.stroke();
+  g.fillStyle=T.muted;g.font="11px "+MONO;g.textAlign="center";g.textBaseline="top";
+  for(let x=Math.ceil(this.xmin/step)*step;x<=this.xmax+1e-9;x+=step){
+    const px=Math.round(this.X(x))+.5;g.beginPath();g.moveTo(px,y0);g.lineTo(px,y0+4);g.stroke();
+    g.fillText(String(+x.toFixed(6)).replace("-","−"),px,y0+6);
+  }
+};
+Plot.prototype.yGrid=function(ticks,fmt){
+  const g=this.g;g.font="11px "+MONO;g.textAlign="right";g.textBaseline="middle";
+  for(const t of ticks){const py=Math.round(this.Y(t))+.5;
+    g.strokeStyle=T.line;g.globalAlpha=.55;g.beginPath();g.moveTo(this.padL,py);g.lineTo(this.w-this.padR,py);g.stroke();g.globalAlpha=1;
+    g.fillStyle=T.muted;g.fillText(fmt?fmt(t):String(t),this.padL-6,py);}
+};
+Plot.prototype.path=function(f,n){
+  const g=this.g;n=n||Math.max(200,Math.round(this.w));g.beginPath();
+  for(let i=0;i<=n;i++){const x=this.xmin+(this.xmax-this.xmin)*i/n;const px=this.X(x),py=this.Y(f(x));if(i===0)g.moveTo(px,py);else g.lineTo(px,py);}
+};
+Plot.prototype.curve=function(f,o){
+  const g=this.g;o=o||{};this.path(f);g.strokeStyle=o.color||T.ink;g.lineWidth=o.width||2;g.setLineDash(o.dash||[]);g.lineJoin="round";g.stroke();g.setLineDash([]);
+};
+Plot.prototype.fillBetween=function(lo,hi,color){
+  const g=this.g,n=Math.max(200,Math.round(this.w));g.beginPath();
+  for(let i=0;i<=n;i++){const x=this.xmin+(this.xmax-this.xmin)*i/n;const px=this.X(x),py=this.Y(hi(x));if(i===0)g.moveTo(px,py);else g.lineTo(px,py);}
+  for(let i=n;i>=0;i--){const x=this.xmin+(this.xmax-this.xmin)*i/n;g.lineTo(this.X(x),this.Y(lo(x)));}
+  g.closePath();g.fillStyle=color;g.fill();
+};
+
+function Hist(lo,hi,n){this.lo=lo;this.hi=hi;this.n=n;this.w=(hi-lo)/n;this.c=new Float64Array(n);this.N=0;}
+Hist.prototype.add=function(x){this.N++;const i=Math.floor((x-this.lo)/this.w);if(i>=0&&i<this.n)this.c[i]++;};
+Hist.prototype.reset=function(){this.c.fill(0);this.N=0;};
+Hist.prototype.dens=function(i){return this.N?this.c[i]/(this.N*this.w):0;};
+Hist.prototype.maxDens=function(){let m=0;for(let i=0;i<this.n;i++)m=Math.max(m,this.dens(i));return m;};
+function drawHist(P,h,scale,color){
+  const g=P.g;g.fillStyle=color;
+  for(let i=0;i<h.n;i++){const d=h.dens(i)*scale;if(d<=0)continue;
+    const x0=P.X(h.lo+i*h.w),x1=P.X(h.lo+(i+1)*h.w);const y=P.Y(d),y0=P.Y(0);
+    g.fillRect(x0+.5,y,Math.max(1,x1-x0-1),y0-y);}
+}
+function label(g,text,x,y,color,align){g.font="12px "+SANS;g.fillStyle=color;g.textAlign=align||"left";g.textBaseline="bottom";g.fillText(text,x,y);}
+
+// ---------- animation loop ----------
+const demos=[];let raf=null,lastT=null;
+function loop(t){
+  raf=null;const dt=lastT==null?0:Math.min(0.1,(t-lastT)/1000);lastT=t;let any=false;
+  for(const d of demos){
+    if(d.playing){any=true;d.acc+=dt*d.rate;let n=Math.floor(d.acc);d.acc-=n;if(n>0){d.run(Math.min(n,6000));d.dirty=true;}}
+    if(d.dirty){d.dirty=false;d.draw();}
+  }
+  if(any)raf=requestAnimationFrame(loop);else lastT=null;
+}
+function kick(){if(raf==null)raf=requestAnimationFrame(loop);}
+function mark(d){d.dirty=true;kick();}
+function setPlaying(d,on,btn){d.playing=on;d.acc=0;btn.textContent=on?"暫停":"播放";mark(d);}
+
+// ============ Demo 1: intro ============
+const intro={dirty:true,playing:false,acc:0,rate:0,run(){},
+  P:new Plot(document.getElementById("c-intro"),{height:220,ymax:0.4}),
+  h:new Hist(-6,6,60),
+  add(n){for(let i=0;i<n;i++)this.h.add(sampleExact());document.getElementById("intro-n").textContent=this.h.N.toLocaleString();mark(this);},
+  draw(){
+    const P=this.P;P.clear();
+    P.ymax=Math.max(0.4,this.h.maxDens()*1.08);
+    P.yGrid([0.1,0.2,0.3].filter(v=>v<P.ymax),v=>v.toFixed(1));
+    drawHist(P,this.h,1,T.hist);
+    P.curve(pn,{color:T.ink,width:2});
+    P.xAxis(2);
+    label(P.g,"p(x)",P.X(-1.5)+14,P.Y(pn(-1.5))-2,T.ink);
+  }};
+demos.push(intro);
+document.querySelectorAll("#demo-intro [data-n]").forEach(b=>b.addEventListener("click",()=>intro.add(+b.dataset.n)));
+document.getElementById("intro-reset").addEventListener("click",()=>{intro.h.reset();intro.add(0);});
+
+// ============ Demo 2: rejection sampling ============
+const rsEl=id=>document.getElementById(id);
+const rs={dirty:true,playing:false,acc:0,rate:30,
+  top:new Plot(rsEl("c-rs-top"),{height:280,ymax:0.9}),
+  bot:new Plot(rsEl("c-rs-bot"),{height:190,ymax:0.4}),
+  mu:0,sigma:2.5,M:1,Mmin:1,auto:true,pts:[],h:new Hist(-6,6,60),tried:0,accN:0,last:null,theory:0,
+  q(x){return normpdf(x,this.mu,this.sigma);},
+  Mq(x){return this.M*normpdf(x,this.mu,this.sigma);},
+  computeMmin(){let m=0;for(let x=-12;x<=12;x+=0.004){const r=pt(x)/this.q(x);if(r>m)m=r;}this.Mmin=m;},
+  computeTheory(){let s=0;const dx=0.004;for(let x=-12;x<=12;x+=dx){s+=Math.min(pt(x),this.Mq(x))*dx;}this.theory=s/this.M;},
+  Mfromslider(v){return 0.5*Math.pow(100,v/1000);},
+  sliderFromM(M){return Math.round(1000*Math.log(M/0.5)/Math.log(100));},
+  reset(){this.pts=[];this.h.reset();this.tried=0;this.accN=0;this.last=null;},
+  step(){
+    const x=this.mu+this.sigma*randn(),u=Math.random();const mq=this.Mq(x),p=pt(x),r=p/mq;const ok=u<=r;
+    this.tried++;if(ok){this.accN++;this.h.add(x);}
+    this.pts.push({x,y:u*mq,ok});if(this.pts.length>700)this.pts.splice(0,this.pts.length-700);
+    this.last={x,u,mq,p,r,ok};
+  },
+  run(n){for(let i=0;i<n;i++)this.step();},
+  sync(){
+    rsEl("rs-mu-o").textContent=sgn(this.mu,1);rsEl("rs-sigma-o").textContent=this.sigma.toFixed(2);
+    rsEl("rs-M-o").textContent=this.M.toFixed(2);
+  },
+  draw(){
+    const P=this.top,g=P.g;P.clear();
+    let peak=0;for(let x=-6;x<=6;x+=0.02)peak=Math.max(peak,this.Mq(x),pt(x));
+    P.ymax=Math.min(Math.max(peak,0.62)*1.1,1.6);
+    P.yGrid([0.2,0.4,0.6,0.8,1.0,1.2,1.4].filter(v=>v<P.ymax*0.97),v=>v.toFixed(1));
+    P.clipOn();
+    const mq=x=>this.Mq(x),lo=x=>Math.min(pt(x),this.Mq(x));
+    P.fillBetween(()=>0,lo,T["ok-soft"]);
+    P.fillBetween(lo,mq,T["bad-soft"]);
+    const viol=this.M<this.Mmin*(1-1e-6);
+    if(viol)P.fillBetween(mq,x=>Math.max(pt(x),this.Mq(x)),T["bad-strong"]);
+    P.curve(mq,{color:T.accent,width:2,dash:[6,4]});
+    P.curve(pt,{color:T.ink,width:2});
+    // points
+    for(const pnt of this.pts){
+      const px=P.X(pnt.x),py=P.Y(pnt.y);
+      if(pnt.ok){g.fillStyle=T.ok;g.beginPath();g.arc(px,py,2.6,0,7);g.fill();}
+      else{g.strokeStyle=T.bad;g.lineWidth=1.4;g.beginPath();g.moveTo(px-2.6,py-2.6);g.lineTo(px+2.6,py+2.6);g.moveTo(px+2.6,py-2.6);g.lineTo(px-2.6,py+2.6);g.stroke();}
+    }
+    if(this.last){
+      const L=this.last,px=P.X(L.x);
+      g.strokeStyle=T.muted;g.lineWidth=1;g.setLineDash([3,3]);g.beginPath();g.moveTo(px,P.Y(0));g.lineTo(px,P.Y(L.mq));g.stroke();g.setLineDash([]);
+      g.strokeStyle=L.ok?T.ok:T.bad;g.lineWidth=2;g.beginPath();g.arc(px,P.Y(L.u*L.mq),7,0,7);g.stroke();
+    }
+    P.clipOff();
+    P.xAxis(2);
+    // curve labels
+    const xl=this.mu+this.sigma*0.9;label(g,"M·q(x)",Math.min(P.X(xl)+6,P.w-P.padR-60),Math.max(P.Y(this.Mq(xl))-4,P.padT+14),T.accent);
+    label(g,"p̃(x)",P.X(-1.5)-10,P.Y(pt(-1.5))-4,T.ink,"right");
+    // bottom
+    const B=this.bot;B.clear();
+    B.ymax=Math.max(0.36,Math.min(this.h.maxDens()*1.08,0.8));
+    B.yGrid([0.1,0.2,0.3,0.4,0.5,0.6,0.7].filter(v=>v<B.ymax*0.97),v=>v.toFixed(1));
+    drawHist(B,this.h,1,T.hist);B.curve(pn,{color:T.ink,width:2});B.xAxis(2);
+    label(B.g,"p(x) = p̃(x)/Z",B.X(-1.5)+14,B.Y(pn(-1.5))-2,T.ink);
+    // stats
+    rsEl("rs-tried").textContent=this.tried.toLocaleString();
+    rsEl("rs-acc").textContent=this.accN.toLocaleString();
+    rsEl("rs-rate").textContent=this.tried?pct(this.accN/this.tried):"–";
+    rsEl("rs-theory").innerHTML=pct(this.theory)+(viol?"":' <small>= Z/M</small>');
+    rsEl("rs-mmin").textContent=this.Mmin.toFixed(2);
+    rsEl("rs-warn").hidden=!viol;
+    const L=this.last;
+    rsEl("rs-text").innerHTML=L?
+      `第 ${this.tried} 次嘗試：x = ${sgn(L.x,3)}（從 q 抽出）｜p̃(x) = ${f3(L.p)}｜M·q(x) = ${f3(L.mq)}｜接受機率 p̃(x)/(M·q(x)) = ${L.r>1?f3(L.r)+"，超過 1，視為 1":f3(L.r)}｜u = ${L.u.toFixed(3)} → `+
+      (L.ok?`<span class="acc">u ≤ ${f3(Math.min(1,L.r))}，接受 x</span>`:`<span class="rej">u &gt; ${f3(L.r)}，拒絕 x</span>`)
+      :"按「單步」執行一次嘗試，這裡會顯示該次用到的數字。";
+  }};
+demos.push(rs);
+function rsParams(resetSamples){
+  rs.mu=+rsEl("rs-mu").value;rs.sigma=+rsEl("rs-sigma").value;rs.computeMmin();
+  if(rs.auto){rs.M=rs.Mmin*1.0005;rsEl("rs-M").value=rs.sliderFromM(rs.M);}
+  else rs.M=rs.Mfromslider(+rsEl("rs-M").value);
+  rs.computeTheory();if(resetSamples)rs.reset();rs.sync();mark(rs);
+}
+rsEl("rs-mu").addEventListener("input",()=>rsParams(true));
+rsEl("rs-sigma").addEventListener("input",()=>rsParams(true));
+rsEl("rs-M").addEventListener("input",()=>{rs.auto=false;rsEl("rs-auto").checked=false;rsParams(true);});
+rsEl("rs-auto").addEventListener("change",e=>{rs.auto=e.target.checked;rsParams(true);});
+rsEl("rs-step").addEventListener("click",()=>{if(rs.playing)setPlaying(rs,false,rsEl("rs-play"));rs.step();mark(rs);});
+rsEl("rs-play").addEventListener("click",()=>setPlaying(rs,!rs.playing,rsEl("rs-play")));
+rsEl("rs-speed").addEventListener("change",e=>{rs.rate=+e.target.value;});
+rsEl("rs-1000").addEventListener("click",()=>{rs.run(1000);mark(rs);});
+rsEl("rs-reset").addEventListener("click",()=>{rs.reset();mark(rs);});
+rsParams(true);rs.run(250);
+
+// ============ Demo 3: dimension ============
+const dim={dirty:true,playing:false,acc:0,rate:0,run(){},
+  P:new Plot(rsEl("c-dim"),{height:240,xmin:0,xmax:100,ymin:0,ymax:5,padL:52,padB:34}),
+  draw(){
+    const s=+rsEl("dim-s").value,d=+rsEl("dim-d").value;
+    rsEl("dim-s-o").textContent=s.toFixed(2);rsEl("dim-d-o").textContent=d;
+    const P=this.P,g=P.g;P.clear();
+    const top=Math.max(2,Math.ceil(100*Math.log10(s)));
+    const stepT=top<=6?1:top<=12?2:top<=25?5:10;
+    P.ymax=top;
+    const ticks=[];for(let k=0;k<=top;k+=stepT)ticks.push(k);
+    // grid + labels as powers of ten
+    g.font="11px "+MONO;
+    for(const k of ticks){const py=Math.round(P.Y(k))+.5;g.strokeStyle=T.line;g.globalAlpha=.55;g.beginPath();g.moveTo(P.padL,py);g.lineTo(P.w-P.padR,py);g.stroke();g.globalAlpha=1;
+      g.fillStyle=T.muted;g.textAlign="right";g.textBaseline="middle";
+      if(k===0){g.fillText("1",P.padL-6,py);}else{const ew=g.measureText(String(k)).width;g.font="9px "+MONO;g.fillText(String(k),P.padL-6,py-5);g.font="11px "+MONO;g.fillText("10",P.padL-8-ew*0.8,py);}
+    }
+    P.xAxis(10);
+    g.fillStyle=T.muted;g.font="11px "+SANS;g.textAlign="center";g.textBaseline="bottom";g.fillText("維度 d",P.X(50),P.h-1);
+    P.clipOn();
+    g.beginPath();for(let x=1;x<=100;x++){const px=P.X(x),py=P.Y(x*Math.log10(s));if(x===1)g.moveTo(px,py);else g.lineTo(px,py);}
+    g.strokeStyle=T.accent;g.lineWidth=2.2;g.stroke();
+    P.clipOff();
+    const px=P.X(d),py=P.Y(d*Math.log10(s));
+    g.strokeStyle=T.muted;g.setLineDash([3,3]);g.lineWidth=1;g.beginPath();g.moveTo(px,P.Y(0));g.lineTo(px,py);g.lineTo(P.padL,py);g.stroke();g.setLineDash([]);
+    g.fillStyle=T.accent;g.beginPath();g.arc(px,py,5,0,7);g.fill();g.strokeStyle=T.surface;g.lineWidth=2;g.stroke();
+    const M=Math.pow(s,d);
+    rsEl("dim-text").innerHTML=`s = ${s.toFixed(2)}，d = ${d}：最小可行 M = s<sup>d</sup> ≈ ${big(M)}｜接受率 = 1/M ≈ ${M<1e5?pct(1/M):"1/("+big(M)+")"}｜平均每得到 1 個樣本需要嘗試約 ${big(M)} 次`;
+  }};
+demos.push(dim);
+rsEl("dim-s").addEventListener("input",()=>mark(dim));
+rsEl("dim-d").addEventListener("input",()=>mark(dim));
+
+// ============ Demo 4: Metropolis–Hastings ============
+const mh={dirty:true,playing:false,acc:0,rate:30,
+  top:new Plot(rsEl("c-mh-top"),{height:260,ymax:0.78}),
+  tr:new Plot(rsEl("c-mh-trace"),{height:230,padB:26,padT:8,padL:46}),
+  sigma:2.5,x0:5.5,x:5.5,chain:[],h:new Hist(-6,6,60),acceptN:0,steps:0,last:null,burn:false,BURN:200,
+  st:null,
+  sigmaFrom(v){return 0.05*Math.pow(1000,v/1000);},
+  sliderFrom(s){return Math.round(1000*Math.log(s/0.05)/Math.log(1000));},
+  resetStats(){this.st={n:0,sx:0,sxx:0,sxy:0,prev:null,left:0};},
+  addStat(x){const s=this.st;s.n++;s.sx+=x;s.sxx+=x*x;if(s.prev!==null){s.sxy+=s.prev*x;s.np=(s.np||0)+1;s.sxp=(s.sxp||0)+s.prev;s.sxc=(s.sxc||0)+x;}s.prev=x;if(x<LEFT_CUT)s.left++;},
+  counted(i){return !this.burn||i>=this.BURN;},
+  reset(){this.x=this.x0;this.chain=[this.x0];this.h.reset();this.acceptN=0;this.steps=0;this.last=null;this.resetStats();if(this.counted(0)){this.h.add(this.x0);this.addStat(this.x0);}},
+  rebuild(){this.h.reset();this.resetStats();this.chain.forEach((x,i)=>{if(this.counted(i)){this.h.add(x);this.addStat(x);}});},
+  step(){
+    const x=this.x,xp=x+this.sigma*randn();const px=pt(x),pp=pt(xp);const ratio=pp/px;const alpha=Math.min(1,ratio);const u=Math.random();const ok=u<=alpha;
+    if(ok){this.x=xp;this.acceptN++;}
+    this.steps++;this.chain.push(this.x);const i=this.chain.length-1;
+    if(this.counted(i)){this.h.add(this.x);this.addStat(this.x);}
+    this.last={x,xp,px,pp,ratio,alpha,u,ok};
+  },
+  run(n){for(let i=0;i<n;i++)this.step();},
+  rho(){const s=this.st;if(!s.np||s.np<10)return null;const n=s.np;const mx=s.sxp/n,my=s.sxc/n;const mean=s.sx/s.n;const v=s.sxx/s.n-mean*mean;if(v<=1e-12)return null;return (s.sxy/n-mx*my)/v;},
+  draw(){
+    const P=this.top,g=P.g;P.clear();
+    P.ymax=Math.max(0.78,Math.min(2.6,this.h.maxDens()*Z*1.06));
+    const tk=P.ymax>1.6?[0.5,1,1.5,2,2.5]:[0.2,0.4,0.6,0.8,1.0,1.2,1.4];
+    P.yGrid(tk.filter(v=>v<P.ymax*0.97),v=>v.toFixed(1));
+    P.clipOn();
+    drawHist(P,this.h,Z,T.hist);
+    P.fillBetween(()=>0,pt,T["target-fill"]);
+    P.curve(pt,{color:T.ink,width:2});
+    const L=this.last;
+    if(L){
+      const s=this.sigma;P.curve(z=>0.3*Math.exp(-0.5*((z-L.x)/s)**2),{color:T.accent,width:1.6,dash:[5,4]});
+      const c=L.ok?T.ok:T.bad;
+      const ppx=P.X(L.xp);
+      if(L.xp>=P.xmin-1&&L.xp<=P.xmax+1){
+        g.strokeStyle=c;g.lineWidth=2.4;g.beginPath();g.moveTo(ppx,P.Y(0));g.lineTo(ppx,P.Y(L.pp));g.stroke();
+        g.fillStyle=c;g.beginPath();g.arc(ppx,P.Y(L.pp),4.5,0,7);g.fill();
+      }
+      const ox=P.X(L.x);g.strokeStyle=T.ink;g.lineWidth=1.4;g.setLineDash([3,3]);g.beginPath();g.moveTo(ox,P.Y(0));g.lineTo(ox,P.Y(L.px));g.stroke();g.setLineDash([]);
+      g.fillStyle=T.ink;g.beginPath();g.arc(ox,P.Y(L.px),3.5,0,7);g.fill();
+    }
+    P.clipOff();
+    P.xAxis(2);
+    // current position marker
+    const cx=P.X(Math.max(-6,Math.min(6,this.x))),by=P.Y(0);
+    g.fillStyle=T.ink;g.beginPath();g.moveTo(cx,by-1);g.lineTo(cx-6,by+9);g.lineTo(cx+6,by+9);g.closePath();g.fill();
+    label(g,"p̃(x)",P.X(-1.5)-10,P.Y(pt(-1.5))-4,T.ink,"right");
+    if(L&&(L.xp<P.xmin||L.xp>P.xmax)){label(g,"x′ = "+sgn(L.xp,2)+"（在圖外）",L.xp<0?P.padL+4:P.w-P.padR-4,P.padT+14,L.ok?T.ok:T.bad,L.xp<0?"left":"right");}
+    // trace
+    const R=this.tr,tg=R.g;R.clear();
+    const K=200,n=this.chain.length;
+    const yOf=k=>R.padT+k/(K-1)*(R.h-R.padT-R.padB);
+    // burn-in band
+    if(this.burn){const kStart=n-1-(this.BURN-1);if(kStart<K){tg.fillStyle=T["bad-soft"];const y0=yOf(Math.max(0,kStart));tg.fillRect(R.padL,y0,R.w-R.padL-R.padR,R.h-R.padB-y0);tg.fillStyle=T.muted;tg.font="11px "+SANS;tg.textAlign="right";tg.textBaseline="bottom";tg.fillText("burn-in（不計入）",R.w-R.padR-4,R.h-R.padB-3);}}
+    // grid
+    tg.font="11px "+MONO;tg.textAlign="right";tg.textBaseline="middle";
+    [0,50,100,150,199].forEach(k=>{const py=Math.round(yOf(k))+.5;tg.strokeStyle=T.line;tg.globalAlpha=.5;tg.beginPath();tg.moveTo(R.padL,py);tg.lineTo(R.w-R.padR,py);tg.stroke();tg.globalAlpha=1;tg.fillStyle=T.muted;tg.fillText(k===0?"t="+(n-1):"−"+k,R.padL-6,py);});
+    // target ghost under trace axis
+    R.ymin=0;R.ymax=1;
+    tg.save();tg.beginPath();tg.rect(R.padL,R.padT-2,R.w-R.padL-R.padR,R.h-R.padT-R.padB+4);tg.clip();
+    tg.beginPath();
+    for(let k=0;k<Math.min(K,n);k++){const x=this.chain[n-1-k];const px=R.X(x),py=yOf(k);if(k===0)tg.moveTo(px,py);else tg.lineTo(px,py);}
+    tg.strokeStyle=T.accent;tg.lineWidth=1.4;tg.lineJoin="round";tg.stroke();
+    tg.fillStyle=T.ink;tg.beginPath();tg.arc(R.X(this.chain[n-1]),yOf(0),4,0,7);tg.fill();
+    tg.restore();
+    // x axis at bottom
+    const y0=R.h-R.padB;tg.strokeStyle=T.line;tg.lineWidth=1;tg.beginPath();tg.moveTo(R.padL,y0+.5);tg.lineTo(R.w-R.padR,y0+.5);tg.stroke();
+    tg.fillStyle=T.muted;tg.textAlign="center";tg.textBaseline="top";
+    for(let x=-6;x<=6;x+=2){const px=Math.round(R.X(x))+.5;tg.beginPath();tg.moveTo(px,y0);tg.lineTo(px,y0+4);tg.stroke();tg.fillText(String(x).replace("-","−"),px,y0+6);}
+    // stats
+    rsEl("mh-steps").textContent=this.steps.toLocaleString();
+    rsEl("mh-rate").textContent=this.steps?pct(this.acceptN/this.steps):"–";
+    const s=this.st;
+    rsEl("mh-left").innerHTML=s.n?`${(s.left/s.n).toFixed(3)} <small>正確值 ${LEFT_TRUE.toFixed(3)}</small>`:"–";
+    const r=this.rho();rsEl("mh-rho").textContent=r==null?"–":r.toFixed(3);
+    rsEl("mh-text").innerHTML=L?
+      `第 ${this.steps} 步：x<sub>t</sub> = ${sgn(L.x,3)}，提議 x′ = ${sgn(L.xp,3)}｜p̃(x<sub>t</sub>) = ${f3(L.px)}，p̃(x′) = ${f3(L.pp)}｜α = min(1, ${f3(L.pp)} / ${f3(L.px)}) = ${f3(L.alpha)}｜u = ${L.u.toFixed(3)} → `+
+      (L.ok?`<span class="acc">u ≤ α，接受：x<sub>t+1</sub> = ${sgn(L.xp,3)}</span>`:`<span class="rej">u &gt; α，拒絕：x<sub>t+1</sub> = x<sub>t</sub> = ${sgn(L.x,3)}</span>`)
+      :"按「單步」執行一步，這裡會顯示該步用到的數字。";
+  }};
+demos.push(mh);
+function mhSetSigma(s,resetChain){
+  mh.sigma=s;rsEl("mh-sigma").value=mh.sliderFrom(s);rsEl("mh-sigma-o").textContent=s<1?s.toFixed(2):s.toFixed(1);
+  document.querySelectorAll("#demo-mh [data-sigma]").forEach(b=>b.setAttribute("aria-pressed",String(Math.abs(+b.dataset.sigma-s)<1e-6)));
+  if(resetChain)mh.reset();mark(mh);
+}
+rsEl("mh-sigma").addEventListener("input",e=>{const s=mh.sigmaFrom(+e.target.value);mhSetSigma(+s.toPrecision(3),true);});
+document.querySelectorAll("#demo-mh [data-sigma]").forEach(b=>b.addEventListener("click",()=>mhSetSigma(+b.dataset.sigma,true)));
+rsEl("mh-x0").addEventListener("input",e=>{mh.x0=+e.target.value;rsEl("mh-x0-o").textContent=sgn(mh.x0,1);mh.reset();mark(mh);});
+rsEl("mh-burn").addEventListener("change",e=>{mh.burn=e.target.checked;mh.rebuild();mark(mh);});
+rsEl("mh-step").addEventListener("click",()=>{if(mh.playing)setPlaying(mh,false,rsEl("mh-play"));mh.step();mark(mh);});
+rsEl("mh-play").addEventListener("click",()=>setPlaying(mh,!mh.playing,rsEl("mh-play")));
+rsEl("mh-speed").addEventListener("change",e=>{mh.rate=+e.target.value;});
+rsEl("mh-1000").addEventListener("click",()=>{mh.run(1000);mark(mh);});
+rsEl("mh-reset").addEventListener("click",()=>{mh.reset();mark(mh);});
+rsEl("mh-x0-o").textContent=sgn(mh.x0,1);
+mhSetSigma(2.5,true);mh.run(300);
+
+// ============ Demo 5: discrete detailed balance ============
+const W=[1,4,2,6,3,1],S=W.length,WS=W.reduce((a,b)=>a+b,0),TARGET=W.map(w=>w/WS);
+const TM=[];for(let i=0;i<S;i++){TM.push(new Array(S).fill(0));let stay=1;for(const j of [i-1,i+1]){if(j<0||j>=S)continue;const p=0.5*Math.min(1,W[j]/W[i]);TM[i][j]=p;stay-=p;}TM[i][i]=stay;}
+const db={dirty:true,playing:false,acc:0,rate:2,
+  P:new Plot(rsEl("c-db"),{height:230,xmin:0,xmax:S,ymin:0,ymax:1,padL:40,padB:30}),
+  pi:null,t:0,
+  reset(){this.pi=new Array(S).fill(0);this.pi[0]=1;this.t=0;},
+  step(){const nx=new Array(S).fill(0);for(let i=0;i<S;i++)for(let j=0;j<S;j++)nx[j]+=this.pi[i]*TM[i][j];this.pi=nx;this.t++;},
+  run(n){for(let i=0;i<n;i++)this.step();},
+  draw(){
+    const P=this.P,g=P.g;P.clear();
+    const mx=Math.max(...this.pi,...TARGET);P.ymax=Math.max(0.45,Math.min(1,mx*1.15));
+    P.yGrid([0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0].filter(v=>v<P.ymax*0.97),v=>v.toFixed(1));
+    const bw=(P.X(1)-P.X(0));
+    for(let i=0;i<S;i++){
+      const x0=P.X(i)+bw*0.18,w=bw*0.64;
+      const y=P.Y(this.pi[i]);g.fillStyle=T.accent;g.fillRect(x0,y,w,P.Y(0)-y);
+      const yt=P.Y(TARGET[i]);g.strokeStyle=T.ink;g.lineWidth=1.5;g.setLineDash([4,3]);g.strokeRect(x0-3,yt,w+6,P.Y(0)-yt);g.setLineDash([]);
+      g.fillStyle=T.muted;g.font="11px "+MONO;g.textAlign="center";g.textBaseline="bottom";
+      g.fillText(this.pi[i].toFixed(3),x0+w/2,Math.min(y,yt)-3);
+      g.textBaseline="top";g.fillStyle=T.ink;g.font="12px "+SANS;g.fillText("狀態 "+(i+1),x0+w/2,P.Y(0)+7);
+    }
+    g.strokeStyle=T.line;g.beginPath();g.moveTo(P.padL,Math.round(P.Y(0))+.5);g.lineTo(P.w-P.padR,Math.round(P.Y(0))+.5);g.stroke();
+    let tv=0;for(let i=0;i<S;i++)tv+=Math.abs(this.pi[i]-TARGET[i]);tv/=2;
+    rsEl("db-t").textContent=this.t;rsEl("db-tv").textContent=tv<1e-5?tv.toExponential(1):tv.toFixed(4);
+    let rows="";
+    for(let i=0;i<S-1;i++){const r=this.pi[i]*TM[i][i+1],l=this.pi[i+1]*TM[i+1][i],d=r-l;const ok=Math.abs(d)<1e-4;
+      rows+=`<tr class="${ok?"balanced":""}"><td>${i+1} ↔ ${i+2}</td><td class="num">${r.toFixed(4)}</td><td class="num">${l.toFixed(4)}</td><td class="num diff">${(d>=0?"+":"−")+Math.abs(d).toFixed(4)}</td></tr>`;}
+    rsEl("db-table").innerHTML=rows;
+  }};
+demos.push(db);
+db.reset();
+rsEl("db-step").addEventListener("click",()=>{if(db.playing)setPlaying(db,false,rsEl("db-play"));db.step();mark(db);});
+rsEl("db-step10").addEventListener("click",()=>{if(db.playing)setPlaying(db,false,rsEl("db-play"));db.run(10);mark(db);});
+rsEl("db-play").addEventListener("click",()=>setPlaying(db,!db.playing,rsEl("db-play")));
+rsEl("db-reset").addEventListener("click",()=>{if(db.playing)setPlaying(db,false,rsEl("db-play"));db.reset();mark(db);});
+
+// ---------- sizing & theme ----------
+function resizeAll(){
+  [intro.P,rs.top,rs.bot,dim.P,mh.top,mh.tr,db.P].forEach(p=>p.resize());
+  demos.forEach(d=>d.dirty=true);kick();
+}
+intro.add(300);
+resizeAll();
+let rt=null;
+const ro=new ResizeObserver(()=>{clearTimeout(rt);rt=setTimeout(resizeAll,60);});
+document.querySelectorAll(".demo").forEach(el=>ro.observe(el));
+function retheme(){readTokens();demos.forEach(d=>d.dirty=true);kick();}
+new MutationObserver(retheme).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme","class","style"]});
+try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",retheme);}catch(e){}
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>{demos.forEach(d=>d.dirty=true);kick();});
+})();
+</script>
+</body>
+</html>

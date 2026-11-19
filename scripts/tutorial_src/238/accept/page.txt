@@ -1,0 +1,634 @@
+擴散模型的預測目標 k
+
+跳到內容
+
+ No. 238
+ 擴散模型的預測目標：從 ε、v、x 到連續的 k
+
+00 摘要01 前向過程02 參數 k03 線性模型04 兩個模式05 垂直殘差06 最佳 k07 適用範圍08 k-Diff09 實驗結果10 實作11 研究脈絡12 限制與延伸
+
+00摘要
+01前向過程
+02參數 k
+03線性模型
+04兩個模式
+05垂直殘差
+06最佳 k
+07適用範圍
+08k-Diff
+09實驗結果
+10實作
+11研究脈絡
+12限制與延伸
+
+ No. 238 · 互動教學 · arXiv 2601.21419 · NeurIPS 2026
+
+ 擴散模型的預測目標：從 ε、v、x 到連續的 k
+
+ 這篇論文把三種預測目標放進同一個參數 k，推得最佳 k 由資料維度決定，並讓 k 在訓練中學出來。
+
+ Qing Jin、Chaoyang Wang（2026）〈Understanding and Learning Prediction Targets in Diffusion Models〉
+
+ε k = 0v k = 0.5x k = 1潛空間學到 0.66
+像素空間學到 ≈ 1.0
+
+ 01 · 一個式子同一個式子 u=kx−(1−k)n $u=kx-(1-k)n$ 包含三種常見目標：k = 0 是預測噪聲，k = 0.5 是預測速度，k = 1 是預測乾淨資料。
+
+ 02 · 一個公式在簡化的線性模型中，最佳 k 等於 D/(D+d)：D 是資料向量的長度，d 是資料實際所在子空間的維度。資料越集中在低維子空間，最佳 k 越接近 1。
+
+ 03 · 一個參數k-Diff 只多訓練一個數字 k。在 ImageNet 256 上，潛空間模型學到 0.66，像素空間模型學到接近 1。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · 前向過程
+
+ 前向過程把資料與噪聲線性混合
+
+ 擴散模型（diffusion model）與 flow matching 都從一個「前向過程」開始：把一筆乾淨資料 x $x$ 與一筆標準高斯噪聲 n $n$ 依時間 t $t$ 混合成帶噪的 z $z$ 。論文先寫出一般形式（Sec. 3）：
+
+ z=αx+σn,u=φx+ψn $z=\alpha x+\sigma n,\qquad u=\varphi x+\psi n$ 
+Eq. 1
+
+ α,σ $\alpha,\sigma$ 決定前向過程如何混合資料與噪聲；φ,ψ $\varphi,\psi$ 決定網路要預測的目標 u $u$ ，由設計者選擇（例如 v-prediction 取 φ=1,ψ=−1 $\varphi=1,\psi=-1$ ，x-prediction 取 φ=1,ψ=0 $\varphi=1,\psi=0$ ）。本論文採用 flow matching，取 α=t $\alpha=t$ 、σ=1−t $\sigma=1-t$ ：
+
+ z=t x+(1−t) n,t∈[0,1] $z=t\,x+(1-t)\,n,\qquad t\in[0,1]$ 
+Eq. 1，α = t
+
+ 在這個慣例下，t=1 $t=1$ 時 z=x $z=x$ 是乾淨資料，t=0 $t=0$ 時 z=n $z=n$ 是純噪聲。DDPM 的慣例是 t $t$ 越大噪聲越多，方向與本文相反，閱讀其他文獻時要先確認方向。
+
+ 訓練時，網路看到 z $z$ 與 t $t$ ，輸出一個「預測目標」。生成時，從 t=0 $t=0$ 的純噪聲出發，反覆用網路的輸出換算出速度 v=x−n $v=x-n$ ，沿 dz/dt=v $dz/dt=v$ 一小步一小步往 t=1 $t=1$ 前進（Alg. 2）。網路預測得越準，終點越接近資料分布。常見的預測目標有三種：
+
+ ε-prediction：預測噪聲 n $n$ ，DDPM 等早期方法採用。
+
+ v-prediction：預測速度 v=x−n $v=x-n$ ，flow matching 的標準做法。
+
+ x-prediction：預測乾淨資料 x $x$ ，近期的像素空間模型（例如 JiT）採用。
+
+ 三者都是 x $x$ 與 n $n$ 的線性組合；知道 z $z$ 與 t $t$ 時，任一種目標都能換算成另外兩種。下圖用二維平面呈現前向過程：資料只落在水平線上，噪聲則向所有方向擴散。
+
+ C1a前向過程：z 是 x 與 n 的混合
+
+ 拖動 t：t = 0 時點雲是純噪聲，t = 1 時所有點落在資料所在的直線上。
+
+ 擴散時間 t0.50
+
+ 重新抽樣
+
+ t·x（資料部分）(1−t)·n（噪聲部分）
+
+ x̃ = -1.69　n = (-0.45, -0.81)
+z = t·x + (1−t)·n = (-1.07, -0.41)
+
+ 設定：D = 2、d = 1；x = (x̃, 0)，x̃ ~ N(0, 1)；n ~ N(0, I)。150 個點由固定 seed 的 mulberry32 產生。讀數由本頁依 Eq. 1 即時計算。
+
+ 延伸閱讀：ε-prediction 與 DDPM、score-based 模型、Flow matching 的速度目標
+
+ 02 · 參數 k
+
+ 一個參數 k 涵蓋三種目標
+
+ 作者先把目標寫成一般的線性組合 u=φx+ψn $u=\varphi x+\psi n$ （Eq. 1），再把係數限制為 φ=k $\varphi=k$ 、ψ=−(1−k) $\psi=-(1-k)$ ，得到一族只由單一參數 k∈[0,1] $k\in[0,1]$ 決定的目標（Sec. 3.3）：
+
+ u=k x−(1−k) n $u=k\,x-(1-k)\,n$ 
+Eq. 13
+
+ k 的三個特殊值（flow matching，α = t，σ = 1 − t）
+ ku對應的傳統目標
+
+ 0−n $-n$ ε-prediction（差一個負號）
+
+ 0.512(x−n)=12v $\tfrac12(x-n)=\tfrac12 v$ 1​(x−n)=21​vv-prediction（差 ½ 倍）
+
+ 1x $x$ x-prediction
+
+ 論文寫明這三個對應是「up to a constant scaling factor」，也就是只差一個常數倍。k $k$ 介於這些點之間時，得到的是三種傳統目標以外的新目標。後續的分析要回答的是：對一組給定的資料，哪一個 k $k$ 讓訓練損失最小。
+
+ 延伸閱讀：v-prediction 與 preconditioning、廣義預測目標 u = kx − (1 − k)n 與 k-Diff
+
+ 03 · 線性模型
+
+ 分析對象是單層共享線性去噪器
+
+ 實際的去噪網路是大型 Transformer，無法寫出閉式解。作者改分析一個可以完整推導的簡化問題（Sec. 3.1），設定如下。
+
+ 資料。x=Px~ $x=P\tilde x$ ，其中 x~∈Rd $\tilde x\in\mathbb R^d$ ∈Rd 是資料的內在座標，P $P$ 是 D×d $D\times d$ 矩陣且 P⊤P=Id×d $P^\top P=I_{d\times d}$ P=Id×d​。資料向量的長度是環境維度（ambient dimension）D $D$ ，但資料只分布在一個 d $d$ 維子空間裡，d $d$ 稱為內在維度（intrinsic dimension）。此設定沿用 JiT。
+
+ 投影。PP⊤ $PP^\top$ 是投影矩陣：對任一向量 y $y$ ，PP⊤y $PP^\top y$ y 是 y $y$ 落在資料子空間上的分量，(I−PP⊤)y $(I-PP^\top)y$ )y 是垂直於子空間的分量，兩者相加等於 y $y$ ，且 (PP⊤)2=PP⊤ $(PP^\top)^2=PP^\top$ )2=PP⊤、PP⊤(I−PP⊤)=0 $PP^\top(I-PP^\top)=0$ (I−PP⊤)=0（Eq. 34）。下圖以 D=2 $D=2$ 、d=1 $d=1$ 表示，與 C1 使用同一個平面。
+
+ 去噪器。u^=Wz $\hat u=Wz$ =Wz（Eq. 2），W $W$ 是 D×D $D\times D$ 矩陣。所有噪聲強度 t $t$ 共用同一個 W $W$ ，論文稱為 time-shared。
+
+ 假設。內在座標白化，E[x~x~⊤]=Id×d $\mathbb E[\tilde x\tilde x^\top]=I_{d\times d}$ x~⊤]=Id×d​（Eq. 6）；噪聲 E[nn⊤]=I $\mathbb E[nn^\top]=I$ ]=I（Eq. 7）。
+
+ 訓練。損失為 L=12∫Dα  E∥Wz−u∥2 $L=\tfrac12\int D\alpha\;\mathbb E\|Wz-u\|^2$ 1​∫DαE∥Wz−u∥2（Eq. 4，這裡先取最簡單的 u-MSE），Dα $D\alpha$ 是訓練時 t $t$ 的取樣分布。梯度下降寫成連續時間的微分方程
+
+ τ dWdt~=−∂WL $\tau\,\frac{dW}{d\tilde t}=-\partial_W L$ dW​=−∂W​L
+Eq. 27
+
+ 意思是學習率很小時，權重隨訓練時間 t~ $\tilde t$ 沿負梯度方向連續移動，τ $\tau$ 是學習率的倒數。線性模型讓所有期望值都能寫成閉式，投影矩陣讓問題能沿子空間與其垂直方向拆開。下一節說明拆開後的結果。
+
+ 04 · 兩個模式
+
+ 學習動態拆成平行與垂直兩個模式
+
+ 因為 x $x$ 與 n $n$ 獨立且 E[n]=0 $\mathbb E[n]=0$ ，梯度需要的兩個二階期望值是（Eq. 32）：
+
+ E[zz⊤]=α2PP⊤+σ2IE[uz⊤]=φα PP⊤+ψσ I $\begin{gathered}\mathbb E[zz^\top]=\alpha^2PP^\top+\sigma^2I\\ \mathbb E[uz^\top]=\varphi\alpha\,PP^\top+\psi\sigma\,I\end{gathered}$ ]=α2PP⊤+σ2IE[uz⊤]=φαPP⊤+ψσI​
+Eq. 32
+
+ 代入梯度，得到權重的動態（Eq. 8；此處以 u-MSE 寫出，S07 會把 Dα $D\alpha$ 換成一般的加權測度）：
+
+ τdWdt~=−∫Dα (α2WPP⊤+σ2W−φαPP⊤−ψσI) $\tau\frac{dW}{d\tilde t}=-\int D\alpha\,\big(\alpha^2WPP^\top+\sigma^2W-\varphi\alpha PP^\top-\psi\sigma I\big)$ dW​=−∫Dα(α2WPP⊤+σ2W−φαPP⊤−ψσI)
+Eq. 8
+
+ 兩個期望值只由 PP⊤ $PP^\top$ 與 I $I$ 組成。定義平行分量 W∥=WPP⊤ $W_\parallel=WPP^\top$ ​=WPP⊤ 與垂直分量 W⊥=W(I−PP⊤) $W_\perp=W(I-PP^\top)$ ​=W(I−PP⊤)（Eq. 10），把 Eq. 8 分別右乘 PP⊤ $PP^\top$ 與 I−PP⊤ $I-PP^\top$ ，再用 Eq. 34 的兩個投影性質，動態拆成兩個互不影響的方程：
+
+ τdW∥dt~=−∫Dα[(α2+σ2)W∥−(φα+ψσ)PP⊤] $\tau\frac{dW_\parallel}{d\tilde t}=-\int D\alpha\big[(\alpha^2+\sigma^2)W_\parallel-(\varphi\alpha+\psi\sigma)PP^\top\big]$ dW∥​​=−∫Dα[(α2+σ2)W∥​−(φα+ψσ)PP⊤]
+Eq. 9a
+
+ τdW⊥dt~=−∫Dα[σ2W⊥−ψσ(I−PP⊤)] $\tau\frac{dW_\perp}{d\tilde t}=-\int D\alpha\big[\sigma^2W_\perp-\psi\sigma(I-PP^\top)\big]$ dW⊥​​=−∫Dα[σ2W⊥​−ψσ(I−PP⊤)]
+Eq. 9b
+
+ Eq. 9a · W∥平行模式：資料重建
+方程含 α $\alpha$ 與 φ $\varphi$ ，也就是與資料的係數有關。作者稱為資料重建（data recovery）。
+
+ Eq. 9b · W⊥垂直模式：消除噪聲
+方程只含 σ $\sigma$ 與 ψ $\psi$ 。子空間外沒有資料，那裡的輸入只有噪聲 σn⊥ $\sigma n_\perp$ ​，目標只有 ψn⊥ $\psi n_\perp$ ​。作者稱為消除噪聲（noise elimination）。
+
+ 兩個模式對 φ,ψ $\varphi,\psi$ 的要求不同，固定的目標通常無法同時滿足兩者，最佳設計要在兩者之間權衡（Sec. 3.2）。另外，平行模式的收斂速率由 ∫Dα(α2+σ2) $\int D\alpha(\alpha^2+\sigma^2)$ +σ2) 決定，垂直模式由 ∫Dα σ2 $\int D\alpha\,\sigma^2$ 決定；均勻取樣時分別為 2/3 與 1/3本頁推導（由 Eq. 9 的係數積分）。
+
+ 延伸閱讀：擴散模型學習與泛化動態的理論背景
+
+ 05 · 垂直殘差
+
+ 共享權重在垂直方向留下殘差
+
+ 令 Eq. 9 的右邊等於 0，得到最佳權重（Theorem 3.1）：
+
+ W∗=∫Dα(φα+ψσ)∫Dα(α2+σ2)PP⊤+∫Dα ψσ∫Dα σ2(I−PP⊤) $W^*=\frac{\int D\alpha(\varphi\alpha+\psi\sigma)}{\int D\alpha(\alpha^2+\sigma^2)}PP^\top+\frac{\int D\alpha\,\psi\sigma}{\int D\alpha\,\sigma^2}(I-PP^\top)$ =∫Dα(α2+σ2)∫Dα(φα+ψσ)​PP⊤+∫Dασ2∫Dαψσ​(I−PP⊤)
+Eq. 11
+
+ 代回損失，並用 Tr(PP⊤)=d $\mathrm{Tr}(PP^\top)=d$ )=d、Tr(I−PP⊤)=D−d $\mathrm{Tr}(I-PP^\top)=D-d$ )=D−d（Eq. 48–49），得到最佳損失；第一行是平行（流形內）項，第二行是垂直（環境殘差）項：
+
+ Δ∗=  d2[∫Dα(φ2+ψ2)−(∫Dα(φα+ψσ))2∫Dα(α2+σ2)]+D−d2[∫Dα ψ2−(∫Dα ψσ)2∫Dα σ2] $\begin{aligned}\Delta^*=\;&\frac d2\Big[\int D\alpha(\varphi^2+\psi^2)-\frac{\big(\int D\alpha(\varphi\alpha+\psi\sigma)\big)^2}{\int D\alpha(\alpha^2+\sigma^2)}\Big]\\&+\frac{D-d}2\Big[\int D\alpha\,\psi^2-\frac{\big(\int D\alpha\,\psi\sigma\big)^2}{\int D\alpha\,\sigma^2}\Big]\end{aligned}$ =​2d​[∫Dα(φ2+ψ2)−∫Dα(α2+σ2)(∫Dα(φα+ψσ))2​]+2D−d​[∫Dαψ2−∫Dασ2(∫Dαψσ)2​]​
+Eq. 12
+
+ 作者從 Eq. 12 讀出四點（Theorem 3.1 Remark）：
+
+ 平行項正比於內在維度 d $d$ ，垂直項正比於餘維度 D−d $D-d$ 。
+
+ 平行項依賴 α $\alpha$ 與 φ $\varphi$ ；垂直項與兩者無關。
+
+ D≈d $D\approx d$ 時平行項主導；D≫d $D\gg d$ 時垂直項主導。
+
+ 取 ψ=0 $\psi=0$ （x-prediction）時垂直項為 0。
+
+ 垂直項的來源可以這樣看：若每個噪聲強度各有一個矩陣，垂直方向的最佳增益是 ψ/σ $\psi/\sigma$ （App. H，Eq. 76b），預測 ψσ⋅σn⊥=ψn⊥ $\frac{\psi}{\sigma}\cdot\sigma n_\perp=\psi n_\perp$ ψ​⋅σn⊥​=ψn⊥​ 與目標完全相同。共享的 W⊥ $W_\perp$ ​ 只能取一個加權平均 b∗=∫Dα ψσ/∫Dα σ2 $b^*=\int D\alpha\,\psi\sigma/\int D\alpha\,\sigma^2$ =∫Dαψσ/∫Dασ2，預測 b∗σn⊥ $b^*\sigma n_\perp$ σn⊥​ 與目標 ψn⊥ $\psi n_\perp$ ​ 之間的差就是殘差。由 Cauchy–Schwarz 不等式（Eq. 78b），垂直項非負，且只有在 ψ/σ $\psi/\sigma$ 不隨 t $t$ 改變時為 0。在 u=kx−(1−k)n $u=kx-(1-k)n$ 這一族中 ψ/σ=−(1−k)/(1−t) $\psi/\sigma=-(1-k)/(1-t)$ ，只有 k=1 $k=1$ 時不隨 t $t$ 改變本頁推導（等號條件套用到 k 族）。
+
+ 與共享模型相比，雜訊強度相依模型的優勢不只在垂直項：由 Eq. 78a，它的平行項也不大於共享模型的平行項，所以總損失 Δdep∗≤Δ∗ $\Delta^*_{dep}\le\Delta^*$ ∗​≤Δ∗（Eq. 79）。下圖只畫垂直部分。
+
+ C1b目標向量與垂直殘差
+
+ 調整 k：左圖的橘色箭頭是目標 u；右圖比較垂直方向的目標與共享模型的預測，下方面積就是每個垂直維度的殘差。
+
+ 目標參數 k0.50
+
+ ε（k = 0）v（k = 0.5）x（k = 1）
+
+ 擴散時間 t0.50
+
+ 重新抽樣
+
+ z∥ = t·x̃ + (1−t)·n∥ = -1.07
+z⊥ = (1−t)·n⊥ = -0.41
+u∥ = k·x̃ − (1−k)·n∥ = -0.62
+u⊥ = −(1−k)·n⊥ = 0.41
+
+ 目標 ψ = −(1−k)；雜訊強度相依模型的預測與此線重合共享模型 b*·σ(t)
+
+ ½·e(t)²，e(t) = b*σ − ψ = (1−k)(1.5t − 0.5)
+
+ 每個垂直維度的殘差 ½∫e(t)²dt = (1−k)²/8 = 0.031。k = 1 時兩線都在 0，殘差為 0；k 越小，兩線差距越大，殘差與 (1−k)² 成正比。
+
+ 設定：D = 2、d = 1，均勻 t、u-MSE（Theorem 3.2 條件）。b* = ∫ψσ/∫σ² = −1.5(1−k)（Eq. 11）。殘差 ½∫e(t)²dt = (1−k)²/8（Eq. 54c，D − d = 1）。共享模型與雜訊強度相依模型的差距還包含平行項（Eq. 78a），這張圖只畫垂直部分。讀數由本頁即時計算。
+
+ k = 0.50，垂直殘差 0.031
+
+ 06 · 最佳 k
+
+ 最佳 k 等於 D/(D+d)
+
+ 直接對 Eq. 12 求最佳的 φ(α),ψ(α) $\varphi(\alpha),\psi(\alpha)$ 很複雜，結果還依賴損失、取樣分布與積分區間。作者因此加上四個條件（Theorem 3.2）：資料是白化的子空間資料、去噪器是共享線性、t∼U[0,1] $t\sim U[0,1]$ 、損失為 u-MSE；並取 φ=k $\varphi=k$ 、ψ=−(1−k) $\psi=-(1-k)$ ，k $k$ 不隨 t $t$ 改變。
+
+ 均勻取樣下 ∫dt=1 $\int dt=1$ 、∫t dt=∫(1−t) dt=1/2 $\int t\,dt=\int(1-t)\,dt=1/2$ 、∫t2dt=∫(1−t)2dt=1/3 $\int t^2dt=\int(1-t)^2dt=1/3$ dt=∫(1−t)2dt=1/3（Eq. 53），代入 Eq. 12 得到：
+
+ Δ∗(k)=d(k24−k4+516)+(D−d)(1−k)28=116[2(D+d)k2−4Dk+(2D+3d)] $\begin{aligned}\Delta^*(k)&=d\Big(\frac{k^2}{4}-\frac{k}{4}+\frac{5}{16}\Big)+\frac{(D-d)(1-k)^2}{8}\\&=\frac{1}{16}\big[2(D+d)k^2-4Dk+(2D+3d)\big]\end{aligned}$ (k)​=d(4k2​−4k​+165​)+8(D−d)(1−k)2​=161​[2(D+d)k2−4Dk+(2D+3d)]​
+Eq. 54c–d
+
+ 這是 k $k$ 的二次函數，最小值在
+
+ k∗=DD+d $k^*=\frac{D}{D+d}$ =D+dD​
+Eq. 14
+
+ 平行項在 k=0.5 $k=0.5$ 最小（值 d/4 $d/4$ ），垂直項在 k=1 $k=1$ 最小（值 0）；k∗ $k^*$ 是兩者依 d $d$ 與 D−d $D-d$ 加權後的位置。由此得到三個區間（Sec. 3.3）：
+
+ 資料填滿空間（D≈d $D\approx d$ ）：k∗≈0.5 $k^*\approx0.5$ ≈0.5，v-prediction 最佳。
+
+ 資料只占極低維子空間（D≫d $D\gg d$ ）：k∗→1 $k^*\to1$ →1，x-prediction 最佳。
+
+ 一般情形：0.5<k∗<1 $0.5<k^*<1$ <1，論文寫「neither conventional target is optimal」，ε、v、x 都不是最佳。
+
+ 偏離 k∗ $k^*$ 的代價是 Δ∗(k)−Δ∗(k∗)=D+d8(k−k∗)2 $\Delta^*(k)-\Delta^*(k^*)=\frac{D+d}{8}(k-k^*)^2$ (k)−Δ∗(k∗)=8D+d​(k−k∗)2本頁推導（由 Eq. 54d 配方）。
+
+ C2平行項與垂直項的權衡
+
+ 調整 D 與 d：曲線是每個環境維度的最佳損失 Δ*/D；橘色點是 k*。同比例放大 D 與 d 時，k* 不變。
+
+ 平行項垂直項總和
+
+ 環境維度 D128
+
+ 內在維度 d32
+
+ k* = D/(D+d) = 0.800
+d/D = 0.250
+
+ Δ*（Eq. 54d）與比 k* 多出的損失 (D+d)(k−k*)²/8
+ 目標kΔ*比 k* 多
+ε022.00012.800
+v0.511.0001.800
+x110.0000.800
+k*0.8009.2000.000
+
+ 完全使用 Eq. 54c（Theorem 3.2 的四個條件），無額外近似。「比 k* 多」一欄為本頁推導（由 Eq. 54d 配方）。讀數由本頁即時計算。
+
+ D = 128，d = 32，k* = 0.800
+
+ 資料不是白化時，若 Σ=E[xx⊤] $\Sigma=\mathbb E[xx^\top]$ ] 為一般的二階動差矩陣，同樣條件下最佳值為 k∗=D/(D+Tr Σ) $k^*=D/(D+\mathrm{Tr}\,\Sigma)$ =D/(D+TrΣ)（App. G，Eq. 72）；白化子空間資料的 Tr Σ=d $\mathrm{Tr}\,\Sigma=d$ ，回到 Eq. 14。
+
+ 延伸閱讀：x-prediction 與流形觀點：JiT 與 pixel-space 的近期結果
+
+ 07 · 適用範圍
+
+ 時間條件、取樣與損失會移動最佳 k
+
+ Theorem 3.2 的四個條件在實務上都不成立。作者用受控實驗檢查閉式解的適用範圍（Sec. 3.4）：各向同性高斯資料放在 R128 $\mathbb R^{128}$ 的 d $d$ 維子空間，k=sigmoid(wk) $k=\mathrm{sigmoid}(w_k)$ ​) 與去噪器一起訓練。讀懂結果之前，需要先介紹三個概念。
+
+ 損失的加權：κ 與有效測度
+
+ 網路輸出 u^ $\hat u$ ，但損失可以算在另一個變數 w=ξx+ηn $w=\xi x+\eta n$ 上，例如速度 v $v$ （ξ=1,η=−1 $\xi=1,\eta=-1$ ）。由 z $z$ 與 u^ $\hat u$ 可以解出 x^,n^ $\hat x,\hat n$ ,n^（Eq. 16–18），進而得到
+
+ w^−w=κ(u^−u),κ=ξσ−ηαφσ−ψα $\hat w-w=\kappa(\hat u-u),\qquad \kappa=\frac{\xi\sigma-\eta\alpha}{\varphi\sigma-\psi\alpha}$ −w=κ(u^−u),κ=φσ−ψαξσ−ηα​
+Eq. 3, 22
+
+ 因此任何 w-MSE 都等於以 κ2 $\kappa^2$ 加權的 u-MSE。前面所有式子只要把 Dα $D\alpha$ 換成有效測度 Dα~=Dα⋅κ2 $\widetilde{D\alpha}=D\alpha\cdot\kappa^2$ =Dα⋅κ2（Eq. 4、5）。
+
+ 四種損失的換算因子 κ（App. A）
+ 損失κ出處
+
+ u-loss（w=u $w=u$ ）1 $1$ Eq. 23
+
+ x-lossσ/(φσ−ψα) $\sigma/(\varphi\sigma-\psi\alpha)$ Eq. 24
+
+ ε-loss−α/(φσ−ψα) $-\alpha/(\varphi\sigma-\psi\alpha)$ Eq. 25
+
+ v-loss(α+σ)/(φσ−ψα) $(\alpha+\sigma)/(\varphi\sigma-\psi\alpha)$ Eq. 26
+
+ 在 k $k$ 參數化與 flow matching 下，v-loss 的 κ=1/(k(1−t)+(1−k)t) $\kappa=1/\big(k(1-t)+(1-k)t\big)$ 本頁推導（代入 Eq. 26，α+σ=1 $\alpha+\sigma=1$ ）。本頁中「u-MSE」指 κ=1 $\kappa=1$ ，「v-MSE」指這個 κ $\kappa$ 。
+
+ 換句話說，用 v-loss 訓練等於用以 κ2 $\kappa^2$ 加權的 u-MSE 訓練：v^−v=κ(u^−u) $\hat v-v=\kappa(\hat u-u)$ −v=κ(u^−u)，有效測度為 Dα~=Dα⋅κ2 $\widetilde{D\alpha}=D\alpha\cdot\kappa^2$ =Dα⋅κ2，其中 κ=1/(k(1−t)+(1−k)t) $\kappa=1/\big(k(1-t)+(1-k)t\big)$ 。
+
+ logit-normal 取樣
+
+ logit-normal 取樣讓 ln⁡t1−t $\ln\frac{t}{1-t}$ t​ 服從常態分布 N(μ,s2) $\mathcal N(\mu,s^2)$ )。μ<0 $\mu<0$ 時取樣集中在 t<0.5 $t<0.5$ ，也就是噪聲較多的一側。論文 Sec. 3.4 沒有寫出 μ $\mu$ 與 s $s$ 。對稱的取樣分布配上 u-MSE 時，最佳值仍是 D/(D+d) $D/(D+d)$ 本頁推導，無法得到論文報告的 k=0 $k=0$ ；本頁採 μ=−0.8 $\mu=-0.8$ 、s=0.8 $s=0.8$ （與 JiT 的像素空間設定相同，Table 3），用它算出的母體最佳值與論文報告的數字一致。這是用論文數字校準的推定值，不是論文寫明的設定。
+
+ 時間條件：N 區間與雜訊強度相依模型
+
+ 共享線性模型對所有 t $t$ 用同一個 W $W$ 。若把 [0,1] $[0,1]$ 切成 N $N$ 個等寬區間，每個區間各用一個線性映射，就是 N 區間模型；N→∞ $N\to\infty$ 的極限是每個噪聲強度各有一個矩陣的 W(α) $W(\alpha)$ （App. H），其最佳損失為
+
+ Δdep∗=d2∫Dα~  (φσ−ψα)2α2+σ2 $\Delta^*_{dep}=\frac d2\int\widetilde{D\alpha}\;\frac{(\varphi\sigma-\psi\alpha)^2}{\alpha^2+\sigma^2}$ ∗​=2d​∫Dαα2+σ2(φσ−ψα)2​
+Eq. 77c
+
+ 垂直項完全消失，平行項也不大於共享模型的平行項（Eq. 78a），所以 Δdep∗≤Δ∗ $\Delta^*_{dep}\le\Delta^*$ ∗​≤Δ∗（Eq. 79）。
+
+ 下圖計算的是「母體最佳值」：對資料與噪聲取期望（相當於無限多樣本）後算出的最佳 k $k$ 。它與「訓練值」，也就是實際以梯度下降與有限樣本訓練得到的 k $k$ ，不一定相同。請依步驟 1 到 4 操作。
+
+ C3訓練設定如何移動母體最佳 k（D = 128）
+
+ 1Theorem 3.2 的條件
+ 2加入時間條件
+ 3改用 logit-normal 取樣
+ 4再改用 v-MSE
+
+ D/(D+d)（Theorem 3.2）共享線性
+
+ 內在維度 d32
+
+ d = 32　設定 A
+D/(D+d) = 0.800
+共享線性 = 0.800
+
+ 訓練設定
+A 均勻·uB logitN·uC logitN·v
+
+ 時間區間數 N
+1248163264
+
+ 顯示雜訊強度相依模型（App. H）
+
+ 論文（Fig. 1 左上、右上）：共享線性在此條件下學到的 k 與 D/(D+d) 相差在 0.027 內；加入時間條件後 k 偏離 D/(D+d)，分區預測與訓練出的八區間 k 相差在 0.025 內。
+
+ 副圖的 k0.50
+
+ 有效權重 p(t)·κ²(t)，以最大值正規化。設定 B 的權重集中在 t < 0.5；設定 C 的 κ² 再依 k 改變分布。
+
+ 設定 A：均勻 + u-MSE；B：logit-normal（μ = −0.8，s = 0.8，推定值）+ u-MSE；C：logit-normal + v-MSE。母體最佳值以 M = 1024 中點積分、k 網格步長 0.005 計算（Eq. 12、77c）；不含時間嵌入 MLP。「雜訊相依恆為 0.5」與「v-MSE 下損失與 k 無關」為本頁推導。
+
+ 設定 A，d = 32，共享線性 k* = 0.800
+
+ 母體最佳值不等於訓練值
+
+ 步驟 2 中，雜訊強度相依模型的母體最佳值恆為 0.5：去掉垂直殘差後，剩下的平行項 (φσ−ψα)2/(α2+σ2) $(\varphi\sigma-\psi\alpha)^2/(\alpha^2+\sigma^2)$ /(α2+σ2) 在 k↔1−k $k\leftrightarrow1-k$ 、t↔1−t $t\leftrightarrow1-t$ 下不變本頁推導。這是線性模型的母體結果，不代表實際網路；時間條件化的 JiT-B/16 在像素空間學到接近 1.0（Sec. 5.2）。
+
+ 母體最佳值與訓練值不同（Fig. 1 右下格，d = 128）
+
+ 0.212八區間模型的母體最佳值（本頁網格算出 0.210）
+
+ 0.659實際訓練出的八區間模型
+
+ 0.612實際訓練出的時間嵌入 MLP
+
+ 設定為時間條件 + logit-normal + v-MSE（Sec. 3.4）。「母體最佳值」是對資料與噪聲取期望後算出的最佳 k $k$ ；「訓練值」是以梯度下降與有限樣本實際訓練得到的 k $k$ 。在這個設定下，母體分析不再能定量預測訓練結果。作者的結論是：知道 d $d$ 與 D $D$ 並不足以決定實際學到的 k $k$ ，因此應該在實際的訓練設定下直接學 k $k$ 。
+
+ Fig. 1 四格的結論（Sec. 3.4，數字照原文）
+ Fig. 1 位置設定結果
+
+ 左上共享線性、均勻 t、u-MSE（Theorem 3.2 原條件）學到的 k 與 D/(D+d) 相差在 0.027 內
+
+ 右上加入時間條件（八區間線性；時間嵌入 MLP），均勻 t、u-MSEk 偏離 D/(D+d)；分區預測與訓練出的八區間 k 相差在 0.025 內；MLP 與八區間模型相差在 0.012 內（平均差 0.004）
+
+ 左下共享線性，改取樣與損失logit-normal 使最佳值在 d ≥ 48 時為 k = 0（預測誤差 0.026 內）；再改用 v-MSE 使高 d 的最佳值離開邊界（預測誤差 0.045 內）
+
+ 右下時間條件 + logit-normal + v-MSEd = 128：八區間母體最佳 0.212，訓練出的八區間模型 0.659，時間嵌入 MLP 0.612
+
+ 延伸閱讀：Loss weighting 與 ELBO：目標選擇等於加權選擇
+
+ 08 · k-Diff
+
+ k-Diff 把 k 當成可訓練參數
+
+ k-Diff 把 k $k$ 寫成 k=sigmoid(wk) $k=\mathrm{sigmoid}(w_k)$ ​)，wk $w_k$ ​ 是一個可訓練的純量，與網路參數 θ $\theta$ 一起以反向傳播更新（Sec. 4）：
+
+ L(θ,wk)=12∫Dα~  E ∥uθ(z)−u∥2,k=sigmoid(wk) $L(\theta,w_k)=\frac12\int\widetilde{D\alpha}\;\mathbb E\,\big\|u_\theta(z)-u\big\|^2,\qquad k=\mathrm{sigmoid}(w_k)$ ​)=21​∫DαE​uθ​(z)−u​2,k=sigmoid(wk​)
+Eq. 15
+
+ 目標 u $u$ 透過 k $k$ 依賴 wk $w_k$ ​（Eq. 13）。實際訓練用 v-loss（Alg. 1、Table 3）：網路輸出先換算成速度，再與速度目標比較。此時 Dα~=Dα⋅κ2 $\widetilde{D\alpha}=D\alpha\cdot\kappa^2$ =Dα⋅κ2、κ=1/(k(1−t)+(1−k)t) $\kappa=1/\big(k(1-t)+(1-k)t\big)$ ，Eq. 15 與 Alg. 1 的 l2_loss(v - v_pred) 相同。因為 κ $\kappa$ 依賴 k $k$ ，對 wk $w_k$ ​ 的梯度也包含換算分母隨 k $k$ 的變化。
+
+ Alg. 1 訓練步驟（App. E）
+這一行做什麼
+
+ t = sample_t()依 Dα $D\alpha$ 抽擴散時間（實驗用 logit-normal）。
+
+ e = randn_like(x)抽標準高斯噪聲；e 即本文的 n $n$ 。
+
+ k = sigmoid(w_k)由可訓練純量得到 k∈(0,1) $k\in(0,1)$ ；初始 wk=0 $w_k=0$ ​=0，即 k=0.5 $k=0.5$ 。
+
+ z = t * x + (1 - t) * e前向過程（Eq. 1）。
+
+ u = k * x - (1 - k) * e目標（Eq. 13）。
+
+ v = ((1 - 2k) * z + u) / (k(1 - t) + (1 - k) t)由 z,u $z,u$ 換算速度；代數上恆等於 x−e $x-e$ ，與 k $k$ 無關本頁推導。
+
+ u_pred = net(z, t)網路輸出。
+
+ v_pred = ((1 - 2k) * z + u_pred) / (k(1 - t) + (1 - k) t)用同一個式子把網路輸出換算成速度。
+
+ loss = l2_loss(v - v_pred)在速度空間比較；梯度同時流向 θ $\theta$ 與 wk $w_k$ ​。
+
+ Alg. 2 取樣步驟
+
+ z_next = z + (t_next - t) * v_pred以 Euler 步寫出；論文報告的所有結果用 Heun 解算器 50 步（NFE = 99）。
+
+ v 恆等於 x−e $x-e$ 的理由：由 Eq. 17，x=(1−k)z+(1−t)uk(1−t)+(1−k)t $x=\frac{(1-k)z+(1-t)u}{k(1-t)+(1-k)t}$ (1−k)z+(1−t)u​、n=kz−tuk(1−t)+(1−k)t $n=\frac{kz-tu}{k(1-t)+(1-k)t}$ kz−tu​，兩式相減即得 Alg. 1 的換算式本頁推導。所以實際訓練永遠在同一個速度空間比較，k $k$ 只決定網路輸出如何換算成速度。
+
+ 分母 k(1−t)+(1−k)t $k(1-t)+(1-k)t$ 在 k=1 $k=1$ 、t→1 $t\to1$ 或 k=0 $k=0$ 、t→0 $t\to0$ 時趨近 0；0<k<1 $0<k<1$ 時分母不小於 min⁡(k,1−k) $\min(k,1-k)$ 。截斷規則在論文中有兩處寫法：Sec. 4 寫「必要時把分母截斷到最小 0.05」；Table 3（欄名「clip of (1 − t) in division」）的設定是像素空間一律 0.05，潛空間只有 x-prediction 用 0.05、其他（含 k-Diff）用 0。
+
+ 論文也測試時間相依的 k(t) $k(t)$ ：把 [0,1] $[0,1]$ 切成 N $N$ 個區間（例如 128），每個端點各有一個可訓練參數，區間內對 sigmoid 後的值線性內插（App. F）。結果見 S09。
+
+ 下圖是 k-Diff 的玩具版：沿用 S03 的線性模型與母體損失，k $k$ 與去噪器一起以 Adam 訓練，沒有任何地方輸入 d $d$ 。
+
+ C4k-Diff 的玩具版：k 作為可訓練參數
+
+ 按「執行」：k 從 0.5 出發，與平行係數 a、垂直係數 b 一起以 Adam 更新 3000 步。
+
+ A 均勻·uB logitN·uC logitN·v
+
+ 內在維度 d32
+
+ 執行
+ 重設
+
+ 學到的 kC3 網格值（步長 0.005）D/(D+d)
+
+ a（平行）b（垂直）依目前 k 的平衡值 a*、b*（Eq. 11）
+
+ 步數 0　k = 0.500　C3 網格值 = 0.800　D/(D+d) = 0.800
+𝓛 = —　a = 0.000　b = 0.000
+
+ C4 以連續參數最佳化，終值與 C3 的網格值可差到半個網格（例：B、d = 32 為 0.117 對 0.115；C、d = 32 為 0.847 對 0.845），這個差異在網格解析度內。
+
+ 玩具設定：母體損失（對 x、n 取期望，t 以 M = 1024 中點積分），去噪器限制為 W = a·PPᵀ + b·(I − PPᵀ)，從 W = 0 出發時梯度只落在這兩個矩陣的組合中（本頁推導）；D = 128。Adam β₁ = 0.9、β₂ = 0.95（Table 3 的值），學習率 0.02（玩具用值；論文網路用 2e-4），解析梯度，v-MSE 時包含 κ² 對 k 的導數。這個玩具省略了 sample_t 與 randn_like（改成取期望），保留 k = sigmoid(w_k)、u = k·x − (1−k)·e 與依賴 k 的換算分母。
+
+ 延伸閱讀：廣義預測目標 u = kx − (1 − k)n 與 k-Diff
+
+ 09 · 實驗結果
+
+ 實驗中 k 在潛空間停在 0.66、在像素空間趨近 1
+
+ 作者在 ImageNet 256×256 與 512×512 上比較 k-Diff 與固定目標的基準（Sec. 5）。
+
+ 潛空間（LightningDiT-XL/1，VA-VAE tokenizer）：訓練 64 epoch、CFG 1.5、Heun 50 步（NFE = 99）時，v-prediction 基準 FID 2.08（原論文報告 2.11），k-Diff 為 2.05。延長到 800 epoch，最終 FID 1.34，最低 1.22 出現在第 384 epoch，之後有過擬合趨勢（Fig. 3a）。k $k$ 從 0.5 單調上升，Fig. 3b 的長期收斂值為 0.66；Table 2 記錄的第 64 epoch 值為 0.522。
+
+ 像素空間（JiT-B/16）：200 epoch 時 k-Diff 與 x-prediction 的 FID 都是 4.70（Fig. 2b）；k $k$ 在 30 個 epoch 內從 0.5 升到接近 1.0（Fig. 3b）。
+
+ FID 摘要：潛空間 64 epoch，k-Diff 2.05、v-prediction 2.08；像素空間 200 epoch，k-Diff 與 x-prediction 都是 4.70；消融中 128 區間的時間相依 k(t) $k(t)$ 為 2.17，差於常數 k $k$ 的 2.05（Sec. 5、Table 2）。
+
+ k 軸論文報告的學到值
+
+ε k = 0v k = 0.5x k = 1潛空間 第 64 epoch 0.522（Table 2）
+潛空間 長期 0.66（Fig. 3b）
+像素空間 ≈ 1.0（Fig. 3b）
+
+ Table 1 摘錄：k-Diff 與其固定目標基準（FID-50K ↓、IS ↑）
+ 資料／模型基準基準 FID基準 ISk-Diff FIDk-Diff IS
+
+ ImageNet 256，潛空間，LightningDiT-XL/1（800 epoch 最終 checkpoint）LightningDiT-XL/11.35295.31.34301.7
+
+ ImageNet 256，像素空間，JiT-B/16JiT-B/163.66275.13.64274.9
+
+ ImageNet 512，像素空間，JiT-B/32JiT-B/324.02271.04.03277.1
+
+ 論文未寫明 Table 1 像素空間列的訓練 epoch 數。ImageNet 512 一列中 k-Diff 的 FID 略高、IS 較高。
+
+ Table 2 消融（LightningDiT-XL/1，ImageNet 256，64 epoch）
+ 參數目標型態時間區間學到的值（第 64 epoch）FID
+
+ 1 個 k（k-Diff）常數10.5222.05
+
+ 2 個（k0x−k1ε $k_0x-k_1\varepsilon$ ​x−k1​ε）常數1(0.556, 0.509)2.04
+
+ 1 個 k（k-Diff）時間相依128見 Fig. 5a2.17
+
+ 兩個獨立參數的 FID 2.04 與單一參數的 2.05 幾乎相同，作者據此認為單一內插參數已足夠。時間相依 k(t) $k(t)$ 的 FID 2.17 較差；作者推測常數 k $k$ 提供較穩定的訓練目標。Fig. 5a 中，排除 t=0 $t=0$ 與 t=1 $t=1$ 附近的邊界區域後，k(t) $k(t)$ 隨 t $t$ 單調下降，在 t≈0 $t\approx0$ （邊界區域內側）約 0.56，接近 t=1 $t=1$ 時降到約 0.3；緊鄰邊界的參數停在初始值 0.5，作者歸因於 logit-normal（μ = 0、σ = 1）取樣密度在端點趨近 0，梯度不足（App. F）。
+
+ 作者對 k $k$ 值的解釋：潛空間的維度比像素空間低，但仍有相當的環境維度，垂直方向的動態把 k $k$ 拉到 0.66；像素空間的 D $D$ 遠大於 d $d$ ，k $k$ 迅速趨近 x-prediction，方向與 Theorem 3.2 一致（Sec. 5.1、5.2）。
+
+ 延伸閱讀：Pixel-space diffusion
+
+ 10 · 實作
+
+ 實作設定與常見錯誤
+
+ Table 3 與 App. I 的設定
+ 項目潛空間 LightningDiT-XL像素空間 JiT-B
+
+ tokenizerVA-VAE—
+
+ depth / hidden / heads28 / 1152 / 1612 / 768 / 12
+
+ image size / patch size256 / 1256（另有 512）/ image_size ÷ 16
+
+ bottleneck—128
+
+ in-context class tokens / start block—32 / 4
+
+ dropout00
+
+ lossv-lossv-loss
+
+ epochs64（消融）、800200（消融）、600
+
+ warmup epochs05
+
+ optimizerAdam，β₁, β₂ = 0.9, 0.95同左
+
+ batch / lr / schedule / weight decay1024 / 2e-4 / constant / 0同左
+
+ EMA decay{0.9996, 0.9998, 0.9999}同左
+
+ time samplerlogit(t) ~ N(0.0, 1.0²)logit(t) ~ N(−0.8, 0.8²)
+
+ noise scale1.01.0 × image_size ÷ 256
+
+ clip of (1 − t) in divisionx-prediction 0.05，其他 00.05
+
+ class token drop（CFG 用）0.10.1
+
+ 取樣Heun 50 步，時間點在 [0, 1] 線性分布，CFG 1.5，CFG 區間 [0.1, 1]Heun 50 步，同左，CFG 2.9，CFG 區間 [0.1, 1]
+
+ 常見錯誤
+
+ 時間方向弄反。本文 t=1 $t=1$ 是資料、t=0 $t=0$ 是噪聲，與 DDPM 相反。
+
+ 換算分母未截斷。Sec. 4 寫「必要時把 k(1−t)+(1−k)t $k(1-t)+(1-k)t$ 截斷到 0.05」；Table 3 的欄名是「clip of (1 − t) in division」，潛空間 x-prediction 0.05、其他 0，像素空間 0.05。
+
+ 把損失算在 u 空間。Alg. 1 與 Table 3 用 v-loss；k $k$ 改變的是輸出參數化，v 目標本身與 k $k$ 無關。
+
+ k $k$ 的參數化與初始化不一致。k=sigmoid(wk) $k=\mathrm{sigmoid}(w_k)$ ​)、初始 wk=0 $w_k=0$ ​=0（k=0.5 $k=0.5$ ，Fig. 3b 由 0.5 出發）。論文沒有說明 wk $w_k$ ​ 是否使用與網路相同的學習率，也沒有說明 EMA 是否套用在 wk $w_k$ ​。
+
+ 期待時間相依 k(t) $k(t)$ 更好。Table 2 中 128 區間 k(t) $k(t)$ 的 FID 2.17 差於常數 k $k$ 的 2.05；取樣密度低的端點參數學不動（App. F）。
+
+ 取樣時忘了用學到的 k $k$ 換算速度。Alg. 2 以 Euler 步寫出換算；論文報告的結果用 Heun 50 步（NFE = 99）。
+
+ 11 · 研究脈絡
+
+ 研究脈絡（由 notes/timeline.json 提供）
+
+ 預測目標的選擇依序經歷 ε（DDPM、score SDE）、v（Progressive Distillation、EDM、flow matching）、加權觀點（Kingma 與 Gao 把各目標寫成 ELBO 的不同加權）與 x（SiD2、JiT），本論文再把三者放回同一條 k 軸。每張卡片連到對應的研究筆記。
+
+ 擴散模型預測噪聲預測速度損失加權預測資料動態分析連續的 k
+
+ 2015擴散模型Deep Unsupervised Learning using Nonequilibrium Thermodynamics
+Sohl-Dickstein et al.
+本論文引用為擴散模型的基礎，後續目標選擇都在此框架內。
+arXiv ↗筆記
+2020預測噪聲 · k = 0Denoising Diffusion Probabilistic Models
+Ho, Jain, Abbeel
+以噪聲預測（ε-prediction）訓練，本論文視為早期標準目標（k = 0）。
+arXiv ↗筆記
+2020預測噪聲 · k = 0Score-Based Generative Modeling through Stochastic Differential Equations
+Song et al.
+與 DDPM 同被歸為早期 ε-prediction 路線。
+arXiv ↗筆記
+2022預測速度 · k = 0.5Progressive Distillation for Fast Sampling of Diffusion Models
+Salimans, Ho
+提出新的參數化，使少步取樣更穩定；本論文將其列為 v-prediction 來源。
+arXiv ↗筆記
+2022預測速度 · k = 0.5Elucidating the Design Space of Diffusion-Based Generative Models
+Karras et al.
+以 preconditioning 設計目標與縮放，使網路輸出變異數跨 SNR 維持固定。
+arXiv ↗筆記
+2022預測速度 · k = 0.5Flow Matching for Generative Modeling
+Lipman et al.
+改為回歸固定條件機率路徑的向量場（速度），涵蓋擴散路徑。
+arXiv ↗筆記
+2023損失加權Understanding Diffusion Objectives as the ELBO with Simple Data Augmentation
+Kingma, Gao
+證明各目標等於不同噪聲層級 ELBO 的加權積分，目標差異等同加權差異。
+arXiv ↗筆記
+2024預測速度 · k = 0.5Scaling Rectified Flow Transformers for High-Resolution Image Synthesis
+Esser et al.
+在高解析度生成中大規模比較 rectified flow 與既有擴散公式。
+arXiv ↗筆記
+2024預測資料 · k = 1Simpler Diffusion (SiD2): 1.5 FID on ImageNet512 with pixel-space diffusion
+Hoogeboom et al.
+以 sigmoid loss weighting 讓 pixel-space 擴散可擴展；被本論文歸為 x-prediction 或重度 SNR 加權的例子。
+arXiv ↗筆記
+2024動態分析Dynamical Regimes of Diffusion Models
+Biroli et al.
+分析反向生成過程的三個動力學區段，屬本論文所接續的理論脈絡。
+arXiv ↗筆記
+2025預測資料 · k = 1Back to Basics: Let Denoising Generative Models Denoise
+Li, He
+依流形假設主張直接預測乾淨資料（x-prediction），並提出 JiT。
+arXiv ↗筆記
+2026連續的 k · 本文Understanding and Learning Prediction Targets in Diffusion Models
+本論文
+以 u = kx − (1 − k)n 統一 ε、v、x，推得 k* = D/(D + d)，並提出可學 k 的 k-Diff。
+arXiv ↗筆記
+
+ 12 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 閉式解 k∗=D/(D+d) $k^*=D/(D+d)$ =D/(D+d) 假設白化子空間資料、共享線性去噪器、均勻時間取樣與 u-MSE。受控實驗顯示學到的目標會隨去噪器、取樣與損失改變，而且分區母體最佳值不一定等於訓練值。推廣到非線性模型與更大規模的文字到影像系統，以及釐清目標選擇如何影響樣本品質，論文列為開放問題（Sec. 6）。
+
+ 研究筆記（依閱讀順序）
+
+ 擴散模型預測目標的演進總覽：從 ε 到 v 到 x總覽
+
+ ε-prediction 與 DDPM、score-based 模型擴散模型起點與噪聲預測
+
+ v-prediction 與 preconditioning：Progressive Distillation 與 EDM速度參數化
+
+ Flow matching 的速度目標與 rectified flow 的大規模使用回歸向量場
+
+ Loss weighting 與 ELBO：目標選擇等於加權選擇不同目標等價於不同加權
+
+ x-prediction 與流形觀點：JiT 與 pixel-space 的近期結果高維資料與 x-prediction
+
+ 廣義預測目標 u = kx − (1 − k)n 與 k-Diff本論文的理論與方法
+
+ 擴散模型學習與泛化動態的理論背景本論文所接續的分析傳統
+
+ Pixel-space diffusion站內既有筆記
+
+ Velocity Irreducible Variance站內既有筆記
+
+ Qing Jin, Chaoyang Wang. Understanding and Learning Prediction Targets in Diffusion Models. NeurIPS 2026. arXiv:2601.21419.
+
+ 本頁的方程式與數字取自論文 v3；標示「本頁推導」的內容為本頁自行推導，並非論文結論。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記

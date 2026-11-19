@@ -25,7 +25,7 @@ Paper Master 把「研究手記」Discord 伺服器裡收集的論文，整理�
 - `index.html`：互動式論文關聯圖
 - `tutorials/`：互動教學與研究筆記；`tutorials/index.html` 是總目錄
 
-重新產生的指令與目前的整理方式見 `PAPER-MASTER.md`。
+重新產生的指令與目前的整理方式見 `PAPER-MASTER.md`。互動教學頁的清單在 `scripts/tutorial_list.json`，原始頁面在 `scripts/tutorials_raw/`，每篇教學的設計文件、審查與驗算在 `scripts/tutorial_src/<論文編號>/`。
 
 ## 步驟 1–4：資料庫與關聯圖
 
@@ -35,6 +35,8 @@ Paper Master 把「研究手記」Discord 伺服器裡收集的論文，整理�
 4. **關聯圖**（參考 Connected Papers）：節點＝論文，大小＝關聯度，顏色＝群集；連線＝主題相似，越像距離越近。要有搜尋（高亮直接關聯的論文）、依 Tag／群集／來源分支篩選，以及點節點後顯示完整資訊與最相關論文的側邊欄。
 
 ## 步驟 6：每篇論文的詳細介紹
+
+建構互動式教學時使用 `.claude/skills/paper-tutorial/`（Elephant-Goldfish 流程、模型分工、驗收與上架腳本）。以下是內容要求。
 
 依需求逐篇做，三個階段依序完成：
 

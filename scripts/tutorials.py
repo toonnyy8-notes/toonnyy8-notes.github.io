@@ -1,22 +1,9 @@
 import json,re,os,html
-P=json.load(open('papers.json')); byid={p['id']:p for p in P}
-grad=[p['id'] for p in P if 'Gradient decent' in p['cats']]
-T=[
- ('fors-illustrated','只用 Score 的高精度取樣（FORS 圖解）',[273]),
- ('fors-from-zero','從零讀懂 FORS',[273]),
- ('flow-matching-coupling','Flow Matching 配對入門',[214,215,233]),
- ('fourier-features','Fourier Features 入門',[]),
- ('discoloop','DiscoLoop 互動導讀',[79]),
- ('loopcd','LoopCD 入門',[82]),
- ('looped-lm-intro','迴圈式語言模型入門',[p['id'] for p in P if re.search(r'loop|recurrent depth',p['title'],re.I)]),
- ('zeroth-order','零階之路',sorted(set(grad+[122,123,148,200,258]))),
- ('rejection-mh','拒絕取樣與 Metropolis–Hastings 入門',[273,1]),
- ('mala','MALA 入門',[273,146,228]),
- ('prediction-targets-k-diff','擴散模型的預測目標：從 ε、v、x 到連續的 k',[238]),
- ('strong-stochastic-flow-maps','強隨機 Flow Map 導讀',[235]),
- ('ldm-is-ae','LDM-is-AE 導讀',[234]),
-]
-os.makedirs('out/tutorials',exist_ok=True)
+os.chdir(os.path.dirname(os.path.abspath(__file__)))  # paths below are relative to scripts/; pages are written to the repo root
+P=json.load(open('../papers.json')); byid={p['id']:p for p in P}
+# interactive tutorials: one entry per page in tutorials_raw/ (slug, title, paper ids)
+T=[(t['slug'],t['title'],t['papers']) for t in json.load(open('tutorial_list.json'))]
+os.makedirs('../tutorials',exist_ok=True)
 BAR='''<nav id="pm-bar" aria-label="Paper Master" style="position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif">
 <a href="../index.html" style="padding:10px 14px;border-radius:999px;background:#1D1C19;color:#F6F4EE;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:0 4px 16px rgba(0,0,0,.2)">← Paper Master</a>
 <a href="index.html" style="padding:10px 14px;border-radius:999px;background:#F6F4EE;color:#1D1C19;text-decoration:none;border:1px solid #DCD7CB;min-height:20px;display:inline-flex;align-items:center;box-shadow:0 4px 16px rgba(0,0,0,.12)">教學與筆記</a></nav>'''
@@ -27,7 +14,7 @@ for slug,title,ids in T:
   s=open(src).read()
   if 'id="pm-bar"' not in s:
     s=re.sub(r'</body>',BAR+'\n</body>',s,count=1,flags=re.I) if re.search(r'</body>',s,re.I) else s+BAR
-  open(f'out/tutorials/{slug}.html','w').write(s)
+  open(f'../tutorials/{slug}.html','w').write(s)
   out.append({'file':f'{slug}.html','title':title,'papers':ids})
 ax={}
 for p in P:
@@ -65,7 +52,7 @@ for slug in order:
   if n['papers']:
     rel+='<section class="related"><h2>資料庫中的相關論文</h2>'+''.join(f'<a href="../index.html#paper-{i}"><span>{i:03d}</span>{html.escape(byid[i]["title"])}</a>' for i in n['papers'])+'</section>'
   kick=f'<b>{noteno(slug)}</b><span>'+('主題總覽' if n.get('kind')=='hub' else '研究筆記')+'</span><span>'+html.escape(n.get('cluster',''))+'</span>'
-  open(f'out/tutorials/{slug}.html','w').write(NT.replace('__TITLE__',html.escape(n['title'])).replace('__KICKER__',kick).replace('__RELATED__',rel).replace('__MD__',n['md'].replace('</script','<\\/script')))
+  open(f'../tutorials/{slug}.html','w').write(NT.replace('__TITLE__',html.escape(n['title'])).replace('__KICKER__',kick).replace('__RELATED__',rel).replace('__MD__',n['md'].replace('</script','<\\/script')))
   out.append({'file':f'{slug}.html','title':n['title'],'papers':n['papers'],'kind':n.get('kind','topic'),'cluster':n.get('cluster',''),'related':rn})
 json.dump(out,open('tutorials.json','w'),ensure_ascii=False)
 inter=[t for t in out if 'kind' not in t]
@@ -84,7 +71,7 @@ def grp(h):
           f'<p class="cnt">{len(kids)} 篇主題筆記 · {len(h["papers"])} 篇相關論文</p></header><ol>'
           +''.join(f'<li><a href="{k["file"]}"><span class="no">{noteno(k["file"][:-5])}</span>{html.escape(k["title"])}</a></li>' for k in kids)+'</ol></section>')
 notes_html=''.join(grp(h) for h in hubs)
-open('out/tutorials/index.html','w').write(f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>教學與筆記 · Paper Master</title>
+open('../tutorials/index.html','w').write(f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>教學與筆記 · Paper Master</title>
 <meta name="description" content="Paper Master 收錄的 {len(inter)} 份互動教學與 {len(hubs)+ntopic} 篇研究筆記。">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">

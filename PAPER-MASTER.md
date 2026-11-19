@@ -19,10 +19,10 @@
 ## 重新產生
 
 ```sh
-cd scripts
-# 先把三份 md 放在同一個資料夾
-python3 parse.py && python3 build.py && python3 tutorials.py && python3 render.py
+python3 scripts/tutorials.py && python3 scripts/render.py   # 從 scripts/ 的資料重建 tutorials/ 與 index.html
 ```
+
+資料庫本身（papers.csv／papers.json）由 `scripts/parse.py` 與 `scripts/build.py` 產生，需先把三份清單 md 放在 `scripts/`。新增互動教學用 `.claude/skills/paper-tutorial/`。
 
 ## 尚未完成
 

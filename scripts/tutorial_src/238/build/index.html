@@ -1,0 +1,1237 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>擴散模型的預測目標 k</title>
+<meta name="description" content="圖解 Jin 與 Wang 的 NeurIPS 2026 論文：把 ε、v、x 三種預測目標寫成 u = kx − (1−k)n，推得線性模型的最佳 k = D/(D+d)，並以 k-Diff 在訓練中學出 k。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 238</span>
+  <span class="ttl">擴散模型的預測目標：從 ε、v、x 到連續的 k</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 238</b> · 互動教學 · arXiv 2601.21419 · NeurIPS 2026</div>
+  <h1>擴散模型的預測目標：從 <span class="lat">ε、v、x</span> 到連續的 <span class="lat">k</span></h1>
+  <p class="dek">這篇論文把三種預測目標放進同一個參數 k，推得最佳 k 由資料維度決定，並讓 k 在訓練中學出來。</p>
+  <p class="byline">Qing Jin、Chaoyang Wang（2026）〈Understanding and Learning Prediction Targets in Diffusion Models〉</p>
+  <div class="kaxis" id="kx-hero" role="img" aria-label="k 軸：k = 0 為 ε，0.5 為 v，1 為 x；潛空間學到 0.66，像素空間學到接近 1.0" data-marks='[{"k":0.66,"label":"潛空間學到 <span class=\"v\">0.66</span>","acc":1},{"k":1,"label":"像素空間學到 <span class=\"v\">≈ 1.0</span>","acc":1}]'></div>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 一個式子</span><p>同一個式子 $u=kx-(1-k)n$ 包含三種常見目標：k = 0 是預測噪聲，k = 0.5 是預測速度，k = 1 是預測乾淨資料。</p></div>
+    <div class="fact"><span class="n">02 · 一個公式</span><p>在簡化的線性模型中，最佳 k 等於 D/(D+d)：D 是資料向量的長度，d 是資料實際所在子空間的維度。資料越集中在低維子空間，最佳 k 越接近 1。</p></div>
+    <div class="fact"><span class="n">03 · 一個參數</span><p>k-Diff 只多訓練一個數字 k。在 ImageNet 256 上，潛空間模型學到 0.66，像素空間模型學到接近 1。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2601.21419">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-238">在關聯圖中查看</a>
+    <a class="btn" href="prediction-targets-overview.html">研究筆記總覽</a>
+  </div>
+</section>
+
+<!-- S1 ============================================================ -->
+<section class="ch" id="basics" data-toc="01" data-tt="前向過程">
+  <div class="ch-num">01 · 前向過程</div>
+  <h2>前向過程把資料與噪聲線性混合</h2>
+  <div class="prose">
+    <p>擴散模型（diffusion model）與 flow matching 都從一個「前向過程」開始：把一筆乾淨資料 $x$ 與一筆標準高斯噪聲 $n$ 依時間 $t$ 混合成帶噪的 $z$。論文先寫出一般形式（Sec. 3）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$z=\alpha x+\sigma n,\qquad u=\varphi x+\psi n$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="prose">
+    <p>$\alpha,\sigma$ 決定前向過程如何混合資料與噪聲；$\varphi,\psi$ 決定網路要預測的目標 $u$，由設計者選擇（例如 v-prediction 取 $\varphi=1,\psi=-1$，x-prediction 取 $\varphi=1,\psi=0$）。本論文採用 flow matching，取 $\alpha=t$、$\sigma=1-t$：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$z=t\,x+(1-t)\,n,\qquad t\in[0,1]$$</div><span class="eq-n">Eq. 1，α = t</span></div>
+  <div class="prose">
+    <p>在這個慣例下，$t=1$ 時 $z=x$ 是乾淨資料，$t=0$ 時 $z=n$ 是純噪聲。DDPM 的慣例是 $t$ 越大噪聲越多，方向與本文相反，閱讀其他文獻時要先確認方向。</p>
+    <p>訓練時，網路看到 $z$ 與 $t$，輸出一個「預測目標」。生成時，從 $t=0$ 的純噪聲出發，反覆用網路的輸出換算出速度 $v=x-n$，沿 $dz/dt=v$ 一小步一小步往 $t=1$ 前進（Alg. 2）。網路預測得越準，終點越接近資料分布。常見的預測目標有三種：</p>
+    <ul>
+      <li><b>ε-prediction</b>：預測噪聲 $n$，DDPM 等早期方法採用。</li>
+      <li><b>v-prediction</b>：預測速度 $v=x-n$，flow matching 的標準做法。</li>
+      <li><b>x-prediction</b>：預測乾淨資料 $x$，近期的像素空間模型（例如 JiT）採用。</li>
+    </ul>
+    <p>三者都是 $x$ 與 $n$ 的線性組合；知道 $z$ 與 $t$ 時，任一種目標都能換算成另外兩種。下圖用二維平面呈現前向過程：資料只落在水平線上，噪聲則向所有方向擴散。</p>
+  </div>
+  <div class="plate" id="c1a">
+    <div class="plate-h"><span class="id">C1a</span><h3>前向過程：z 是 x 與 n 的混合</h3></div>
+    <p class="plate-lead">拖動 t：t = 0 時點雲是純噪聲，t = 1 時所有點落在資料所在的直線上。</p>
+    <div class="pg two">
+      <div class="fig" id="c1a-fig"><svg role="img" aria-label="二維前向過程示意"></svg></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1a-t">擴散時間 t<output id="c1a-to">0.50</output></label><input id="c1a-t" type="range" min="0" max="1" step="0.01" value="0.5"></div>
+        <div class="ctl-row"><button class="small-btn" type="button" id="c1a-re">重新抽樣</button></div>
+        <div class="legend"><span class="lg par">t·x（資料部分）</span><span class="lg perp">(1−t)·n（噪聲部分）</span></div>
+        <p class="readout" id="c1a-ro"></p>
+      </div>
+    </div>
+    <p class="plate-f">設定：D = 2、d = 1；x = (x̃, 0)，x̃ ~ N(0, 1)；n ~ N(0, I)。150 個點由固定 seed 的 mulberry32 產生。讀數由本頁依 Eq. 1 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c1a-live"></p>
+  </div>
+  <details class="check">
+    <summary>符號表</summary>
+    <div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+      <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td>$x\in\mathbb R^D$</td><td>乾淨資料</td></tr>
+      <tr><td>$n\in\mathbb R^D$</td><td>標準高斯噪聲；Alg. 1 程式碼裡寫成 <code>e</code></td></tr>
+      <tr><td>$D$、$d$</td><td>環境維度（資料向量的長度）、內在維度（資料實際所在子空間的維度）</td></tr>
+      <tr><td>$t$</td><td>擴散時間；$t=1$ 為乾淨資料，$t=0$ 為純噪聲</td></tr>
+      <tr><td>$\alpha,\sigma$</td><td>前向過程係數，本文 $\alpha=t$、$\sigma=1-t$</td></tr>
+      <tr><td>$\varphi,\psi$</td><td>目標係數，$u=\varphi x+\psi n$</td></tr>
+      <tr><td>$u$、$\hat u$</td><td>網路要預測的目標、網路的輸出</td></tr>
+      <tr><td>$v=x-n$</td><td>速度目標。「v-loss／v-MSE」指以 $\|\hat v-v\|^2$ 為損失；「v-prediction」指網路直接輸出 $v$</td></tr>
+      <tr><td>$I$</td><td>對 $\alpha$ 積分的區間，通常為 $[0,1]$</td></tr>
+      <tr><td>$D\alpha$</td><td>訓練時 $\alpha$（即 $t$）的取樣機率測度</td></tr>
+      <tr><td>$\kappa$、$\widetilde{D\alpha}$</td><td>損失換算因子與有效測度（S07）</td></tr>
+      <tr><td>$P$</td><td>$D\times d$ 矩陣，$P^\top P=I$；$PP^\top$ 投影到資料子空間</td></tr>
+      <tr><td>$W$、$W_\parallel$、$W_\perp$</td><td>線性去噪器權重及其平行、垂直分量</td></tr>
+      <tr><td>$\tau$、$\tilde t$</td><td>學習率的倒數、訓練時間（與擴散時間 $t$ 無關）</td></tr>
+      </tbody></table></div></div>
+  </details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">本文的 $z$ 怎麼寫？$t=0$、$t=1$ 各代表什麼？</p>
+    <p class="a">$z=tx+(1-t)n$；$t=1$ 為乾淨資料，$t=0$ 為純噪聲（Sec. 3，$\alpha=t,\sigma=1-t$）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="eps-prediction-ddpm-score.html">ε-prediction 與 DDPM、score-based 模型</a>、<a href="flow-matching-velocity-target.html">Flow matching 的速度目標</a></p>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="k" data-toc="02" data-tt="參數 k">
+  <div class="ch-num">02 · 參數 k</div>
+  <h2>一個參數 k 涵蓋三種目標</h2>
+  <div class="prose">
+    <p>作者先把目標寫成一般的線性組合 $u=\varphi x+\psi n$（Eq. 1），再把係數限制為 $\varphi=k$、$\psi=-(1-k)$，得到一族只由單一參數 $k\in[0,1]$ 決定的目標（Sec. 3.3）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$u=k\,x-(1-k)\,n$$</div><span class="eq-n">Eq. 13</span></div>
+  <div class="tscroll" style="max-width:700px"><table>
+    <caption>k 的三個特殊值（flow matching，α = t，σ = 1 − t）</caption>
+    <thead><tr><th class="num">k</th><th>u</th><th>對應的傳統目標</th></tr></thead><tbody>
+    <tr><td class="num">0</td><td>$-n$</td><td>ε-prediction（差一個負號）</td></tr>
+    <tr><td class="num">0.5</td><td>$\tfrac12(x-n)=\tfrac12 v$</td><td>v-prediction（差 ½ 倍）</td></tr>
+    <tr><td class="num">1</td><td>$x$</td><td>x-prediction</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>論文寫明這三個對應是「up to a constant scaling factor」，也就是只差一個常數倍。$k$ 介於這些點之間時，得到的是三種傳統目標以外的新目標。後續的分析要回答的是：對一組給定的資料，哪一個 $k$ 讓訓練損失最小。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$u=kx-(1-k)n$ 中 $k=0,0.5,1$ 各得到什麼？</p>
+    <p class="a">$k=0$：$u=-n$（ε，差負號）；$k=0.5$：$u=\tfrac12(x-n)=\tfrac12v$；$k=1$：$u=x$（Eq. 13）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="v-prediction-and-preconditioning.html">v-prediction 與 preconditioning</a>、<a href="generalized-target-k-parameterization.html">廣義預測目標 u = kx − (1 − k)n 與 k-Diff</a></p>
+</section>
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="linear" data-toc="03" data-tt="線性模型">
+  <div class="ch-num">03 · 線性模型</div>
+  <h2>分析對象是單層共享線性去噪器</h2>
+  <div class="prose">
+    <p>實際的去噪網路是大型 Transformer，無法寫出閉式解。作者改分析一個可以完整推導的簡化問題（Sec. 3.1），設定如下。</p>
+    <p><b>資料。</b>$x=P\tilde x$，其中 $\tilde x\in\mathbb R^d$ 是資料的內在座標，$P$ 是 $D\times d$ 矩陣且 $P^\top P=I_{d\times d}$。資料向量的長度是環境維度（ambient dimension）$D$，但資料只分布在一個 $d$ 維子空間裡，$d$ 稱為內在維度（intrinsic dimension）。此設定沿用 JiT。</p>
+    <p><b>投影。</b>$PP^\top$ 是投影矩陣：對任一向量 $y$，$PP^\top y$ 是 $y$ 落在資料子空間上的分量，$(I-PP^\top)y$ 是垂直於子空間的分量，兩者相加等於 $y$，且 $(PP^\top)^2=PP^\top$、$PP^\top(I-PP^\top)=0$（Eq. 34）。下圖以 $D=2$、$d=1$ 表示，與 C1 使用同一個平面。</p>
+  </div>
+  <figure class="fig" style="max-width:420px;margin:8px 0 28px"><svg id="s3-fig" viewBox="0 0 360 240" width="360" height="240" role="img" aria-label="向量 y 分解為資料子空間上的分量與垂直分量"></svg></figure>
+  <div class="prose">
+    <p><b>去噪器。</b>$\hat u=Wz$（Eq. 2），$W$ 是 $D\times D$ 矩陣。所有噪聲強度 $t$ 共用同一個 $W$，論文稱為 time-shared。</p>
+    <p><b>假設。</b>內在座標白化，$\mathbb E[\tilde x\tilde x^\top]=I_{d\times d}$（Eq. 6）；噪聲 $\mathbb E[nn^\top]=I$（Eq. 7）。</p>
+    <p><b>訓練。</b>損失為 $L=\tfrac12\int D\alpha\;\mathbb E\|Wz-u\|^2$（Eq. 4，這裡先取最簡單的 u-MSE），$D\alpha$ 是訓練時 $t$ 的取樣分布。梯度下降寫成連續時間的微分方程</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\tau\,\frac{dW}{d\tilde t}=-\partial_W L$$</div><span class="eq-n">Eq. 27</span></div>
+  <div class="prose">
+    <p>意思是學習率很小時，權重隨訓練時間 $\tilde t$ 沿負梯度方向連續移動，$\tau$ 是學習率的倒數。線性模型讓所有期望值都能寫成閉式，投影矩陣讓問題能沿子空間與其垂直方向拆開。下一節說明拆開後的結果。</p>
+  </div>
+</section>
+
+<!-- S4 ============================================================ -->
+<section class="ch" id="modes" data-toc="04" data-tt="兩個模式">
+  <div class="ch-num">04 · 兩個模式</div>
+  <h2>學習動態拆成平行與垂直兩個模式</h2>
+  <div class="prose">
+    <p>因為 $x$ 與 $n$ 獨立且 $\mathbb E[n]=0$，梯度需要的兩個二階期望值是（Eq. 32）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{gathered}\mathbb E[zz^\top]=\alpha^2PP^\top+\sigma^2I\\ \mathbb E[uz^\top]=\varphi\alpha\,PP^\top+\psi\sigma\,I\end{gathered}$$</div><span class="eq-n">Eq. 32</span></div>
+  <div class="prose">
+    <p>代入梯度，得到權重的動態（Eq. 8；此處以 u-MSE 寫出，S07 會把 $D\alpha$ 換成一般的加權測度）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\tau\frac{dW}{d\tilde t}=-\int D\alpha\,\big(\alpha^2WPP^\top+\sigma^2W-\varphi\alpha PP^\top-\psi\sigma I\big)$$</div><span class="eq-n">Eq. 8</span></div>
+  <div class="prose">
+    <p>兩個期望值只由 $PP^\top$ 與 $I$ 組成。定義平行分量 $W_\parallel=WPP^\top$ 與垂直分量 $W_\perp=W(I-PP^\top)$（Eq. 10），把 Eq. 8 分別右乘 $PP^\top$ 與 $I-PP^\top$，再用 Eq. 34 的兩個投影性質，動態拆成兩個互不影響的方程：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\tau\frac{dW_\parallel}{d\tilde t}=-\int D\alpha\big[(\alpha^2+\sigma^2)W_\parallel-(\varphi\alpha+\psi\sigma)PP^\top\big]$$</div><span class="eq-n">Eq. 9a</span></div>
+  <div class="eq"><div class="eq-m">$$\tau\frac{dW_\perp}{d\tilde t}=-\int D\alpha\big[\sigma^2W_\perp-\psi\sigma(I-PP^\top)\big]$$</div><span class="eq-n">Eq. 9b</span></div>
+  <details class="check"><summary>推導：為什麼交叉項會消失</summary><div class="qa">
+    <p>用兩個投影性質 $PP^\top PP^\top=PP^\top$ 與 $PP^\top(I-PP^\top)=0$（Eq. 34），把 Eq. 8 括號內的四項逐一右乘（App. B，Eq. 35–36）：</p>
+    <p><b>右乘 $PP^\top$：</b>$\alpha^2WPP^\top PP^\top=\alpha^2W_\parallel$；$\sigma^2WPP^\top=\sigma^2W_\parallel$；$\varphi\alpha PP^\top PP^\top=\varphi\alpha PP^\top$；$\psi\sigma I\,PP^\top=\psi\sigma PP^\top$。合併得到 Eq. 9a。</p>
+    <p><b>右乘 $I-PP^\top$：</b>$\alpha^2WPP^\top(I-PP^\top)=0$；$\sigma^2W(I-PP^\top)=\sigma^2W_\perp$；$\varphi\alpha PP^\top(I-PP^\top)=0$；$\psi\sigma(I-PP^\top)$ 保留。含 $\alpha$ 與 $\varphi$ 的兩項因為 $PP^\top(I-PP^\top)=0$ 而消失，得到 Eq. 9b。</p>
+  </div></details>
+  <div class="pair">
+    <div class="card par"><span class="k">Eq. 9a · W∥</span><h3>平行模式：資料重建</h3><p>方程含 $\alpha$ 與 $\varphi$，也就是與資料的係數有關。作者稱為資料重建（data recovery）。</p></div>
+    <div class="card perp"><span class="k">Eq. 9b · W⊥</span><h3>垂直模式：消除噪聲</h3><p>方程只含 $\sigma$ 與 $\psi$。子空間外沒有資料，那裡的輸入只有噪聲 $\sigma n_\perp$，目標只有 $\psi n_\perp$。作者稱為消除噪聲（noise elimination）。</p></div>
+  </div>
+  <div class="prose">
+    <p>兩個模式對 $\varphi,\psi$ 的要求不同，固定的目標通常無法同時滿足兩者，最佳設計要在兩者之間權衡（Sec. 3.2）。另外，平行模式的收斂速率由 $\int D\alpha(\alpha^2+\sigma^2)$ 決定，垂直模式由 $\int D\alpha\,\sigma^2$ 決定；均勻取樣時分別為 2/3 與 1/3<span class="tag">本頁推導</span>（由 Eq. 9 的係數積分）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼 Eq. 8 可以拆成 $W_\parallel$ 與 $W_\perp$？</p>
+    <p class="a">$\mathbb E[zz^\top]$ 與 $\mathbb E[uz^\top]$ 都只由 $PP^\top$ 與 $I$ 組成，$PP^\top$ 與 $I-PP^\top$ 是互相正交的投影（Eq. 32、34）。</p>
+    <p class="q">垂直模式的動態與哪些參數無關？代表什麼過程？</p>
+    <p class="a">與 $\alpha$、$\varphi$ 無關（只含 $\sigma,\psi$）；代表消除噪聲，平行模式代表資料重建（Sec. 3.2）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="diffusion-dynamics-theory-background.html">擴散模型學習與泛化動態的理論背景</a></p>
+</section>
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="residual" data-toc="05" data-tt="垂直殘差">
+  <div class="ch-num">05 · 垂直殘差</div>
+  <h2>共享權重在垂直方向留下殘差</h2>
+  <div class="prose">
+    <p>令 Eq. 9 的右邊等於 0，得到最佳權重（Theorem 3.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$W^*=\frac{\int D\alpha(\varphi\alpha+\psi\sigma)}{\int D\alpha(\alpha^2+\sigma^2)}PP^\top+\frac{\int D\alpha\,\psi\sigma}{\int D\alpha\,\sigma^2}(I-PP^\top)$$</div><span class="eq-n">Eq. 11</span></div>
+  <div class="prose">
+    <p>代回損失，並用 $\mathrm{Tr}(PP^\top)=d$、$\mathrm{Tr}(I-PP^\top)=D-d$（Eq. 48–49），得到最佳損失；第一行是平行（流形內）項，第二行是垂直（環境殘差）項：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}\Delta^*=\;&\frac d2\Big[\int D\alpha(\varphi^2+\psi^2)-\frac{\big(\int D\alpha(\varphi\alpha+\psi\sigma)\big)^2}{\int D\alpha(\alpha^2+\sigma^2)}\Big]\\&+\frac{D-d}2\Big[\int D\alpha\,\psi^2-\frac{\big(\int D\alpha\,\psi\sigma\big)^2}{\int D\alpha\,\sigma^2}\Big]\end{aligned}$$</div><span class="eq-n">Eq. 12</span></div>
+  <div class="prose">
+    <p>作者從 Eq. 12 讀出四點（Theorem 3.1 Remark）：</p>
+    <ol>
+      <li>平行項正比於內在維度 $d$，垂直項正比於餘維度 $D-d$。</li>
+      <li>平行項依賴 $\alpha$ 與 $\varphi$；垂直項與兩者無關。</li>
+      <li>$D\approx d$ 時平行項主導；$D\gg d$ 時垂直項主導。</li>
+      <li>取 $\psi=0$（x-prediction）時垂直項為 0。</li>
+    </ol>
+    <p>垂直項的來源可以這樣看：若每個噪聲強度各有一個矩陣，垂直方向的最佳增益是 $\psi/\sigma$（App. H，Eq. 76b），預測 $\frac{\psi}{\sigma}\cdot\sigma n_\perp=\psi n_\perp$ 與目標完全相同。共享的 $W_\perp$ 只能取一個加權平均 $b^*=\int D\alpha\,\psi\sigma/\int D\alpha\,\sigma^2$，預測 $b^*\sigma n_\perp$ 與目標 $\psi n_\perp$ 之間的差就是殘差。由 Cauchy–Schwarz 不等式（Eq. 78b），垂直項非負，且只有在 $\psi/\sigma$ 不隨 $t$ 改變時為 0。在 $u=kx-(1-k)n$ 這一族中 $\psi/\sigma=-(1-k)/(1-t)$，只有 $k=1$ 時不隨 $t$ 改變<span class="tag">本頁推導</span>（等號條件套用到 k 族）。</p>
+    <p>與共享模型相比，雜訊強度相依模型的優勢不只在垂直項：由 Eq. 78a，它的平行項也不大於共享模型的平行項，所以總損失 $\Delta^*_{dep}\le\Delta^*$（Eq. 79）。下圖只畫垂直部分。</p>
+  </div>
+  <div class="plate" id="c1b">
+    <div class="plate-h"><span class="id">C1b</span><h3>目標向量與垂直殘差</h3></div>
+    <p class="plate-lead">調整 k：左圖的橘色箭頭是目標 u；右圖比較垂直方向的目標與共享模型的預測，下方面積就是每個垂直維度的殘差。</p>
+    <div class="pg two">
+      <div class="fig" id="c1b-plane"><svg role="img" aria-label="二維平面中的 x、n、z、u"></svg></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1b-k">目標參數 k<output id="c1b-ko">0.50</output></label><input id="c1b-k" type="range" min="0" max="1" step="0.01" value="0.5"></div>
+        <div class="ctl-row" role="group" aria-label="傳統目標"><button class="chip" type="button" data-k="0">ε（k = 0）</button><button class="chip" type="button" data-k="0.5">v（k = 0.5）</button><button class="chip" type="button" data-k="1">x（k = 1）</button></div>
+        <div class="rng"><label class="lbl" for="c1b-t">擴散時間 t<output id="c1b-to">0.50</output></label><input id="c1b-t" type="range" min="0" max="1" step="0.01" value="0.5"></div>
+        <div class="ctl-row"><button class="small-btn" type="button" id="c1b-re">重新抽樣</button></div>
+        <p class="readout" id="c1b-ro"></p>
+      </div>
+    </div>
+    <div class="pg two" style="margin-top:20px">
+      <div class="fig" id="c1b-top"><svg role="img" aria-label="垂直方向的目標係數與共享模型預測係數"></svg>
+        <div class="legend"><span class="lg tot">目標 ψ = −(1−k)；雜訊強度相依模型的預測與此線重合</span><span class="lg perp">共享模型 b*·σ(t)</span></div></div>
+      <div class="fig" id="c1b-bot"><svg role="img" aria-label="每個 t 的殘差"></svg>
+        <div class="legend"><span class="lg acc">½·e(t)²，e(t) = b*σ − ψ = (1−k)(1.5t − 0.5)</span></div></div>
+    </div>
+    <p class="cap" id="c1b-res"></p>
+    <p class="plate-f">設定：D = 2、d = 1，均勻 t、u-MSE（Theorem 3.2 條件）。b* = ∫ψσ/∫σ² = −1.5(1−k)（Eq. 11）。殘差 ½∫e(t)²dt = (1−k)²/8（Eq. 54c，D − d = 1）。共享模型與雜訊強度相依模型的差距還包含平行項（Eq. 78a），這張圖只畫垂直部分。讀數由本頁即時計算。</p>
+    <p class="sr" aria-live="polite" id="c1b-live"></p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">最佳損失的平行項、垂直項各正比於什麼？取 $\psi=0$ 時發生什麼？</p>
+    <p class="a">平行項 ∝ $d$，垂直項 ∝ $D-d$；$\psi=0$（x-prediction）時垂直項為 0（Theorem 3.1 Remark）。</p>
+    <p class="q">共享線性模型的垂直殘差從哪裡來？雜訊強度相依模型為何沒有？</p>
+    <p class="a">每個 $t$ 的理想垂直增益 $\psi/\sigma$ 隨 $t$ 改變，共享 $W_\perp$ 只能取 $\int\widetilde{D\alpha}\psi\sigma/\int\widetilde{D\alpha}\sigma^2$；$W(\alpha)$ 可在每個 $\alpha$ 取 $\psi/\sigma$，Eq. 77c 只剩 $d$ 項。兩者的差距不只在垂直項：由 Eq. 78a，雜訊強度相依模型的平行項也較小或相等（App. H）。</p>
+  </div></details>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="kstar" data-toc="06" data-tt="最佳 k">
+  <div class="ch-num">06 · 最佳 k</div>
+  <h2>最佳 k 等於 D/(D+d)</h2>
+  <div class="prose">
+    <p>直接對 Eq. 12 求最佳的 $\varphi(\alpha),\psi(\alpha)$ 很複雜，結果還依賴損失、取樣分布與積分區間。作者因此加上四個條件（Theorem 3.2）：資料是白化的子空間資料、去噪器是共享線性、$t\sim U[0,1]$、損失為 u-MSE；並取 $\varphi=k$、$\psi=-(1-k)$，$k$ 不隨 $t$ 改變。</p>
+    <p>均勻取樣下 $\int dt=1$、$\int t\,dt=\int(1-t)\,dt=1/2$、$\int t^2dt=\int(1-t)^2dt=1/3$（Eq. 53），代入 Eq. 12 得到：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}\Delta^*(k)&=d\Big(\frac{k^2}{4}-\frac{k}{4}+\frac{5}{16}\Big)+\frac{(D-d)(1-k)^2}{8}\\&=\frac{1}{16}\big[2(D+d)k^2-4Dk+(2D+3d)\big]\end{aligned}$$</div><span class="eq-n">Eq. 54c–d</span></div>
+  <div class="prose"><p>這是 $k$ 的二次函數，最小值在</p></div>
+  <div class="eq"><div class="eq-m">$$k^*=\frac{D}{D+d}$$</div><span class="eq-n">Eq. 14</span></div>
+  <div class="prose">
+    <p>平行項在 $k=0.5$ 最小（值 $d/4$），垂直項在 $k=1$ 最小（值 0）；$k^*$ 是兩者依 $d$ 與 $D-d$ 加權後的位置。由此得到三個區間（Sec. 3.3）：</p>
+    <ul>
+      <li>資料填滿空間（$D\approx d$）：$k^*\approx0.5$，v-prediction 最佳。</li>
+      <li>資料只占極低維子空間（$D\gg d$）：$k^*\to1$，x-prediction 最佳。</li>
+      <li>一般情形：$0.5&lt;k^*&lt;1$，論文寫「neither conventional target is optimal」，ε、v、x 都不是最佳。</li>
+    </ul>
+    <p>偏離 $k^*$ 的代價是 $\Delta^*(k)-\Delta^*(k^*)=\frac{D+d}{8}(k-k^*)^2$<span class="tag">本頁推導</span>（由 Eq. 54d 配方）。</p>
+  </div>
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>平行項與垂直項的權衡</h3></div>
+    <p class="plate-lead">調整 D 與 d：曲線是每個環境維度的最佳損失 Δ*/D；橘色點是 k*。同比例放大 D 與 d 時，k* 不變。</p>
+    <div class="pg side">
+      <div class="fig" id="c2-fig"><svg role="img" aria-label="最佳損失對 k 的曲線"></svg>
+        <div class="legend"><span class="lg par">平行項</span><span class="lg perp">垂直項</span><span class="lg tot">總和</span></div></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c2-D">環境維度 D<output id="c2-Do">128</output></label><input id="c2-D" type="range" min="0" max="15" step="1" value="6"></div>
+        <div class="rng"><label class="lbl" for="c2-d">內在維度 d<output id="c2-do">32</output></label><input id="c2-d" type="range" min="0" max="10" step="1" value="0"></div>
+        <p class="readout" id="c2-ro"></p>
+        <div class="fig" id="c2-inset"><svg role="img" aria-label="k* 對 d/D 的曲線"></svg></div>
+      </div>
+    </div>
+    <div class="tscroll"><table id="c2-tab"><caption>Δ*（Eq. 54d）與比 k* 多出的損失 (D+d)(k−k*)²/8</caption>
+      <thead><tr><th>目標</th><th class="num">k</th><th class="num">Δ*</th><th class="num">比 k* 多</th></tr></thead><tbody></tbody></table></div>
+    <p class="plate-f">完全使用 Eq. 54c（Theorem 3.2 的四個條件），無額外近似。「比 k* 多」一欄為本頁推導（由 Eq. 54d 配方）。讀數由本頁即時計算。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <div class="prose" style="margin-top:28px">
+    <p>資料不是白化時，若 $\Sigma=\mathbb E[xx^\top]$ 為一般的二階動差矩陣，同樣條件下最佳值為 $k^*=D/(D+\mathrm{Tr}\,\Sigma)$（App. G，Eq. 72）；白化子空間資料的 $\mathrm{Tr}\,\Sigma=d$，回到 Eq. 14。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Theorem 3.2 下 $k^*$ 是多少？$D=128,d=32$ 時 $k^*$ 與 $\Delta^*$ 在 ε、v、x、$k^*$ 的值？</p>
+    <p class="a">$k^*=D/(D+d)=0.8$；$\Delta^*=\tfrac1{16}[2(D+d)k^2-4Dk+(2D+3d)]$，值為 22、11、10、9.2（Eq. 14、54d）。</p>
+    <p class="q">$d=D$ 與 $d/D\to0$ 時 $k^*$ 分別趨近什麼？</p>
+    <p class="a">$d=D$：0.5（v）；$d/D\to0$：1（x）；其他情形 $0.5&lt;k^*&lt;1$，三個傳統目標都不是最佳（Sec. 3.3）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="x-prediction-manifold-view.html">x-prediction 與流形觀點：JiT 與 pixel-space 的近期結果</a></p>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="scope" data-toc="07" data-tt="適用範圍">
+  <div class="ch-num">07 · 適用範圍</div>
+  <h2>時間條件、取樣與損失會移動最佳 k</h2>
+  <div class="prose">
+    <p>Theorem 3.2 的四個條件在實務上都不成立。作者用受控實驗檢查閉式解的適用範圍（Sec. 3.4）：各向同性高斯資料放在 $\mathbb R^{128}$ 的 $d$ 維子空間，$k=\mathrm{sigmoid}(w_k)$ 與去噪器一起訓練。讀懂結果之前，需要先介紹三個概念。</p>
+    <h3>損失的加權：κ 與有效測度</h3>
+    <p>網路輸出 $\hat u$，但損失可以算在另一個變數 $w=\xi x+\eta n$ 上，例如速度 $v$（$\xi=1,\eta=-1$）。由 $z$ 與 $\hat u$ 可以解出 $\hat x,\hat n$（Eq. 16–18），進而得到</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\hat w-w=\kappa(\hat u-u),\qquad \kappa=\frac{\xi\sigma-\eta\alpha}{\varphi\sigma-\psi\alpha}$$</div><span class="eq-n">Eq. 3, 22</span></div>
+  <div class="prose">
+    <p>因此任何 w-MSE 都等於以 $\kappa^2$ 加權的 u-MSE。前面所有式子只要把 $D\alpha$ 換成有效測度 $\widetilde{D\alpha}=D\alpha\cdot\kappa^2$（Eq. 4、5）。</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table>
+    <caption>四種損失的換算因子 κ（App. A）</caption>
+    <thead><tr><th>損失</th><th>κ</th><th>出處</th></tr></thead><tbody>
+    <tr><td>u-loss（$w=u$）</td><td>$1$</td><td class="mono">Eq. 23</td></tr>
+    <tr><td>x-loss</td><td>$\sigma/(\varphi\sigma-\psi\alpha)$</td><td class="mono">Eq. 24</td></tr>
+    <tr><td>ε-loss</td><td>$-\alpha/(\varphi\sigma-\psi\alpha)$</td><td class="mono">Eq. 25</td></tr>
+    <tr><td>v-loss</td><td>$(\alpha+\sigma)/(\varphi\sigma-\psi\alpha)$</td><td class="mono">Eq. 26</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>在 $k$ 參數化與 flow matching 下，v-loss 的 $\kappa=1/\big(k(1-t)+(1-k)t\big)$<span class="tag">本頁推導</span>（代入 Eq. 26，$\alpha+\sigma=1$）。本頁中「u-MSE」指 $\kappa=1$，「v-MSE」指這個 $\kappa$。</p>
+    <p>換句話說，用 v-loss 訓練等於用以 $\kappa^2$ 加權的 u-MSE 訓練：$\hat v-v=\kappa(\hat u-u)$，有效測度為 $\widetilde{D\alpha}=D\alpha\cdot\kappa^2$，其中 $\kappa=1/\big(k(1-t)+(1-k)t\big)$。</p>
+    <h3>logit-normal 取樣</h3>
+    <p>logit-normal 取樣讓 $\ln\frac{t}{1-t}$ 服從常態分布 $\mathcal N(\mu,s^2)$。$\mu&lt;0$ 時取樣集中在 $t&lt;0.5$，也就是噪聲較多的一側。論文 Sec. 3.4 沒有寫出 $\mu$ 與 $s$。對稱的取樣分布配上 u-MSE 時，最佳值仍是 $D/(D+d)$<span class="tag">本頁推導</span>，無法得到論文報告的 $k=0$；本頁採 $\mu=-0.8$、$s=0.8$（與 JiT 的像素空間設定相同，Table 3），用它算出的母體最佳值與論文報告的數字一致。這是用論文數字校準的推定值，不是論文寫明的設定。</p>
+    <h3>時間條件：N 區間與雜訊強度相依模型</h3>
+    <p>共享線性模型對所有 $t$ 用同一個 $W$。若把 $[0,1]$ 切成 $N$ 個等寬區間，每個區間各用一個線性映射，就是 N 區間模型；$N\to\infty$ 的極限是每個噪聲強度各有一個矩陣的 $W(\alpha)$（App. H），其最佳損失為</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\Delta^*_{dep}=\frac d2\int\widetilde{D\alpha}\;\frac{(\varphi\sigma-\psi\alpha)^2}{\alpha^2+\sigma^2}$$</div><span class="eq-n">Eq. 77c</span></div>
+  <div class="prose">
+    <p>垂直項完全消失，平行項也不大於共享模型的平行項（Eq. 78a），所以 $\Delta^*_{dep}\le\Delta^*$（Eq. 79）。</p>
+    <p>下圖計算的是「母體最佳值」：對資料與噪聲取期望（相當於無限多樣本）後算出的最佳 $k$。它與「訓練值」，也就是實際以梯度下降與有限樣本訓練得到的 $k$，不一定相同。請依步驟 1 到 4 操作。</p>
+  </div>
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>訓練設定如何移動母體最佳 k（D = 128）</h3></div>
+    <div class="steps" role="group" aria-label="導覽步驟">
+      <button type="button" data-step="1"><span class="s">1</span>Theorem 3.2 的條件</button>
+      <button type="button" data-step="2"><span class="s">2</span>加入時間條件</button>
+      <button type="button" data-step="3"><span class="s">3</span>改用 logit-normal 取樣</button>
+      <button type="button" data-step="4"><span class="s">4</span>再改用 v-MSE</button>
+    </div>
+    <div class="pg side">
+      <div class="fig" id="c3-fig"><svg role="img" aria-label="母體最佳 k 對內在維度 d 的曲線"></svg>
+        <div class="legend" id="c3-leg"></div></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c3-d">內在維度 d<output id="c3-do">32</output></label><input id="c3-d" type="range" min="1" max="128" step="1" value="32"></div>
+        <p class="readout" id="c3-ro"></p>
+        <div id="c3-free" class="ctl">
+          <div><div class="lbl">訓練設定</div><div class="seg" id="c3-set" role="group" aria-label="訓練設定"><button type="button" data-v="A">A 均勻·u</button><button type="button" data-v="B">B logitN·u</button><button type="button" data-v="C">C logitN·v</button></div></div>
+          <div><div class="lbl">時間區間數 N</div><div class="seg" id="c3-N" role="group" aria-label="時間區間數"></div></div>
+          <label class="chk"><input type="checkbox" id="c3-dep" checked>顯示雜訊強度相依模型（App. H）</label>
+        </div>
+      </div>
+    </div>
+    <p class="cap" id="c3-cap"></p>
+    <div id="c3-wbox" class="pg side" style="margin-top:16px">
+      <div class="fig" id="c3-w"><svg role="img" aria-label="有效權重對 t 的曲線"></svg></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c3-k">副圖的 k<output id="c3-ko">0.50</output></label><input id="c3-k" type="range" min="0.02" max="0.98" step="0.01" value="0.5"></div>
+        <p class="cap" style="margin:0">有效權重 p(t)·κ²(t)，以最大值正規化。設定 B 的權重集中在 t &lt; 0.5；設定 C 的 κ² 再依 k 改變分布。</p>
+      </div>
+    </div>
+    <p class="plate-f">設定 A：均勻 + u-MSE；B：logit-normal（μ = −0.8，s = 0.8，推定值）+ u-MSE；C：logit-normal + v-MSE。母體最佳值以 M = 1024 中點積分、k 網格步長 0.005 計算（Eq. 12、77c）；不含時間嵌入 MLP。「雜訊相依恆為 0.5」與「v-MSE 下損失與 k 無關」為本頁推導。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+  <div class="prose" style="margin-top:28px">
+    <h3>母體最佳值不等於訓練值</h3>
+    <p>步驟 2 中，雜訊強度相依模型的母體最佳值恆為 0.5：去掉垂直殘差後，剩下的平行項 $(\varphi\sigma-\psi\alpha)^2/(\alpha^2+\sigma^2)$ 在 $k\leftrightarrow1-k$、$t\leftrightarrow1-t$ 下不變<span class="tag">本頁推導</span>。這是線性模型的母體結果，不代表實際網路；時間條件化的 JiT-B/16 在像素空間學到接近 1.0（Sec. 5.2）。</p>
+  </div>
+  <aside class="callout" aria-label="母體最佳值與訓練值">
+    <p class="ct">母體最佳值與訓練值不同（Fig. 1 右下格，d = 128）</p>
+    <div class="cv">
+      <div><span class="num">0.212</span><span class="cl">八區間模型的母體最佳值（本頁網格算出 0.210）</span></div>
+      <div><span class="num">0.659</span><span class="cl">實際訓練出的八區間模型</span></div>
+      <div><span class="num">0.612</span><span class="cl">實際訓練出的時間嵌入 MLP</span></div>
+    </div>
+    <p>設定為時間條件 + logit-normal + v-MSE（Sec. 3.4）。「母體最佳值」是對資料與噪聲取期望後算出的最佳 $k$；「訓練值」是以梯度下降與有限樣本實際訓練得到的 $k$。在這個設定下，母體分析不再能定量預測訓練結果。作者的結論是：知道 $d$ 與 $D$ 並不足以決定實際學到的 $k$，因此應該在實際的訓練設定下直接學 $k$。</p>
+  </aside>
+  <div class="tscroll" style="max-width:860px"><table class="stack">
+    <caption>Fig. 1 四格的結論（Sec. 3.4，數字照原文）</caption>
+    <thead><tr><th>Fig. 1 位置</th><th>設定</th><th>結果</th></tr></thead><tbody>
+    <tr><td>左上</td><td data-h="設定">共享線性、均勻 t、u-MSE（Theorem 3.2 原條件）</td><td data-h="結果">學到的 k 與 D/(D+d) 相差在 0.027 內</td></tr>
+    <tr><td>右上</td><td data-h="設定">加入時間條件（八區間線性；時間嵌入 MLP），均勻 t、u-MSE</td><td data-h="結果">k 偏離 D/(D+d)；分區預測與訓練出的八區間 k 相差在 0.025 內；MLP 與八區間模型相差在 0.012 內（平均差 0.004）</td></tr>
+    <tr><td>左下</td><td data-h="設定">共享線性，改取樣與損失</td><td data-h="結果">logit-normal 使最佳值在 d ≥ 48 時為 k = 0（預測誤差 0.026 內）；再改用 v-MSE 使高 d 的最佳值離開邊界（預測誤差 0.045 內）</td></tr>
+    <tr><td>右下</td><td data-h="設定">時間條件 + logit-normal + v-MSE</td><td data-h="結果">d = 128：八區間母體最佳 0.212，訓練出的八區間模型 0.659，時間嵌入 MLP 0.612</td></tr>
+    </tbody></table></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">用 v-loss 訓練時，損失與 u-MSE 的關係是什麼？</p>
+    <p class="a">$\hat v-v=\kappa(\hat u-u)$，損失等於以 $\kappa^2$ 加權的 u-MSE，即有效測度 $\widetilde{D\alpha}=D\alpha\cdot\kappa^2$（Eq. 3–5、26）。</p>
+    <p class="q">Theorem 3.2 依賴哪四個條件？Fig. 1 中改變哪些設定會讓學到的 $k$ 偏離 $D/(D+d)$？</p>
+    <p class="a">白化子空間資料、共享線性去噪器、$t\sim U[0,1]$、u-MSE；時間條件、取樣分布、損失。例：Fig. 1 左下（共享線性 + logit-normal + u-MSE）$d\ge48$ 時最佳 $k=0$；Fig. 1 右下（時間條件 + logit-normal + v-MSE）$d=128$ 時八區間母體最佳 0.212，訓練出的八區間模型 0.659（Sec. 3.4、Sec. 6）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="loss-weighting-and-elbo.html">Loss weighting 與 ELBO：目標選擇等於加權選擇</a></p>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="kdiff" data-toc="08" data-tt="k-Diff">
+  <div class="ch-num">08 · k-Diff</div>
+  <h2>k-Diff 把 k 當成可訓練參數</h2>
+  <div class="prose">
+    <p>k-Diff 把 $k$ 寫成 $k=\mathrm{sigmoid}(w_k)$，$w_k$ 是一個可訓練的純量，與網路參數 $\theta$ 一起以反向傳播更新（Sec. 4）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$L(\theta,w_k)=\frac12\int\widetilde{D\alpha}\;\mathbb E\,\big\|u_\theta(z)-u\big\|^2,\qquad k=\mathrm{sigmoid}(w_k)$$</div><span class="eq-n">Eq. 15</span></div>
+  <div class="prose">
+    <p>目標 $u$ 透過 $k$ 依賴 $w_k$（Eq. 13）。實際訓練用 v-loss（Alg. 1、Table 3）：網路輸出先換算成速度，再與速度目標比較。此時 $\widetilde{D\alpha}=D\alpha\cdot\kappa^2$、$\kappa=1/\big(k(1-t)+(1-k)t\big)$，Eq. 15 與 Alg. 1 的 <code>l2_loss(v - v_pred)</code> 相同。因為 $\kappa$ 依賴 $k$，對 $w_k$ 的梯度也包含換算分母隨 $k$ 的變化。</p>
+  </div>
+  <div class="algo" role="table" aria-label="Alg. 1 訓練步驟與說明">
+    <div class="row hd" role="row"><div role="columnheader">Alg. 1 訓練步驟（App. E）</div><div class="ex-h" role="columnheader">這一行做什麼</div></div>
+    <div class="row" role="row"><code>t = sample_t()</code><div class="ex">依 $D\alpha$ 抽擴散時間（實驗用 logit-normal）。</div></div>
+    <div class="row" role="row"><code>e = randn_like(x)</code><div class="ex">抽標準高斯噪聲；<code>e</code> 即本文的 $n$。</div></div>
+    <div class="row" role="row"><code>k = sigmoid(w_k)</code><div class="ex">由可訓練純量得到 $k\in(0,1)$；初始 $w_k=0$，即 $k=0.5$。</div></div>
+    <div class="row" role="row"><code>z = t * x + (1 - t) * e</code><div class="ex">前向過程（Eq. 1）。</div></div>
+    <div class="row" role="row"><code>u = k * x - (1 - k) * e</code><div class="ex">目標（Eq. 13）。</div></div>
+    <div class="row" role="row"><code>v = ((1 - 2k) * z + u) / (k(1 - t) + (1 - k) t)</code><div class="ex">由 $z,u$ 換算速度；代數上恆等於 $x-e$，與 $k$ 無關<span class="tag">本頁推導</span>。</div></div>
+    <div class="row" role="row"><code>u_pred = net(z, t)</code><div class="ex">網路輸出。</div></div>
+    <div class="row" role="row"><code>v_pred = ((1 - 2k) * z + u_pred) / (k(1 - t) + (1 - k) t)</code><div class="ex">用同一個式子把網路輸出換算成速度。</div></div>
+    <div class="row" role="row"><code>loss = l2_loss(v - v_pred)</code><div class="ex">在速度空間比較；梯度同時流向 $\theta$ 與 $w_k$。</div></div>
+    <div class="row hd" role="row"><div role="columnheader">Alg. 2 取樣步驟</div><div class="ex-h" role="columnheader"></div></div>
+    <div class="row" role="row"><code>z_next = z + (t_next - t) * v_pred</code><div class="ex">以 Euler 步寫出；論文報告的所有結果用 Heun 解算器 50 步（NFE = 99）。</div></div>
+  </div>
+  <div class="prose">
+    <p>v 恆等於 $x-e$ 的理由：由 Eq. 17，$x=\frac{(1-k)z+(1-t)u}{k(1-t)+(1-k)t}$、$n=\frac{kz-tu}{k(1-t)+(1-k)t}$，兩式相減即得 Alg. 1 的換算式<span class="tag">本頁推導</span>。所以實際訓練永遠在同一個速度空間比較，$k$ 只決定網路輸出如何換算成速度。</p>
+    <p>分母 $k(1-t)+(1-k)t$ 在 $k=1$、$t\to1$ 或 $k=0$、$t\to0$ 時趨近 0；$0&lt;k&lt;1$ 時分母不小於 $\min(k,1-k)$。截斷規則在論文中有兩處寫法：Sec. 4 寫「必要時把分母截斷到最小 0.05」；Table 3（欄名「clip of (1 − t) in division」）的設定是像素空間一律 0.05，潛空間只有 x-prediction 用 0.05、其他（含 k-Diff）用 0。</p>
+    <p>論文也測試時間相依的 $k(t)$：把 $[0,1]$ 切成 $N$ 個區間（例如 128），每個端點各有一個可訓練參數，區間內對 sigmoid 後的值線性內插（App. F）。結果見 S09。</p>
+    <p>下圖是 k-Diff 的玩具版：沿用 S03 的線性模型與母體損失，$k$ 與去噪器一起以 Adam 訓練，沒有任何地方輸入 $d$。</p>
+  </div>
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>k-Diff 的玩具版：k 作為可訓練參數</h3></div>
+    <p class="plate-lead">按「執行」：k 從 0.5 出發，與平行係數 a、垂直係數 b 一起以 Adam 更新 3000 步。</p>
+    <div class="ctl-row" style="gap:12px;margin-bottom:16px">
+      <div class="seg" id="c4-set" role="group" aria-label="訓練設定"><button type="button" data-v="A">A 均勻·u</button><button type="button" data-v="B">B logitN·u</button><button type="button" data-v="C">C logitN·v</button></div>
+      <div class="rng" style="flex:1;min-width:200px"><label class="lbl" for="c4-d">內在維度 d<output id="c4-do">32</output></label><input id="c4-d" type="range" min="1" max="128" step="1" value="32"></div>
+      <button class="small-btn pri" type="button" id="c4-run">執行</button>
+      <button class="small-btn" type="button" id="c4-reset">重設</button>
+    </div>
+    <div class="pg two">
+      <div class="fig" id="c4-k"><svg role="img" aria-label="k 對訓練步數"></svg>
+        <div class="legend"><span class="lg acc">學到的 k</span><span class="lg ref">C3 網格值（步長 0.005）</span><span class="lg dot" id="c4-lgD">D/(D+d)</span></div></div>
+      <div class="fig" id="c4-ab"><svg role="img" aria-label="a 與 b 對訓練步數"></svg>
+        <div class="legend"><span class="lg par">a（平行）</span><span class="lg perp">b（垂直）</span><span class="lg ref">依目前 k 的平衡值 a*、b*（Eq. 11）</span></div></div>
+    </div>
+    <p class="readout" id="c4-ro" style="margin-top:14px"></p>
+    <p class="cap">C4 以連續參數最佳化，終值與 C3 的網格值可差到半個網格（例：B、d = 32 為 0.117 對 0.115；C、d = 32 為 0.847 對 0.845），這個差異在網格解析度內。</p>
+    <p class="plate-f">玩具設定：母體損失（對 x、n 取期望，t 以 M = 1024 中點積分），去噪器限制為 W = a·PPᵀ + b·(I − PPᵀ)，從 W = 0 出發時梯度只落在這兩個矩陣的組合中（本頁推導）；D = 128。Adam β₁ = 0.9、β₂ = 0.95（Table 3 的值），學習率 0.02（玩具用值；論文網路用 2e-4），解析梯度，v-MSE 時包含 κ² 對 k 的導數。這個玩具省略了 sample_t 與 randn_like（改成取期望），保留 k = sigmoid(w_k)、u = k·x − (1−k)·e 與依賴 k 的換算分母。</p>
+    <p class="sr" aria-live="polite" id="c4-live"></p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">k-Diff 如何參數化 $k$？實際損失算在哪個空間？分母何時趨近 0？論文如何截斷？</p>
+    <p class="a">$k=\mathrm{sigmoid}(w_k)$，純量，與網路一起反向傳播（Eq. 15），初始 0.5；損失為 v-loss，$v_{pred}=((1-2k)z+u_{pred})/(k(1-t)+(1-k)t)$；$k\to1,t\to1$ 或 $k\to0,t\to0$ 時分母趨近 0；Sec. 4 寫必要時截斷到 0.05，Table 3：像素空間 0.05，潛空間 x-prediction 0.05、其他 0（Sec. 4、Alg. 1、Table 3）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="generalized-target-k-parameterization.html">廣義預測目標 u = kx − (1 − k)n 與 k-Diff</a></p>
+</section>
+
+<!-- S9 ============================================================ -->
+<section class="ch" id="results" data-toc="09" data-tt="實驗結果">
+  <div class="ch-num">09 · 實驗結果</div>
+  <h2>實驗中 k 在潛空間停在 0.66、在像素空間趨近 1</h2>
+  <div class="prose">
+    <p>作者在 ImageNet 256×256 與 512×512 上比較 k-Diff 與固定目標的基準（Sec. 5）。</p>
+    <p><b>潛空間</b>（LightningDiT-XL/1，VA-VAE tokenizer）：訓練 64 epoch、CFG 1.5、Heun 50 步（NFE = 99）時，v-prediction 基準 FID 2.08（原論文報告 2.11），k-Diff 為 2.05。延長到 800 epoch，最終 FID 1.34，最低 1.22 出現在第 384 epoch，之後有過擬合趨勢（Fig. 3a）。$k$ 從 0.5 單調上升，Fig. 3b 的長期收斂值為 0.66；Table 2 記錄的第 64 epoch 值為 0.522。</p>
+    <p><b>像素空間</b>（JiT-B/16）：200 epoch 時 k-Diff 與 x-prediction 的 FID 都是 4.70（Fig. 2b）；$k$ 在 30 個 epoch 內從 0.5 升到接近 1.0（Fig. 3b）。</p>
+    <p><b>FID 摘要：</b>潛空間 64 epoch，k-Diff 2.05、v-prediction 2.08；像素空間 200 epoch，k-Diff 與 x-prediction 都是 4.70；消融中 128 區間的時間相依 $k(t)$ 為 2.17，差於常數 $k$ 的 2.05（Sec. 5、Table 2）。</p>
+  </div>
+  <div class="plate" style="max-width:760px">
+    <div class="plate-h"><span class="id">k 軸</span><h3>論文報告的學到值</h3></div>
+    <div class="kaxis" id="kx-res" role="img" aria-label="k 軸：潛空間第 64 epoch 0.522，潛空間長期 0.66，像素空間接近 1.0" data-marks='[{"k":0.522,"label":"潛空間 第 64 epoch <span class=\"v\">0.522</span>（Table 2）"},{"k":0.66,"label":"潛空間 長期 <span class=\"v\">0.66</span>（Fig. 3b）","acc":1},{"k":1,"label":"像素空間 <span class=\"v\">≈ 1.0</span>（Fig. 3b）","acc":1}]'></div>
+  </div>
+  <div class="tscroll" style="max-width:860px"><table>
+    <caption>Table 1 摘錄：k-Diff 與其固定目標基準（FID-50K ↓、IS ↑）</caption>
+    <thead><tr><th>資料／模型</th><th>基準</th><th class="num">基準 FID</th><th class="num">基準 IS</th><th class="num">k-Diff FID</th><th class="num">k-Diff IS</th></tr></thead><tbody>
+    <tr><td>ImageNet 256，潛空間，LightningDiT-XL/1（800 epoch 最終 checkpoint）</td><td>LightningDiT-XL/1</td><td class="num">1.35</td><td class="num">295.3</td><td class="num">1.34</td><td class="num">301.7</td></tr>
+    <tr><td>ImageNet 256，像素空間，JiT-B/16</td><td>JiT-B/16</td><td class="num">3.66</td><td class="num">275.1</td><td class="num">3.64</td><td class="num">274.9</td></tr>
+    <tr><td>ImageNet 512，像素空間，JiT-B/32</td><td>JiT-B/32</td><td class="num">4.02</td><td class="num">271.0</td><td class="num">4.03</td><td class="num">277.1</td></tr>
+    </tbody></table></div>
+  <p class="note" style="max-width:700px">論文未寫明 Table 1 像素空間列的訓練 epoch 數。ImageNet 512 一列中 k-Diff 的 FID 略高、IS 較高。</p>
+  <div class="tscroll" style="max-width:860px"><table>
+    <caption>Table 2 消融（LightningDiT-XL/1，ImageNet 256，64 epoch）</caption>
+    <thead><tr><th>參數</th><th>目標型態</th><th class="num">時間區間</th><th class="num">學到的值（第 64 epoch）</th><th class="num">FID</th></tr></thead><tbody>
+    <tr class="hl"><td>1 個 k（k-Diff）</td><td>常數</td><td class="num">1</td><td class="num">0.522</td><td class="num">2.05</td></tr>
+    <tr><td>2 個（$k_0x-k_1\varepsilon$）</td><td>常數</td><td class="num">1</td><td class="num">(0.556, 0.509)</td><td class="num">2.04</td></tr>
+    <tr><td>1 個 k（k-Diff）</td><td>時間相依</td><td class="num">128</td><td class="num">見 Fig. 5a</td><td class="num">2.17</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>兩個獨立參數的 FID 2.04 與單一參數的 2.05 幾乎相同，作者據此認為單一內插參數已足夠。時間相依 $k(t)$ 的 FID 2.17 較差；作者推測常數 $k$ 提供較穩定的訓練目標。Fig. 5a 中，排除 $t=0$ 與 $t=1$ 附近的邊界區域後，$k(t)$ 隨 $t$ 單調下降，在 $t\approx0$（邊界區域內側）約 0.56，接近 $t=1$ 時降到約 0.3；緊鄰邊界的參數停在初始值 0.5，作者歸因於 logit-normal（μ = 0、σ = 1）取樣密度在端點趨近 0，梯度不足（App. F）。</p>
+    <p>作者對 $k$ 值的解釋：潛空間的維度比像素空間低，但仍有相當的環境維度，垂直方向的動態把 $k$ 拉到 0.66；像素空間的 $D$ 遠大於 $d$，$k$ 迅速趨近 x-prediction，方向與 Theorem 3.2 一致（Sec. 5.1、5.2）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">潛空間與像素空間學到的 $k$ 各是多少？時間相依 $k(t)$ 的消融結果？</p>
+    <p class="a">潛空間（LightningDiT-XL/1）0.5→0.66（Fig. 3b 長期收斂值；Table 2 第 64 epoch 為 0.522），64 epoch FID 2.05 vs v-pred 2.08；像素空間（JiT-B/16）30 epoch 內→約 1.0，200 epoch FID 皆 4.70；128 區間 $k(t)$ FID 2.17，差於常數 $k$ 的 2.05（Sec. 5、Table 2）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="pixel-space-diffusion.html">Pixel-space diffusion</a></p>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="impl" data-toc="10" data-tt="實作">
+  <div class="ch-num">10 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="tscroll" style="max-width:860px"><table class="stack">
+    <caption>Table 3 與 App. I 的設定</caption>
+    <thead><tr><th>項目</th><th>潛空間 LightningDiT-XL</th><th>像素空間 JiT-B</th></tr></thead><tbody>
+    <tr><td>tokenizer</td><td data-h="潛空間">VA-VAE</td><td data-h="像素空間">—</td></tr>
+    <tr><td>depth / hidden / heads</td><td data-h="潛空間">28 / 1152 / 16</td><td data-h="像素空間">12 / 768 / 12</td></tr>
+    <tr><td>image size / patch size</td><td data-h="潛空間">256 / 1</td><td data-h="像素空間">256（另有 512）/ image_size ÷ 16</td></tr>
+    <tr><td>bottleneck</td><td data-h="潛空間">—</td><td data-h="像素空間">128</td></tr>
+    <tr><td>in-context class tokens / start block</td><td data-h="潛空間">—</td><td data-h="像素空間">32 / 4</td></tr>
+    <tr><td>dropout</td><td data-h="潛空間">0</td><td data-h="像素空間">0</td></tr>
+    <tr><td>loss</td><td data-h="潛空間">v-loss</td><td data-h="像素空間">v-loss</td></tr>
+    <tr><td>epochs</td><td data-h="潛空間">64（消融）、800</td><td data-h="像素空間">200（消融）、600</td></tr>
+    <tr><td>warmup epochs</td><td data-h="潛空間">0</td><td data-h="像素空間">5</td></tr>
+    <tr><td>optimizer</td><td data-h="潛空間">Adam，β₁, β₂ = 0.9, 0.95</td><td data-h="像素空間">同左</td></tr>
+    <tr><td>batch / lr / schedule / weight decay</td><td data-h="潛空間">1024 / 2e-4 / constant / 0</td><td data-h="像素空間">同左</td></tr>
+    <tr><td>EMA decay</td><td data-h="潛空間">{0.9996, 0.9998, 0.9999}</td><td data-h="像素空間">同左</td></tr>
+    <tr><td>time sampler</td><td data-h="潛空間">logit(t) ~ N(0.0, 1.0²)</td><td data-h="像素空間">logit(t) ~ N(−0.8, 0.8²)</td></tr>
+    <tr><td>noise scale</td><td data-h="潛空間">1.0</td><td data-h="像素空間">1.0 × image_size ÷ 256</td></tr>
+    <tr><td>clip of (1 − t) in division</td><td data-h="潛空間">x-prediction 0.05，其他 0</td><td data-h="像素空間">0.05</td></tr>
+    <tr><td>class token drop（CFG 用）</td><td data-h="潛空間">0.1</td><td data-h="像素空間">0.1</td></tr>
+    <tr><td>取樣</td><td data-h="潛空間">Heun 50 步，時間點在 [0, 1] 線性分布，CFG 1.5，CFG 區間 [0.1, 1]</td><td data-h="像素空間">Heun 50 步，同左，CFG 2.9，CFG 區間 [0.1, 1]</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <h3>常見錯誤</h3>
+    <ol>
+      <li><b>時間方向弄反。</b>本文 $t=1$ 是資料、$t=0$ 是噪聲，與 DDPM 相反。</li>
+      <li><b>換算分母未截斷。</b>Sec. 4 寫「必要時把 $k(1-t)+(1-k)t$ 截斷到 0.05」；Table 3 的欄名是「clip of (1 − t) in division」，潛空間 x-prediction 0.05、其他 0，像素空間 0.05。</li>
+      <li><b>把損失算在 u 空間。</b>Alg. 1 與 Table 3 用 v-loss；$k$ 改變的是輸出參數化，v 目標本身與 $k$ 無關。</li>
+      <li><b>$k$ 的參數化與初始化不一致。</b>$k=\mathrm{sigmoid}(w_k)$、初始 $w_k=0$（$k=0.5$，Fig. 3b 由 0.5 出發）。論文沒有說明 $w_k$ 是否使用與網路相同的學習率，也沒有說明 EMA 是否套用在 $w_k$。</li>
+      <li><b>期待時間相依 $k(t)$ 更好。</b>Table 2 中 128 區間 $k(t)$ 的 FID 2.17 差於常數 $k$ 的 2.05；取樣密度低的端點參數學不動（App. F）。</li>
+      <li><b>取樣時忘了用學到的 $k$ 換算速度。</b>Alg. 2 以 Euler 步寫出換算；論文報告的結果用 Heun 50 步（NFE = 99）。</li>
+    </ol>
+  </div>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="history" data-toc="11" data-tt="研究脈絡">
+  <div class="ch-num">11 · 研究脈絡</div>
+  <h2>研究脈絡（由 notes/timeline.json 提供）</h2>
+  <div class="prose">
+    <p>預測目標的選擇依序經歷 ε（DDPM、score SDE）、v（Progressive Distillation、EDM、flow matching）、加權觀點（Kingma 與 Gao 把各目標寫成 ELBO 的不同加權）與 x（SiD2、JiT），本論文再把三者放回同一條 k 軸。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="next" data-toc="12" data-tt="限制與延伸">
+  <div class="ch-num">12 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>閉式解 $k^*=D/(D+d)$ 假設白化子空間資料、共享線性去噪器、均勻時間取樣與 u-MSE。受控實驗顯示學到的目標會隨去噪器、取樣與損失改變，而且分區母體最佳值不一定等於訓練值。推廣到非線性模型與更大規模的文字到影像系統，以及釐清目標選擇如何影響樣本品質，論文列為開放問題（Sec. 6）。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="prediction-targets-overview.html">擴散模型預測目標的演進總覽：從 ε 到 v 到 x</a><span>總覽</span></div></li>
+    <li><div><a href="eps-prediction-ddpm-score.html">ε-prediction 與 DDPM、score-based 模型</a><span>擴散模型起點與噪聲預測</span></div></li>
+    <li><div><a href="v-prediction-and-preconditioning.html">v-prediction 與 preconditioning：Progressive Distillation 與 EDM</a><span>速度參數化</span></div></li>
+    <li><div><a href="flow-matching-velocity-target.html">Flow matching 的速度目標與 rectified flow 的大規模使用</a><span>回歸向量場</span></div></li>
+    <li><div><a href="loss-weighting-and-elbo.html">Loss weighting 與 ELBO：目標選擇等於加權選擇</a><span>不同目標等價於不同加權</span></div></li>
+    <li><div><a href="x-prediction-manifold-view.html">x-prediction 與流形觀點：JiT 與 pixel-space 的近期結果</a><span>高維資料與 x-prediction</span></div></li>
+    <li><div><a href="generalized-target-k-parameterization.html">廣義預測目標 u = kx − (1 − k)n 與 k-Diff</a><span>本論文的理論與方法</span></div></li>
+    <li><div><a href="diffusion-dynamics-theory-background.html">擴散模型學習與泛化動態的理論背景</a><span>本論文所接續的分析傳統</span></div></li>
+    <li><div><a href="pixel-space-diffusion.html">Pixel-space diffusion</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="velocity-irreducible-variance.html">Velocity Irreducible Variance</a><span>站內既有筆記</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Qing Jin, Chaoyang Wang. Understanding and Learning Prediction Targets in Diffusion Models. NeurIPS 2026. <a href="https://arxiv.org/abs/2601.21419">arXiv:2601.21419</a>.</p>
+  <p>本頁的方程式與數字取自論文 v3；標示「本頁推導」的內容為本頁自行推導，並非論文結論。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2015, "title": "Deep Unsupervised Learning using Nonequilibrium Thermodynamics", "authors_short": "Sohl-Dickstein et al.", "arxiv": "1503.03585", "role": "本論文引用為擴散模型的基礎，後續目標選擇都在此框架內。", "source": "2601.21419 related work"}, {"year": 2020, "title": "Denoising Diffusion Probabilistic Models", "authors_short": "Ho, Jain, Abbeel", "arxiv": "2006.11239", "role": "以噪聲預測（ε-prediction）訓練，本論文視為早期標準目標（k = 0）。", "source": "2601.21419 related work"}, {"year": 2020, "title": "Score-Based Generative Modeling through Stochastic Differential Equations", "authors_short": "Song et al.", "arxiv": "2011.13456", "role": "與 DDPM 同被歸為早期 ε-prediction 路線。", "source": "2601.21419 related work"}, {"year": 2022, "title": "Progressive Distillation for Fast Sampling of Diffusion Models", "authors_short": "Salimans, Ho", "arxiv": "2202.00512", "role": "提出新的參數化，使少步取樣更穩定；本論文將其列為 v-prediction 來源。", "source": "abstract"}, {"year": 2022, "title": "Elucidating the Design Space of Diffusion-Based Generative Models", "authors_short": "Karras et al.", "arxiv": "2206.00364", "role": "以 preconditioning 設計目標與縮放，使網路輸出變異數跨 SNR 維持固定。", "source": "2601.21419 related work"}, {"year": 2022, "title": "Flow Matching for Generative Modeling", "authors_short": "Lipman et al.", "arxiv": "2210.02747", "role": "改為回歸固定條件機率路徑的向量場（速度），涵蓋擴散路徑。", "source": "abstract"}, {"year": 2023, "title": "Understanding Diffusion Objectives as the ELBO with Simple Data Augmentation", "authors_short": "Kingma, Gao", "arxiv": "2303.00848", "role": "證明各目標等於不同噪聲層級 ELBO 的加權積分，目標差異等同加權差異。", "source": "abstract"}, {"year": 2024, "title": "Scaling Rectified Flow Transformers for High-Resolution Image Synthesis", "authors_short": "Esser et al.", "arxiv": "2403.03206", "role": "在高解析度生成中大規模比較 rectified flow 與既有擴散公式。", "source": "abstract"}, {"year": 2024, "title": "Simpler Diffusion (SiD2): 1.5 FID on ImageNet512 with pixel-space diffusion", "authors_short": "Hoogeboom et al.", "arxiv": "2410.19324", "role": "以 sigmoid loss weighting 讓 pixel-space 擴散可擴展；被本論文歸為 x-prediction 或重度 SNR 加權的例子。", "source": "2601.21419 related work"}, {"year": 2024, "title": "Dynamical Regimes of Diffusion Models", "authors_short": "Biroli et al.", "arxiv": "2402.18491", "role": "分析反向生成過程的三個動力學區段，屬本論文所接續的理論脈絡。", "source": "abstract"}, {"year": 2025, "title": "Back to Basics: Let Denoising Generative Models Denoise", "authors_short": "Li, He", "arxiv": "2511.13720", "role": "依流形假設主張直接預測乾淨資料（x-prediction），並提出 JiT。", "source": "abstract"}, {"year": 2026, "title": "Understanding and Learning Prediction Targets in Diffusion Models", "authors_short": "本論文", "arxiv": "2601.21419", "role": "以 u = kx − (1 − k)n 統一 ε、v、x，推得 k* = D/(D + d)，並提出可學 k 的 k-Diff。", "source": "2601.21419 related work"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+const lgs=(d0,d1,r0,r1)=>{const a=Math.log(d0),b=Math.log(d1);return v=>r0+(Math.log(v)-a)/(b-a)*(r1-r0)};
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+const f2=v=>(Math.abs(v)<0.005?0:v).toFixed(2),f3=v=>(Math.abs(v)<0.0005?0:v).toFixed(3);
+const fmtNum=x=>x.toLocaleString('zh-TW',{minimumFractionDigits:3,maximumFractionDigits:3});
+function fmtK(k){if(k<=0.999)return k.toFixed(3);const s=k.toFixed(8);let i=s.indexOf('.')+1;while(i<s.length&&s[i]==='9')i++;return s.slice(0,Math.min(i+1,s.indexOf('.')+7))}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function frame(svg,o){
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m=o.m,x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=m.t;
+  const X=(o.xlog?lgs:lin)(o.x[0],o.x[1],x0,x1),Y=lin(o.y[0],o.y[1],y0,y1);
+  const g=el('g',null,svg);
+  (o.yt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.yf?o.yf(v):String(v)),yy=Y(val);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},g);tx(g,x0-8,yy+4,lab,{class:'tk','text-anchor':'end'})});
+  (o.xt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.xf?o.xf(v):String(v)),xx=X(val);el('line',{x1:xx,x2:xx,y1:y0,y2:y0+4,class:'axl'},g);tx(g,xx,y0+18,lab,{class:'tk','text-anchor':'middle'})});
+  el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  if(o.xl)tx(g,(x0+x1)/2,o.H-4,o.xl,{class:'al','text-anchor':'middle'});
+  if(o.yl)tx(g,4,12,o.yl,{class:'al'});
+  return {X,Y,g,x0,x1,y0,y1};
+}
+function arrow(g,x0,y0,x1,y1,cls,dash){const dx=x1-x0,dy=y1-y0,L=Math.hypot(dx,dy);if(L<2)return;const ux=dx/L,uy=dy/L,h=Math.min(10,L*.6);
+  el('line',{x1:x0,y1:y0,x2:x1-ux*h*.7,y2:y1-uy*h*.7,class:cls+(dash?' dash':'')},g);
+  el('path',{d:`M${x1} ${y1}L${x1-ux*h-uy*h*.45} ${y1-uy*h+ux*h*.45}L${x1-ux*h+uy*h*.45} ${y1-uy*h-ux*h*.45}Z`,class:cls+'-f'},g)}
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+
+/* ---------- shared math ---------- */
+const M=1024,T=new Float64Array(M);for(let j=0;j<M;j++)T[j]=(j+.5)/M;
+const SETTINGS={A:{sampler:'uniform',loss:'u'},B:{sampler:'logitn',loss:'u'},C:{sampler:'logitn',loss:'v'}};
+const LOGITN={mu:-0.8,s:0.8};
+const DENS={uniform:new Float64Array(M).fill(1),logitn:new Float64Array(M)};
+for(let j=0;j<M;j++){const t=T[j],l=Math.log(t/(1-t));DENS.logitn[j]=Math.exp(-((l-LOGITN.mu)**2)/(2*LOGITN.s*LOGITN.s))/(LOGITN.s*Math.sqrt(2*Math.PI)*t*(1-t))}
+function weights(set,k){const S=SETTINGS[set],p=DENS[S.sampler],w=new Float64Array(M);for(let j=0;j<M;j++){let v=p[j]/M;if(S.loss==='v'){const den=k*(1-T[j])+(1-k)*T[j];v/=den*den}w[j]=v}return w}
+function modeParts(set,k,N){
+  const w=weights(set,k),ph=k,ps=-(1-k);
+  if(N===0){let P=0;for(let j=0;j<M;j++){const a=T[j],s=1-a,q=ph*s-ps*a;P+=w[j]*q*q/(a*a+s*s)}return{P:.5*P,Q:0}}
+  let P=0,Q=0;const L=M/N;
+  for(let b=0;b<N;b++){let S0=0,Sa=0,Ss=0,Saa=0,Sss=0;for(let j=b*L;j<(b+1)*L;j++){const ww=w[j],a=T[j],s=1-a;S0+=ww;Sa+=ww*a;Ss+=ww*s;Saa+=ww*a*a;Sss+=ww*s*s}
+    const den=Saa+Sss,c=ph*Sa+ps*Ss;
+    P+=Math.max(0,.5*((ph*ph+ps*ps)*S0-(den>1e-300?c*c/den:0)));
+    Q+=Math.max(0,.5*ps*ps*(S0-(Sss>1e-300?Ss*Ss/Sss:0)))}
+  return{P,Q};
+}
+const KG=201,KS=Float64Array.from({length:KG},(_,i)=>i/(KG-1));
+const curveCache=new Map();
+function kStarCurve(set,N){const key=set+'|'+N;if(curveCache.has(key))return curveCache.get(key);
+  const PQ=[];for(let i=0;i<KG;i++)PQ.push(modeParts(set,KS[i],N));
+  const ks=new Float64Array(128),flat=[];
+  for(let d=1;d<=128;d++){let best=Infinity,bi=0,mx=-Infinity,ma=0;for(let i=0;i<KG;i++){const v=d*PQ[i].P+(128-d)*PQ[i].Q;if(v<best){best=v;bi=i}if(v>mx)mx=v;ma=Math.max(ma,Math.abs(v))}
+    ks[d-1]=KS[bi];flat.push(mx-best<1e-9*ma)}
+  const r={ks,flat};curveCache.set(key,r);return r}
+function closedForm(D,d,k){const par=d*(k*k/4-k/4+5/16),perp=(D-d)*(1-k)**2/8;return{par,perp,total:par+perp}}
+const kStarClosed=(D,d)=>D/(D+d);
+function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function gauss(r){const u1=r(),u2=r();return Math.sqrt(-2*Math.log(1-u1))*Math.cos(2*Math.PI*u2)}
+
+/* ---------- S3 static figure ---------- */
+(function(){const s=$('#s3-fig');const X=lin(-0.6,2.6,24,336),Y=lin(-0.4,1.6,214,20);
+  el('line',{x1:X(-0.6),x2:X(2.6),y1:Y(0),y2:Y(0),class:'manifold'},s);tx(s,X(2.55),Y(0)+20,'資料子空間（d = 1）',{class:'al','text-anchor':'end'});
+  const yx=1.6,yy=1.1;
+  el('line',{x1:X(yx),x2:X(yx),y1:Y(0),y2:Y(yy),class:'proj'},s);
+  el('path',{d:`M${X(yx)-10} ${Y(0)}L${X(yx)-10} ${Y(0)-10}L${X(yx)} ${Y(0)-10}`,class:'proj',style:'stroke-dasharray:none'},s);
+  arrow(s,X(0),Y(0),X(yx),Y(0),'par');arrow(s,X(yx),Y(0),X(yx),Y(yy),'perp',true);arrow(s,X(0),Y(0),X(yx),Y(yy),'ink');
+  tx(s,X(yx/2)-6,Y(yy/2)-12,'y',{class:'labm','text-anchor':'end'});
+  tx(s,X(yx/2),Y(0)+20,'PPᵀy',{class:'labm','text-anchor':'middle',style:'fill:var(--c-par)'});
+  tx(s,X(yx)+8,Y(yy/2)+4,'(I − PPᵀ)y',{class:'labm',style:'fill:var(--c-perp)'});})();
+
+/* ---------- C1 ---------- */
+const c1={seed:7,pts:[]};
+function c1sample(){const r=mulberry32(c1.seed);c1.pts=[];for(let i=0;i<150;i++){const xt=gauss(r),np=gauss(r),nq=gauss(r);c1.pts.push({xt,np,nq})}
+  c1.hi=Math.max(0,c1.pts.findIndex(p=>Math.abs(p.xt)>1&&Math.abs(p.nq)>.8&&Math.abs(p.np)<1.5))}
+function plane(box,t,k,showU){
+  const svg=$('svg',box),W=widthOf(box,260,440),H=W;
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const S=lin(-3,3,10,W-10),SY=lin(-3,3,H-10,10),g=el('g',null,svg);
+  for(let v=-2;v<=2;v++){if(!v)continue;el('line',{x1:S(v),x2:S(v),y1:SY(-3),y2:SY(3),class:'faint'},g);el('line',{x1:S(-3),x2:S(3),y1:SY(v),y2:SY(v),class:'faint'},g)}
+  el('line',{x1:S(0),x2:S(0),y1:SY(-3),y2:SY(3),class:'axl'},g);
+  el('line',{x1:S(-3),x2:S(3),y1:SY(0),y2:SY(0),class:'manifold'},g);
+  tx(g,S(2.9),SY(0)+18,showU?'資料子空間（d = 1）':'資料所在的直線',{class:'al','text-anchor':'end'});
+  if(showU)tx(g,S(0)+6,SY(2.85)+4,'垂直方向',{class:'al'});
+  const cl=v=>Math.max(-3,Math.min(3,v));
+  for(const p of c1.pts){el('circle',{cx:S(cl(t*p.xt+(1-t)*p.np)),cy:SY(cl((1-t)*p.nq)),r:2.6,class:'pt'},g)}
+  const p=c1.pts[c1.hi],ax=t*p.xt,zx=ax+(1-t)*p.np,zy=(1-t)*p.nq;
+  arrow(g,S(0),SY(0),S(ax),SY(0),'par');arrow(g,S(ax),SY(0),S(zx),SY(zy),'perp',true);
+  el('circle',{cx:S(zx),cy:SY(zy),r:5,class:'ink-f'},g);tx(g,S(zx)+8,SY(zy)-8,'z',{class:'labm'});
+  if(!showU){tx(g,S(ax/2),SY(0)-8,'t·x',{class:'labm','text-anchor':'middle',style:'fill:var(--c-par)'})}
+  if(showU){const ux=k*p.xt-(1-k)*p.np,uy=-(1-k)*p.nq;
+    el('line',{x1:S(ux),x2:S(ux),y1:SY(uy),y2:SY(0),class:'proj'},g);el('line',{x1:S(ux),x2:S(0),y1:SY(uy),y2:SY(uy),class:'proj'},g);
+    arrow(g,S(0),SY(0),S(ux),SY(uy),'acc');tx(g,S(ux)+(ux>=0?8:-8),SY(uy)+(uy>0?-8:16),'u',{class:'labm','text-anchor':ux>=0?'start':'end',style:'fill:var(--accent)'})}
+  return{p,zx,zy};
+}
+function renderC1a(){const t=+$('#c1a-t').value;$('#c1a-to').textContent=t.toFixed(2);const r=plane($('#c1a-fig'),t,0,false);
+  $('#c1a-ro').innerHTML=`x̃ = <b>${f2(r.p.xt)}</b>　n = (<b>${f2(r.p.np)}</b>, <b>${f2(r.p.nq)}</b>)<br>z = t·x + (1−t)·n = (<b>${f2(r.zx)}</b>, <b>${f2(r.zy)}</b>)`;}
+function renderC1b(){const t=+$('#c1b-t').value,k=+$('#c1b-k').value;$('#c1b-to').textContent=t.toFixed(2);$('#c1b-ko').textContent=k.toFixed(2);
+  $$('#c1b .chip').forEach(c=>c.setAttribute('aria-pressed',String(Math.abs(+c.dataset.k-k)<1e-9)));
+  const r=plane($('#c1b-plane'),t,k,true),p=r.p;
+  const up=k*p.xt-(1-k)*p.np,uq=-(1-k)*p.nq;
+  $('#c1b-ro').innerHTML=`z∥ = t·x̃ + (1−t)·n∥ = <b>${f2(r.zx)}</b><br>z⊥ = (1−t)·n⊥ = <b>${f2(r.zy)}</b><br>u∥ = k·x̃ − (1−k)·n∥ = <b>${f2(up)}</b><br>u⊥ = −(1−k)·n⊥ = <b class="acc">${f2(uq)}</b>`;
+  // top chart
+  const bt=$('#c1b-top'),W=widthOf(bt,260,520),bs=-1.5*(1-k),ps=-(1-k);
+  const F=frame($('svg',bt),{W,H:200,m:{l:44,r:12,t:24,b:34},x:[0,1],y:[-1.6,0.6],xt:[0,.25,.5,.75,1],yt:[-1.5,-1,-.5,0,.5],xf:v=>String(v),yf:v=>String(v),xl:'擴散時間 t',yl:'每單位 n⊥ 的係數'});
+  const pts=[];for(let i=0;i<=50;i++){const tt=i/50;pts.push([tt,bs*(1-tt)])}
+  el('path',{d:lp(pts.map(q=>[F.X(q[0]),F.Y(q[1])]))+`L${F.X(1)} ${F.Y(ps)}L${F.X(0)} ${F.Y(ps)}Z`,class:'fillp'},F.g);
+  el('line',{x1:F.X(0),x2:F.X(1),y1:F.Y(ps),y2:F.Y(ps),class:'tot'},F.g);
+  el('line',{x1:F.X(0),x2:F.X(1),y1:F.Y(bs),y2:F.Y(0),class:'perp dash'},F.g);
+  el('line',{x1:F.X(t),x2:F.X(t),y1:F.y1,y2:F.y0,class:'cur'},F.g);
+  // bottom chart
+  const bb=$('#c1b-bot'),W2=widthOf(bb,260,520);
+  const G=frame($('svg',bb),{W:W2,H:200,m:{l:44,r:12,t:24,b:34},x:[0,1],y:[0,0.6],xt:[0,.25,.5,.75,1],yt:[0,.2,.4,.6],xf:v=>String(v),yf:v=>String(v),xl:'擴散時間 t',yl:'½·e(t)²'});
+  const e2=[];for(let i=0;i<=100;i++){const tt=i/100,e=(1-k)*(1.5*tt-.5);e2.push([G.X(tt),G.Y(.5*e*e)])}
+  el('path',{d:lp(e2)+`L${G.X(1)} ${G.Y(0)}L${G.X(0)} ${G.Y(0)}Z`,class:'filla'},G.g);
+  el('path',{d:lp(e2),class:'acc',style:'stroke-width:2.5'},G.g);
+  el('line',{x1:G.X(t),x2:G.X(t),y1:G.y1,y2:G.y0,class:'cur'},G.g);
+  const res=(1-k)**2/8;
+  $('#c1b-res').innerHTML=`每個垂直維度的殘差 ½∫e(t)²dt = (1−k)²/8 = <b class="mono">${res.toFixed(3)}</b>。k = 1 時兩線都在 0，殘差為 0；k 越小，兩線差距越大，殘差與 (1−k)² 成正比。`;
+  announce('c1b',`k = ${k.toFixed(2)}，垂直殘差 ${res.toFixed(3)}`);
+}
+function initC1(){c1sample();
+  $('#c1a-t').addEventListener('input',renderC1a);$('#c1a-t').addEventListener('change',()=>announce('c1a','t = '+(+$('#c1a-t').value).toFixed(2)));
+  ['#c1b-t','#c1b-k'].forEach(s=>$(s).addEventListener('input',renderC1b));
+  $$('#c1b .chip').forEach(c=>c.addEventListener('click',()=>{$('#c1b-k').value=c.dataset.k;renderC1b()}));
+  const re=()=>{c1.seed++;c1sample();renderC1a();renderC1b()};$('#c1a-re').addEventListener('click',re);$('#c1b-re').addEventListener('click',re);
+  const sync=v=>e=>{ $('#c1a-t').setAttribute('aria-valuetext','t = '+(+$('#c1a-t').value).toFixed(2));};
+  $('#c1a-t').addEventListener('input',sync());
+  renderC1a();renderC1b();}
+
+/* ---------- C2 ---------- */
+const D_VALUES=[2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768,65536];
+const c2={D:128,d:32,dl:[]};
+function dList(D){const s=new Set();for(let i=0;i<=200;i++)s.add(Math.max(1,Math.min(D,Math.round(2**(i/200*Math.log2(D))))));return[...s].sort((a,b)=>a-b)}
+function setDList(){c2.dl=dList(c2.D);let bi=0;c2.dl.forEach((v,i)=>{if(Math.abs(Math.log(v)-Math.log(Math.min(c2.d,c2.D)))<Math.abs(Math.log(c2.dl[bi])-Math.log(Math.min(c2.d,c2.D))))bi=i});const r=$('#c2-d');r.max=c2.dl.length-1;r.value=bi;c2.d=c2.dl[bi]}
+function renderC2(){const D=c2.D,d=c2.d,ks=kStarClosed(D,d);
+  $('#c2-Do').textContent=D.toLocaleString('en-US');$('#c2-do').textContent=d.toLocaleString('en-US');
+  $('#c2-D').setAttribute('aria-valuetext','D = '+D);$('#c2-d').setAttribute('aria-valuetext','d = '+d);
+  const box=$('#c2-fig'),W=widthOf(box,280,640);
+  const F=frame($('svg',box),{W,H:300,m:{l:48,r:16,t:28,b:40},x:[0,1],y:[0,.35],xt:[[0,'ε 0'],[.25,'0.25'],[.5,'v 0.5'],[.75,'0.75'],[1,'x 1']],yt:[0,.1,.2,.3],yf:v=>v.toFixed(1),xl:'目標參數 k',yl:'Δ*/D'});
+  const P=[],Q=[],S=[];for(let i=0;i<=100;i++){const k=i/100,c=closedForm(D,d,k);P.push([F.X(k),F.Y(c.par/D)]);Q.push([F.X(k),F.Y(c.perp/D)]);S.push([F.X(k),F.Y(c.total/D)])}
+  el('path',{d:lp(P),class:'par'},F.g);el('path',{d:lp(Q),class:'perp dash'},F.g);el('path',{d:lp(S),class:'tot'},F.g);
+  const cs=closedForm(D,d,ks);el('line',{x1:F.X(ks),x2:F.X(ks),y1:F.y0,y2:F.Y(cs.total/D),class:'ref',style:'stroke:var(--accent)'},F.g);
+  el('circle',{cx:F.X(ks),cy:F.Y(cs.total/D),r:6,class:'kdot'},F.g);
+  const lx=F.X(ks),anchor=ks>.8?'end':'middle';tx(F.g,anchor==='end'?lx+6:lx,F.Y(cs.total/D)-14,'k* = '+fmtK(ks),{class:'labm','text-anchor':anchor,style:'fill:var(--accent)'});
+  $('#c2-ro').innerHTML=`k* = D/(D+d) = <b class="acc">${fmtK(ks)}</b><br>d/D = <b>${(d/D).toPrecision(3)}</b>`;
+  const rows=[['ε',0],['v',.5],['x',1],['k*',ks]];
+  $('#c2-tab tbody').innerHTML=rows.map(([n,k])=>{const v=closedForm(D,d,k).total,ex=(D+d)*(k-ks)**2/8;return`<tr${n==='k*'?' class="hl"':''}><td>${n}</td><td class="num">${n==='k*'?fmtK(k):k}</td><td class="num">${fmtNum(v)}</td><td class="num">${fmtNum(Math.abs(ex)<1e-12?0:ex)}</td></tr>`}).join('');
+  // inset
+  const ib=$('#c2-inset'),Wi=widthOf(ib,220,300);
+  const G=frame($('svg',ib),{W:Wi,H:160,m:{l:40,r:12,t:24,b:36},x:[1e-5,1],xlog:true,y:[.5,1],xt:[[1e-5,'10⁻⁵'],[1e-3,'10⁻³'],[1e-1,'10⁻¹'],[1,'1']],yt:[[.5,'0.5'],[.75,'0.75'],[1,'1']],xl:'d/D（對數）',yl:'k*'});
+  const C=[];for(let i=0;i<=80;i++){const r=10**(-5+5*i/80);C.push([G.X(r),G.Y(1/(1+r))])}
+  el('path',{d:lp(C),class:'acc',style:'stroke-width:2'},G.g);el('circle',{cx:G.X(Math.max(1e-5,d/D)),cy:G.Y(ks),r:5,class:'kdot'},G.g);
+  announce('c2',`D = ${D}，d = ${d}，k* = ${fmtK(ks)}`);
+}
+function initC2(){$('#c2-D').addEventListener('input',e=>{c2.D=D_VALUES[+e.target.value];setDList();renderC2()});
+  $('#c2-d').addEventListener('input',e=>{c2.d=c2.dl[+e.target.value];renderC2()});setDList();renderC2()}
+
+/* ---------- C3 ---------- */
+const c3={step:1,set:'A',N:8,showN:false,showDep:false,d:32,kSide:.5};
+const C3CAP={A:'論文（Fig. 1 左上、右上）：共享線性在此條件下學到的 k 與 D/(D+d) 相差在 0.027 內；加入時間條件後 k 偏離 D/(D+d)，分區預測與訓練出的八區間 k 相差在 0.025 內。',
+  B:'論文（Fig. 1 左下）：logit-normal 取樣使最佳值在 d ≥ 48 時變成 k = 0，Theorem 3.1 的預測誤差在 0.026 內。',
+  C:'論文（Fig. 1 左下、右下）：再改用 v-MSE 使高 d 的最佳值離開邊界（預測誤差 0.045 內）；加上時間條件後，d = 128 的八區間母體最佳 0.212，訓練值 0.659，時間嵌入 MLP 0.612，母體分析失準。'};
+function setStep(s){c3.step=s;if(s===1){c3.set='A';c3.showN=false;c3.showDep=false}else{c3.showN=true;c3.showDep=true;c3.set=s===2?'A':s===3?'B':'C'}$('#c3-dep').checked=c3.showDep;renderC3()}
+function renderC3(){
+  $$('#c3 .steps button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.step===c3.step)));
+  $('#c3-free').classList.toggle('hide',c3.step===1);
+  $$('#c3-set button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===c3.set)));
+  $$('#c3-N button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.v===c3.N)));
+  $('#c3-do').textContent=c3.d;$('#c3-d').setAttribute('aria-valuetext','d = '+c3.d);
+  const sh=kStarCurve(c3.set,1),bn=c3.showN?kStarCurve(c3.set,c3.N):null,dp=c3.showDep?kStarCurve(c3.set,0):null;
+  const box=$('#c3-fig'),W=widthOf(box,280,640);
+  const F=frame($('svg',box),{W,H:320,m:{l:52,r:20,t:28,b:40},x:[1,128],y:[0,1],xt:[1,32,64,96,128],yt:[[0,'ε 0'],[.25,'0.25'],[.5,'v 0.5'],[.75,'0.75'],[1,'x 1']],xl:'內在維度 d（D = 128）',yl:'母體最佳 k*'});
+  const ref=[];for(let d=1;d<=128;d++)ref.push([F.X(d),F.Y(128/(128+d))]);el('path',{d:lp(ref),class:'ref'},F.g);
+  const cur=(c,cls)=>{const pts=[];for(let d=1;d<=128;d++)pts.push([F.X(d),F.Y(c.ks[d-1])]);el('path',{d:lp(pts),class:cls},F.g)};
+  let depFlat=false;
+  if(dp){depFlat=dp.flat.every(Boolean);if(!depFlat)cur(dp,'perp dot')}
+  if(bn)cur(bn,'par dash');
+  cur(sh,'acc');
+  el('line',{x1:F.X(c3.d),x2:F.X(c3.d),y1:F.y1,y2:F.y0,class:'cur'},F.g);
+  el('circle',{cx:F.X(c3.d),cy:F.Y(sh.ks[c3.d-1]),r:5,class:'kdot'},F.g);
+  if(c3.set==='C'&&c3.showN){const xx=F.X(128);[[.212,'八區間母體 0.212',14],[.659,'訓練出的八區間 0.659',-10],[.612,'時間嵌入 MLP 0.612',16]].forEach(([v,l,dy])=>{el('circle',{cx:xx,cy:F.Y(v),r:5,class:'hollow'},F.g);tx(F.g,xx-10,F.Y(v)+dy/3+(dy>0?6:-2),l,{class:'lab','text-anchor':'end'})});tx(F.g,xx-10,F.Y(.212)+24,'論文報告（d = 128）',{class:'al','text-anchor':'end'})}
+  // legend & readout
+  const leg=['<span class="lg ref">D/(D+d)（Theorem 3.2）</span>','<span class="lg acc">共享線性</span>'];
+  if(bn)leg.push(`<span class="lg npar">${c3.N} 區間線性</span>`);
+  if(dp)leg.push(depFlat?'<span class="lg dot">雜訊強度相依：損失與 k 無關，k 無法由損失決定</span>':'<span class="lg dot">雜訊強度相依（App. H）</span>');
+  if(c3.set==='C'&&c3.showN)leg.push('<span class="lg pt">論文報告</span>');
+  $('#c3-leg').innerHTML=leg.join('');
+  const d=c3.d;let ro=`d = <b>${d}</b>　設定 <b>${c3.set}</b><br>D/(D+d) = <b>${(128/(128+d)).toFixed(3)}</b><br>共享線性 = <b class="acc">${sh.ks[d-1].toFixed(3)}</b>`;
+  if(bn)ro+=`<br>${c3.N} 區間 = <b>${bn.ks[d-1].toFixed(3)}</b>`;
+  if(dp)ro+=`<br>雜訊相依 = <b>${depFlat?'平坦':dp.ks[d-1].toFixed(3)}</b>`;
+  $('#c3-ro').innerHTML=ro;
+  $('#c3-cap').textContent=C3CAP[c3.set];
+  // weight subplot
+  const wb=$('#c3-wbox');wb.classList.toggle('hide',c3.set==='A');
+  if(c3.set!=='A'){const k=c3.kSide;$('#c3-ko').textContent=k.toFixed(2);const w=weights(c3.set,k);let mx=0;for(let j=0;j<M;j++)mx=Math.max(mx,w[j]);
+    const b=$('#c3-w'),Ww=widthOf(b,260,640);
+    const G=frame($('svg',b),{W:Ww,H:170,m:{l:44,r:14,t:24,b:36},x:[0,1],y:[0,1.05],xt:[0,.25,.5,.75,1],yt:[0,.5,1],xl:'擴散時間 t',yl:'有效權重（正規化）'});
+    const pts=[];for(let j=0;j<M;j+=4)pts.push([G.X(T[j]),G.Y(w[j]/mx)]);el('path',{d:lp(pts),class:'par'},G.g)}
+  announce('c3',`設定 ${c3.set}，d = ${d}，共享線性 k* = ${sh.ks[d-1].toFixed(3)}`);
+}
+function initC3(){
+  $('#c3-N').innerHTML=[1,2,4,8,16,32,64].map(n=>`<button type="button" data-v="${n}">${n}</button>`).join('');
+  $$('#c3 .steps button').forEach(b=>b.addEventListener('click',()=>setStep(+b.dataset.step)));
+  $$('#c3-set button').forEach(b=>b.addEventListener('click',()=>{c3.set=b.dataset.v;renderC3()}));
+  $$('#c3-N button').forEach(b=>b.addEventListener('click',()=>{c3.N=+b.dataset.v;c3.showN=true;renderC3()}));
+  $('#c3-dep').addEventListener('change',e=>{c3.showDep=e.target.checked;renderC3()});
+  $('#c3-d').addEventListener('input',e=>{c3.d=+e.target.value;renderC3()});
+  $('#c3-k').addEventListener('input',e=>{c3.kSide=+e.target.value;renderC3()});
+  renderC3();}
+
+/* ---------- C4 ---------- */
+const C4STEPS=3000,C4PER=30;
+function c4new(set,d){return{set,d,step:0,a:0,b:0,w:0,m:[0,0,0],v:[0,0,0],hist:{k:[.5],a:[0],b:[0]},L:NaN,running:false}}
+function gradC4(st){const k=1/(1+Math.exp(-st.w)),S=SETTINGS[st.set],p=DENS[S.sampler],D=128,d=st.d;let ga=0,gb=0,gk=0,L=0;
+  for(let j=0;j<M;j++){const t=T[j],s=1-t,e1=st.a*t-k,e2=st.a*s+1-k,e3=st.b*s+1-k,l=d*(e1*e1+e2*e2)+(D-d)*e3*e3;let w,dw;
+    if(S.loss==='u'){w=p[j]/M;dw=0}else{const den=k*s+(1-k)*t;w=p[j]/(M*den*den);dw=-2*p[j]*(1-2*t)/(M*den*den*den)}
+    ga+=w*2*d*(e1*t+e2*s);gb+=w*2*(D-d)*e3*s;gk+=w*(-2*d*(e1+e2)-2*(D-d)*e3)+dw*l;L+=w*l}
+  return{g:[ga/(2*D),gb/(2*D),gk/(2*D)*k*(1-k)],L:L/(2*D)}}
+function stepC4(st){const r=gradC4(st),g=r.g;st.step++;st.L=r.L;const pr=['a','b','w'];
+  for(let i=0;i<3;i++){st.m[i]=.9*st.m[i]+.1*g[i];st.v[i]=.95*st.v[i]+.05*g[i]*g[i];const mh=st.m[i]/(1-.9**st.step),vh=st.v[i]/(1-.95**st.step);st[pr[i]]-=0.02*mh/(Math.sqrt(vh)+1e-8)}
+  st.hist.k.push(1/(1+Math.exp(-st.w)));st.hist.a.push(st.a);st.hist.b.push(st.b)}
+function eqAB(set,k){const w=weights(set,k),ph=k,ps=-(1-k);let n1=0,d1=0,n2=0,d2=0;for(let j=0;j<M;j++){const a=T[j],s=1-a;n1+=w[j]*(ph*a+ps*s);d1+=w[j]*(a*a+s*s);n2+=w[j]*ps*s;d2+=w[j]*s*s}return{a:n1/d1,b:n2/d2}}
+let c4=c4new('A',32),c4raf=0;
+function renderC4(){
+  $$('#c4-set button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===c4.set)));$('#c4-do').textContent=c4.d;$('#c4-d').setAttribute('aria-valuetext','d = '+c4.d);
+  $('#c4-lgD').classList.toggle('hide',c4.set!=='A');
+  const k=c4.hist.k[c4.hist.k.length-1],tgt=kStarCurve(c4.set,1).ks[c4.d-1];
+  const box=$('#c4-k'),W=widthOf(box,260,520);
+  const F=frame($('svg',box),{W,H:260,m:{l:52,r:16,t:28,b:40},x:[0,C4STEPS],y:[0,1],xt:[0,1000,2000,3000],xf:v=>v.toLocaleString('en-US'),yt:[[0,'ε 0'],[.5,'v 0.5'],[1,'x 1']],xl:'Adam 步數',yl:'k'});
+  el('line',{x1:F.x0,x2:F.x1,y1:F.Y(tgt),y2:F.Y(tgt),class:'ref'},F.g);
+  if(c4.set==='A'){const kd=128/(128+c4.d);el('line',{x1:F.x0,x2:F.x1,y1:F.Y(kd),y2:F.Y(kd),class:'perp dot',style:'stroke-width:2'},F.g)}
+  const pk=[];const h=c4.hist.k;for(let i=0;i<h.length;i+=(i<200?1:5))pk.push([F.X(i),F.Y(h[i])]);pk.push([F.X(h.length-1),F.Y(h[h.length-1])]);
+  el('path',{d:lp(pk),class:'acc'},F.g);el('circle',{cx:F.X(h.length-1),cy:F.Y(k),r:5,class:'kdot'},F.g);
+  const b2=$('#c4-ab'),W2=widthOf(b2,260,520);
+  const G=frame($('svg',b2),{W:W2,H:260,m:{l:44,r:16,t:28,b:40},x:[0,C4STEPS],y:[-1.6,1],xt:[0,1000,2000,3000],xf:v=>v.toLocaleString('en-US'),yt:[-1.5,-1,-.5,0,.5,1],yf:v=>String(v),xl:'Adam 步數',yl:'係數'});
+  const eq=eqAB(c4.set,k);
+  el('line',{x1:G.x0,x2:G.x1,y1:G.Y(eq.a),y2:G.Y(eq.a),class:'par dot',style:'stroke-width:1.5'},G.g);
+  if(c4.d<128)el('line',{x1:G.x0,x2:G.x1,y1:G.Y(eq.b),y2:G.Y(eq.b),class:'perp dot',style:'stroke-width:1.5'},G.g);
+  const pa=[],pb=[];for(let i=0;i<h.length;i+=(i<200?1:5)){pa.push([G.X(i),G.Y(c4.hist.a[i])]);pb.push([G.X(i),G.Y(c4.hist.b[i])])}
+  el('path',{d:lp(pa),class:'par'},G.g);el('path',{d:lp(pb),class:'perp dash'},G.g);
+  if(c4.d===128)tx(G.g,G.x1,G.Y(0)-8,'d = D，無垂直維度',{class:'al','text-anchor':'end'});
+  $('#c4-ro').innerHTML=`步數 <b>${c4.step}</b>　k = <b class="acc">${k.toFixed(3)}</b>　C3 網格值 = <b>${tgt.toFixed(3)}</b>${c4.set==='A'?`　D/(D+d) = <b>${(128/(128+c4.d)).toFixed(3)}</b>`:''}<br>𝓛 = <b>${isNaN(c4.L)?'—':c4.L.toFixed(4)}</b>　a = <b>${f3(c4.a)}</b>　b = <b>${f3(c4.b)}</b>`;
+  $('#c4-run').textContent=c4.running?'暫停':(c4.step>=C4STEPS?'已完成':'執行');$('#c4-run').disabled=c4.step>=C4STEPS&&!c4.running;
+}
+function c4done(){c4.running=false;renderC4();announce('c4',`第 ${c4.step} 步，k = ${c4.hist.k[c4.hist.k.length-1].toFixed(3)}`)}
+function runC4(){if(c4.running){c4.running=false;cancelAnimationFrame(c4raf);c4done();return}
+  if(c4.step>=C4STEPS)return;c4.running=true;renderC4();
+  if(RM){const chunk=()=>{if(!c4.running)return;for(let i=0;i<500&&c4.step<C4STEPS;i++)stepC4(c4);if(c4.step<C4STEPS)setTimeout(chunk,0);else c4done()};setTimeout(chunk,0);return}
+  const tick=()=>{if(!c4.running)return;const t0=performance.now();const per=c4.per||C4PER;for(let i=0;i<per&&c4.step<C4STEPS;i++)stepC4(c4);if(performance.now()-t0>12)c4.per=10;renderC4();if(c4.step<C4STEPS)c4raf=requestAnimationFrame(tick);else c4done()};c4raf=requestAnimationFrame(tick)}
+function resetC4(set,d){c4.running=false;cancelAnimationFrame(c4raf);c4=c4new(set??c4.set,d??c4.d);renderC4()}
+function initC4(){$$('#c4-set button').forEach(b=>b.addEventListener('click',()=>resetC4(b.dataset.v)));
+  $('#c4-d').addEventListener('input',e=>resetC4(undefined,+e.target.value));$('#c4-run').addEventListener('click',runC4);$('#c4-reset').addEventListener('click',()=>resetC4());renderC4();
+  if(!RM&&'IntersectionObserver' in window){const io=new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting)){io.disconnect();if(c4.step===0&&!c4.running)runC4()}},{threshold:.5});io.observe($('#c4-k'))}}
+
+/* ---------- k axes ---------- */
+function kaxis(node){const marks=JSON.parse(node.dataset.marks);node.innerHTML='<div class="kx-track"><div class="kx-line"></div></div>';const tr=node.firstChild;
+  [[0,'ε','k = 0','l'],[.5,'v','k = 0.5',''],[1,'x','k = 1','r']].forEach(([k,n,v,c])=>{const s=document.createElement('span');s.className='kx-tick '+c;s.style.left=k*100+'%';s.innerHTML=`<b>${n}</b> ${v}`;tr.appendChild(s)});
+  marks.forEach(m=>{const d=document.createElement('div');d.className='kx-mark'+(m.acc?' acc':'');d.style.left=m.k*100+'%';d.innerHTML=`<span class="kx-dot"></span><span class="kx-stem"></span><span class="kx-lab ${m.k>.85?'r':m.k<.15?'l':'c'}">${m.label}</span>`;tr.appendChild(d)});
+  layoutKAxis(node)}
+function layoutKAxis(node){const tr=node.firstChild;if(!tr)return;const labs=$$('.kx-lab',tr);labs.forEach(l=>{l.style.bottom='14px';l.previousSibling.style.height='8px'});
+  const items=labs.map(l=>({l,r:l.getBoundingClientRect()})).sort((a,b)=>a.r.left-b.r.left);const rows=[];let mx=0;
+  items.forEach(it=>{let r=0;while(rows[r]!==undefined&&it.r.left<rows[r]+8)r++;rows[r]=it.r.right;mx=Math.max(mx,r);it.l.style.bottom=(14+r*28)+'px';it.l.previousSibling.style.height=(8+r*28)+'px'});
+  tr.style.marginTop=(mx*28+40)+'px'}
+
+/* ---------- timeline ---------- */
+const TL_GROUP={'1503.03585':['base','overview'],'2006.11239':['eps','eps-prediction-ddpm-score'],'2011.13456':['eps','eps-prediction-ddpm-score'],
+ '2202.00512':['v','v-prediction-and-preconditioning'],'2206.00364':['v','v-prediction-and-preconditioning'],'2210.02747':['v','flow-matching-velocity-target'],'2403.03206':['v','flow-matching-velocity-target'],
+ '2303.00848':['w','loss-weighting-and-elbo'],'2410.19324':['x','x-prediction-manifold-view'],'2511.13720':['x','x-prediction-manifold-view'],
+ '2402.18491':['th','diffusion-dynamics-theory-background'],'2601.21419':['me','generalized-target-k-parameterization']};
+const TL_NAME={base:'擴散模型',eps:'預測噪聲 · k = 0',v:'預測速度 · k = 0.5',w:'損失加權',x:'預測資料 · k = 1',th:'動態分析',me:'連續的 k · 本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  if(!data.some(e=>e.arxiv==='2601.21419'))data.push({year:2026,title:'Understanding and Learning Prediction Targets in Diffusion Models',authors_short:'本論文',arxiv:'2601.21419',role:'把三種預測目標放進同一個參數 k，推得最佳 k 由資料維度決定，並讓 k 在訓練中學出來。'});
+  data=data.map((e,i)=>({e,i})).sort((a,b)=>(+a.e.year||0)-(+b.e.year||0)||a.i-b.i).map(o=>o.e);
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const slug=g[1]==='overview'?'prediction-targets-overview':g[1];const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${slug?`<a href="${slug}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k].split(' · ')[0];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+
+/* ---------- toc, theme, appbar ---------- */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));
+  addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+/* ---------- self test ---------- */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  [[0,22],[.5,11],[1,10],[.8,9.2]].forEach(([k,v])=>ok(Math.abs(closedForm(128,32,k).total-v)<1e-9,'closedForm k='+k));
+  const near=(a,b,t)=>Math.abs(a-b)<=t+1e-9;
+  ok(near(kStarCurve('A',1).ks[31],.8,.005),'A shared d=32');ok(near(kStarCurve('A',8).ks[3],.87,.005),'A 8-bin d=4');
+  ok(near(kStarCurve('B',1).ks[47],0,.005),'B shared d=48');ok(near(kStarCurve('C',8).ks[127],.21,.005),'C 8-bin d=128');
+  ok(kStarCurve('C',0).flat.every(Boolean),'C dep flat');
+  const tab={A1:[.99,.97,.89,.8,.725,.665,.57,.5],A8:[.96,.87,.695,.605,.565,.54,.515,.5],A0:[.5,.5,.5,.5,.5,.5,.5,.5],B1:[.935,.775,.375,.115,0,0,0,0],B8:[.455,.03,0,0,0,0,0,0],B0:[0,0,0,0,0,0,0,0],C1:[.995,.985,.94,.845,.71,.545,.24,.08],C8:[1,.995,.98,.955,.915,.84,.48,.21]};
+  const ds=[1,4,16,32,48,64,96,128];for(const key in tab){const c=kStarCurve(key[0],+key.slice(1));tab[key].forEach((v,i)=>ok(near(c.ks[ds[i]-1],v,.005),`C3 ${key} d=${ds[i]}`))}
+  [1,2,4,8,16,32,64].forEach((N,i)=>ok(near(kStarCurve('A',N).ks[31],[.8,.73,.67,.605,.56,.535,.515][i],.005),'A N='+N));
+  const c4t=[['A',4,.970,.705,-.045],['A',32,.800,.450,-.300],['A',64,.667,.250,-.499],['A',128,.500,0,0],['B',4,.774,.174,-.319],['B',32,.117,-.909,-1.249],['B',64,0,-1.100,-1.415],['C',4,.987,.748,-.020],['C',32,.847,.433,-.234],['C',64,.543,-.194,-.652],['C',128,.081,-1.011,0]];
+  c4t.forEach(([s,d,k,a,b])=>{const st=c4new(s,d);for(let i=0;i<3000;i++)stepC4(st);const kk=1/(1+Math.exp(-st.w));ok(near(kk,k,.002)&&near(st.a,a,.002)&&near(st.b,b,.002),`C4 ${s} d=${d}: k=${kk.toFixed(4)} a=${st.a.toFixed(4)} b=${st.b.toFixed(4)}`)});
+  const st=c4new('A',32);for(let i=0;i<1000;i++)stepC4(st);ok(near(1/(1+Math.exp(-st.w)),.8,.002),'C4 A d=32 @1000');
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ---------- boot ---------- */
+initTheme();initToc();initC1();initC2();initC3();initC4();renderTimeline();
+$$('.kaxis').forEach(kaxis);
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{renderC1a();renderC1b();renderC2();renderC3();renderC4();$$('.kaxis').forEach(layoutKAxis)})});
+document.fonts&&document.fonts.ready.then(()=>$$('.kaxis').forEach(layoutKAxis));
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false})}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath()});
+if(/[?&]test\b/.test(location.search))selfTest();
+})();
+</script>
+</body>
+</html>
