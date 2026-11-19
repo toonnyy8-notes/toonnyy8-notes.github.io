@@ -1,0 +1,1249 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>分數誤差、曝光偏差與三種縮放</title>
+<meta name="description" content="綜合教學：比較 Tempered Score（No. 237）、DDPM-IP（No. 405）與 Epsilon Scaling（No. 406）。三篇都處理取樣器需要的分數與網路實際給出的值之間的差；本頁以統一的誤差單位、分數乘數軸、平穩分佈與擾動強度對照，說明它們在哪裡相連、哪裡不相連。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+/* ---- No. 406 additions ---- */
+.seg button[aria-checked=true]{background:var(--accent-soft);color:var(--ink)}
+.chip[aria-checked=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+details.sym,details.adv,details.calc{max-width:700px;margin:0 0 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.adv{border-style:dashed}
+details.calc{margin:14px 0 0;max-width:none}
+details.sym>summary,details.adv>summary,details.calc>summary{cursor:pointer;list-style:none;padding:12px 20px;min-height:44px;font:500 14px/1.4 var(--f-body);color:var(--ink-2);display:flex;align-items:center;gap:10px}
+details.sym>summary::-webkit-details-marker,details.adv>summary::-webkit-details-marker,details.calc>summary::-webkit-details-marker{display:none}
+details.sym>summary::before,details.adv>summary::before,details.calc>summary::before{content:"";flex:none;width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details[open].sym>summary::before,details[open].adv>summary::before,details[open].calc>summary::before{transform:rotate(45deg)}
+details.sym .qa,details.adv .qa,details.calc .qa{padding:0 20px 14px;font-size:15px;line-height:1.75}
+details.sym ul{margin:0;padding-left:1.2em}
+blockquote.author{max-width:700px;margin:0 0 20px;padding:4px 0 4px 18px;border-left:2px solid var(--line);color:var(--ink-2)}
+blockquote.author p{margin:0}
+dl.ro{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:0;padding:10px 14px;border-radius:10px;background:var(--surface-2);font:400 13px/1.6 var(--f-mono);color:var(--ink-2)}
+dl.ro dt{margin:0;font-family:var(--f-body)}
+dl.ro dd{margin:0;color:var(--ink);text-align:right}
+dl.ro dd.acc{color:var(--accent)}
+.pipes{margin:32px 0 0;max-width:720px;overflow-x:auto}
+.pipes svg{width:100%;min-width:640px;height:auto;display:block}
+svg .pbox{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+svg .pbox.acc-b{stroke:var(--accent);stroke-width:2}
+svg .acc-thin{stroke:var(--accent);stroke-width:2.5;fill:none}
+svg .mk{stroke:var(--surface);stroke-width:1.5}
+svg .mk.train,svg .mk.single{fill:var(--c-par)}
+svg .mk.gap,svg .mk.multi,svg .mk.lam{fill:var(--accent)}
+svg .mk.ratio{fill:var(--ink-3)}
+svg .mk-h{fill:var(--surface);stroke-width:2}
+svg .mk-h.train,svg .mk-h.single{stroke:var(--c-par)}
+svg .mk-h.gap,svg .mk-h.multi{stroke:var(--accent)}
+svg .mk-h.ratio{stroke:var(--ink-3)}
+svg .mk-h.fig1{stroke:var(--ink)}
+svg .bar-tr{fill:var(--c-par);opacity:.85}
+svg .bar-gap{fill:url(#hatch-acc);stroke:var(--accent);stroke-width:1}
+svg .b4-base{fill:var(--surface-2);stroke:var(--ink);stroke-width:1.2}
+svg .b4-es{fill:var(--accent)}
+svg .b4-star{fill:url(#hatch-acc);stroke:var(--accent);stroke-width:1.2}
+.lg.accd::before{border-top:2px dashed var(--accent)}
+.lg.dia::before{width:9px;height:9px;border:2px solid var(--ink);transform:rotate(45deg);margin:0 6px}
+.lg.base::before{width:14px;height:12px;border:1.5px solid var(--ink);background:var(--surface-2)}
+.lg.hatch::before{width:14px;height:12px;border:1.5px solid var(--accent);background:linear-gradient(135deg,transparent 42%,var(--accent) 42% 58%,transparent 58%)}
+#c4-sub{gap:8px}
+/* ---- synthesis additions ---- */
+.tag.paper{border-color:color-mix(in oklab,var(--accent) 55%,var(--line));color:var(--ink-2)}
+.tag.interp{border-style:dashed;border-color:var(--ink-3)}
+.fact .fl{margin:12px 0 0;font-size:14px;font-weight:500}
+.rel{display:grid;grid-template-columns:1fr;gap:10px;max-width:860px;margin:8px 0 28px}
+@media (min-width:768px){.rel{grid-template-columns:1fr 1fr}}
+.relc{display:grid;grid-template-columns:44px 1fr;align-items:start;gap:4px 10px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px 16px}
+.relc .rk{grid-row:span 2;font:500 13px/1.6 var(--f-mono);color:var(--accent)}
+.relc p{margin:0;font-size:15px;line-height:1.6}
+.relc .tag{justify-self:start;margin:4px 6px 0 0}
+.num-in{min-height:40px;width:100%;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-mono)}
+.lg.ink1::before{border-top:1.5px solid var(--ink)}
+.lg.refdot::before{border-top:2px dotted var(--ink-3)}
+.lg.perpdot::before{border-top:2px dotted var(--c-perp)}
+.lg.dotl::before{border-top:3px dotted var(--accent)}
+.lg.dashl::before{border-top:2px dashed var(--accent)}
+.lg.band::before{height:12px;border:0;background:var(--accent);opacity:.25}
+svg .thin{stroke-width:1.5}
+svg .par-s{stroke:var(--c-par)}
+svg .acc-s{stroke:var(--accent)}
+.ipnow{margin:8px 0 0}
+.cmp td:first-child{font-weight:600;white-space:nowrap}
+@media (max-width:479px){.cmp td:first-child{white-space:normal}}
+#w2-ins{margin-top:8px}
+@media (max-width:479px){
+  table.stack td{display:block;padding:4px 0}
+  table.stack td::before{display:block;font-size:12px;line-height:1.4}
+  table.stack td.num{text-align:left}
+}
+.concl{max-width:700px;margin:24px 0 0;padding:16px 20px;border-left:3px solid var(--accent);background:var(--surface);border-radius:0 12px 12px 0;font-size:16px;line-height:1.8}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 237 · 405 · 406</span>
+  <span class="ttl">分數誤差、曝光偏差與三種縮放</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- HERO -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>綜合教學</b> · No. 237 × No. 405 × No. 406</div>
+  <h1>分數誤差、曝光偏差與三種縮放</h1>
+  <p class="dek">三篇論文都在處理「取樣器需要的分數」與「網路實際給出的值」之間的差。本頁整理它們在哪裡相連、哪裡不相連。</p>
+  <p class="byline">每一句關係陳述後都標出狀態：<span class="tag paper">論文</span> 為原文寫出的內容；<span class="tag">本頁推導</span> 為本頁自行推導；<span class="tag interp">本頁詮釋</span> 為解讀或對應；<span class="tag">推定</span> 為論文沒寫、本頁選定的值。後三者都不是任何一篇論文的主張。</p>
+  <div class="facts">
+    <div class="fact"><span class="n">No. 237 · 幾何</span><p>資料若落在低維曲面上，分數中「離曲面多遠」的資訊比「曲面上哪裡資料多」強得多。把校正步的分數乘上隨噪聲變小的係數，可得到曲面上的均勻分佈。</p>
+      <p class="fl"><a href="scores-learn-geometry.html">教學</a> · <a href="../index.html#paper-237">論文</a> · <a href="https://arxiv.org/abs/2509.24912">arXiv</a></p></div>
+    <div class="fact"><span class="n">No. 405 · 訓練端</span><p>訓練時網路看到真實的帶噪樣本，取樣時看到自己產生的樣本。訓練時在網路輸入多加一份小噪聲（DDPM-IP），推論不變，FID 改善。</p>
+      <p class="fl"><a href="ddpm-input-perturbation.html">教學</a> · <a href="../index.html#paper-405">論文</a> · <a href="https://arxiv.org/abs/2301.11706">arXiv</a></p></div>
+    <div class="fact"><span class="n">No. 406 · 推論端</span><p>以高斯誤差模型說明取樣樣本的變異數大於訓練樣本。取樣時把網路預測的噪聲除以一個略大於 1 的係數（Epsilon Scaling），不需重新訓練。</p>
+      <p class="fl"><a href="exposure-bias-epsilon-scaling.html">教學</a> · <a href="../index.html#paper-406">論文</a> · <a href="https://arxiv.org/abs/2308.15321">arXiv</a></p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="score-error-exposure-bias-relations.html">研究筆記：三篇的關係</a>
+    <a class="btn" href="../index.html#paper-237">在關聯圖中查看</a>
+  </div>
+</section>
+
+<!-- S0 -->
+<section class="ch" id="defs" data-toc="01" data-tt="最少的定義">
+  <div class="ch-num">01 · 最少的定義</div>
+  <h2>讀這一頁需要的六個詞</h2>
+  <div class="prose">
+    <p><b>去噪擴散模型。</b>把資料一步步加上高斯噪聲，再訓練網路把噪聲一步步去掉。第 $t$ 步的帶噪樣本寫成 $x_t=\sqrt{\bar\alpha_t}\,x_0+\sigma_t\,\epsilon$，其中 $x_0$ 是真實資料，$\epsilon$ 是標準高斯噪聲，$\bar\alpha_t$ 是保留資料的比例，$\sigma_t=\sqrt{1-\bar\alpha_t}$ 是噪聲標準差（稱為 VP 形式）。$t$ 越大，$\sigma_t$ 越大。</p>
+    <p><b>ε、分數與 $\hat x_0$。</b>網路 $\epsilon_\theta(x_t,t)$ 預測當初加入的噪聲 ε。分數（score）是 log 密度的梯度 $s=\nabla\log p$，指向密度較高的方向；在 VP 形式下它與 ε 的關係是 $s=-\epsilon/\sigma_t$。由預測的 ε 也可以換算出乾淨資料的估計 $\hat x_0=(x_t-\sigma_t\hat\epsilon)/\sqrt{\bar\alpha_t}$。這三個量描述同一件事，只是單位不同（第 03 章）。</p>
+    <p><b>$x_t$ 與 $\hat x_t$。</b>訓練時網路看到的帶噪樣本記為 $x_t$，由真實資料加噪得到；取樣時取樣器自己一步步產生的狀態記為 $\hat x_t$。兩者的分佈不同，稱為曝光偏差（exposure bias）。</p>
+    <p><b>取樣步數 $T'$。</b>訓練用 $T=1{,}000$ 個時間步，取樣時可以只走其中 $T'$ 步（例如 20 或 100 步）。</p>
+    <p><b>預測步與校正步。</b>取樣從純噪聲出發，每步用網路輸出往乾淨資料走一步，稱為預測步（predictor）。有些取樣器在兩個預測步之間再做幾次「沿分數走一小步並加一點噪聲」，稱為校正步（corrector），它就是 Langevin 動態。</p>
+    <p><b>流形。</b>高維空間中的低維曲面，例如平面上的一個圓。流形假設（manifold hypothesis）認為影像等資料集中在這樣的曲面附近。</p>
+  </div>
+</section>
+
+<!-- S1 -->
+<section class="ch" id="papers" data-toc="02" data-tt="三篇與關係地圖">
+  <div class="ch-num">02 · 三篇與關係地圖</div>
+  <h2>三篇論文各自做了什麼，彼此有哪些關係</h2>
+  <div class="prose">
+    <p><b>No. 237（Li、Shen、Hsieh、He）。</b>問題：分數要多準，擴散模型才會產生正確的分佈。修正：在流形假設下，分數中與流形距離有關的部分比資料密度的部分強 $\sigma^{-2}$ 倍，所以把校正步的分數乘上 $\sigma^\alpha$（Tempered Score，TS），就能在較大的分數誤差下得到流形上的均勻分佈。證據：定理（σ → 0 的漸近分析、連續時間）與初步實驗（橢圓上的模擬、Stable Diffusion 1.5）。詳見 <a href="scores-learn-geometry.html#tempered">No. 237 教學第 06 章</a>。</p>
+    <p><b>No. 405（Ning 等人，ICML 2023）。</b>問題：訓練時網路看到 $x_t$，取樣時看到 $\hat x_t$。修正：訓練時在網路輸入多加一份小噪聲（DDPM-IP），預測目標不變，推論不變。證據：五個資料集上的 FID 實驗。詳見 <a href="ddpm-input-perturbation.html#ip">No. 405 教學第 05 章</a>。</p>
+    <p><b>No. 406（Ning 等人，ICLR 2024）。</b>問題：同一個曝光偏差，以變異數差距量化。修正：取樣時把網路預測的 ε 除以略大於 1 的係數（Epsilon Scaling，ES），不需重新訓練。證據：高斯誤差模型的推導，以及六種框架上的 FID 實驗。詳見 <a href="exposure-bias-epsilon-scaling.html#es">No. 406 教學第 07 章</a>。</p>
+    <p>三篇之間由論文自己寫出的關係只有一條：只有 No. 406 引用 No. 405。No. 406 在 Sec. 3.4 把 DDPM-IP 列為以資料增強降低曝光偏差的方法，並在 Table 3 列出「ADM-IP (Ning et al., 2023)」100 步的 best FID 2.38 <span class="tag paper">論文</span>。這個 2.38 不在 No. 405 的任何表中（No. 405 Tab. 3 中 CIFAR10 的 ADM-IP 在 1,000、300、100、80 步分別為 2.76、2.67、2.70、2.93），No. 406 沒有寫它的 γ 與權重來源。No. 237 沒有提到曝光偏差；No. 405 與 No. 406 沒有提到流形。以下其餘的關係都是本頁建立的。</p>
+  </div>
+  <div class="rel" role="list" aria-label="關係地圖">
+    <div class="relc" role="listitem"><span class="rk">R1</span><p>三篇都在處理取樣器需要的分數與實際送入值的差，且都特別處理噪聲小的末段</p><span class="tag interp">本頁詮釋</span></div>
+    <div class="relc" role="listitem"><span class="rk">R1b</span><p>分數、ε、$\hat x_0$ 三種單位的誤差換算（第 03 章）</p><span class="tag">本頁推導</span></div>
+    <div class="relc" role="listitem"><span class="rk">R1c</span><p>No. 237 不追蹤取樣軌跡上的誤差累積；曝光偏差是產生最終誤差的一種機制（第 04 章）</p><span class="tag paper">論文</span><span class="tag interp">本頁詮釋</span></div>
+    <div class="relc" role="listitem"><span class="rk">R2</span><p>TS 與 ES 都是取樣時乘在分數上的係數，作用在不同步驟（第 05 章）</p><span class="tag paper">論文</span><span class="tag">本頁推導</span></div>
+    <div class="relc" role="listitem"><span class="rk">R2c</span><p>精確分數下，乘常數 $c$ 的 Langevin 平穩分佈變成 $p^c$（第 06 章）</p><span class="tag">本頁推導</span></div>
+    <div class="relc" role="listitem"><span class="rk">R3</span><p>DDPM-IP 的最佳網路等於較大噪聲的精確分數，但這解釋不了 IP 的改善（第 07 章）</p><span class="tag">本頁推導</span></div>
+    <div class="relc" role="listitem"><span class="rk">R3c</span><p>使 IP 對上 No. 406 誤差模型所需的擾動強度隨 t 變化（第 08 章）</p><span class="tag">本頁推導</span><span class="tag">推定</span></div>
+    <div class="relc" role="listitem"><span class="rk">R4</span><p>流形觀點能說明與不能說明的部分（第 09 章）</p><span class="tag interp">本頁詮釋</span></div>
+  </div>
+  <div class="prose">
+    <p><b>不相關之處。</b>(1) TS 的目標是流形上的均勻分佈，IP 與 ES 的目標是資料分佈。(2) 評估不能互比：No. 237 用 CLIP 分數（Stable Diffusion 1.5），No. 405 與 No. 406 用 FID（CIFAR-10 等）。(3) No. 237 沒有定理涉及有限步的反向過程，No. 405 與 No. 406 沒有漸近分析。(4) 上述 2.38 與 No. 405 自己的數字不同。</p>
+  </div>
+  <p class="concl"><b>本章結論。</b>三篇之間由論文自己寫出的關係只有一條：No. 406 引用 No. 405，在 Sec. 3.4 把 DDPM-IP 列為資料增強類的解法，並在 Table 3 列出 ADM-IP 的 FID 2.38；這個 2.38 不在 No. 405 的任何表中。No. 237 沒有提到曝光偏差；No. 405 與 No. 406 沒有提到流形。除這一條以外，本頁所有的關係都是本頁的推導或詮釋，論文沒有寫。</p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">三篇之間有哪些是論文自己寫的關係？</p>
+    <p class="a">只有 No. 406 引用 No. 405：Sec. 3.4 列為資料增強、Table 3 列 ADM-IP 2.38（No. 405 的表中沒有這個值）；No. 237 沒提曝光偏差，No. 405、406 沒提流形。</p>
+  </div></details>
+</section>
+
+<!-- S2 -->
+<section class="ch" id="units" data-toc="03" data-tt="三種單位">
+  <div class="ch-num">03 · 三種單位</div>
+  <h2>同一個誤差的三種單位</h2>
+  <div class="prose">
+    <p>由 $s=-\epsilon/\sigma_t$ 與 $\hat x_0=(x_t-\sigma_t\hat\epsilon)/\sqrt{\bar\alpha_t}$，網路在 ε 上差 $\Delta\epsilon$，等於在 $\hat x_0$ 上差 $\Delta\hat x_0=-\sigma_t\Delta\epsilon/\sqrt{\bar\alpha_t}$，也等於在分數上差 <span class="tag">本頁推導</span></p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\Delta s=-\frac{\Delta\epsilon}{\sigma_t}=\frac{\sqrt{\bar\alpha_t}\,\Delta\hat x_0}{\sigma_t^{2}}.$$</div><span class="eq-n">本頁推導</span></div>
+  <div class="prose">
+    <p>所以 ε 誤差 η 對應分數誤差 $\eta/\sigma_t$，$x_0$ 誤差 e 對應分數誤差 $\sqrt{\bar\alpha_t}\,e/\sigma_t^2$。σ 每小 10 倍，同樣的 $x_0$ 誤差對應的分數誤差大約大 100 倍。</p>
+    <p>No. 237 的 Thm 4.1 在 Assumptions 2.1、2.2、4.1 下給出兩個充分條件 <span class="tag paper">論文</span>：生成分佈的分數誤差 $E_\sigma=\|s_{\pi_\sigma}-s^*\|_{L^\infty(K)}$（在包住流形附近的一塊有界區域 K 上取最大差距）若為 $o(\sigma^{-2})$，就足以讓樣本集中到流形；若為 $o(1)$，就足以還原資料分佈 $p_{data}$。σ → 0 時 $\bar\alpha_t\to1$，換成 $x_0$ 誤差：$x_0$ 誤差 $o(1)$ 足以集中到流形、$o(\sigma^2)$ 足以還原 $p_{data}$；換成 ε 誤差則是 $o(\sigma^{-1})$ 與 $o(\sigma)$ <span class="tag">本頁推導</span>。</p>
+    <p>兩個限定。第一，Thm 4.1 是「若…則…」，換算後也只能讀成「足以」，不是「必須」；第 06 章就有分數誤差為 $\Theta(\sigma^{-2})$ 仍集中到流形的例子。第二，$E_\sigma$ 是最終生成分佈 $\pi_\sigma$ 的分數誤差，不是網路誤差；兩者相等只在「網路輸出就是 Langevin 的漂移、且是梯度場」這類設定下成立。No. 405 量到的 $x_0$ 誤差標準差平均約 0.2（第 08 章），但那是對 t 平均的值，沒有 σ → 0 的資訊，本頁不據此判斷它屬於哪一階。</p>
+  </div>
+  <div class="tscroll"><table class="stack">
+    <caption>Thm 4.1 的兩個充分條件在三種單位下的寫法（σ → 0）</caption>
+    <thead><tr><th>結論</th><th>分數誤差</th><th>ε 誤差</th><th>$x_0$ 誤差</th></tr></thead>
+    <tbody>
+      <tr><td>集中到流形</td><td data-h="分數">$o(\sigma^{-2})$</td><td data-h="ε">$o(\sigma^{-1})$</td><td data-h="x₀">$o(1)$</td></tr>
+      <tr><td>還原 $p_{data}$</td><td data-h="分數">$o(1)$</td><td data-h="ε">$o(\sigma)$</td><td data-h="x₀">$o(\sigma^{2})$</td></tr>
+    </tbody>
+  </table></div>
+  <div class="plate" id="w0">
+    <div class="plate-h"><span class="id">W0</span><h3>誤差換算器</h3></div>
+    <p class="plate-lead">輸入一個 $x_0$ 或 ε 的誤差與噪聲水準 σ，讀出對應的分數誤差。</p>
+    <div class="pg two">
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="w0-s">噪聲標準差 σ<output id="w0-so">0.100</output></label><input id="w0-s" type="range" min="-2.3" max="-0.3" step="0.01" value="-1"></div>
+        <div class="rng"><label class="lbl" for="w0-e">誤差大小</label><input id="w0-e" class="num-in" type="number" min="0" max="1" step="0.01" value="0.2"></div>
+        <div><div class="lbl">誤差的單位</div><div class="seg" id="w0-u" role="radiogroup" aria-label="誤差的單位"><button data-v="x0">x₀ 誤差</button><button data-v="eps">ε 誤差</button></div></div>
+      </div>
+      <div class="ctl"><dl class="ro" id="w0-ro"></dl></div>
+    </div>
+    <p class="plate-f">讀數由本頁依上式即時計算（VP，$\bar\alpha=1-\sigma^2$） <span class="tag">本頁推導</span></p>
+    <p class="sr" aria-live="polite" id="w0-live"></p>
+  </div>
+  <p class="concl"><b>本章結論。</b>這是本頁的推導，論文沒有寫。VP 中 ε 誤差 η 對應分數誤差 $\eta/\sigma_t$，$x_0$ 誤差 e 對應分數誤差 $\sqrt{\bar\alpha_t}\,e/\sigma_t^2$。把 No. 237 Thm 4.1 換成 $x_0$ 誤差：$x_0$ 誤差 $o(1)$ 足以集中到流形，$o(\sigma^2)$ 足以還原 $p_{data}$。這兩者只是充分條件，不是必要條件；前提是 Assumptions 2.1、2.2、4.1，誤差以 $L^\infty(K)$ 範數量測，而且這裡的誤差是生成分佈的分數誤差，不是網路誤差。</p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">VP 中 ε 誤差 η、$x_0$ 誤差 e 各對應多大的分數誤差？No. 237 Thm 4.1 的兩個充分條件換成 $x_0$ 誤差是什麼？這是論文結論還是本頁推導？</p>
+    <p class="a">本頁推導。$\eta/\sigma_t$；$\sqrt{\bar\alpha_t}e/\sigma_t^2$。$x_0$ 誤差 $o(1)$ 足以集中到流形、$o(\sigma^2)$ 足以還原 $p_{data}$（只是充分條件；前提為 Assumptions 2.1、2.2、4.1、$L^\infty(K)$ 範數，且誤差指生成分佈的分數）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="scores-learn-geometry.html#existing">No. 237 教學：兩個門檻</a>、<a href="eps-prediction-ddpm-score.html">ε-prediction 與 DDPM、score-based 模型</a></p>
+</section>
+
+<!-- S3 -->
+<section class="ch" id="measure" data-toc="04" data-tt="誤差在哪裡量">
+  <div class="ch-num">04 · 誤差在哪裡量</div>
+  <h2>三篇在不同的地方量誤差</h2>
+  <div class="prose">
+    <p>No. 237 的 $E_\sigma$ 是生成分佈的分數與真實分數在 $L^\infty(K)$ 下的差，並只看 σ → 0 的極限 <span class="tag paper">論文</span>。No. 405 的 Tab. 1 在 ImageNet 32×32 上，從真實的 $x_t$ 出發跑 $t$ 步反向過程，再算 FID：100 步 0.983，1,000 步 3.544 <span class="tag paper">論文</span>。No. 406 的 $\delta_t$ 是多步取樣狀態的變異數與訓練變異數的差 $(\sqrt{V_t}-\sigma_t)^2$，$V_t$ 是取樣狀態 $\hat x_t$（給定 $x_0$）的變異數 <span class="tag paper">論文</span>。</p>
+    <p>No. 237 在 Limitations (a) 寫明，它不追蹤取樣軌跡上的誤差累積，只假設知道最終生成分佈的誤差 <span class="tag paper">論文</span>。曝光偏差描述的正是軌跡上的過程：$\hat x_t$ 偏離 $x_t$，網路在沒看過的輸入上給出的值也跟著偏。所以曝光偏差可以看成產生 No. 237 所說「最終分佈誤差」的一種機制，但 No. 237 的定理沒有描述這個機制，不能直接用來描述曝光偏差 <span class="tag interp">本頁詮釋</span>。</p>
+  </div>
+  <div class="tscroll cmp"><table class="stack">
+    <caption>三篇的比較（符號在後面章節定義處標出）</caption>
+    <thead><tr><th>項目</th><th>No. 237 TS</th><th>No. 405 IP</th><th>No. 406 ES</th></tr></thead>
+    <tbody>
+      <tr><td>問題</td><td data-h="237">小 σ 時，幾何與密度各需要多準的分數</td><td data-h="405">訓練 $x_t$ 與取樣 $\hat x_t$ 不一致</td><td data-h="406">同左，量化為變異數差</td></tr>
+      <tr><td>誤差在哪裡量</td><td data-h="237">生成分佈的分數與真實分數在有界區域 K 上的最大差距，σ → 0（Thm 4.1）</td><td data-h="405">從真實 $x_t$ 跑 $t$ 步的 FID（Tab. 1，ImageNet 32×32）；沿取樣軌跡實測的 $\hat x_0$ 誤差標準差（第 08 章）</td><td data-h="406">取樣狀態與訓練樣本的變異數差（第 08 章）、ε 的範數比（Fig. 2–3）、FID</td></tr>
+      <tr><td>修正</td><td data-h="237">無條件分數乘 $\sigma^\alpha$（Eq. 8、App. C.2）</td><td data-h="405">訓練輸入多加一份噪聲（Eq. 6，第 07 章），目標不變</td><td data-h="406">ε 除以略大於 1 的係數（Sec. 4.1，第 05 章記為 λ）</td></tr>
+      <tr><td>訓練或推論</td><td data-h="237">推論（校正步）</td><td data-h="405">訓練（推論不變）</td><td data-h="406">推論（不需重新訓練）</td></tr>
+      <tr><td>縮放的對象</td><td data-h="237">校正步中的無條件分數；CFG 項不變</td><td data-h="405">網路輸入的噪聲量</td><td data-h="406">預測步平均中的 ε；噪聲項不變</td></tr>
+      <tr><td>關鍵數字</td><td data-h="237">分數誤差為 $o(\sigma^\beta)$（β 是誤差的階數，β &gt; −2）時需 $\max\{-\beta,0\}\lt\alpha\lt2$；Stable Diffusion 實驗搜尋 α ∈ {0.1, 0.5, 1.0, 1.5}</td><td data-h="405">擾動強度 0.1（第 07 章記為 γ）；實測誤差標準差平均 0.20、0.19</td><td data-h="406">ADM：CIFAR-10 的係數 1.017，其他資料集 1.004–1.011；另有隨 t 線性變化的版本</td></tr>
+      <tr><td>目標分佈</td><td data-h="237">流形上的均勻分佈（對黎曼體積）</td><td data-h="405">$p_{data}$</td><td data-h="406">$p_{data}$</td></tr>
+      <tr><td>證據類型</td><td data-h="237">定理（漸近、連續時間）與初步實驗（CLIP 分數）</td><td data-h="405">實驗（FID，五個資料集）</td><td data-h="406">高斯誤差模型的分析與實驗（FID，六種框架）</td></tr>
+    </tbody>
+  </table></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">No. 237 的 $E_\sigma$、No. 405 Tab. 1、No. 406 的 $\delta_t$ 各量什麼？No. 237 為什麼不能直接描述曝光偏差？</p>
+    <p class="a">No. 237：生成分佈的分數與真實分數的 $L^\infty(K)$ 差，σ → 0；No. 405：ImageNet 32×32 上從真實 $x_t$ 跑 $t$ 步後的 FID；No. 406：多步取樣變異數與訓練變異數的差 $(\sqrt{V_t}-\sigma_t)^2$。No. 237 Limitations (a)：不追蹤取樣軌跡上的誤差累積。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="diffusion-exposure-bias.html">擴散模型的 exposure bias</a>、<a href="exposure-bias-epsilon-scaling.html#metric">No. 406 教學：度量 δₜ</a></p>
+</section>
+
+<!-- S4 -->
+<section class="ch" id="scale" data-toc="05" data-tt="兩種縮放">
+  <div class="ch-num">05 · 兩種縮放</div>
+  <h2>TS 與 ES 放在同一個乘數軸上</h2>
+  <div class="prose">
+    <p>No. 237 的 TS 在校正步中把分數乘上 $\sigma^\alpha$（$0\lt\alpha\lt2$，Eq. 8）。在 Stable Diffusion 1.5 的實驗中，它只改 Predictor–Corrector 取樣器的校正步，乘的是無條件的部分 $\sigma_t^\alpha\epsilon(x,t,\varnothing)$，classifier-free guidance 的引導項（w = 7.5）不變（Sec. 7.2、App. C.2）<span class="tag paper">論文</span>。No. 406 的 ES 在預測步的平均中把 ε 除以 $\lambda_t$，噪聲項不變（Sec. 4.1）<span class="tag paper">論文</span>：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mu_\theta(\hat x_t,t)=\frac{1}{\sqrt{\alpha_t}}\Big(\hat x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\,\frac{\epsilon_\theta(\hat x_t,t)}{\lambda_t}\Big).$$</div><span class="eq-n">406 Sec. 4.1</span></div>
+  <div class="prose">
+    <p>多數實驗用常數 $\lambda_t=b$；ADM 在 CIFAR-10 用 $b=1.017$，其他資料集 1.004–1.011（Table 14）。No. 406 也有隨 t 線性變化的 $\lambda(t)=kt+b$（ADM-ES*）<span class="tag paper">論文</span>。</p>
+    <p>因為 $s=-\epsilon/\sigma_t$，兩者都是乘在分數上的係數：TS 為 $m_{TS}=\sigma^\alpha$，常數 ES 為 $m_{ES}=1/\lambda$ <span class="tag">本頁推導</span>。σ = 0.1、α = 1、λ = 1.017 時，TS 的係數是 0.1（只乘無條件分數），ES 的係數是 0.9833。兩者相等的位置是 $\sigma^*=\lambda^{-1/\alpha}$，α = 1 時為 0.9833，對應 cosine 排程（推定）中 $t\ge883$ 的最吵階段；比 σ* 小的地方，TS 都縮得比 ES 多，σ = 0.1 時相差 10 倍。</p>
+    <p>常數 ES 也可以寫成 $\sigma^{\alpha_{eq}}$，其中 $\alpha_{eq}=\ln\lambda/(-\ln\sigma)$；σ = 0.1 時 0.00732，σ = 0.01 時 0.00366，σ → 0 時趨近 0。所以常數 ES 不是某個固定 α 的 TS，第 06 章會看到兩者的極限也不同 <span class="tag">本頁推導</span>。這一點只對常數 ES 成立；線性 λ(t) 不是單一常數。</p>
+  </div>
+  <div class="plate" id="w1">
+    <div class="plate-h"><span class="id">W1</span><h3>分數乘數對 σ</h3></div>
+    <p class="plate-lead">橫軸是噪聲標準差 σ（對數），縱軸是乘在分數上的係數。上方第二軸標出 cosine 排程（推定）中對應的時間步 t。</p>
+    <div class="pg side">
+      <div class="fig"><div id="w1-fig"><svg role="img" aria-label="TS 與 ES 的分數乘數對 σ 的曲線"></svg></div>
+        <div class="legend" id="w1-lg"><span class="lg par">TS：σ^α（校正步，只乘無條件分數）</span><span class="lg perp">ES：1/λ（預測步平均中的 ε，噪聲項不變）</span><span class="lg acc dotl ipx hide">IP：近流形法向倍數</span><span class="lg acc dashl ipx hide">IP：一維高斯玩具</span></div></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="w1-a">TS 指數 α<output id="w1-ao">1.00</output></label><input id="w1-a" type="range" min="0.05" max="1.95" step="0.05" value="1"></div>
+        <div class="rng"><label class="lbl" for="w1-l">ES 係數 λ<output id="w1-lo">1.017</output></label><input id="w1-l" type="range" min="0.95" max="1.06" step="0.001" value="1.017"></div>
+        <div class="rng"><label class="lbl" for="w1-s">目前 σ<output id="w1-so">0.100</output></label><input id="w1-s" type="range" min="-2.3" max="-0.004" step="0.001" value="-1"></div>
+        <div><div class="lbl">縱軸</div><div class="seg" id="w1-z" role="radiogroup" aria-label="縱軸範圍"><button data-v="full">全範圍</button><button data-v="zoom">放大 0.95–1.01</button></div></div>
+        <div class="ipx hide" id="w1-ip">
+          <label class="chk"><input type="checkbox" id="w1-ipc" checked> 顯示 IP</label>
+          <div class="rng"><label class="lbl" for="w1-g">IP 擾動強度 γ<output id="w1-go">0.10</output></label><input id="w1-g" type="range" min="0" max="0.3" step="0.01" value="0.1"></div>
+        </div>
+        <dl class="ro" id="w1-ro"></dl>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依 $m_{TS}=\sigma^\alpha$、$m_{ES}=1/\lambda$ 即時計算 <span class="tag">本頁推導</span>。TS、ES、IP 作用在不同步驟：TS 在校正步，ES 在預測步，IP 在訓練。<span class="ipx hide">IP 線是最佳網路分數的法向分量倍數，不是取樣時的乘數，與 TS、ES 不是同一種量（第 07 章）。</span></p>
+    <p class="sr" aria-live="polite" id="w1-live"></p>
+  </div>
+  <p class="concl"><b>本章結論。</b>把兩者放在同一個乘數軸上是本頁的推導，論文沒有寫。σ = 0.1、α = 1、λ = 1.017 時，TS 的乘數是 0.1（只乘無條件分數），ES 的乘數是 0.9833；兩者在 $\sigma^*=\lambda^{-1/\alpha}=0.9833$ 相等。作用位置是論文寫的：TS 在校正步，乘的是 $\sigma_t^\alpha\epsilon(x,t,\varnothing)$，CFG 項不變（No. 237 Sec. 7.2、App. C.2）；ES 在預測步，把平均中的 ε 除以 $\lambda_t$，噪聲項不變（No. 406 Sec. 4.1）。</p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">σ = 0.1、α = 1、λ = 1.017 時兩者的乘數？在哪個 σ 相等？各改哪一步、哪一項？</p>
+    <p class="a">TS 0.1（只乘無條件分數）、ES 0.9833；$\sigma^*=\lambda^{-1/\alpha}=0.9833$。TS：校正步，$\sigma_t^\alpha\epsilon(x,t,\varnothing)$，CFG 項不變（No. 237 Sec. 7.2、App. C.2）；ES：預測步平均中的 ε 除以 $\lambda_t$，噪聲項不變（No. 406 Sec. 4.1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="score-geometry-tempered-langevin.html">Tempered Score Langevin</a>、<a href="epsilon-scaling-method.html">Epsilon Scaling</a></p>
+</section>
+
+<!-- S5 -->
+<section class="ch" id="stationary" data-toc="06" data-tt="乘數與平穩分佈">
+  <div class="ch-num">06 · 乘數與平穩分佈</div>
+  <h2>乘數對平穩分佈與 $\hat x_0$ 變異數的影響</h2>
+  <div class="prose">
+    <p><b>Langevin 動態。</b>重複執行「沿分數 $s$ 走一小步，再加一點高斯噪聲」：$x\leftarrow x+\delta\,s(x)+\sqrt{2\delta}\,z$。它就是第 01 章的校正步。</p>
+    <p><b>平穩分佈。</b>跑夠久以後，樣本的分佈不再改變，這個分佈稱為平穩分佈（stationary distribution）。分數精確（$s=\nabla\log p$）時，平穩分佈就是 $p$。若把漂移乘上常數 $c$，平穩分佈變成 $p^c$（再正規化）。一維例子：$p=\mathcal N(0,v)$ 時 $p^c=\mathcal N(0,v/c)$；$c\lt1$ 時分佈變寬、變平，文獻稱為 tempering。</p>
+    <p><b>TV 距離。</b>兩個分佈差的絕對值積分的一半，0 表示相同，1 表示完全不重疊。</p>
+    <p><b>對體積的密度 $p_{vol}$。</b>流形上的資料密度若以弧長（一般為黎曼體積）為底來量，記為 $p_{vol}$；在單位圓上就是對角度的密度。流形上的均勻分佈即 $p_{vol}$ 為常數。</p>
+    <p>在 No. 237 的設定下（Assumptions 2.1、2.2、4.1，分數精確且為梯度場，連續時間的 Langevin 跑到平穩），乘上常數 $c$ 的平穩分佈 $\propto p_\sigma^c$；σ → 0 時樣本集中到流形，流形上的分佈 $\propto p_{vol}^{\,c}$ <span class="tag">本頁推導</span>。代入 $c=1/\lambda$ 得 $p_{vol}^{1/\lambda}$；代入 $c=\sigma^\alpha$，因為 $\sigma^\alpha\to0$，得到流形上的均勻分佈，即 No. 237 的 Thm 5.1 <span class="tag paper">論文</span>。第 07 章會看到 IP 的最佳網路收斂到 $p_{data}$。三種修正的極限各不相同。</p>
+    <p>這個結果不能說明 ES 的效果。ES 是有限步反向過程中的 ε 縮放，不是跑到平穩的 Langevin 動態；常數乘數在 Thm 4.1 的誤差度量下是 $\Theta(\sigma^{-2})$ 的誤差，也不在 Thm 4.1 的充分條件內，樣本仍集中是因為它是梯度場。</p>
+  </div>
+  <details class="adv"><summary>進階：$p_{vol}^c$ 的推導（No. 237 Thm B.1）</summary><div class="qa">
+    <p>漂移 $c\nabla\log p_\sigma$、擴散 $\sqrt2$ 的 Langevin 平穩分佈 $\propto p_\sigma^c$。代入 No. 237 Eq. 6，取 $\theta=\sigma^2/c$，得 $f_0=d_M$、$f_1=c(-\log p_{data}+\log\sqrt{|\hat H|})$。Thm B.1 給出 $\pi(u)\propto e^{-f_1(u,0)}|\partial_r^2f_0|^{-1/2}\,\tfrac{dM}{du}=p_{data}^{\,c}\,(\tfrac{dM}{du})^{1-c}$，即 $p_{vol}=p_{data}/(dM/du)$ 變成 $p_{vol}^{\,c}$。$c=1$ 回到 Thm 4.1(3)，$c=\sigma^\alpha$ 回到 Thm 5.1。元件 W2 用 von Mises 分佈 $p_{data}(t)\propto e^{\kappa\cos(t-\theta_0)}$，κ = 4、θ₀ = π（No. 237 App. C.3 的值）。</p>
+  </div></details>
+  <div class="plate" id="w2">
+    <div class="plate-h"><span class="id">W2</span><h3>單位圓上的平穩分佈</h3></div>
+    <p class="plate-lead">設定沿用 No. 237 教學的 C2：單位圓、分數精確且為梯度場、Langevin 跑到平穩。這不是 ES 或 IP 實際使用的有限步反向過程。橫軸是相對資料峰值的角度 $t-\theta_0$。</p>
+    <div class="pg side">
+      <div class="fig"><div id="w2-fig"><svg role="img" aria-label="單位圓上各種乘數的平穩分佈"></svg></div><div id="w2-ins"><svg role="img" aria-label="峰頂放大圖"></svg></div>
+        <div class="legend"><span class="lg ink1">精確分數</span><span class="lg ref">$p_{data}$</span><span class="lg refdot">均勻</span><span class="lg perp" id="w2-lg-es">ES 型 c = 1/λ</span><span class="lg perpdot" id="w2-lg-lim">σ → 0 極限 $p^{1/\lambda}$</span><span class="lg par hide" id="w2-lg-ts">TS c = σ^α</span><span class="lg acc dotl hide" id="w2-lg-ip">IP（σ√(1+γ²)）</span></div></div>
+      <div class="ctl">
+        <div><div class="lbl">σ</div><div class="seg" id="w2-s" role="radiogroup" aria-label="σ"><button data-v="0">0.2</button><button data-v="1">0.1</button><button data-v="2">0.05</button><button data-v="3">0.02</button><button data-v="4">0.01</button></div></div>
+        <div><div class="lbl">疊加</div><div class="seg" id="w2-o" role="radiogroup" aria-label="疊加的修正"><button data-v="es">ES 型</button><button data-v="ts">TS</button><button data-v="ip" id="w2-ipb">IP（第 07 章）</button></div></div>
+        <div class="rng"><label class="lbl" for="w2-l">λ<output id="w2-lo">1.017</output></label><input id="w2-l" type="range" min="0.95" max="1.06" step="0.001" value="1.017"></div>
+        <div class="rng"><label class="lbl" for="w2-a">α<output id="w2-ao">1.00</output></label><input id="w2-a" type="range" min="0.05" max="1.9" step="0.05" value="1"></div>
+        <div class="rng ipx hide"><label class="lbl" for="w2-g">γ<output id="w2-go">0.10</output></label><input id="w2-g" type="range" min="0" max="0.3" step="0.01" value="0.1"></div>
+      </div>
+    </div>
+    <div class="tscroll"><table class="stack" id="w2-tb"><caption>讀數（TV 為 ½∫|p − q|dt）</caption><thead><tr><th>修正</th><th class="num">TV($p_{data}$)</th><th class="num">TV(均勻)</th><th class="num">最大／最小</th></tr></thead><tbody></tbody></table></div>
+    <p class="plate-f" id="w2-f">讀數由本頁以 No. 237 的單位圓封閉式數值積分即時計算 <span class="tag">本頁推導</span>。</p>
+    <p class="sr" aria-live="polite" id="w2-live"></p>
+  </div>
+  <div class="prose">
+    <p>σ = 0.01、λ = 1.017 時，ES 型的 TV($p_{data}$) 為 0.0046，約等於極限 $p^{1/\lambda}$ 與 $p_{data}$ 的 TV 0.0045；資料的最大／最小密度比由 2976 降到 2604。同一 σ 下 TS（α = 1）的 TV(均勻) 為 0.0127。</p>
+    <p><b>有限步反向過程的玩具</b> <span class="tag">本頁玩具</span>。一維高斯資料 $\mathcal N(0,0.25)$、網路完美、cosine 排程（推定），在 DDPM 的祖先取樣中把 ε 除以 λ。$T'=100$ 時，λ = 1.017 使輸出 $\hat x_0$ 的變異數由 0.2326 增為 0.2417（+3.9%），λ = 0.965 使它降為 0.2169；$T'=1000$ 時 λ = 1.017 由 0.2480 增為 0.2566（+3.5%，這個 λ 是推定，No. 406 稱最佳係數一般隨步數增加而下降）。所以「λ > 1 使輸出變寬」只在分數精確時成立。在 $T'=20$，也就是 No. 406 改善最大的地方（CIFAR-10 FID 10.36 → 5.15），這個玩具失效：λ = 1.017 與 λ = 0.965 都使變異數大幅變寬（0.185 → 0.649、0.968），原因是最吵的幾步把 ε 換算成 $\hat x_0$ 時要除以很小的 $\sqrt{\bar\alpha_t}$。No. 406 是否截斷 $\hat x_0$ 沒有寫。</p>
+    <p>No. 406 的理由與精確分數下的方向相反：作者觀察到取樣時 $\|\epsilon_\theta\|$ 每一步都比訓練情境大（Fig. 2），認為 $\hat x_t$ 上的 ε 過長，縮小它是修正 <span class="tag paper">論文</span>。精確分數在離資料較遠的 $\hat x_t$ 上本來就比較長，所以範數比本身不能區分網路誤差與分佈偏移 <span class="tag interp">本頁詮釋</span>。ES 的 FID 改善是以真實網路量到的實驗結果，No. 237 的理論不預測它。</p>
+  </div>
+  <p class="concl"><b>本章結論。</b>這是本頁的推導，論文沒有寫。前提：No. 237 的假設（Assumptions 2.1、2.2、4.1）、分數精確且為梯度場、連續時間的 Langevin 跑到平穩、σ → 0。在這個前提下，乘常數 $1/\lambda$ 收斂到 $p_{vol}^{1/\lambda}$，乘 $\sigma^\alpha$ 收斂到流形上的均勻分佈（No. 237 Thm 5.1）。這不能說明 ES 的效果：ES 是有限步反向過程中的 ε 縮放；本頁的高斯玩具在 $T'=20$（No. 406 改善最大處）中，λ = 1.017 與 λ = 0.965 兩個方向都使輸出大幅變寬；No. 406 自己的理由是 $\hat x_t$ 上的 ε 過長、縮小它是修正，ES 的效果是實驗結果。</p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">精確分數、梯度場、Langevin 跑到平穩、σ → 0 時，乘常數 $1/\lambda$、乘 $\sigma^\alpha$ 各收斂到什麼？這能說明 ES 的效果嗎？</p>
+    <p class="a">$p_{vol}^{1/\lambda}$；流形上均勻（Thm 5.1）。不能：ES 是有限步反向過程中的 ε 縮放；高斯玩具在 $T'=20$（No. 406 改善最大處）λ 兩個方向都使輸出大幅變寬；No. 406 的理由是修正 $\hat x_t$ 上過長的 ε，效果是實驗結果。</p>
+  </div></details>
+</section>
+
+<!-- S6 -->
+<section class="ch" id="ip" data-toc="07" data-tt="訓練端：IP">
+  <div class="ch-num">07 · 訓練端：IP</div>
+  <h2>IP 的最佳網路與它解釋不了的部分</h2>
+  <div class="prose">
+    <p>No. 405 的 DDPM-IP 把訓練輸入換成 <span class="tag paper">論文</span></p>
+  </div>
+  <div class="eq"><div class="eq-m">$$y_t=\sqrt{\bar\alpha_t}\,x_0+\sqrt{1-\bar\alpha_t}\,(\epsilon+\gamma\xi),\qquad \xi\sim\mathcal N(0,I),$$</div><span class="eq-n">405 Eq. 6</span></div>
+  <div class="prose">
+    <p>γ 是輸入擾動強度，固定為 0.1；回歸目標仍是 ε，推論不變。對照組 DDPM-y 用同一個 $y_t$，但目標換成使 $y_t$ 寫成標準形式的噪聲 $\epsilon'=(\epsilon+\gamma\xi)/\sqrt{1+\gamma^2}$（Eq. 8）。在 CIFAR10 100 步，DDPM 的 FID 為 3.37，DDPM-y 為 3.90，DDPM-IP 為 2.70（Tab. 7）<span class="tag paper">論文</span>。作者把 IP 的效果歸因於讓預測函數變平滑的正則化（Sec. 5.2、5.4）。</p>
+    <p>DDPM-IP 的貝氏最佳網路（訓練損失的最小值）經標準取樣器換算成分數後，等於資料在噪聲標準差 $\sigma_t\sqrt{1+\gamma^2}$ 下的精確分數 <span class="tag">本頁推導</span>：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\epsilon^*_{IP}(y,t)=-\sigma_t\,\nabla\log\tilde p_t(y),\qquad \tilde p_t=\mathrm{law}\big(\sqrt{\bar\alpha_t}x_0+\sigma_t\sqrt{1+\gamma^2}\,z\big).$$</div><span class="eq-n">本頁推導</span></div>
+  <div class="prose">
+    <p>γ = 0.1 時，這個噪聲水準是原本的 1.005 倍。Monte Carlo（兩點資料、$3\times10^7$ 樣本）與推導一致（差小於 0.002）。三個推論：靠近流形時，精確分數主要是指向流形的法向分量 $-(x-P_M(x))/\sigma^2$（No. 237 Eq. 20 的首項），所以 IP 的最佳網路把法向分量乘上 $1/(1+\gamma^2)=0.9901$，切向分量幾乎不變；σ → 0 時 $\tilde p_t$ 趨近 $p_{data}$，Langevin 極限仍是 $p_{data}$；若取樣狀態 $\hat x_t$（給定 $x_0$）是平均 $\sqrt{\bar\alpha_t}x_0$、變異數略大的高斯分佈（No. 406 誤差模型的結論），選對 γ 時 IP 的最佳網路給出的正是 $\hat x_t$ 所在分佈的精確分數。</p>
+    <p>這個等式解釋不了 IP 的改善。DDPM-y 的最佳網路與 IP 只差一個 $\sqrt{1+\gamma^2}$ 倍（0.5%），Tab. 7 中 DDPM-y（3.90）卻比 DDPM（3.37）差，IP 為 2.70。所以 IP 的改善來自有限網路的訓練行為，不是最佳網路的性質；本頁的等式只描述最佳網路。</p>
+    <p class="ipnow"><button class="small-btn pri" type="button" id="reveal-ip">在 W1、W2 顯示 IP</button></p>
+  </div>
+  <details class="adv"><summary>進階：最佳網路等式的推導</summary><div class="qa">
+    <p>令 $n=\epsilon+\gamma\xi$，$\sigma'=\sigma_t\sqrt{1+\gamma^2}$。給定 $n$ 時 ε 與 $x_0$ 獨立，且 $\mathbb E[\epsilon\mid n]=n/(1+\gamma^2)$，所以 $\mathbb E[\epsilon\mid y]=\mathbb E[n\mid y]/(1+\gamma^2)$。把 $y$ 寫成 $\sqrt{\bar\alpha_t}x_0+\sigma'z'$（$z'=n/\sqrt{1+\gamma^2}$），Tweedie 公式給出 $\mathbb E[\sigma'z'\mid y]=-\sigma'^2\nabla\log\tilde p_t(y)$。合併得 $\mathbb E[\epsilon\mid y]=-\sigma_t\nabla\log\tilde p_t(y)$；取樣器把它除以 $-\sigma_t$，得到分數 $\nabla\log\tilde p_t$。DDPM-y 的目標是 $z'$，最佳網路 $\mathbb E[z'\mid y]=\sqrt{1+\gamma^2}\,\mathbb E[\epsilon\mid y]$。若 $\hat x_t\mid x_0\sim\mathcal N(\sqrt{\bar\alpha_t}x_0,V_t)$，取 $\gamma^2=V_t/\sigma_t^2-1$ 即使兩者一致。</p>
+  </div></details>
+  <p class="concl"><b>本章結論。</b>這是本頁的推導，論文沒有寫。DDPM-IP 的貝氏最佳網路經標準取樣器換算後，是噪聲標準差 $\sigma_t\sqrt{1+\gamma^2}$（γ = 0.1 時為 1.005 倍）下的精確分數。這解釋不了 IP 的改善：DDPM-y 的最佳網路只差 $\sqrt{1+\gamma^2}$ 倍（0.5%），但 No. 405 Tab. 7 中 DDPM-y（3.90）比 DDPM（3.37）差，IP 為 2.70。</p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">DDPM-IP 的貝氏最佳網路經標準取樣器換算後是什麼分數？為什麼這解釋不了 IP 的改善？</p>
+    <p class="a">噪聲標準差 $\sigma_t\sqrt{1+\gamma^2}$（1.005 倍）的精確分數；DDPM-y 的最佳網路只差 $\sqrt{1+\gamma^2}$ 倍（0.5%），但 No. 405 Tab. 7 中 DDPM-y（3.90）比 DDPM（3.37）差、IP 2.70。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="input-perturbation-ddpm-ip.html">DDPM-IP</a>、<a href="ddpm-input-perturbation.html#asym">No. 405 教學：輸入與目標</a>、<a href="vicinal-risk-and-smoothness-regularization.html">鄰域風險與平滑正則化</a></p>
+</section>
+
+<!-- S7 -->
+<section class="ch" id="gamma" data-toc="08" data-tt="γ、νₜ、eₜ、δₜ">
+  <div class="ch-num">08 · γ、νₜ、eₜ、δₜ</div>
+  <h2>擾動強度與實測誤差的對照</h2>
+  <div class="prose">
+    <p>No. 405 在 Sec. 5.3 沿取樣軌跡量測 $x_0$ 預測誤差 $e_t=\hat x_0-x_0$，發現它近似 $\mathcal N(0,\nu_t^2I)$；兩個資料集的 $\nu_t$ 平均為 0.20 與 0.19。作者以 $[0,\mathbb E_t\nu_t]=[0,0.2]$ 為 γ 的搜尋範圍，稱它「covering the last half of the sampling trajectory」，最後取 γ = 0.1，並寫道原則上可以設 $\gamma_t=\nu_t$ 來模仿實際的預測誤差 <span class="tag paper">論文</span>。No. 406 的 Eq. 7 則把 $x_0$ 預測建模為 $x_0+e_t\epsilon_0$，$e_t$ 是建模參數，論文沒有報數值 <span class="tag paper">論文</span>。</p>
+    <p>No. 405 的 $\nu_t$ 與 No. 406 的 $e_t$ 定義相同（$\hat x_0-x_0$ 的標準差），來源不同：前者沿取樣軌跡實測，後者是未給數值的建模參數 <span class="tag interp">本頁詮釋</span>。</p>
+    <p>No. 406 的 Eq. 9 指出，單步取樣分佈比訓練分佈多出變異數 $(c_{1,t+1}e_{t+1})^2$，其中 $c_{1,t+1}=\sqrt{\bar\alpha_t}\beta_{t+1}/(1-\bar\alpha_{t+1})$。DDPM-IP 的訓練輸入變異數是 $\sigma_t^2(1+\gamma^2)$（No. 405 Eq. 7）。兩者相等的條件是 <span class="tag">本頁推導</span></p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\gamma=\frac{c_{1,t+1}\,e_{t+1}}{\sigma_t}.$$</div><span class="eq-n">本頁推導</span></div>
+  <div class="prose">
+    <p>它不是 $\gamma_t=\nu_t$：γ 是 $x_t$ 空間中相對於 $\sigma_t$ 的擾動，$\nu_t$ 是 $x_0$ 空間的誤差，兩者單位不同，只在 $c_{1,t+1}\approx\sigma_t$ 的地方一致。考慮多步累積時，把多出的變異數沿取樣鏈累加，得到多步版的 $\gamma_M$，以及 No. 406 的度量 $\delta_t=\sigma_t^2(\sqrt{1+\gamma_M^2}-1)^2$ <span class="tag">本頁推導</span>。</p>
+    <p>以推定值計算（$e$ 對所有 t 都等於 0.2、cosine 排程、$T'=100$）：多步版的 γ 只在 $t=16..39$ 落在 [0.05, 0.2]，在 $t=1$ 高達 29.4 <span class="tag">推定</span>。$t$ 很小時的大值是「e 不隨 t 變」這個假設造成的；No. 405 只以圖給出 $\nu_t$ 隨 t 的形狀。本頁不據此評論 γ = 0.1 的好壞，只說明兩個量單位不同，且常數 γ 只在一段 t 內與 No. 406 的模型一致。</p>
+  </div>
+  <details class="adv"><summary>進階：多步累積的遞迴</summary><div class="qa">
+    <p>記 $V_t$ 為取樣狀態 $\hat x_t$（給定 $x_0$）的變異數，$D_t=V_t-\sigma_t^2$ 為多出的部分。No. 406 App. A.1 的恆等式 $c_{2,t}^2\sigma_t^2+\tilde\beta_t=\sigma_{t-1}^2$ 使 $D_{t-1}=c_{2,t}^2D_t+(c_{1,t}e_t)^2$，$D_{T'}=0$。於是 $\gamma_M=\sqrt{D_t}/\sigma_t$，$\delta_t=\big(D_t/(\sqrt{\sigma_t^2+D_t}+\sigma_t)\big)^2$。這樣寫不需把兩個相近的數相減。</p>
+  </div></details>
+  <div class="plate" id="w3">
+    <div class="plate-h"><span class="id">W3</span><h3>讓 IP 對上 No. 406 模型所需的 γ</h3></div>
+    <p class="plate-lead">假設 $x_0$ 誤差標準差 e 對所有 t 相同 <span class="tag">推定</span>。t 很小時 γ 很大，是這個假設造成的。</p>
+    <div class="pg side">
+      <div class="fig"><div id="w3-fig"><svg role="img" aria-label="使變異數一致的 γ 對時間步 t"></svg></div>
+        <div class="legend"><span class="lg acc">多步 γ_M</span><span class="lg accd">單步 γ₁</span><span class="lg ref">參考 γ</span><span class="lg band">γ_M 在參考值的 ½ 到 2 倍之間</span></div></div>
+      <div class="ctl">
+        <div><div class="lbl">排程（推定）</div><div class="seg" id="w3-k" role="radiogroup" aria-label="排程"><button data-v="cosine">cosine</button><button data-v="linear">linear</button></div></div>
+        <div><div class="lbl">取樣步數 T′</div><div class="seg" id="w3-T" role="radiogroup" aria-label="取樣步數"><button data-v="20">20</button><button data-v="100">100</button><button data-v="1000">1000</button></div></div>
+        <div class="rng"><label class="lbl" for="w3-e">x₀ 誤差標準差 e<output id="w3-eo">0.20</output></label><input id="w3-e" type="range" min="0" max="0.4" step="0.01" value="0.2"></div>
+        <div class="rng"><label class="lbl" for="w3-g">參考 γ<output id="w3-go">0.10</output></label><input id="w3-g" type="range" min="0.01" max="0.3" step="0.01" value="0.1"></div>
+        <div class="rng"><label class="lbl" for="w3-t">時間步 t<output id="w3-to">20</output></label><input id="w3-t" type="range" min="1" max="99" step="1" value="20"></div>
+        <p class="note" id="w3-pre"><span class="tag">推定</span> 依推定：e 為常數、cosine 排程</p>
+        <dl class="ro" id="w3-ro"></dl>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依 No. 406 Eq. 9 與上方遞迴即時計算 <span class="tag">本頁推導</span>。</p>
+    <p class="sr" aria-live="polite" id="w3-live"></p>
+  </div>
+  <p class="concl"><b>本章結論。</b>$\nu_t$ 與 $e_t$ 定義相同（$\hat x_0-x_0$ 的標準差），來源不同：No. 405 的 $\nu_t$ 沿取樣軌跡實測，No. 406 的 $e_t$ 是未給數值的建模參數；這是本頁的詮釋。使 IP 與 No. 406 單步取樣變異數一致的 γ 是 $\gamma=c_{1,t+1}e_{t+1}/\sigma_t$；這是本頁的推導，論文沒有寫。在推定的假設下（e 對所有 t 都是 0.2、cosine 排程、$T'=100$），多步版的 γ 只在 $t=16..39$ 落在 [0.05, 0.2]。</p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$\nu_t$ 與 $e_t$ 有何異同？使 IP 與 No. 406 單步取樣變異數一致的 γ 是什麼？</p>
+    <p class="a">定義相同（$\hat x_0-x_0$ 的標準差），No. 405 沿取樣軌跡實測、No. 406 是未給數值的建模參數；$\gamma=c_{1,t+1}e_{t+1}/\sigma_t$。推定常數 e = 0.2、cosine、$T'=100$ 時，多步版只在 $t=16..39$ 落在 [0.05, 0.2]。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="ddpm-input-perturbation.html#gamma">No. 405 教學：選擇 γ</a>、<a href="prediction-error-variance-analysis.html">預測誤差與取樣變異數分析</a></p>
+</section>
+
+<!-- S8 -->
+<section class="ch" id="limits" data-toc="09" data-tt="流形觀點的邊界">
+  <div class="ch-num">09 · 流形觀點的邊界</div>
+  <h2>流形觀點能說明與不能說明的部分</h2>
+  <div class="pair">
+    <div class="card"><span class="k">能說明</span><p>靠近流形時，法向誤差被 $\sigma^{-2}$ 放大，所以噪聲小的末段最敏感；三篇都特別處理末段。三種修正在精確分數下的極限不同：IP 的最佳網路收斂到 $p_{data}$，常數乘數 $1/\lambda$ 收斂到 $p_{vol}^{1/\lambda}$，TS 收斂到均勻分佈。</p></div>
+    <div class="card perp"><span class="k">不能說明</span><p>有限步與離散化誤差（No. 237 Limitations d）、取樣軌跡上的累積（a）、實際訓練控制的是 $L^2$ 誤差而非 $L^\infty$（b）、FID 的改善；也不預測 λ = 1.017 或 γ = 0.1 這些值。</p></div>
+  </div>
+  <div class="prose">
+    <p>No. 237 的理論不能解釋 No. 405 與 No. 406 的以下部分：有限步與離散化（Limitations d）、軌跡上的累積（a）、$L^2$ 訓練誤差（b）以及 FID；它也不預測 λ = 1.017 或 γ = 0.1 <span class="tag interp">本頁詮釋</span>。No. 237 的實驗本身也是初步的（Limitations e），且用 CLIP 分數而非 FID。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">No. 237 的理論不能解釋 No. 405／406 的哪些部分？</p>
+    <p class="a">有限步與離散化（Limitations d）、軌跡上的累積（a）、$L^2$ 訓練誤差（b）、FID；也不預測 λ = 1.017 或 γ = 0.1。</p>
+  </div></details>
+</section>
+
+<!-- S9 -->
+<section class="ch" id="misread" data-toc="10" data-tt="常見誤讀">
+  <div class="ch-num">10 · 常見誤讀</div>
+  <h2>常見誤讀與延伸閱讀</h2>
+  <div class="prose">
+    <ol>
+      <li>把常數 ES 當成 TS 的特例：ES 的係數不隨 σ 變，等效指數 $\alpha_{eq}\to0$，極限不是均勻分佈。</li>
+      <li>把 TS 的理論保證套到預測步：No. 237 只分析校正步（Langevin 動態）跑到平穩的情形。</li>
+      <li>把 γ = 0.1 與 $\nu_t\approx0.2$ 直接比大小：前者在 $x_t$ 空間、相對於 $\sigma_t$，後者在 $x_0$ 空間。</li>
+      <li>把 $o(\sigma^{-2})$ 讀成「ε 誤差可到 $\sigma^{-2}$」：換成 ε 是 $o(\sigma^{-1})$；也不要把充分條件讀成必要條件。</li>
+      <li>把 No. 406 Table 3 的 2.38 當成 No. 405 報告的數字。</li>
+      <li>把 IP 的最佳網路等式當成 IP 有效的原因。</li>
+    </ol>
+  </div>
+  <ol class="rl">
+    <li><a href="score-error-exposure-bias-relations.html">分數誤差、曝光偏差與三種縮放：三篇的關係</a><span>本頁的研究筆記</span></li>
+    <li><a href="score-geometry-lineage-hub.html">When Scores Learn Geometry 的研究脈絡總覽</a><span>No. 237</span></li>
+    <li><a href="input-perturbation-lineage-overview.html">Input Perturbation（DDPM-IP）的研究脈絡總覽</a><span>No. 405</span></li>
+    <li><a href="exposure-bias-elucidation-overview.html">擴散模型曝光偏差分析與 Epsilon Scaling：研究脈絡總覽</a><span>No. 406</span></li>
+    <li><a href="scores-learn-geometry.html">No. 237 互動教學</a><span><a href="../index.html#paper-237">論文</a></span></li>
+    <li><a href="ddpm-input-perturbation.html">No. 405 互動教學</a><span><a href="../index.html#paper-405">論文</a></span></li>
+    <li><a href="exposure-bias-epsilon-scaling.html">No. 406 互動教學</a><span><a href="../index.html#paper-406">論文</a></span></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Li, Shen, Hsieh, He. When Scores Learn Geometry: Rate Separations under the Manifold Hypothesis. <a href="https://arxiv.org/abs/2509.24912">arXiv:2509.24912</a>. · Ning, Sangineto, Porrello, Calderara, Cucchiara. Input Perturbation Reduces Exposure Bias in Diffusion Models. ICML 2023. <a href="https://arxiv.org/abs/2301.11706">arXiv:2301.11706</a>. · Ning, Li, Su, Salah, Ertugrul. Elucidating the Exposure Bias in Diffusion Models. ICLR 2024. <a href="https://arxiv.org/abs/2308.15321">arXiv:2308.15321</a>.</p>
+  <p>標示「本頁推導」「本頁詮釋」「本頁玩具」的內容是本頁自行建立，不是任何一篇論文的結論；標示「推定」的值為本頁選定。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+<script>
+(()=>{
+'use strict';
+// core.js — numerical core to be copied verbatim into build/index.html.
+// Setting: VE smoothing, d=2, n=1; p_data = von Mises on the parameter angle t.
+const KAPPA = 4, THETA0 = Math.PI;              // App. C.3 values
+const TWO_PI = 2 * Math.PI;
+
+// ---- Bessel I0, I1 (A&S 9.8.1-9.8.4 for x<50; asymptotic series for x>=50)
+function logI0(x) {
+  x = Math.abs(x);
+  if (x < 3.75) { const t = (x / 3.75) ** 2;
+    return Math.log(1 + t * (3.5156229 + t * (3.0899424 + t * (1.2067492 + t * (0.2659732 + t * (0.0360768 + t * 0.0045813)))))); }
+  if (x < 50) { const t = 3.75 / x;
+    const p = 0.39894228 + t * (0.01328592 + t * (0.00225319 + t * (-0.00157565 + t * (0.00916281 + t * (-0.02057706 + t * (0.02635537 + t * (-0.01647633 + t * 0.00392377)))))));
+    return x + Math.log(p) - 0.5 * Math.log(x); }
+  const y = 1 / x;
+  return x - 0.5 * Math.log(TWO_PI * x) + Math.log1p(y * (1 / 8 + y * (9 / 128 + y * (225 / 3072 + y * 11025 / 98304))));
+}
+// I1(x)/I0(x) / x  (finite at x=0, value 1/2)
+function ratioOverX(x) {
+  if (x < 1e-8) return 0.5;
+  if (x < 3.75) { const t = (x / 3.75) ** 2;
+    const i1x = 0.5 + t * (0.87890594 + t * (0.51498869 + t * (0.15084934 + t * (0.02658733 + t * (0.00301532 + t * 0.00032411)))));
+    const i0 = 1 + t * (3.5156229 + t * (3.0899424 + t * (1.2067492 + t * (0.2659732 + t * (0.0360768 + t * 0.0045813)))));
+    return i1x / i0; }
+  if (x < 50) { const t = 3.75 / x;
+    const p0 = 0.39894228 + t * (0.01328592 + t * (0.00225319 + t * (-0.00157565 + t * (0.00916281 + t * (-0.02057706 + t * (0.02635537 + t * (-0.01647633 + t * 0.00392377)))))));
+    const p1 = 0.39894228 + t * (-0.03988024 + t * (-0.00362018 + t * (0.00163801 + t * (-0.01031555 + t * (0.02282967 + t * (-0.02895312 + t * (0.01787654 - t * 0.00420059)))))));
+    return p1 / p0 / x; }
+  const y = 1 / x;
+  return (1 - y * (0.5 + y * (1 / 8 + y * (1 / 8 + y * (25 / 128 + y * 13 / 32))))) / x;
+}
+const LOG_NORM_VM = Math.log(TWO_PI) + logI0(KAPPA);       // log(2*pi*I0(kappa))
+const logPdata = t => KAPPA * Math.cos(t - THETA0) - LOG_NORM_VM;
+
+// ---- unit circle: exact log p_sigma and score (closed form)
+function circleLogP(x1, x2, s) {
+  const s2 = s * s, a = x1 / s2 + KAPPA * Math.cos(THETA0), b = x2 / s2 + KAPPA * Math.sin(THETA0);
+  const R = Math.hypot(a, b);
+  return -Math.log(TWO_PI * s2) - (x1 * x1 + x2 * x2 + 1) / (2 * s2) + logI0(R) - logI0(KAPPA);
+}
+function circleScore(x1, x2, s) {                // returns [s1, s2]
+  const s2 = s * s, a = x1 / s2 + KAPPA * Math.cos(THETA0), b = x2 / s2 + KAPPA * Math.sin(THETA0);
+  const q = ratioOverX(Math.hypot(a, b)) / s2;
+  return [-x1 / s2 + q * a, -x2 / s2 + q * b];
+}
+// radial / tangential components at polar (rho, phi), computed without cancellation in the tangential part
+function circleScorePolar(rho, phi, s) {
+  const s2 = s * s, c = Math.cos(phi - THETA0);
+  const R = Math.hypot(rho / s2 + KAPPA * c, KAPPA * Math.sin(phi - THETA0));
+  const q = ratioOverX(R) / s2;
+  return { rad: -rho / s2 + q * (rho / s2 + KAPPA * c), tan: -q * KAPPA * Math.sin(phi - THETA0) };
+}
+// Eq. (6) four terms on the circle (VE): A=-d_M/s^2, B=log p_data, C=-(d-n)/2 log(2 pi s^2), D=H=-1/2 log|H^| = -1/2 log rho
+function eq6Terms(rho, phi, s) {
+  const x1 = rho * Math.cos(phi), x2 = rho * Math.sin(phi);
+  const exact = circleLogP(x1, x2, s);
+  const A = -0.5 * (rho - 1) ** 2 / (s * s), B = logPdata(phi), C = -0.5 * Math.log(TWO_PI * s * s), D = -0.5 * Math.log(rho);
+  return { exact, A, B, C, D, resid: exact - (A + B + C + D) };
+}
+
+// ---- general ellipse Phi(t) = (a cos t, b sin t): log p_sigma by periodic trapezoid in t'
+// Windowed: a 128-node coarse scan finds the coarse intervals that can contribute; only their fine nodes are summed.
+// Interval k is kept if (d_k - Delta)^2 <= dmin^2 + 2 s^2 (40 + 2 kappa), Delta = max|Phi'| * coarse spacing
+// (true distance inside the interval >= d_k - Delta; 2 kappa = range of log p_data). Dropped mass < e^-40 relative.
+const NC = 128;
+function makeEllipseLogP(a, b, s, full) {
+  const per = Math.max(1, Math.ceil(Math.min(6000, Math.max(256, 8 * Math.PI * Math.max(a, b) / s)) / NC));
+  const N = per * NC, h = TWO_PI / N, cx = new Float64Array(N), cy = new Float64Array(N), lp = new Float64Array(N), e = new Float64Array(N);
+  for (let k = 0; k < N; k++) { const t = -Math.PI + (k + 0.5) * h; cx[k] = a * Math.cos(t); cy[k] = b * Math.sin(t); lp[k] = logPdata(t); }
+  const inv = 1 / (2 * s * s), c0 = -Math.log(TWO_PI * s * s) + Math.log(h);
+  const Delta = Math.max(a, b) * TWO_PI / NC, slack = 2 * s * s * (40 + 2 * KAPPA), dk = new Float64Array(NC);
+  const keep = new Uint8Array(NC);
+  return function (x1, x2) {
+    let m = -Infinity, sum = 0;
+    if (full) {
+      for (let k = 0; k < N; k++) { const dx = x1 - cx[k], dy = x2 - cy[k]; const v = lp[k] - (dx * dx + dy * dy) * inv; e[k] = v; if (v > m) m = v; }
+      for (let k = 0; k < N; k++) if (e[k] > m - 40) sum += Math.exp(e[k] - m);
+      return c0 + m + Math.log(sum);
+    }
+    let dmin2 = Infinity;
+    for (let c = 0; c < NC; c++) { const k = c * per + (per >> 1), dx = x1 - cx[k], dy = x2 - cy[k], d2 = dx * dx + dy * dy; dk[c] = Math.sqrt(d2); if (d2 < dmin2) dmin2 = d2; }
+    const thr = dmin2 + slack;
+    for (let c = 0; c < NC; c++) { const lo = dk[c] - Delta; keep[c] = (lo <= 0 || lo * lo <= thr) ? 1 : 0; }
+    let n = 0;
+    for (let c = 0; c < NC; c++) if (keep[c]) for (let k = c * per, k1 = k + per; k < k1; k++) { const dx = x1 - cx[k], dy = x2 - cy[k]; const v = lp[k] - (dx * dx + dy * dy) * inv; e[n++] = v; if (v > m) m = v; }
+    for (let q = 0; q < n; q++) if (e[q] > m - 40) sum += Math.exp(e[q] - m);
+    return c0 + m + Math.log(sum);
+  };
+}
+
+// ---- C2: angular marginal of pi~ ∝ exp( s^alpha (log p_s + U_err) - v ), generalized polar x=(a r cos t, b r sin t)
+// Split in two: c2Grid (expensive, depends on shape, sigma, alpha, nt; cacheable; can be filled in row slices)
+// and c2Combine (cheap; error field, beta, lambda). opts: {a,b,sigma,alpha,err:'none'|'c3'|'tan', beta, lambda, nt}
+const C2_NT = 180, C2_NS = 49;
+function c2Grid(o) {
+  const { a, b, sigma: s, alpha } = o, nt = o.nt || C2_NT, w = Math.pow(s, 1 - alpha / 2);
+  const r0 = Math.max(0.02, 1 - 8 * w), r1 = 1 + 8 * w, dr = (r1 - r0) / (C2_NS - 1);
+  const circle = (a === 1 && b === 1 && !o.forceQuad);
+  return { a, b, s, alpha, nt, w, r0, dr, circle, lpE: circle ? null : makeEllipseLogP(a, b, s, o.fullQuad), LP: new Float64Array(nt * C2_NS), rowsDone: 0 };
+}
+function c2FillRows(G, j1) {            // fill rows G.rowsDone .. j1-1 (page calls this in ~8 ms slices)
+  for (let j = G.rowsDone; j < j1; j++) {
+    const t = -Math.PI + (j + 0.5) * TWO_PI / G.nt, ct = Math.cos(t), st = Math.sin(t);
+    for (let i = 0; i < C2_NS; i++) { const r = G.r0 + i * G.dr, x1 = G.a * r * ct, x2 = G.b * r * st;
+      G.LP[j * C2_NS + i] = G.circle ? circleLogP(x1, x2, G.s) : G.lpE(x1, x2); }
+  }
+  G.rowsDone = Math.max(G.rowsDone, j1);
+}
+function c2Combine(G, o) {
+  const { a, b, s, alpha, nt } = G, sa = Math.pow(s, alpha), tb = o.err === 'tan' ? Math.pow(s, o.beta) : 0, lam = o.lambda || 0;
+  const logm = new Float64Array(nt), L = new Float64Array(C2_NS);
+  for (let j = 0; j < nt; j++) {
+    const t = -Math.PI + (j + 0.5) * TWO_PI / nt, ct = Math.cos(t), st = Math.sin(t);
+    let m = -Infinity;
+    for (let i = 0; i < C2_NS; i++) {
+      const r = G.r0 + i * G.dr, x1 = a * r * ct, x2 = b * r * st;
+      let ell = G.LP[j * C2_NS + i];
+      if (o.err === 'c3') { const q = (x1 - 1) ** 2 + x2 * x2; ell += -0.5 * q * q; }
+      else if (o.err === 'tan') ell += tb * ct;
+      const v = sa * ell - lam * (1 - ct) + Math.log(a * b * r) + ((i === 0 || i === C2_NS - 1) ? Math.log(0.5) : 0);
+      L[i] = v; if (v > m) m = v;
+    }
+    let sum = 0; for (let i = 0; i < C2_NS; i++) sum += Math.exp(L[i] - m);
+    logm[j] = m + Math.log(sum);
+  }
+  // normalization over t also in the log domain (sigma^alpha*U_err can reach ~6e3): subtract the max before exp
+  let M = -Infinity, Mlo = Infinity; for (const v of logm) { if (v > M) M = v; if (v < Mlo) Mlo = v; }
+  const dens = new Float64Array(nt); let Z = 0;
+  for (let j = 0; j < nt; j++) { dens[j] = Math.exp(logm[j] - M); Z += dens[j]; }
+  const dt = TWO_PI / nt; for (let j = 0; j < nt; j++) dens[j] /= Z * dt;
+  return { dens, w: G.w, theta: Math.pow(s, 2 - alpha), log10MaxOverMin: (M - Mlo) / Math.LN10 };
+}
+function c2Marginal(o) { const G = c2Grid(o); c2FillRows(G, G.nt); return c2Combine(G, o); }
+// reference curves on the same t grid (densities in t)
+function refCurve(kind, a, b, lambda, nt) {
+  nt = nt || C2_NT;
+  const out = new Float64Array(nt), dt = TWO_PI / nt; let Z = 0;
+  for (let j = 0; j < nt; j++) {
+    const t = -Math.PI + (j + 0.5) * dt, sp = Math.hypot(a * Math.sin(t), b * Math.cos(t));
+    let v;
+    if (kind === 'pdata') v = Math.exp(logPdata(t));
+    else if (kind === 'unif') v = sp;
+    else if (kind === 'post') v = Math.exp(-(lambda || 0) * (1 - Math.cos(t))) * sp;
+    else if (kind === 'postdata') v = Math.exp(-(lambda || 0) * (1 - Math.cos(t)) + logPdata(t));
+    else if (kind === 'c3lim') { const q = (a * Math.cos(t) - 1) ** 2 + (b * Math.sin(t)) ** 2; v = Math.exp(logPdata(t) - 0.5 * q * q); }
+    out[j] = v; Z += v * dt;
+  }
+  for (let j = 0; j < nt; j++) out[j] /= Z;
+  return out;
+}
+const tv = (p, q) => { let s = 0; for (let j = 0; j < p.length; j++) s += Math.abs(p[j] - q[j]); return 0.5 * s * TWO_PI / p.length; };
+const maxOverMin = p => { let lo = Infinity, hi = 0; for (const v of p) { if (v < lo) lo = v; if (v > hi) hi = v; } return hi / lo; };
+
+// ---- C4: particles, Euler–Maruyama in the App. C.1 clock
+function mulberry32(seed) { let a = seed >>> 0; return function () { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function errField(err, x1, x2) {
+  if (err === 'c3') { const d1 = x1 - 1, q = d1 * d1 + x2 * x2; return [-2 * q * d1, -2 * q * x2]; }
+  if (err === 'rot') { const r = Math.hypot(x1, x2); if (r < 1e-9) return [0, 0]; const g = 4 * (1 - x1 / r); return [-g * x2 / r, g * x1 / r]; }
+  return [0, 0];
+}
+// state: {X: Float64Array(2N) per panel}, both panels share the same noise
+function c4Init(N, seed) {
+  const rng = mulberry32(seed), X = new Float64Array(2 * N);
+  for (let i = 0; i < N; i++) { const t = -Math.PI + TWO_PI * rng(); X[2 * i] = Math.cos(t); X[2 * i + 1] = Math.sin(t); }
+  return { rng, P: [X, Float64Array.from(X)], step: 0, resets: [0, 0] };
+}
+function c4Steps(st, n, o) {          // o: {sigma, alphas:[0, aTS], err, dt}
+  const s = o.sigma, s2 = s * s, dt = o.dt, N = st.P[0].length / 2;
+  const amp = o.alphas.map(al => Math.sqrt(2 * Math.pow(s, 2 - al) * dt));
+  for (let k = 0; k < n; k++) {
+    for (let i = 0; i < N; i++) {
+      const u1 = st.rng(), u2 = st.rng(), rr = Math.sqrt(-2 * Math.log(1 - u1)), g1 = rr * Math.cos(TWO_PI * u2), g2 = rr * Math.sin(TWO_PI * u2);
+      for (let p = 0; p < 2; p++) {
+        const X = st.P[p], x1 = X[2 * i], x2 = X[2 * i + 1];
+        const sc = circleScore(x1, x2, s), e = errField(o.err, x1, x2);
+        let y1 = x1 + dt * s2 * (sc[0] + e[0]) + amp[p] * g1, y2 = x2 + dt * s2 * (sc[1] + e[1]) + amp[p] * g2;
+        if (!isFinite(y1) || !isFinite(y2) || y1 * y1 + y2 * y2 > 2500) { y1 = 1; y2 = 0; st.resets[p]++; }
+        X[2 * i] = y1; X[2 * i + 1] = y2;
+      }
+    }
+    st.step++;
+  }
+}
+function c4Stats(X, nb) {
+  const N = X.length / 2, h = new Float64Array(nb); let C = 0, S = 0;
+  for (let i = 0; i < N; i++) { const t = Math.atan2(X[2 * i + 1], X[2 * i]); C += Math.cos(t); S += Math.sin(t);
+    let j = Math.floor((t + Math.PI) / TWO_PI * nb); if (j >= nb) j = nb - 1; if (j < 0) j = 0; h[j]++; }
+  let tvU = 0; for (let j = 0; j < nb; j++) tvU += Math.abs(h[j] / N - 1 / nb); 
+  return { meanCos: C / N, meanSin: S / N, tvUnif: 0.5 * tvU, hist: h };
+}
+// core.js — synthesis page numeric core; copied verbatim into build/index.html
+// (after 237/verify/core.js, which supplies circleLogP, circleScorePolar, c2Marginal, tv, KAPPA, THETA0, ...).
+// ---- schedules (ported from 406/verify/check.py; T = 1000)
+const SYN_T = 1000;
+function abarFull(kind) {
+  const ab = []; let p = 1;
+  if (kind === 'linear') { for (let i = 0; i < SYN_T; i++) { p *= 1 - (1e-4 + (0.02 - 1e-4) * i / (SYN_T - 1)); ab.push(p); } return ab; }
+  const f = u => Math.cos((u / SYN_T + 0.008) / 1.008 * Math.PI / 2) ** 2;
+  for (let i = 0; i < SYN_T; i++) { p *= 1 - Math.min(1 - f(i + 1) / f(i), 0.999); ab.push(p); }
+  return ab;
+}
+function respace(kind, Tp) {          // A[0] = 1, A[t] for t = 1..Tp
+  const ab = abarFull(kind), A = [1];
+  for (let i = 0; i < Tp; i++) A.push(ab[Math.round(i * (SYN_T - 1) / (Tp - 1))]);
+  return A;
+}
+function coefs(A, t) {                 // step x_t -> x_{t-1}
+  const a = A[t] / A[t - 1], b = 1 - a;
+  return { alpha: a, beta: b, c1: Math.sqrt(A[t - 1]) * b / (1 - A[t]), c2: Math.sqrt(a) * (1 - A[t - 1]) / (1 - A[t]), bt: (1 - A[t - 1]) * b / (1 - A[t]) };
+}
+// ---- W1: multipliers on the score (equivalently on eps, since s = -eps/sigma)
+const mTS = (sigma, alpha) => Math.pow(sigma, alpha);                  // 237 Eq. 8 / App. C.2
+const mES = lambda => 1 / lambda;                                       // 406 Sec. 4.1
+const mIPman = gamma => 1 / (1 + gamma * gamma);                        // page derivation: normal part, sigma -> 0
+function mIPgauss(sigma, gamma, s2) {                                   // page toy: 1-D Gaussian data, VP abar = 1 - sigma^2
+  if (!(sigma > 0 && sigma < 1)) return NaN;
+  const ab = 1 - sigma * sigma; return (ab * s2 + sigma * sigma) / (ab * s2 + sigma * sigma * (1 + gamma * gamma));
+}
+const sigmaCross = (lambda, alpha) => Math.pow(lambda, -1 / alpha);     // sigma^alpha = 1/lambda
+const alphaEq = (lambda, sigma) => (sigma > 0 && sigma < 1) ? Math.log(lambda) / -Math.log(sigma) : NaN; // ES written as sigma^alpha at this sigma
+function sigmaOfT(A, t) { return Math.sqrt(1 - A[t]); }
+// ---- W2: on-circle limits; tempered von Mises density in t, p^c normalised
+function vmPow(c, nt) {
+  nt = nt || 180; const out = new Float64Array(nt), dt = 2 * Math.PI / nt; let Z = 0;
+  for (let j = 0; j < nt; j++) { const t = -Math.PI + (j + 0.5) * dt; out[j] = Math.exp(c * KAPPA * Math.cos(t - THETA0)); Z += out[j] * dt; }
+  for (let j = 0; j < nt; j++) out[j] /= Z; return out;
+}
+// ---- W3: gamma that makes IP's training input variance equal the sampling variance of the 406 Eq. 7 model
+// model 'x0': e_t = val (x0-space std, 405 nu_t / 406 e_t); model 'eps': e_t = val*sqrt((1-abar_t)/abar_t) (eps-space std val)
+function gammaMatch(kind, Tp, val, model) {
+  // accumulate the excess variance D_t = V_t - sigma_t^2 directly (406 App. A.1: c2^2 (1-abar_t) + bt = 1-abar_{t-1}),
+  // so D_{t-1} = c2^2 D_t + (c1 e_t)^2, D_{T'} = 0 -- no subtraction of nearly equal numbers
+  const A = respace(kind, Tp), D = new Float64Array(Tp + 1), rows = [];
+  const eOf = t => model === 'eps' ? val * Math.sqrt((1 - A[t]) / A[t]) : val;
+  for (let s = Tp; s >= 1; s--) { const c = coefs(A, s); D[s - 1] = c.c2 * c.c2 * D[s] + (c.c1 * eOf(s)) ** 2; }
+  for (let t = 1; t < Tp; t++) {
+    const bb = 1 - A[t], sg = Math.sqrt(bb), c = coefs(A, t + 1), one = (c.c1 * eOf(t + 1)) ** 2;
+    rows.push({ t, sigma: sg, c1: c.c1, g1: Math.sqrt(one) / sg, gM: Math.sqrt(D[t]) / sg, delta: (D[t] / (Math.sqrt(bb + D[t]) + sg)) ** 2 });
+  }
+  return rows;
+}
+// ---- prose check: perfect network, Gaussian data var s2, ancestral DDPM with eps/lambda -> Var(x0_hat) (exact linear recursion)
+function esGaussVar(kind, Tp, s2, lambda) {
+  const A = respace(kind, Tp); let v = 1;                                // x_T ~ N(0, 1) (v = Var of x_hat_t)
+  for (let t = Tp; t >= 1; t--) {
+    const c = coefs(A, t), sg = Math.sqrt(1 - A[t]), k = sg / (A[t] * s2 + 1 - A[t]);   // eps*(x) = k x
+    const g = (1 - sg * k / lambda) / Math.sqrt(A[t]);                   // x0_hat = g x
+    const m = c.c1 * g + c.c2;                                           // x_{t-1} = m x + sqrt(bt) z
+    v = m * m * v + c.bt;
+  }
+  return v;
+}
+/* ---------- helpers (shell of the 405/406 pages) ---------- */
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+const lgs=(d0,d1,r0,r1)=>{const a=Math.log(d0),b=Math.log(d1);return v=>r0+(Math.log(v)-a)/(b-a)*(r1-r0)};
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+let clipN=0;
+function frame(svg,o){
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m=o.m,x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=m.t;
+  const X=(o.xlog?lgs:lin)(o.x[0],o.x[1],x0,x1),Y=(o.ylog?lgs:lin)(o.y[0],o.y[1],y0,y1);
+  const g=el('g',null,svg);
+  (o.yt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:String(v),yy=Y(val);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},g);tx(g,x0-8,yy+4,lab,{class:'tk','text-anchor':'end'})});
+  (o.xt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:String(v),xx=X(val);el('line',{x1:xx,x2:xx,y1:y0,y2:y0+4,class:'axl'},g);tx(g,xx,y0+18,lab,{class:'tk','text-anchor':'middle'})});
+  el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  if(o.xl)tx(g,(x0+x1)/2,o.H-4,o.xl,{class:'al','text-anchor':'middle'});
+  if(o.yl)tx(g,4,12,o.yl,{class:'al'});
+  const id='clip'+(++clipN),d=el('defs',null,svg),c=el('clipPath',{id},d);el('rect',{x:x0,y:y1-2,width:x1-x0,height:y0-y1+4},c);
+  const pg=el('g',{'clip-path':`url(#${id})`},svg);
+  return {X,Y,g,pg,x0,x1,y0,y1};
+}
+function radiogroup(box,val,onChange){const bs=$$('button',box);
+  const set=(v,focus)=>{bs.forEach(b=>{const on=b.dataset.v===String(v);b.setAttribute('aria-checked',String(on));b.tabIndex=on?0:-1;if(on&&focus)b.focus()})};
+  bs.forEach((b,i)=>{b.type='button';b.setAttribute('role','radio');b.addEventListener('click',()=>{if(b.disabled)return;set(b.dataset.v);onChange(b.dataset.v)});
+    b.addEventListener('keydown',e=>{const d={ArrowRight:1,ArrowDown:1,ArrowLeft:-1,ArrowUp:-1}[e.key];if(!d)return;e.preventDefault();let j=i;do{j=(j+d+bs.length)%bs.length}while(bs[j].disabled&&j!==i);set(bs[j].dataset.v,true);onChange(bs[j].dataset.v)})});
+  set(val);return set}
+function sched(fn){let raf=0;return()=>{if(raf)return;raf=requestAnimationFrame(()=>{raf=0;fn()})}}
+const fe=v=>{if(!isFinite(v))return '—';if(v===0)return '0';const a=Math.abs(v);return(a>=1e-3&&a<1e4)?(+v.toPrecision(3)).toString():v.toExponential(2)};
+function ro(node,rows){node.innerHTML=rows.map(([k,v,acc])=>`<dt>${k}</dt><dd${acc?' class="acc"':''}>${v}</dd>`).join('')}
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},400)}
+function chartW(box){return widthOf(box,260,640)}
+const narrow=()=>innerWidth<600;
+function slider(id,fmt,label,onv){const i=$('#'+id),o=$('#'+id+'o');const up=()=>{const v=+i.value;o.textContent=fmt(v);i.setAttribute('aria-valuetext',label+' = '+fmt(v));onv(v)};i.addEventListener('input',up);up();return i}
+
+/* ---------- W0 ---------- */
+const w0s={ls:-1,e:0.2,u:'x0'};
+function renderW0(){const s=10**w0s.ls,e=w0s.e,v=w0s.u==='x0'?Math.sqrt(1-s*s)*e/(s*s):e/s;
+  ro($('#w0-ro'),[['σ',s.toFixed(3)],['ᾱ = 1 − σ²',(1-s*s).toFixed(4)],[w0s.u==='x0'?'x₀ 誤差 e':'ε 誤差 η',e.toFixed(2)],['公式',w0s.u==='x0'?'√ᾱ·e / σ²':'η / σ'],['對應的分數誤差',(+v.toPrecision(4)).toString(),1]]);
+  announce('w0',`σ = ${s.toFixed(3)}，分數誤差 ${(+v.toPrecision(4))}`)}
+function initW0(){const R=sched(renderW0);slider('w0-s',v=>(10**v).toFixed(3),'σ',v=>{w0s.ls=v;R()});
+  $('#w0-e').addEventListener('input',e=>{const v=+e.target.value;w0s.e=isFinite(v)?Math.max(0,Math.min(1,v)):0;R()});
+  radiogroup($('#w0-u'),w0s.u,v=>{w0s.u=v;R()});renderW0()}
+
+/* ---------- W1 ---------- */
+const w1s={a:1,l:1.017,ls:-1,g:0.1,ip:false,ipShown:false,z:'full'};
+const A1000=respace('cosine',1000);
+function renderW1(){const s=w1s,svg=$('#w1-fig svg'),W=chartW($('#w1-fig')),H=330+12,zoom=s.z==='zoom',yr=zoom?[0.95,1.01]:[0,1.1];
+  const G=frame(svg,{W,H,m:{l:46,r:12,t:48,b:40},x:[0.005,1],xlog:true,y:yr,xl:'σ（對數）',
+    xt:[[0.01,'0.01'],[0.1,'0.1'],[1,'1']].concat(narrow()?[]:[[0.03,'0.03'],[0.3,'0.3']]),
+    yt:zoom?[0.95,0.96,0.97,0.98,0.99,1.0].map(v=>[v,v.toFixed(2)]):[0,0.2,0.4,0.6,0.8,1.0].map(v=>[v,v.toFixed(1)])});
+  // top t axis (cosine, T = 1000)
+  const tl=narrow()?[1,10,100,500]:[1,10,50,100,200,500];
+  el('line',{x1:G.x0,x2:G.x1,y1:G.y1-14,y2:G.y1-14,class:'faint'},G.g);
+  tl.forEach(t=>{const xx=G.X(sigmaOfT(A1000,t));el('line',{x1:xx,x2:xx,y1:G.y1-18,y2:G.y1-14,class:'axl'},G.g);tx(G.g,xx,G.y1-22,String(t),{class:'tk','text-anchor':'middle'})});
+  tx(G.g,G.x1,G.y1-36,'上軸：t（cosine 排程，推定）',{class:'tk','text-anchor':'end'});
+  const N=200,xs=[];for(let i=0;i<=N;i++)xs.push(0.005*Math.pow(1/0.005,i/N));
+  const yc=v=>Math.max(yr[0]-0.05,Math.min(yr[1]+0.05,v));
+  el('path',{d:lp(xs.map(x=>[G.X(x),G.Y(yc(mTS(x,s.a)))])),class:'par'},G.pg);
+  el('path',{d:lp([[G.x0,G.Y(yc(mES(s.l)))],[G.x1,G.Y(yc(mES(s.l)))]]),class:'perp dash'},G.pg);
+  if(s.ipShown&&s.ip){el('path',{d:lp([[G.x0,G.Y(yc(mIPman(s.g)))],[G.x1,G.Y(yc(mIPman(s.g)))]]),class:'acc dot'},G.pg);
+    el('path',{d:lp(xs.filter(x=>x<0.999).map(x=>[G.X(x),G.Y(yc(mIPgauss(x,s.g,0.25)))])),class:'acc-thin dash'},G.pg)}
+  if(!narrow()){const xl=G.X(0.012);tx(G.g,xl,Math.max(G.y1+12,Math.min(G.y0-6,G.Y(yc(mTS(0.012,s.a)))-8)),'TS',{class:'lab'});tx(G.g,G.X(0.012),G.Y(yc(mES(s.l)))+16,'ES',{class:'lab'})}
+  const sig=10**s.ls;el('line',{x1:G.X(sig),x2:G.X(sig),y1:G.y1,y2:G.y0,class:'cur'},G.g);
+  // crossing
+  let crossTxt='—';
+  if(s.l===1)crossTxt='—（λ = 1 時 ES 不縮放）';else if(s.l<1)crossTxt='無交點（ES 放大 ε）';
+  else{const sc=sigmaCross(s.l,s.a);crossTxt=sc.toFixed(4);
+    if(sc<=0.991&&sc>=0.005){const cx=G.X(sc),cy=G.Y(mES(s.l));el('circle',{cx,cy,r:5,class:'kdot'},G.pg);
+      let tc=1;while(tc<1000&&sigmaOfT(A1000,tc)<sc)tc++;tx(G.g,Math.min(cx-6,G.x1-4),cy+(zoom?22:-12),`σ* = ${sc.toFixed(4)}（t ≈ ${tc}）`,{class:'lab','text-anchor':'end'})}
+    else tx(G.g,G.x1-4,G.Y(mES(s.l))-10,`σ* = ${sc.toFixed(4)} →`,{class:'lab','text-anchor':'end'})}
+  if(zoom&&mTS(0.5,s.a)<0.95)tx(G.g,G.X(0.05),G.y0-8,'↓ TS 低於 0.95',{class:'tk','text-anchor':'middle'});
+  const rows=[['σ',sig.toFixed(3)],['TS 乘數 σ^α',mTS(sig,s.a).toFixed(4)],['ES 乘數 1/λ',mES(s.l).toFixed(4)],['交點 σ*',crossTxt],['ES 等效指數 α_eq',isFinite(alphaEq(s.l,sig))?alphaEq(s.l,sig).toFixed(5):'—']];
+  if(s.ipShown&&s.ip)rows.push(['IP 法向倍數',mIPman(s.g).toFixed(4),1],['IP 高斯玩具倍數',isFinite(mIPgauss(sig,s.g,0.25))?mIPgauss(sig,s.g,0.25).toFixed(4):'—',1]);
+  ro($('#w1-ro'),rows);
+  announce('w1',`σ = ${sig.toFixed(3)}：TS ${mTS(sig,s.a).toFixed(4)}，ES ${mES(s.l).toFixed(4)}`)}
+function initW1(){const R=sched(renderW1);
+  slider('w1-a',v=>v.toFixed(2),'α',v=>{w1s.a=v;R()});slider('w1-l',v=>v.toFixed(3),'λ',v=>{w1s.l=v;R()});
+  slider('w1-s',v=>(10**v).toFixed(3),'σ',v=>{w1s.ls=v;R()});slider('w1-g',v=>v.toFixed(2),'γ',v=>{w1s.g=v;R()});
+  $('#w1-ipc').addEventListener('change',e=>{w1s.ip=e.target.checked;R()});
+  radiogroup($('#w1-z'),w1s.z,v=>{w1s.z=v;R()});renderW1()}
+
+/* ---------- W2 ---------- */
+const W2_SIG=[0.2,0.1,0.05,0.02,0.01];
+const w2s={i:2,l:1.017,a:1,g:0.1,o:'es',ipShown:false};
+const w2cache=new Map();
+function w2dens(sigma,alpha){const k=sigma+'|'+alpha;if(w2cache.has(k))return w2cache.get(k);if(w2cache.size>40)w2cache.clear();
+  const d=c2Marginal({a:1,b:1,sigma,alpha}).dens;w2cache.set(k,d);return d}
+const PD=refCurve('pdata',1,1,0,180),UN=refCurve('unif',1,1,0,180);
+function w2all(){const s=w2s,sg=W2_SIG[s.i];
+  return {sg,ex:w2dens(sg,0),es:w2dens(sg,alphaEq(s.l,sg)),ts:w2dens(sg,s.a),ip:w2dens(sg*Math.sqrt(1+s.g*s.g),0),lim:vmPow(1/s.l,180)}}
+const shift=d=>{const n=d.length,o=new Float64Array(n);for(let j=0;j<n;j++)o[j]=d[(j+n/2)%n];return o};  // index j -> phi = t - theta0
+function drawW2(svg,W,H,D,ph0,ph1,inset){const s=w2s,nt=180,dt=2*Math.PI/nt,phi=j=>-Math.PI+(j+.5)*dt;
+  const cur={es:D.es,ts:D.ts,ip:D.ip}[s.o],shown=[D.ex,cur,PD].concat(s.o==='es'?[D.lim]:[]).map(shift);let mx=0,mn=Infinity;
+  for(const a of shown)for(let j=0;j<nt;j++){const p=phi(j);if(p>=ph0&&p<=ph1){mx=Math.max(mx,a[j]);mn=Math.min(mn,a[j])}}
+  const yr=inset?[mn-(mx-mn)*0.05,mx+(mx-mn)*0.08]:[0,mx*1.05],dg=inset?3:2;
+  const G=frame(svg,{W,H,m:{l:inset?48:46,r:10,t:10,b:inset?26:40},x:[ph0,ph1],y:yr,xl:inset?'':'t − θ₀（弧度）',
+    xt:inset?[[-0.1,'−0.1'],[0,'0'],[0.1,'0.1']]:[[-Math.PI,'−π'],[-Math.PI/2,'−π/2'],[0,'0'],[Math.PI/2,'π/2'],[Math.PI,'π']],
+    yt:[yr[0],(yr[0]+yr[1])/2,yr[1]].map(v=>[v,v.toFixed(dg)])});
+  const path=(a,cls,mk)=>{const S=shift(a),pts=[];for(let j=0;j<nt;j++){const p=phi(j);if(p>=ph0-dt&&p<=ph1+dt)pts.push([G.X(p),G.Y(S[j])])}el('path',{d:lp(pts),class:cls},G.pg);
+    if(mk)pts.forEach((q,i)=>{if(i%(inset?3:20)===(inset?1:10)){if(mk==='o')el('circle',{cx:q[0],cy:q[1],r:3.5,class:'mk-h par-s'},G.pg);else el('rect',{x:q[0]-3.5,y:q[1]-3.5,width:7,height:7,class:'mk-h acc-s'},G.pg)}})};
+  path(PD,'ref');path(UN,'ref dot');path(D.ex,'ink thin');
+  if(s.o==='es'){path(D.lim,'perp dot thin');path(D.es,'perp dash')}else if(s.o==='ts')path(D.ts,'par','o');else path(D.ip,'acc dot','s');
+  if(inset)tx(G.g,G.x0+4,G.y1+12,'峰頂放大',{class:'tk'});
+  return G}
+function renderW2(){const s=w2s,D=w2all(),W=chartW($('#w2-fig'));
+  drawW2($('#w2-fig svg'),W,300,D,-Math.PI,Math.PI,false);
+  drawW2($('#w2-ins svg'),Math.min(W,360),160,D,-0.2,0.2,true);
+  const rows=[['精確分數',D.ex],['ES 型 c = 1/λ',D.es],['TS c = σ^α',D.ts]].concat(s.ipShown?[['IP σ√(1+γ²)',D.ip]]:[]);
+  $('#w2-tb tbody').innerHTML=rows.map(([n,d])=>`<tr><td>${n}</td><td class="num" data-h="TV(p_data)">${tv(d,PD).toFixed(4)}</td><td class="num" data-h="TV(均勻)">${tv(d,UN).toFixed(4)}</td><td class="num" data-h="最大／最小">${maxOverMin(d).toFixed(1)}</td></tr>`).join('');
+  const cur={es:D.es,ts:D.ts,ip:D.ip}[s.o],tvx=tv(cur,D.ex);
+  let f='讀數由本頁以 No. 237 的單位圓封閉式數值積分即時計算 <span class="tag">本頁推導</span>。';
+  if(s.o==='es')f+=` σ → 0 極限 p^(1/λ) 與 p_data 的 TV = ${tv(D.lim,PD).toFixed(4)}。`;
+  if(tvx<0.001)f+=` 所選修正與精確分數幾乎重合（TV = ${tvx.toFixed(4)}）。`;
+  $('#w2-f').innerHTML=f;
+  $('#w2-lg-es').classList.toggle('hide',s.o!=='es');$('#w2-lg-lim').classList.toggle('hide',s.o!=='es');$('#w2-lg-ts').classList.toggle('hide',s.o!=='ts');$('#w2-lg-ip').classList.toggle('hide',s.o!=='ip');
+  announce('w2',`σ = ${D.sg}：ES 型 TV(p_data) ${tv(D.es,PD).toFixed(4)}，TS TV(均勻) ${tv(D.ts,UN).toFixed(4)}`)}
+function initW2(){const R=sched(renderW2);
+  radiogroup($('#w2-s'),w2s.i,v=>{w2s.i=+v;R()});w2s.setO=radiogroup($('#w2-o'),w2s.o,v=>{w2s.o=v;R()});
+  $('#w2-ipb').disabled=true;
+  slider('w2-l',v=>v.toFixed(3),'λ',v=>{w2s.l=v;R()});slider('w2-a',v=>v.toFixed(2),'α',v=>{w2s.a=v;R()});slider('w2-g',v=>v.toFixed(2),'γ',v=>{w2s.g=v;R()});
+  renderW2()}
+
+/* ---------- W3 ---------- */
+const w3s={k:'cosine',Tp:100,e:0.2,g:0.1,t:20};
+function w3band(R,g){let a=-1,b=-1;const runs=[];R.forEach(r=>{const inb=r.gM>=g/2&&r.gM<=2*g;if(inb){if(a<0)a=r.t;b=r.t}else if(a>=0){runs.push([a,b]);a=-1}});if(a>=0)runs.push([a,b]);return runs}
+function renderW3(){const s=w3s,R=gammaMatch(s.k,s.Tp,s.e,'x0'),W=chartW($('#w3-fig')),H=320,lg=s.Tp===1000;
+  const G=frame($('#w3-fig svg'),{W,H,m:{l:52,r:12,t:12,b:40},x:[1,s.Tp-1],xlog:lg,y:[1e-4,1e2],ylog:true,xl:'時間步 t'+(lg?'（對數）':''),
+    xt:lg?[1,10,100,999].map(v=>[v,String(v)]):(s.Tp===20?[1,5,10,15,19]:[1,25,50,75,99]).map(v=>[v,String(v)]),
+    yt:[1e-4,1e-2,1,1e2].map(v=>[v,v>=1?String(v):v.toExponential(0).replace('e-','e−')])});
+  const runs=w3band(R,s.g),half=lg?0.5:0.5;
+  runs.forEach(([a,b])=>{const xa=G.X(Math.max(1,a-half)),xb=G.X(Math.min(s.Tp-1,b+half));el('rect',{x:Math.min(xa,xb),y:G.y1,width:Math.abs(xb-xa)||2,height:G.y0-G.y1,class:'filla'},G.pg)});
+  const yc=v=>G.Y(Math.max(5e-5,Math.min(2e2,v>0?v:5e-5)));
+  if(s.e>0){el('path',{d:lp(R.map(r=>[G.X(r.t),yc(r.g1)])),class:'acc-thin dash'},G.pg);el('path',{d:lp(R.map(r=>[G.X(r.t),yc(r.gM)])),class:'acc'},G.pg)}
+  el('line',{x1:G.x0,x2:G.x1,y1:G.Y(s.g),y2:G.Y(s.g),class:'ref'},G.pg);
+  const r=R[s.t-1];el('line',{x1:G.X(s.t),x2:G.X(s.t),y1:G.y1,y2:G.y0,class:'cur'},G.g);
+  if(s.e===0)tx(G.g,(G.x0+G.x1)/2,G.y0-10,'e = 0：沒有多出的變異數',{class:'lab','text-anchor':'middle'});
+  ro($('#w3-ro'),[['t',String(s.t)],['σ_t',r.sigma.toFixed(3)],['c₁,t+1',fe(r.c1)],['單步 γ₁',fe(r.g1)],['多步 γ_M',fe(r.gM),1],['δ_t',fe(r.delta)],['一致區段',runs.length?runs.map(([a,b])=>a===b?`t = ${a}`:`t = ${a}..${b}`).join('、'):'無']]);
+  $('#w3-pre').innerHTML=`<span class="tag">推定</span> 依推定：e 為常數、${s.k} 排程`;
+  announce('w3',`t = ${s.t}：多步 γ ${fe(r.gM)}；一致區段 ${runs.length?runs.map(x=>x.join('..')).join('、'):'無'}`)}
+function w3setTp(v){w3s.Tp=+v;const ti=$('#w3-t');ti.max=w3s.Tp-1;if(w3s.t>w3s.Tp-1){w3s.t=w3s.Tp-1}ti.value=w3s.t;$('#w3-to').textContent=w3s.t;ti.setAttribute('aria-valuetext','t = '+w3s.t)}
+function initW3(){const R=sched(renderW3);
+  radiogroup($('#w3-k'),w3s.k,v=>{w3s.k=v;R()});radiogroup($('#w3-T'),w3s.Tp,v=>{w3setTp(v);R()});
+  slider('w3-e',v=>v.toFixed(2),'e',v=>{w3s.e=v;R()});slider('w3-g',v=>v.toFixed(2),'參考 γ',v=>{w3s.g=v;R()});
+  slider('w3-t',v=>String(v),'t',v=>{w3s.t=v;R()});renderW3()}
+
+/* ---------- reveal IP (after S6) ---------- */
+function revealIP(scroll){if(w1s.ipShown&&!scroll)return;w1s.ipShown=true;w1s.ip=$('#w1-ipc').checked;w2s.ipShown=true;
+  $$('.ipx').forEach(n=>n.classList.remove('hide'));$('#w2-ipb').disabled=false;$('#w2-ipb').textContent='IP';renderW1();renderW2();
+  if(scroll)$('#w1').scrollIntoView({block:'start'})}
+function initReveal(){$('#reveal-ip').addEventListener('click',()=>revealIP(true));
+  const io=new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting)){revealIP(false);io.disconnect()}},{rootMargin:'0px 0px -60% 0px'});io.observe($('#ip'))}
+
+/* ---------- toc, theme ---------- */
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:'auto'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));
+  addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+/* ---------- self test (design §5/§6.3; tolerance: rel 1e-3 or half of the last tabulated digit) ---------- */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const chk=(x,ref,half,m)=>ok(Math.abs(x-ref)<=Math.max(1e-3*Math.abs(ref),half),`${m}: ${x} vs ${ref}`);
+  // 5.1 W1
+  chk(mES(1.017),0.98328,5e-6,'mES');chk(mIPman(0.1),0.99010,5e-6,'mIPman');
+  [[0.5,[0.7071,0.5,0.3536],0.99432,0.02432],[0.1,[0.3162,0.1,0.0316],0.99961,0.00732],[0.01,[0.1,0.01,0.001],1.0,0.00366]].forEach(([s,ts,ip,ae])=>{
+    [0.5,1,1.5].forEach((a,i)=>chk(mTS(s,a),ts[i],5e-5,`mTS ${s} ${a}`));chk(mIPgauss(s,0.1,0.25),ip,5e-6,'mIPgauss '+s);chk(alphaEq(1.017,s),ae,5e-6,'alphaEq '+s)});
+  [[0.1,0.8449],[0.5,0.9668],[1,0.9833],[1.5,0.9888]].forEach(([a,v])=>chk(sigmaCross(1.017,a),v,5e-5,'sigmaCross '+a));
+  [[1,0.00643],[10,0.02513],[50,0.08940],[100,0.16705],[200,0.31827],[500,0.71145]].forEach(([t,v])=>chk(sigmaOfT(A1000,t),v,5e-6,'sigma_t '+t));
+  {let tc=1;while(sigmaOfT(A1000,tc)<1/1.017)tc++;ok(tc===883,'first t = '+tc)}
+  ok(isNaN(alphaEq(1.017,1))&&isNaN(mIPgauss(1,0.1,0.25)),'W1 guards NaN');chk(alphaEq(1.017,0.99),1.6773,5e-5,'alphaEq 0.99');
+  // 5.2 circle radial ratio
+  {const s=0.01,r0=circleScorePolar(1.1,Math.PI/2,s),r1=circleScorePolar(1.1,Math.PI/2,s*Math.sqrt(1.01));chk(r1.rad/r0.rad,0.99010,5e-6,'radial ratio');chk(r1.tan/r0.tan,1.0,5e-6,'tan ratio')}
+  // 5.3 W2
+  [[0.2,[0.0348,0.0391,0.4287,0.0351],[0.5950,0.2297],0.0346,[2209.1,2518.1]],[0.05,[0.0023,0.0067,0.5673,0.0023],[0.6140,0.0633],0.0022,[2579.2,2947.7]],[0.01,[0.0001,0.0046,0.6082,0.0001],[0.6152,0.0127],0.0001,[2603.7,2976.1]]].forEach(([s,tp,tu,tl,mm])=>{
+    const ex=w2dens(s,0),es=w2dens(s,alphaEq(1.017,s)),ts=w2dens(s,1),ip=w2dens(s*Math.sqrt(1.01),0);
+    [ex,es,ts,ip].forEach((d,i)=>chk(tv(d,PD),tp[i],5e-5,`W2 TVp ${s} ${i}`));chk(tv(es,UN),tu[0],5e-5,'W2 TVu es '+s);chk(tv(ts,UN),tu[1],5e-5,'W2 TVu ts '+s);
+    chk(tv(es,vmPow(1/1.017,180)),tl,5e-5,'W2 TVlim '+s);chk(maxOverMin(es),mm[0],0.05,'W2 mm es '+s);chk(maxOverMin(ex),mm[1],0.05,'W2 mm ex '+s)});
+  chk(tv(vmPow(1/1.017,180),PD),0.0045,5e-5,'lim TV');chk(tv(vmPow(1/0.965,180),PD),0.0094,5e-5,'lim .965');chk(tv(vmPow(1/1.06,180),PD),0.0155,5e-5,'lim 1.06');
+  {const d=c2Marginal({a:1,b:1,sigma:0.2,alpha:alphaEq(0.95,0.2)}).dens;let Z=0,fin=true;for(const v of d){Z+=v;if(!isFinite(v))fin=false}ok(fin&&Math.abs(Z*2*Math.PI/d.length-1)<1e-9,'W2 lambda 0.95 guard');chk(tv(d,PD),0.0217,5e-5,'W2 0.95 TV')}
+  // 5.4 W3
+  const g=(k,T,e)=>gammaMatch(k,T,e,'x0');
+  {const R=g('cosine',20,0.2);chk(R[0].gM,30.99,0.005,'W3 20 t1');[[5,0.334,2.145e-1,2.630e-1,1.294e-4],[10,0.682,6.035e-2,8.865e-2,7.161e-6]].forEach(([t,s,a,b,d])=>{const r=R[t-1];chk(r.sigma,s,5e-4,'W3 20 s'+t);chk(r.g1,a,0,'W3 20 g1 '+t);chk(r.gM,b,0,'W3 20 gM '+t);chk(r.delta,d,0,'W3 20 d '+t)});
+    ok(R.filter(r=>r.gM>=0.1).pop().t===9,'W3 20 >=0.1');ok(w3band(R,0.1).map(x=>x.join('..')).join()==='6..14','W3 20 band')}
+  {const R=g('cosine',100,0.2);chk(R[0].gM,29.37,0.005,'W3 100 t1');[[10,0.155,2.265e-1,3.674e-1,1.023e-4],[50,0.706,1.330e-2,3.687e-2,2.301e-7]].forEach(([t,s,a,b,d])=>{const r=R[t-1];chk(r.sigma,s,5e-4,'W3 100 s'+t);chk(r.g1,a,0,'W3 100 g1 '+t);chk(r.gM,b,0,'W3 100 gM '+t);chk(r.delta,d,0,'W3 100 d '+t)});
+    ok(R.filter(r=>r.gM>=0.1).pop().t===24,'W3 100 >=0.1');ok(w3band(R,0.1).map(x=>x.join('..')).join()==='16..39','W3 100 band')}
+  {const R=g('cosine',1000,0.2);chk(R[0].gM,17.64,0.005,'W3 1000 t1');[[100,0.167,2.209e-2,1.037e-1,8.039e-7],[500,0.711,1.228e-3,1.141e-2,2.144e-9]].forEach(([t,s,a,b,d])=>{const r=R[t-1];chk(r.sigma,s,5e-4,'W3 1000 s'+t);chk(r.g1,a,0,'W3 1000 g1 '+t);chk(r.gM,b,0,'W3 1000 gM '+t);chk(r.delta,d,0,'W3 1000 d '+t)});
+    ok(R.filter(r=>r.gM>=0.1).pop().t===102,'W3 1000 >=0.1');ok(w3band(R,0.1).map(x=>x.join('..')).join()==='62..169','W3 1000 band')}
+  {const R=g('cosine',100,0.1);chk(R[0].gM,14.68,0.005,'W3 e.1 t1');chk(R[9].gM,1.837e-1,0,'W3 e.1 t10')}
+  {const R=g('cosine',20,0.1);chk(R[0].delta,8.711e-3,0,'406 d1');chk(R[1].delta,6.054e-4,0,'406 d2');chk(R[4].delta,8.292e-6,0,'406 d5')}
+  // 5.5 toy
+  [[20,[0.18467,0.64902,0.96751]],[100,[0.23261,0.24172,0.21686]],[1000,[0.24800,0.25663,0.23113]]].forEach(([T,v])=>[1,1.017,0.965].forEach((l,i)=>chk(esGaussVar('cosine',T,0.25,l),v[i],5e-6,`toy ${T} ${l}`)));
+  // 5.6 W0
+  chk(Math.sqrt(1-0.01)*0.2/0.01,19.90,0.005,'W0 0.1');chk(Math.sqrt(1-1e-4)*0.2/1e-4,2000,0.5,'W0 0.01');
+  // W3 clamp
+  {const t0=w3s.t,T0=w3s.Tp;w3s.t=60;w3setTp(20);ok(w3s.t<=19,'W3 clamp t='+w3s.t);w3setTp(T0);w3s.t=t0;$('#w3-t').value=t0;$('#w3-to').textContent=t0;renderW3()}
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  ok(!!document.querySelector('.katex'),'KaTeX rendered');
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ---------- boot ---------- */
+initTheme();initToc();initW0();initW1();initW2();initW3();initReveal();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{renderW1();renderW2();renderW3()})});
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false})}
+let tested=false;const runTest=()=>{if(tested||!/[?&]test\b/.test(location.search))return;tested=true;selfTest()};
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',()=>{renderMath()});else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath();runTest()});
+})();
+</script>
+</body>
+</html>
