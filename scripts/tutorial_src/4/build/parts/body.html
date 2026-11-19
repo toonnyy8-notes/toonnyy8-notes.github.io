@@ -1,0 +1,647 @@
+<a class="sr" href="#main">跳到內容</a>
+<svg class="hatch-host" aria-hidden="true" focusable="false"><defs><pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="7" stroke="currentColor" stroke-width="2" stroke-opacity=".32"/></pattern></defs></svg>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 4</span>
+  <span class="ttl">Flow Map Language Models：用連續去噪一步生成文字</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 4</b> · 互動教學 · arXiv 2602.16813</div>
+  <h1><span class="lat">Flow Map Language Models</span>：用連續去噪一步生成文字</h1>
+  <p class="dek">把 token 寫成 one-hot 向量、在連續空間學 flow，再蒸餾成 flow map，一次網路計算生成整段文字。</p>
+  <p class="byline">Chanhyuk Lee、Jaehoon Yoo、Manan Agarwal、Sheel Shah、Jerry Huang、Aditi Raghunathan、Seunghoon Hong、Nicholas M. Boffi、Jinwoo Kim（KAIST、CMU，2026）〈Flow Map Language Models: One-step Language Modeling via Continuous Denoising〉</p>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 問題</span><p>離散擴散語言模型每步平行產生多個 token，但各 token 是獨立抽樣的；步數一少，就會拼出資料中不存在的組合。</p></div>
+    <div class="fact"><span class="n">02 · 做法</span><p>本文把每個 token 寫成 one-hot 向量，在連續空間中讓噪聲沿確定的路徑流向資料；網路只需要預測每個位置的 token 機率。</p></div>
+    <div class="fact"><span class="n">03 · 結果</span><p>蒸餾後的模型只做一次網路計算就生成整段文字。以 GPT-2 Large 計算的生成困惑度（越低越好）在 LM1B 上是 119.34；同樣只算一次的離散擴散基線在 LM1B 上最好是 292.94（Table 13）。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2602.16813">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-4">在關聯圖中查看</a>
+    <a class="btn" href="fmlm-lineage-overview.html">研究筆記總覽</a>
+    <a class="btn" href="https://github.com/david3684/flm">程式碼 ↗</a>
+  </div>
+</section>
+
+<!-- S1 ============================================================ -->
+<section class="ch" id="discrete" data-toc="01" data-tt="離散擴散">
+  <div class="ch-num">01 · 離散擴散</div>
+  <h2>離散擴散一次更新多個 token，步數少時會產生不存在的組合</h2>
+  <div class="prose">
+    <p>語言模型把一段文字表示成 token 序列 $y=(y^1,\dots,y^L)$：每個 token $y^l$ 取自詞表 $V$，詞表大小記為 $|V|$，$L$ 是序列長度。自回歸模型把聯合機率拆成條件機率的乘積：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$p(y)=p(y^1)\,p(y^2\mid y^1)\cdots p(y^L\mid y^{&lt;L})$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="prose">
+    <p>取樣時必須逐個 token 進行，生成 $L$ 個 token 需要 $L$ 次網路計算，這是自回歸模型的序列瓶頸。</p>
+    <p>離散擴散（discrete diffusion）先把整段序列逐步破壞，再學習把它還原。以 masked diffusion 為例，破壞的方式是遮罩：把 token 換成一個「隱藏」符號；揭露一個位置，就是在那裡填回一個詞。生成時在時間格點 $0=t_0&lt;t_1&lt;\dots&lt;t_N=1$ 上做 ancestral sampling：每一步從上一步的結果 $y_s$ 出發，依模型給的轉移機率 $p_{t\mid s}(y_t\mid y_s)$ 抽出下一步的狀態 $y_t$。每一步可以同時改變很多位置，所以步數 $N$ 可以遠小於 $L$。</p>
+    <p>問題在於 $p_{t\mid s}$ 定義在 $V^L$ 上，可能的輸出有 $|V|^L$ 種，網路無法直接輸出這個分布。實際做法是把它近似成逐 token 條件機率的乘積：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\tilde p_{t\mid s}(y_t\mid y_s):=p^1_{t\mid s}(y^1_t\mid y_s)\cdots p^L_{t\mid s}(y^L_t\mid y_s)$$</div><span class="eq-n">Eq. 2</span></div>
+  <div class="prose">
+    <p>每個因子 $p^l_{t\mid s}(y^l_t\mid y_s)$ 是「給定 $y_s$、對其他位置邊際化之後，第 $l$ 個 token 的條件機率」。把 $p_{t\mid s}$ 近似成這個乘積，等於假設去噪後的各個 token 在給定 $y_s$ 下條件獨立。這個假設只在 $t\to s$ 的極限成立：相鄰兩步的時間差趨近 0 時，一步只改變極少數 token，兩個相關的 token 幾乎不會在同一步被決定。步數少時，每一步要同時決定很多 token，乘積近似忽略了 token 之間的相關，產生因子化誤差（factorization error）。作者強調這個誤差來自近似本身，改善模型品質也無法消除（Sec. 2）。</p>
+    <p>論文用一個玩具說明（Fig. 3）：資料只有 new york 與 san diego 兩句，各占一半。一步取樣時，兩個位置各自依邊際機率獨立抽樣，四種組合各 25%，其中 new diego 與 san york 合計 50% 是資料中不存在的無效組合；連續 flow 在多步與少步時都只產生有效資料。這正是上面那個假設的失效：Eq. 2 的條件獨立只在 $t\to s$ 極限成立，一步取樣時 $s=0$、$t=1$ 相距最遠，兩個位置在同一步被決定，假設不成立。Fig. 3 沒有說明它使用哪一種離散模型與排程。下圖用本頁自選的設定，看步數增加時無效組合如何減少。</p>
+  </div>
+  <div class="plate" id="c1a">
+    <div class="plate-h"><span class="id">C1a</span><h3>離散擴散的因子化誤差</h3><span class="tag">本頁推導</span></div>
+    <p class="plate-lead">選擇步數 N。橫條是閉式計算的四種組合機率；下方是 16 次模擬取樣。</p>
+    <div class="ctl-row" style="gap:12px;margin-bottom:14px">
+      <div class="seg" id="c1a-n" role="group" aria-label="步數 N"></div>
+      <button class="small-btn" type="button" id="c1a-re">重新抽 16 個樣本</button>
+    </div>
+    <div class="fig" id="c1a-fig"><svg role="img" aria-label="四種組合的機率橫條"></svg></div>
+    <p class="readout" id="c1a-ro" aria-live="polite" style="margin-top:12px"></p>
+    <p class="sub-h">16 個隨機樣本，與上方閉式值不必相符</p>
+    <div class="samples" id="c1a-s"></div>
+    <p class="plate-f">本頁自選的設定：masked diffusion（遮罩 = token 被隱藏）、線性遮罩排程（時間 t 時每個 token 以機率 t 已揭露）、等距 N 步、完美模型（每個因子就是真條件機率）。同一步揭露的兩個位置各自依「給定 y_s 的條件」抽樣：另一位置已揭露則跟隨它，否則 50/50。只有 N = 1 的四種組合各 25% 與論文 Fig. 3 一致；Fig. 3 未說明所用的離散模型與排程。樣本以 mulberry32（seed 101 起，每按一次加 1）產生。</p>
+  </div>
+  <div class="prose">
+    <p>在這個設定下<span class="tag">本頁推導</span>，兩個 token 的揭露時間各自獨立、均勻分布在 $N$ 步之中，兩者落在同一步的機率是 $1/N$；落在同一步時兩個位置各自 50/50 獨立抽樣，一半的機率無效。所以完美模型在 $N$ 步時的無效率是 $1/(2N)$：$N=1$ 時 50%，$N=8$ 時仍有 6.25%，$N$ 每加倍無效率才減半。模型在這裡沒有任何誤差，無效組合完全來自 Eq. 2 的因子化。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 2 做了什麼近似？為何步數少時出錯？new york / san diego 玩具一步取樣得到什麼？</p>
+    <p class="a">把 $p_{t\mid s}(y_t\mid y_s)$ 近似成逐 token 條件機率的乘積，假設去噪後的 token 在 $y_s$ 下條件獨立；此假設只在 $t\to s$ 極限成立，步數少時忽略 token 相關；一步時四種組合各 25%，new diego 與 san york 合計 50% 無效（Fig. 3）。〔本頁推導〕完美模型、$N$ 步時無效率為 $1/(2N)$。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="fmlm-parallel-decoding-motivation.html">自回歸的序列瓶頸與平行解碼的動機</a>、<a href="fmlm-discrete-diffusion-factorization.html">離散擴散語言模型與少步時的因子化誤差</a></p>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="onehot" data-toc="02" data-tt="one-hot 與 flow">
+  <div class="ch-num">02 · one-hot 與 flow</div>
+  <h2>把 token 寫成 one-hot 向量，在歐氏空間做 flow matching</h2>
+  <div class="prose">
+    <p>本文改走連續路線。第一步是把離散的 token 寫成連續向量（Sec. 3.1）。資料 $x_1=f(y)$：$f$ 把每個 token 換成 $|V|$ 維 one-hot 向量（該詞的位置是 1，其餘是 0），整段序列成為 $L\times|V|$ 的矩陣；$g$ 對每個位置取 argmax，把矩陣解碼回 token：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$f:y\mapsto\big(\mathrm{onehot}(y^1),\dots,\mathrm{onehot}(y^L)\big)^\top,\qquad g:x\mapsto\big(\mathrm{argmax}(x^1),\dots,\mathrm{argmax}(x^L)\big)$$</div><span class="eq-n">Eq. 3–4</span></div>
+  <div class="prose">
+    <p>$g(f(y))=y$，這個表示無損，不需要另外訓練 embedding，也不需要正則化。作者指出學習得到的 embedding 需要小心正則化以免崩塌或發散，預訓練 embedding 對 flow 也未必最佳（Sec. 3.1）。</p>
+    <p>機率 simplex $\Delta^{|V|-1}$ 是分量非負、總和為 1 的 $|V|$ 維向量的集合，也就是 $|V|$ 個詞上所有機率分布的集合。one-hot 向量是 simplex 的頂點。下圖畫出 $|V|=3$ 時的 simplex。</p>
+  </div>
+  <figure class="plate" style="max-width:700px">
+    <svg viewBox="0 0 520 300" role="img" aria-label="|V| = 3 的 simplex：三角形的三個頂點是 one-hot 向量，內部的點是機率向量，三角形外的點代表 I_t 可以離開 simplex" style="display:block;width:100%;height:auto">
+      <path d="M90 250 L430 250 L260 40 Z" fill="var(--surface-2)" stroke="var(--ink)" stroke-width="2.5"/>
+      <circle cx="90" cy="250" r="6" fill="var(--ink)"/><circle cx="430" cy="250" r="6" fill="var(--ink)"/><circle cx="260" cy="40" r="6" fill="var(--ink)"/>
+      <text x="82" y="276" class="labm" text-anchor="middle">(1, 0, 0)</text><text x="438" y="276" class="labm" text-anchor="middle">(0, 1, 0)</text><text x="260" y="24" class="labm" text-anchor="middle">(0, 0, 1)</text>
+      <text x="96" y="294" class="al" text-anchor="middle">one-hot 頂點</text>
+      <circle cx="226" cy="190" r="6" fill="var(--accent)"/><text x="240" y="186" class="lab">機率向量 (0.5, 0.3, 0.2)</text>
+      <circle cx="460" cy="110" r="6" fill="var(--surface)" stroke="var(--ink)" stroke-width="2"/><text x="452" y="94" class="lab" text-anchor="end">I_t 可在 simplex 外</text>
+    </svg>
+    <figcaption class="plate-f">simplex 上每一點是一個機率分布；本文的狀態 x 在整個 ℝ^{L×|V|} 中移動，不限制在三角形內。</figcaption>
+  </figure>
+  <div class="prose">
+    <p>本文的狀態不限制在 simplex 上：它在無約束的歐氏空間 $\mathbb R^{L\times|V|}$ 中移動，不投影到 simplex，這一點與 simplex diffusion 不同。</p>
+    <p>接著在這個空間做 flow matching（Sec. 3.2）。取噪聲 $x_0\sim\mathcal N(0,I)$ 與資料 $x_1=f(y)$，定義 interpolant：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$I_t=(1-t)\,x_0+t\,x_1,\qquad t\in[0,1]$$</div><span class="eq-n">Eq. 5</span></div>
+  <div class="prose">
+    <p>本文的時間方向是 $t=0$ 為純噪聲、$t=1$ 為資料，與 DDPM 的慣例相反。生成時求解 ODE $\dot x_t=b_t(x_t)$（Eq. 6），從 $x_0$ 走到 $x_1$。速度場 $b_t$ 定義成條件期望：$\mathbb E[x_1-x_0\mid I_t=x]$ 是所有會經過點 $x$ 的 $(x_0,x_1)$ 配對，其 $x_1-x_0$ 的平均，也就是站在 $x$ 時對速度的最佳猜測。</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$b_t(x)=\mathbb E\big[\dot I_t\mid I_t=x\big]=\mathbb E\big[x_1-x_0\mid I_t=x\big]$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="prose">
+    <p>$b_t$ 可以用 MSE 回歸學習，$t$ 均勻取樣：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathcal L(\hat b)=\int_0^1\mathbb E\,\big|\hat b_t(I_t)-(x_1-x_0)\big|^2\,dt$$</div><span class="eq-n">Eq. 8</span></div>
+  <div class="prose">
+    <p>生成時在格點上數值積分 Eq. 6。最簡單的是 Euler 法：$x_{t_{n+1}}=x_{t_n}+(t_{n+1}-t_n)\,b_{t_n}(x_{t_n})$，每一步假設速度在步長內不變。步長越大，這個假設越不準，誤差越大。</p>
+  </div>
+  <details class="more"><summary>符號表（查閱用；每個符號在正文首次出現處都有定義）</summary><div class="body"><div class="tscroll" style="margin-top:4px"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$V$、$|V|$、$L$</td><td>詞表、詞表大小、序列長度；$y=(y^l)_{l=1}^L\in V^L$</td></tr>
+    <tr><td>$f$、$g$</td><td>one-hot 編碼、逐位置 argmax 解碼（Eq. 4）</td></tr>
+    <tr><td>$x_0\sim\mathcal N(0,I)$、$x_1=f(y)$</td><td>噪聲、資料（$\mathbb R^{L\times|V|}$）</td></tr>
+    <tr><td>$t\in[0,1]$</td><td>$t=0$ 純噪聲，$t=1$ 資料（與 DDPM 相反）</td></tr>
+    <tr><td>$I_t$</td><td>interpolant $(1-t)x_0+tx_1$（Eq. 5）</td></tr>
+    <tr><td>$b_t$、$D_t$</td><td>速度場（Eq. 7）、denoiser（Eq. 9）</td></tr>
+    <tr><td>$p^l_{1\mid t}(\cdot\mid I_t=x)$</td><td>第 $l$ 個位置的 token 後驗（條件在整個序列的 $I_t$ 上）</td></tr>
+    <tr><td>$\Delta^{|V|-1}$</td><td>機率 simplex</td></tr>
+    <tr><td>$X_{s,t}$、$v_{s,t}$</td><td>flow map（Eq. 14）、平均速度（Eq. 15）</td></tr>
+    <tr><td>$\delta_{s,t}$、$\gamma$</td><td>two-time denoiser（Eq. 18）、半群權重（Eq. 22）</td></tr>
+    <tr><td>$P_e(t)$、$\tau(t)$</td><td>解碼錯誤率（Eq. 24）、重參數化時間（Eq. 25）</td></tr>
+    <tr><td>$d$</td><td>網路內部特徵維度（主文意義）。論文 App. B 起改記 $d=L\times|V|$，本頁不用這個意義</td></tr>
+    <tr><td>sg</td><td>stop-gradient</td></tr>
+    </tbody></table></div></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$f$、$g$ 是什麼？$I_t$ 怎麼寫？$t=0$、$t=1$ 各是什麼？狀態是否限制在 simplex？</p>
+    <p class="a">$f$ 把每個 token 換成 $|V|$ 維 one-hot，$g$ 逐位置取 argmax，$g(f(y))=y$（Eq. 4）；$I_t=(1-t)x_0+tx_1$，$x_0\sim\mathcal N(0,I)$（Eq. 5）；$t=0$ 純噪聲、$t=1$ 資料；狀態在無約束的 $\mathbb R^{L\times|V|}$，不投影到 simplex。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="fmlm-continuous-text-diffusion.html">連續空間的文字擴散：從 Diffusion-LM 到 CDCD</a>、<a href="fmlm-flow-matching-interpolant.html">Flow matching、interpolant 與速度場／denoiser 的關係</a></p>
+</section>
+
+<!-- S3a =========================================================== -->
+<section class="ch" id="denoiser" data-toc="03" data-tt="denoiser">
+  <div class="ch-num">03 · denoiser</div>
+  <h2>最佳 denoiser 是逐 token 後驗，所以輸出層用 softmax</h2>
+  <div class="prose">
+    <p>本文不讓網路直接學速度，而是學 denoiser $D_t$：給定含噪狀態 $x$，預測資料 $x_1$ 的條件期望。速度可以寫成 denoiser 的函數：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$D_t(x):=\mathbb E[x_1\mid I_t=x],\qquad b_t(x)=\frac{D_t(x)-x}{1-t}$$</div><span class="eq-n">Eq. 9</span></div>
+  <details class="more"><summary>推導：由 interpolant 得到 Eq. 9（App. C.2，Eq. 74–76）</summary><div class="body">
+    <p>對 $I_t=(1-t)x_0+tx_1$ 兩邊取條件期望 $\mathbb E[\cdot\mid I_t=x]$，左邊就是 $x$：$x=(1-t)\,\mathbb E[x_0\mid I_t=x]+t\,D_t(x)$。解出 $\mathbb E[x_0\mid I_t=x]=\big(x-tD_t(x)\big)/(1-t)$，代入 $b_t=D_t-\mathbb E[x_0\mid I_t=x]$，得 $b_t(x)=\big(D_t(x)-x\big)/(1-t)$。</p>
+  </div></details>
+  <div class="prose">
+    <p>所以 $b_t(x)=\mathbb E[x_1-x_0\mid I_t=x]=(D_t(x)-x)/(1-t)$（Eq. 7、9）：學到 denoiser 就能算出速度。反過來寫成 $D_t(x)=x+(1-t)\,b_t(x)$（Eq. 77）：denoiser 是從 $x$ 用速度 $b_t$ 走一個步長 $1-t$ 的 Euler 步。第 06 節會用到這個關係。</p>
+    <p>為什麼不直接回歸速度？速度目標 $x_1-x_0$ 含有高斯噪聲 $x_0$，繼承了噪聲的 full-rank 結構。已知當 $|V|$ 遠大於網路內部特徵維度 $d$ 時，回歸這種目標會欠擬合 [40]（Li &amp; He，<i>Back to Basics</i>，arXiv 2511.13720）。論文把這個現象稱為 rank bottleneck（秩瓶頸，Sec. 5 的 Table 18 討論）。具體地說<span class="tag">本頁對 [40] 的說明</span>：網路最後一層把 $d$ 維內部特徵線性映射到 $|V|$ 維輸出，所以每個位置能輸出的向量最多只張成 $d$ 維子空間（秩 $\le d$）。速度目標中的噪聲在全部 $|V|$ 個方向都有分量，$d\ll|V|$ 時大部分方向網路表示不出來，只能欠擬合。denoiser 的目標是後驗機率向量，不帶這份噪聲，沒有這個問題。論文本身只寫 full-rank 與欠擬合，「秩 $\le d$」是本頁的白話說明。</p>
+    <p>實驗證據是 Table 18 的消融（LM1B，FLM 1024 步）：直接回歸速度的 Velocity + MSE，Gen. PPL 是 3801.36，沒有收斂；改學 denoiser、以 softmax 輸出並用交叉熵訓練的 Denoiser + softmax + CE，Gen. PPL 是 96.91。Gen. PPL 是用 GPT-2 Large 評估生成文字的困惑度，越低越好（第 10 節說明）。</p>
+    <p>denoiser 在 one-hot 資料上有明確的意義。記 $p^l_{1\mid t}(\cdot\mid I_t=x)$ 為：看到整個序列的含噪狀態 $x$ 之後，第 $l$ 個位置的真 token 是各個詞的機率。這稱為第 $l$ 個位置的 token 後驗。</p>
+    <p><b>Lemma 3.1</b>：$D_t(x)^l=p^l_{1\mid t}(\cdot\mid I_t=x)\in\Delta^{|V|-1}$（Eq. 11）。證明只用到一件事：$x_1^l$ 只取 one-hot 值 $e_1,\dots,e_{|V|}$。條件期望是這些值的加權平均，權重就是後驗機率（Eq. 40–41）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbb E\big[x_1^l\mid I_t=x\big]=\sum_{i=1}^{|V|}e_i\;p^l_{1\mid t}\big(x_1^l=e_i\mid I_t=x\big)$$</div><span class="eq-n">Eq. 40–41</span></div>
+  <div class="prose">
+    <p>右邊的第 $i$ 個分量就是第 $i$ 個詞的後驗機率，所以最佳 denoiser 每個位置的輸出都是後驗機率向量，落在 simplex 上。因此輸出層可以用逐 token softmax，把假設空間限制在有效的離散分布上，並用交叉熵訓練（Prop. 3.2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathcal L_{CE}(\hat D)=\int_0^1\mathbb E\Big[-\sum_{l=1}^L\log\hat D_t(I_t)^l\cdot x_1^l\Big]\,dt$$</div><span class="eq-n">Eq. 12</span></div>
+  <div class="prose">
+    <p>這個模型稱為 FLM（flow language model）。交叉熵可以分解：對任意分布 $p,q$，$\mathbb E_p[-\log q]=H(p)+\mathrm{KL}(p\,\|\,q)$（Eq. 42），所以</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathcal L_{CE}(\hat D)=\int_0^1\mathbb E\big[H(x_1\mid I_t)\big]dt+\int_0^1\mathbb E\Big[\sum_{l}\mathrm{KL}\big(p^l_{1\mid t}\,\big\|\,\hat p^l_{1\mid t}\big)\Big]dt$$</div><span class="eq-n">Eq. 45</span></div>
+  <div class="prose">
+    <p>第一項是不可約的條件熵，與 $\hat D$ 無關；第二項是逐 token KL。KL ≥ 0，且等號成立若且唯若兩個分布相等，所以交叉熵的唯一最小值是真 denoiser。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$b_t$ 與 $D_t$ 的關係？為何不直接回歸速度？</p>
+    <p class="a">$b_t(x)=\mathbb E[x_1-x_0\mid I_t=x]=(D_t(x)-x)/(1-t)$（Eq. 7、9）；速度目標 $x_1-x_0$ 帶有高斯噪聲的 full-rank 結構，$|V|$ 遠大於網路內部維度 $d$ 時欠擬合；Table 18：Velocity + MSE 3801.36，Denoiser + softmax + CE 96.91。</p>
+    <p class="q">為何最佳 denoiser 在 simplex 上？用什麼目標訓練？為何其唯一最小值是真 denoiser？</p>
+    <p class="a">$x_1^l$ 只取 one-hot 值 $e_i$，條件期望 $\sum_ie_i\,p(x_1^l=e_i\mid I_t=x)$ 就是後驗機率向量（Eq. 40–41）；所以用逐 token softmax、以交叉熵 Eq. 12 訓練；交叉熵 = 不可約條件熵 + 逐 token KL（Eq. 45），KL ≥ 0 且等號 iff 相等。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="x-prediction-manifold-view.html">x-prediction 與流形觀點：JiT 與 pixel-space 的近期結果</a></p>
+</section>
+
+<!-- S3b =========================================================== -->
+<section class="ch" id="crossent" data-toc="04" data-tt="同一個後驗">
+  <div class="ch-num">04 · 同一個後驗</div>
+  <h2>交叉熵訓練與離散擴散用的是同一個後驗，用途不同</h2>
+  <div class="prose">
+    <p>Prop. 3.2 還給出一個誤差界：交叉熵的超額風險小，則在 $t=1-\xi$ 時生成分布與真分布的距離也小（Eq. 13）。</p>
+  </div>
+  <details class="more"><summary>Eq. 13 的內容與證明鏈（App. C.1.2）</summary><div class="body">
+    <p>記超額風險 $\Delta_D(\hat D)=\mathcal L_{CE}(\hat D)-\mathcal L_{CE}(D)$。若 $\Delta_D(\hat D)\le\epsilon$，對任意 $\xi\in(0,1)$，$W_2^2(\hat p_{1-\xi},p_{1-\xi})\le C\epsilon$，$W_2$ 是 2-Wasserstein 距離。比較在 $1-\xi$ 而不是 1，是為了避開 Eq. 9 的 $(1-t)^{-1}$ 奇異點。</p>
+    <p>證明鏈：Pinsker 不等式（Eq. 52）給出 $\int\mathbb E|\hat D-D|^2\le2\Delta_D$（Eq. 50）；由 Eq. 9 得 $\int_0^{1-\xi}\mathbb E|\hat b-b|^2\le2\xi^{-2}\Delta_D$（Eq. 53）；再用 Gronwall 不等式（Eq. 64）得 $W_2\le C_D(\xi)\sqrt{\Delta_D}$，$C_D(\xi)=\sqrt{2(1-\xi)}\,e^{L_{\hat b}(1-\xi)}/\xi$（Eq. 65）。假設：$b,\hat b$ Lipschitz（C.1）、二階動差有界（C.2）、輸出在 simplex 內部（C.3）。</p>
+    <p><span class="tag">本頁推導</span>Eq. 13 的 $C=C_D(\xi)^2$。$\xi\to0$ 時這個上界以 $\xi^{-2}$ 發散；發散的只是上界，不代表真誤差發散，所以這是定性的保證。</p>
+  </div></details>
+  <div class="callout">
+    <p class="ct">連續法與離散法學同一個後驗，差別在怎麼用它</p>
+    <p>兩者學的都是逐 token 後驗 $p^l_{1\mid t}$，離散擴散也常用逐 token 交叉熵訓練。離散法用它做 ancestral sampling：下一步的狀態要從聯合分布抽樣，只能逐 token 獨立抽樣，因此產生因子化誤差。連續法只用它計算速度（Eq. 11 + Eq. 9）：速度是條件期望，對 $x_1$ 線性，所以逐 token 的邊際機率就足以給出精確的 $b_t$，不需要聯合分布。</p>
+  </div>
+  <div class="prose">
+    <p>那麼連續法裡 token 之間的相關從哪裡進來？論文（Sec. 3.2）只說連續法不需要因子化近似。本頁的回答是兩件事<span class="tag">本頁推導</span>：第一，網路對每個位置的後驗都條件在整個序列的 $I_t$ 上，寫作 $p^l_{1\mid t}(\cdot\mid I_t=x)$；第二，確定性 flow 讓各位置耦合演化。初始噪聲 $x_0$ 只提供隨機性。網路輸出同樣是逐 token softmax，差別在用途，而不是有沒有逐 token 分解。第 06 節的 C1b 用一個樣本展示這點。</p>
+    <p>FLM 的訓練與取樣如下（Alg. 5–6）。$\tau(t)$ 是第 05 節的時間重參數化。</p>
+  </div>
+  <div class="algo" role="table" aria-label="Alg. 5 與 Alg. 6 的步驟與說明">
+    <div class="row hd" role="row"><div role="columnheader">Alg. 5 FLM 訓練</div><div class="ex-h" role="columnheader">這一行做什麼</div></div>
+    <div class="row" role="row"><code>x1 ← f(y), y ~ D;  x0 ~ N(0, I)</code><div class="ex">取一筆資料的 one-hot 矩陣與一份高斯噪聲。</div></div>
+    <div class="row" role="row"><code>sample t via τ(t) ~ U[0, 1]</code><div class="ex">在 $\tau$ 空間均勻取樣，再換回 $t$（第 05 節）。</div></div>
+    <div class="row" role="row"><code>It ← (1 − t)·x0 + t·x1</code><div class="ex">interpolant（Eq. 5）。</div></div>
+    <div class="row" role="row"><code>x̂1 ← D̂t(It)</code><div class="ex">網路輸出，每個位置是一個 softmax 機率向量。</div></div>
+    <div class="row" role="row"><code>L_CE = − Σ_l (x1^l)ᵀ log x̂1^l</code><div class="ex">逐 token 交叉熵（Eq. 12），更新 $\hat D$。</div></div>
+    <div class="row hd" role="row"><div role="columnheader">Alg. 6 FLM 取樣</div><div class="ex-h" role="columnheader"></div></div>
+    <div class="row" role="row"><code>x0 ~ N(0, I);  tn ← t(n/N), n = 0..N</code><div class="ex">格點取在 $\tau$ 空間等距的位置。</div></div>
+    <div class="row" role="row"><code>x̂1 ← D̂tn(xtn)</code><div class="ex">denoiser 預測後驗。</div></div>
+    <div class="row" role="row"><code>b̂n ← (x̂1 − xtn) / (1 − tn)</code><div class="ex">用 Eq. 9 換算速度；只在 $t_n&lt;1$ 評估，避開奇異點。</div></div>
+    <div class="row" role="row"><code>xtn+1 ← xtn + (tn+1 − tn)·b̂n</code><div class="ex">Euler 步。</div></div>
+    <div class="row" role="row"><code>return g(xtN)</code><div class="ex">逐位置 argmax 解碼。</div></div>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">兩者都學逐 token 後驗 $p^l_{1\mid t}$，差別在哪？</p>
+    <p class="a">離散法用它做 ancestral sampling，需要聯合分布，逐 token 獨立抽樣造成因子化誤差；連續法只用它算速度，速度是條件期望（對 $x_1$ 線性），逐 token 邊際就給出精確的 $b_t$；token 相關由兩件事帶入：每個位置的後驗都條件在整個序列的 $I_t$ 上，且確定性 flow 讓各位置耦合演化，$x_0$ 只提供隨機性（〔本頁推導〕，論文 Sec. 3.2 只說不需因子化近似）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="cdlm-training-objective.html">連續擴散語言模型的訓練目標與參數化：從 MSE 到 CE 去噪器</a></p>
+</section>
+
+<!-- S4 ============================================================ -->
+<section class="ch" id="time" data-toc="05" data-tt="時間重參數化">
+  <div class="ch-num">05 · 時間重參數化</div>
+  <h2>時間重參數化把訓練與取樣集中在 token 被決定的時間窗</h2>
+  <div class="prose">
+    <p>訓練時 $t$ 該怎麼取樣？作者以解碼錯誤率衡量 flow 在每個時刻決定 token 的進度（Sec. 4）。這個指標沿用自 Duo [19] 與 CANDI [20]；本文的新做法是把它轉成時間重參數化。</p>
+    <p>解碼錯誤率 $P_e(t)$ 是時間 $t$ 的狀態 $x_t$ 經 $g$ 解碼之後，與資料 $x_1$ 的 token 不同的比例（對 $L$ 個位置平均）。端點是 $P_e(0)=1-1/|V|$（純噪聲時 argmax 隨機落在 $|V|$ 個詞之一）與 $P_e(1)=0$。重參數化時間 $\tau(t)$ 是到時間 $t$ 為止已完成的解碼進度：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}P_e(t)&amp;:=\frac1L\sum_{l=1}^LP\big(g^l(x_t)\neq g^l(x_1)\big),\\ \tau(t)&amp;=\frac{P_e(0)-P_e(t)}{P_e(0)}=1-\frac{|V|}{|V|-1}P_e(t)\end{aligned}$$</div><span class="eq-n">Eq. 24–25</span></div>
+  <div class="prose">
+    <p>$|\dot P_e(t)|$ 是 flow 在時間 $t$ 決定 token 的速率。下圖畫出不同詞表大小的 $P_e(t)$，以及兩種取樣格點。</p>
+  </div>
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>解碼錯誤率與時間重參數化</h3><span class="tag">本頁推導</span></div>
+    <p class="plate-lead">選擇詞表大小 |V| 與步數 N。色帶是 90% 解碼進度所在的時間窗；軸下兩列刻度比較等距 t 格點（短線）與 τ 格點（長線）。</p>
+    <div class="ctl-row" style="gap:12px;margin-bottom:14px">
+      <div class="seg" id="c3-v" role="group" aria-label="詞表大小 |V|"></div>
+      <div class="seg" id="c3-n" role="group" aria-label="步數 N"></div>
+    </div>
+    <div class="pg two">
+      <div class="fig" id="c3-main"><p class="figcap">Pₑ(t)：時間 t 的解碼錯誤率</p><svg role="img" aria-label="解碼錯誤率曲線"></svg></div>
+      <div class="ctl">
+        <div class="fig" id="c3-sub"><p class="figcap">τ(t)：已完成的解碼進度</p><svg role="img" aria-label="τ(t) 曲線"></svg></div>
+        <p class="readout" id="c3-ro" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">曲線由本頁閉式計算，把 Eq. 24 的 x_t 讀成 interpolant I_t（下方「本頁怎麼算這條曲線」）；論文未寫出公式（App. E 只描述以 Gauss–Hermite 求積建表），這不是 Fig. 9 的重現。時間窗與格點計數同樣是本頁推導。τ 表為 1,001 個等距 t，t(τ) 以線性內插反查（論文用 cubic spline，兩者差 ≤ 0.001）。</p>
+  </div>
+  <div class="prose">
+    <p>$|V|$ 越大，曲線越晚、越陡地落下。$|V|=30{,}522$（LM1B 的詞表）時，90% 的解碼進度發生在 $t\approx0.71$–$0.85$ 這個很窄的時間窗<span class="tag">本頁推導</span>。大 $|V|$ 時 token 在很窄的時間窗內被決定，均勻取樣 $t$ 會讓大部分訓練樣本落在 token 尚未開始決定或已經決定的時段，浪費訓練訊號；等距的取樣格點也把大部分步數花在幾乎不改變解碼結果的區段：$N=16$ 時只有 2 個等距格點落在窗內，$\tau$ 格點有 15 個。$|V|=2$ 時曲線平緩，等距格點已有 10 個（共 17 個）落在窗內，所以重參數化對大詞表才關鍵。論文文字寫 token 的決定「concentrates acutely near $t=1$」；本頁的計算給出的窗是 0.71–0.85。</p>
+  </div>
+  <details class="more"><summary>本頁怎麼算這條曲線</summary><div class="body">
+    <p>Φ 是標準常態分布的累積分布函數，φ 是它的密度。<span class="tag">本頁推導</span>把 Eq. 24 的 $x_t$ 讀成 interpolant $I_t$，$x_1$ 為同一配對的資料（App. E 的查表很可能算的是同一個量，但論文沒有寫明）。單一位置、真 token 為 $k$ 時，$I_t^l=(1-t)z+te_k$，$z\sim\mathcal N(0,I)$；解碼正確若且唯若 $z_k+t/(1-t)&gt;\max_{j\neq k}z_j$。所以</p>
+    <div class="eq" style="margin:4px 0 12px"><div class="eq-m">$$P_e(t)=1-\int\varphi(z)\,\Phi\!\Big(z+\frac{t}{1-t}\Big)^{|V|-1}dz$$</div></div>
+    <p>它與資料分布無關，只依賴 $|V|$。$t=0$ 時積分為 $1/|V|$，與 Eq. 24 的端點一致。數值上以 $[-8,8]$、步長 0.01 的梯形法積分，$\log\Phi$ 用 erfc 的對數形式計算，避免 $|V|=50{,}257$ 時下溢。</p>
+  </div></details>
+  <div class="prose">
+    <p>做法：訓練時取 $\tau(t)\sim U[0,1]$ 再換回 $t$，取樣時用格點 $t_n=t(n/N)$。FLM 與 FMLM 用同一個 $\tau$。$\tau$ 不是學出來的：App. E 描述以 Gauss–Hermite 求積近似 Eq. 25 的 CDF，在 1,000 個等距 $t$ 上得到 $(t,\tau)$，擬合 cubic spline 得到 $\tau(t)$ 與反函數 $t(\tau)$，訓練前算好；論文沒有寫出被積函數。被比較的 learned entropic time（CDCD [13]）才是線上估計。</p>
+    <p>消融（Table 18，300k 步，與 1M 步的主結果不可比，只在組內比較）的四列都是時間重參數化 $\tau(t)$ 的不同選法：無重參數化（$t$ 均勻取樣）149.18、learned entropic time [13] 130.42、Rank [20] 121.28、解碼錯誤率（Eq. 25）106.98。Rank 是 CANDI [20] 提出的另一種時間重參數化（rank-based），論文沒有說明它的計算方式。解碼錯誤率版優於均勻取樣、learned entropic time 與 rank-based 三者：把訓練信號集中在 token 被解出來的時段，比學一個排程更有效。</p>
+    <p>App. C.6（Prop. C.12）：若每個位置的 token 在 $V$ 上均勻，由 Fano 不等式得 $\tau(t)\le\sigma(t)+O(1/\log|V|)$（Eq. 106），$\sigma$ 是 entropic time（Eq. 105）；作者自己說這個假設「rather strong」。</p>
+    <p>先驗的選擇也經由 $\tau$ 影響結果（App. F，Table 28，200k 步）：Dirichlet(1) 先驗的 Gen. PPL 是 660.33（entropy 4.12），高斯先驗是 105.48（4.31）。Dir(1) 每維變異數約 $1/|V|^2$，樣本集中在均勻向量附近，$P_e(t)$ 幾乎立刻歸零，$\tau$ 把整段時間擠到 $t=0$ 附近。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$P_e(t)$ 的定義與端點？$\tau(t)$ 怎麼定義？訓練與取樣怎麼用？為何不用均勻 $t$？</p>
+    <p class="a">$P_e(t)=\frac1L\sum_lP(g^l(x_t)\ne g^l(x_1))$，$P_e(0)=1-1/|V|$、$P_e(1)=0$；$\tau(t)=1-\frac{|V|}{|V|-1}P_e(t)$（Eq. 24–25）；訓練取 $\tau(t)\sim U[0,1]$、取樣格點 $t_n=t(n/N)$；大 $|V|$ 時 token 在很窄的時間窗內決定，均勻 $t$ 浪費訓練訊號；消融（300k 步）106.98 對無重參數化 149.18。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="cdlm-noise-schedule.html">連續擴散語言模型的噪聲／時間排程</a></p>
+</section>
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="flowmap" data-toc="06" data-tt="flow map">
+  <div class="ch-num">06 · flow map</div>
+  <h2>flow map 從時間 s 的狀態直接算出時間 t 的狀態</h2>
+  <div class="prose">
+    <p>積分 ODE 需要很多次網路計算。flow map 直接學 ODE 的解算子（Sec. 3.3）：$X_{s,t}$ 把時間 $s$ 的狀態映到時間 $t$ 的狀態，可以寫成以平均速度 $v_{s,t}$ 走的一步：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$X_{s,t}(x_s)=x_t,\qquad X_{s,t}(x)=x+(t-s)\,v_{s,t}(x)$$</div><span class="eq-n">Eq. 14–15</span></div>
+  <div class="prose">
+    <p>flow map 由三個條件刻畫：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$X_{s,s}(x)=x,\qquad \lim_{s\to t}\partial_tX_{s,t}(x)=b_t(x),\qquad X_{u,t}\big(X_{s,u}(x)\big)=X_{s,t}(x)$$</div><span class="eq-n">Eq. 16</span></div>
+  <div class="prose">
+    <p>第一個是邊界條件；第二個說 $s\to t$ 時 flow map 的時間導數還原速度場；第三個是半群條件：先從 $s$ 走到 $u$、再從 $u$ 走到 $t$，等於直接從 $s$ 走到 $t$。一步取樣是 $\hat x_1=X_{0,1}(x_0)$；多步取樣 $\hat x_{t_{i+1}}=X_{t_i,t_{i+1}}(\hat x_{t_i})$ 對任意格點都精確，實務上步數多通常較好。</p>
+    <p>半群條件也可以換成兩種微分刻畫：Lagrangian（Eq. 29，沿軌跡的時間導數）與 Eulerian（Eq. 30，速度的空間導數），對應 MeanFlow、Lagrangian self-distillation 等需要 JVP 的方法。本文主線用半群條件，與 progressive distillation、shortcut models 相關。用平方誤差蒸餾時（Eq. 17），離對角項（$s\ne t$）強制半群，對角項讓 $v_{t,t}$ 逼近教師速度 $\hat b_t$，邊界條件由 Eq. 15 自動滿足；把 $\hat b_t$ 換成 $\dot I_t$，就得到不需教師的直接訓練。</p>
+    <p>flow map 與 denoiser 不同。由 Eq. 77，$D_t(x)=x+(1-t)\,b_t(x)$ 只是用速度走一個步長 $1-t$ 的 Euler 步；它是後驗平均，資料有多個模態時會把它們平均掉（App. C.2），所以不是一步 flow map。在 new york／san diego 玩具中，Euler 一步的結果等於兩個模態的平均；精確 flow map 一步就到資料，多步合成的結果與一步相同。</p>
+  </div>
+  <div class="plate" id="c1b">
+    <div class="plate-h"><span class="id">C1b</span><h3>Euler 與 flow map：同一批噪聲、兩種取樣器</h3><span class="tag">本頁推導</span></div>
+    <p class="plate-lead">200 個噪聲起點（空心小圓）經所選取樣器走 N 步後的終點（實心）。點擊圖上的點或按「換一個突顯樣本」查看單一樣本的軌跡。</p>
+    <div class="ctl-row" style="gap:10px;margin-bottom:8px">
+      <div class="seg" id="c1b-s" role="group" aria-label="取樣器"><button type="button" data-v="euler">Euler（Alg. 6）</button><button type="button" data-v="flowmap">flow map（Alg. 8）</button></div>
+      <div class="seg" id="c1b-n" role="group" aria-label="步數 N"></div>
+    </div>
+    <div class="ctl-row" style="gap:10px;margin-bottom:6px">
+      <button class="small-btn" type="button" id="c1b-hi">換一個突顯樣本</button>
+      <button class="small-btn" type="button" id="c1b-re">重新抽樣</button>
+    </div>
+    <p class="note" style="margin:0 0 14px">本頁玩具，非論文數字。這個玩具要看的是：Euler 一步 = 兩個模態的平均；真實語言模型的少步退化見第 10 節（Fig. 11）。</p>
+    <div class="pg two">
+      <div class="fig" id="c1b-fig"><svg role="img" aria-label="Euler，N = 1：200 個樣本全部平手"></svg></div>
+      <div class="ctl">
+        <p class="readout" id="c1b-ro" aria-live="polite"></p>
+        <ul class="mk-legend">
+          <li><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4" fill="none" stroke="var(--ink-3)"/></svg>噪聲起點 x₀</li>
+          <li><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4.5" fill="var(--c-par)"/></svg>終點</li>
+          <li><svg viewBox="0 0 16 16"><path d="M8 3 L13 13 L3 13 Z" fill="var(--c-par)"/></svg>超出範圍的終點（畫在邊界）</li>
+          <li><svg viewBox="0 0 16 16"><line x1="1" y1="8" x2="15" y2="8" stroke="var(--ink-2)" stroke-width="1.5"/></svg>突顯樣本的精確軌跡</li>
+          <li><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/></svg>Euler 迭代點</li>
+          <li><svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" fill="var(--accent)"/></svg>flow map 迭代點</li>
+          <li><svg viewBox="0 0 16 16"><path d="M3 3 L13 13 M13 3 L3 13" stroke="var(--ink)" stroke-width="2"/></svg>one-hot 資料點</li>
+        </ul>
+      </div>
+    </div>
+    <p class="plate-f">玩具設定：L = 2；位置 1 詞表 {new, san}，位置 2 詞表 {york, diego}，|V| = 2；資料只有 new york、san diego，各 50%。狀態 x = (x¹ new, x¹ san, x² york, x² diego) ∈ ℝ⁴；圖中橫軸 a₁、縱軸 a₂ 是每個位置兩個座標的差，a₁ &gt; 0 解碼為 new、a₂ &gt; 0 解碼為 york。真 denoiser 與精確 flow 由閉式後驗 p(new york | x) = sigmoid(t·(a₁ + a₂)/(1 − t)²) 計算；flow map 取樣器使用精確的 X(s,t)。格點用等距 t_n = n/N（|V| = 2，不做 τ 重參數化）。200 個起點以 mulberry32（seed 7 起，每次重新抽樣加 1）產生。</p>
+  </div>
+  <div class="prose">
+    <p>在這個玩具中<span class="tag">本頁推導</span>，$D_0(x_0)=(0.5,0.5,0.5,0.5)$ 與 $x_0$ 無關：$t=0$ 時狀態不含資料的資訊，後驗就是兩個模態各半，所以 Euler 一步的 200 個終點全部疊在原點，兩個位置都是 0.5／0.5 的平手。flow map 一步的終點只在 new york 與 san diego 兩點，無效組合為 0，而且改變 $N$ 時終點不動，這就是半群條件。</p>
+    <p>突顯的樣本（seed 7 的索引 2，0 起算）一開始位置 1 偏 san、位置 2 偏 york，最後兩個位置一起落在 san diego。原因是每個位置的後驗看的是兩個位置的座標（玩具中後驗只依賴 $u=a_1+a_2$），確定性 flow 讓兩個位置一起演化；$x_0$ 只決定起點。Euler 隨 $N$ 增加逐漸逼近 one-hot：$N=2$ 時終點與 one-hot 的平均距離 0.441，$N=4$ 時 0.032。這個玩具只有兩個對稱模態，不能用來推論 Euler 在真實語言資料上的表現。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">flow map 的定義與三個刻畫條件？一步取樣怎麼做？denoiser 為何不是一步 flow map？</p>
+    <p class="a">$X_{s,t}(x_s)=x_t$，$X_{s,t}(x)=x+(t-s)v_{s,t}(x)$；$X_{s,s}=x$、$\lim_{s\to t}\partial_tX_{s,t}=b_t$、$X_{u,t}(X_{s,u}(x))=X_{s,t}(x)$（Eq. 14–16）；$\hat x_1=X_{0,1}(x_0)$；$D_t(x)=x+(1-t)b_t(x)$ 只是步長 $1-t$ 的一個 Euler 步，是後驗平均，會平均掉多模態（Eq. 77、App. C.2）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="fmlm-flow-map-distillation-lineage.html">Flow map 與少步蒸餾的發展：consistency model 到 MeanFlow</a>、<a href="flow-map-few-step-distillation.html">連續 flow 語言模型的少步生成</a></p>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="delta" data-toc="07" data-tt="two-time denoiser">
+  <div class="ch-num">07 · two-time denoiser</div>
+  <h2>two-time denoiser 把 flow map 放回 simplex 上</h2>
+  <div class="prose">
+    <p>flow map $X_{s,t}$ 的輸出不在 simplex 上，不能直接用 softmax 與交叉熵學。作者定義 two-time denoiser：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\delta_{s,t}(x):=x+(1-s)\,v_{s,t}(x)$$</div><span class="eq-n">Eq. 18</span></div>
+  <div class="prose">
+    <p>它是從 $x$ 以平均速度 $v_{s,t}$ 走步長 $1-s$ 的一步；輸入是時間 $s$ 的狀態。Prop. 3.3 給出四個性質：</p>
+    <ol>
+      <li>(i) 還原 flow map：$X_{s,t}(x)=\frac{1-t}{1-s}\,x+\frac{t-s}{1-s}\,\delta_{s,t}(x)$（Eq. 19）。把 $v_{s,t}=(\delta_{s,t}-x)/(1-s)$ 代入 Eq. 15 即得。</li>
+      <li>(ii) 在 simplex 上：$\delta_{s,t}(x)^l\in\Delta^{|V|-1}$（Eq. 20）。</li>
+      <li>(iii) 對角線是 denoiser：$\delta_{s,s}=D_s$（Eq. 21）。</li>
+      <li>(iv) 半群：$\delta_{s,t}(x)=\gamma\,\delta_{s,u}(x)+(1-\gamma)\,\delta_{u,t}\big(X_{s,u}(x)\big)$，$\gamma=\frac{(1-t)(u-s)}{(1-u)(t-s)}\in[0,1]$（Eq. 22）。</li>
+    </ol>
+    <p>(ii) 的理由是 $\delta_{s,t}$ 可以寫成沿軌跡 denoiser 的積分：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\delta_{s,t}(x)=\frac{(1-s)(1-t)}{t-s}\int_s^t\frac{D_\tau\big(X_{s,\tau}(x)\big)}{(1-\tau)^2}\,d\tau$$</div><span class="eq-n">Eq. 82</span></div>
+  <div class="prose">
+    <p>權重 $\frac{(1-s)(1-t)}{(t-s)(1-\tau)^2}$ 非負，且在 $[s,t]$ 上積分為 1（Eq. 83），所以 $\delta_{s,t}$ 是沿軌跡 denoiser 的加權平均，即凸組合。每個 $D_\tau$ 都在 simplex 上，它們的凸組合也在 simplex 上。相對地，$X_{s,t}$ 含噪聲項 $\frac{1-t}{1-s}x$，所以離開 simplex。這讓 flow map 也能用 softmax 參數化、以 KL 或交叉熵學習（Fig. 4）。性質 (ii) 對真 flow map 與真 denoiser 成立；學到的 $\hat\delta$ 在 simplex 上是因為 softmax 參數化。</p>
+  </div>
+  <details class="more"><summary>推導：Eq. 82–83 與半群權重 γ（App. C.3–C.4）</summary><div class="body">
+    <p><b>Eq. 82。</b>沿軌跡 $x_\tau=X_{s,\tau}(x)$，由 Eq. 9 得 $\dot x_\tau=(D_\tau-x_\tau)/(1-\tau)$（Eq. 79）。兩邊乘積分因子 $1/(1-\tau)$：$\frac{d}{d\tau}\frac{x_\tau}{1-\tau}=\frac{D_\tau}{(1-\tau)^2}$（Eq. 80）。從 $s$ 積到 $t$：$\frac{X_{s,t}}{1-t}-\frac{x}{1-s}=\int_s^t\frac{D_\tau}{(1-\tau)^2}d\tau$（Eq. 81）。與 (i) 比對，即得 Eq. 82。權重的積分 $\frac{(1-s)(1-t)}{t-s}\big[\frac1{1-t}-\frac1{1-s}\big]=1$（Eq. 83）。</p>
+    <p><b>γ。</b>兩邊都用 (i) 展開：$X_{s,t}(x)=X_{u,t}(X_{s,u}(x))$ 的右邊是 $\frac{1-t}{1-u}X_{s,u}+\frac{t-u}{1-u}\delta_{u,t}(X_{s,u})$，再把 $X_{s,u}$ 展開（Eq. 94–96）。$x$ 的係數兩邊都是 $\frac{1-t}{1-s}$，消去後乘 $(1-s)/(t-s)$，得 $\delta_{s,t}=\frac{(1-t)(u-s)}{(1-u)(t-s)}\delta_{s,u}+\frac{(t-u)(1-s)}{(1-u)(t-s)}\delta_{u,t}(X_{s,u})$（Eq. 97）。兩個係數的和是 1，因為 $(1-t)(u-s)+(t-u)(1-s)=(t-s)(1-u)$（Eq. 98）。</p>
+  </div></details>
+  <div class="prose">
+    <p>中點 $u=(s+t)/2$ 時 $\gamma=(1-t)/(2-s-t)$（Prop. C.9）。<span class="tag">本頁推導</span>$t=1$ 時 Eq. 19 給出 $X_{s,1}=\delta_{s,1}$；真資料是 one-hot，所以真 $\delta_{0,1}(x_0)$ 幾乎必然是 simplex 的頂點，一步生成是對輸出取 argmax（Alg. 8 回傳 $g(x_{t_N})$），不是從 softmax 抽樣。$t=1$ 時 $\gamma=0$，半群教師完全來自 $\delta_{u,1}(X_{s,u})$。</p>
+    <p>下圖用 new york／san diego 玩具驗證這些性質：每個位置畫一個平面，粗線段是該位置的 simplex。</p>
+  </div>
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>two-time denoiser 在 simplex 上、滿足半群</h3><span class="tag">本頁推導</span></div>
+    <p class="plate-lead">拖動 s 與 t：X s,t 離開 simplex 線段，δ s,t 留在線段上。展開「進階」可以檢查半群（Eq. 22）與 Eq. 82。</p>
+    <div class="ctl-row" style="gap:16px;margin-bottom:10px;align-items:flex-end">
+      <div class="rng" style="flex:1;min-width:180px"><label class="lbl" for="c2-s">起點時間 s<output id="c2-so">0.10</output></label><input id="c2-s" type="range" min="0" max="0.97" step="0.01" value="0.1" aria-valuetext="s = 0.10"></div>
+      <div class="rng" style="flex:1;min-width:180px"><label class="lbl" for="c2-t">終點時間 t<output id="c2-to">0.90</output></label><input id="c2-t" type="range" min="0.02" max="1" step="0.01" value="0.9" aria-valuetext="t = 0.90"></div>
+    </div>
+    <div class="ctl-row" style="gap:10px;margin-bottom:14px">
+      <button class="small-btn" type="button" id="c2-re">重新抽樣 x₀</button>
+      <button class="small-btn" type="button" id="c2-reset">回到預設</button>
+    </div>
+    <div class="c2-panels">
+      <div class="fig" id="c2-p1"><h4>位置 1（new／san）</h4><svg role="img" aria-label="位置 1 的平面"></svg></div>
+      <div class="fig" id="c2-p2"><h4>位置 2（york／diego）</h4><svg role="img" aria-label="位置 2 的平面"></svg></div>
+    </div>
+    <ul class="mk-legend" id="c2-lg"></ul>
+    <p class="readout" id="c2-ro" style="margin-top:12px"></p>
+    <details class="more" id="c2-adv"><summary>進階：半群與 Eq. 82</summary><div class="body">
+      <div class="ctl-row" style="gap:16px;margin:4px 0 12px;align-items:flex-end">
+        <div class="rng" style="flex:1;min-width:180px"><label class="lbl" for="c2-u">中間時間 u<output id="c2-uo">0.50</output></label><input id="c2-u" type="range" min="0" max="0.99" step="0.01" value="0.5" disabled aria-valuetext="u = 0.50"></div>
+        <label class="chk"><input type="checkbox" id="c2-mid" checked>u 取中點 (s+t)/2</label>
+      </div>
+      <p class="readout" id="c2-ro2"></p>
+      <div class="fig" id="c2-p3" style="margin-top:14px"><p class="figcap">Eq. 82：δ 是沿軌跡 denoiser 的加權平均（位置 1 的 new 機率）</p><svg role="img" aria-label="Eq. 82 面板"></svg>
+        <div class="legend"><span class="lg par">p_τ：D_τ(X s,τ) 的 new 機率</span><span class="lg ref">權重 w(τ)（除以最大值，斜線填色）</span><span class="lg acc">δ s,t 的 new 機率 q₈₂</span></div></div>
+    </div></details>
+    <p class="plate-f">玩具同 C1b。預設 x₀ = (0.9, −0.2, −0.4, 0.3)（位置 1 偏 new、位置 2 偏 diego），x_s = X(0,s)(x₀)。δ 由 Eq. 19 反解：δ s,t = ((1 − s)·X s,t − (1 − t)·x)/(t − s)。約束：s ≤ 0.97、t ≥ s + 0.02、s ≤ u ≤ t 且 u ≤ 0.99。Eq. 82 以 Simpson 法 400 等分積分。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <div class="prose">
+    <p>預設 $(s,t)=(0.1,0.9)$ 時，$X_{s,t}$ 兩個位置的座標和是 0.97 與 0.89，不在 simplex 上；$\delta_{s,t}$ 的座標和都是 1。展開進階後，教師 $\gamma\delta_{s,u}+(1-\gamma)\delta_{u,t}(X_{s,u})$ 與 $\delta_{s,t}$ 的差小於 $10^{-8}$；$\gamma=0.1$，教師幾乎全來自第二段。位置 2 的 $X_{s,u}$ 偏向 diego（座標 0.368 對 0.082），$\delta_{s,t}$ 的 york 機率卻是 0.939：$\delta_{s,t}$ 是 $s$ 到 $t$ 整段軌跡上 denoiser 的加權平均，權重集中在 $\tau$ 接近 $t$ 的一端。把 $t$ 拉到 1，$\delta_{s,1}=X_{s,1}$ 是 one-hot，$\gamma=0$。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$\delta_{s,t}$ 的定義？Prop. 3.3 四性質？為何 $\delta$ 在 simplex 上而 $X_{s,t}$ 不在？</p>
+    <p class="a">$\delta_{s,t}(x)=x+(1-s)v_{s,t}(x)$；(i) $X_{s,t}=\frac{1-t}{1-s}x+\frac{t-s}{1-s}\delta_{s,t}$；(ii) $\delta^l_{s,t}\in\Delta^{|V|-1}$；(iii) $\delta_{s,s}=D_s$；(iv) $\delta_{s,t}=\gamma\delta_{s,u}+(1-\gamma)\delta_{u,t}(X_{s,u})$，$\gamma=\frac{(1-t)(u-s)}{(1-u)(t-s)}\in[0,1]$；$\delta$ 是沿軌跡 denoiser 的加權平均，權重非負且積分為 1（Eq. 82–83）；$X_{s,t}$ 含噪聲項 $\frac{1-t}{1-s}x$。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="fmlm-onehot-denoiser-two-time.html">FMLM 的設計：one-hot flow、CE denoiser 與 two-time denoiser</a></p>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="distill" data-toc="08" data-tt="蒸餾">
+  <div class="ch-num">08 · 蒸餾</div>
+  <h2>以 KL 半群目標把 FLM 蒸餾成 FMLM</h2>
+  <div class="prose">
+    <p>有了 $\delta_{s,t}$，就可以用 KL 目標學 flow map（Prop. 3.4）。蒸餾後的模型稱為 FMLM（flow map language model）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}\mathcal L_{KL}(\delta)={}&amp;\mathbb E_{t,s,u}\,\mathbb E\Big[\sum_l\mathrm{KL}\big(\bar\delta^l_{s,t}\,\big\|\,\delta^l_{s,t}(I_s)\big)\Big]\\&amp;+\mathbb E_t\,\mathbb E\Big[\sum_l\mathrm{KL}\big(D^l_t(I_t)\,\big\|\,\delta^l_{t,t}(I_t)\big)\Big],\\ \bar\delta_{s,t}:={}&amp;\mathrm{sg}\big(\gamma\,\delta_{s,u}(I_s)+(1-\gamma)\,\delta_{u,t}(X_{s,u}(I_s))\big)\end{aligned}$$</div><span class="eq-n">Eq. 23</span></div>
+  <div class="prose">
+    <p>離對角項讓 $\delta_{s,t}(I_s)$ 逼近停止梯度（sg）的半群教師 $\bar\delta_{s,t}=\mathrm{sg}(\gamma\delta_{s,u}+(1-\gamma)\delta_{u,t}(X_{s,u}))$，也就是 Prop. 3.3 (iv) 的右邊；對角項讓 $\delta_{t,t}$ 逼近 denoiser。實作把 $D_t$ 換成凍結的預訓練 FLM $\hat D_t$，所以這是蒸餾。$(s,u,t)$ 的分布需在 $\{0\le s\le u\le t\le1\}$ 上 full support。作者證明在教師精確時唯一的最小值是真 $\delta$（App. C.5 的證明是簡短的 sketch，不是收斂保證）。</p>
+    <p>用 KL 而不用交叉熵，是因為 KL 的最小值為 0，可以直接量測重建品質；兩者只差常數，學習動態相同（Sec. 3.3）。Alg. 7 寫成交叉熵形式。把對角項的 $D_t$ 換成 one-hot $x_1$，就得到 Eq. 12 的交叉熵，成為不需教師的直接訓練（self-distillation，Eq. 104）。</p>
+  </div>
+  <div class="algo" role="table" aria-label="Alg. 7 與 Alg. 8 的步驟與說明">
+    <div class="row hd" role="row"><div role="columnheader">Alg. 7 FMLM 訓練（蒸餾）</div><div class="ex-h" role="columnheader">這一行做什麼</div></div>
+    <div class="row" role="row"><code>x1 ← f(y), y ~ D;  x0 ~ N(0, I)</code><div class="ex">同 Alg. 5。</div></div>
+    <div class="row" role="row"><code>τ(s) ~ U[0, 1];  Is ← (1 − s)·x0 + s·x1</code><div class="ex">對角項：取一個時間（Eq. 23 寫成 $t$、$I_t$，只是變數名不同）。</div></div>
+    <div class="row" role="row"><code>L_diag ← − Σ_l D̂(Is)^l · log δ̂s,s(Is)^l</code><div class="ex">讓 $\delta_{s,s}$ 逼近凍結的 FLM 輸出。</div></div>
+    <div class="row" role="row"><code>h ~ U[0, 1];  τ(s) ~ U[0, 1 − h]</code><div class="ex">離對角項：在 $\tau$ 空間取步長 $h$ 與起點。</div></div>
+    <div class="row" role="row"><code>τ(t) ← τ(s) + h;  τ(u) ← (τ(s) + τ(t)) / 2</code><div class="ex">中點取在 $\tau$ 空間。</div></div>
+    <div class="row" role="row"><code>γ ← (1 − t)(u − s) / ((1 − u)(t − s))</code><div class="ex">換回 $t$ 後用一般式計算，不能用 $t$ 空間的中點公式。</div></div>
+    <div class="row" role="row"><code>X̂s,u ← (1−u)/(1−s)·Is + (u−s)/(1−s)·δ̂s,u(Is)</code><div class="ex">用 Eq. 19 從 $\delta$ 得到中間狀態。</div></div>
+    <div class="row" role="row"><code>δ̄ ← sg(γ·δ̂s,u(Is) + (1 − γ)·δ̂u,t(X̂s,u))</code><div class="ex">半群教師，停止梯度。</div></div>
+    <div class="row" role="row"><code>L_off ← − Σ_l δ̄^l · log δ̂s,t(Is)^l</code><div class="ex">讓 $\delta_{s,t}$ 逼近教師；以 $L_{diag}+L_{off}$ 更新。</div></div>
+    <div class="row hd" role="row"><div role="columnheader">Alg. 8 FMLM 取樣</div><div class="ex-h" role="columnheader"></div></div>
+    <div class="row" role="row"><code>x0 ~ N(0, I);  tn ← t(n/N)</code><div class="ex">同 Alg. 6 的格點。</div></div>
+    <div class="row" role="row"><code>xtn+1 ← (1−tn+1)/(1−tn)·xtn + (tn+1−tn)/(1−tn)·δ̂tn,tn+1(xtn)</code><div class="ex">Eq. 19：每步一次網路計算；$N=1$ 時就是 $\hat\delta_{0,1}(x_0)$。</div></div>
+    <div class="row" role="row"><code>return g(xtN)</code><div class="ex">argmax 解碼，不從 softmax 抽樣。</div></div>
+  </div>
+  <div class="prose">
+    <p>三元組的取法（Alg. 7）：$h\sim U[0,1]$、$\tau(s)\sim U[0,1-h]$、$\tau(t)=\tau(s)+h$、$\tau(u)=(\tau(s)+\tau(t))/2$。中點取在 $\tau$ 空間，換回 $t$ 後 $u$ 一般不是 $s,t$ 的中點，所以 $\gamma$ 必須用一般式計算。$(s,t)$ 連續取值，不同於 shortcut models 的二進格點。</p>
+    <p>邊界取樣：$\tau(t)$ 在 $t=0$ 附近平坦，$s$ 很少落在 0，一步生成需要的 $(s,t)=(0,1)$ 幾乎取不到，所以以機率 $p=1/32$ 直接取 $(s,t)=(0,1)$。App. E 寫明每個 batch 對半分成對角（$s=t$，flow matching）與離對角（蒸餾）兩半，1/32 是在蒸餾那一半之中。沒有邊界取樣時一步 Gen. PPL 是 142.61（entropy 3.81），有邊界取樣時是 119.34（4.16）（Table 18）。</p>
+    <p>其他目標（Table 18，LM1B 一步）：半群 119.34、Eulerian 149.13、Lagrangian 193.08；蒸餾 119.34 優於 self-distillation 159.53；平方誤差的 Average velocity + MSE 是 199.01。Lagrangian（Eq. 85 → Eq. 99）與 Eulerian（Eq. 86 → Eq. 100）的教師含導數項，可能暫時離開 simplex，所以用交叉熵。主文（Sec. 5）推測 Eulerian 目標需要額外正則化才能讓預測留在 simplex 上；App. F（Fig. 31 的說明）則寫 Eulerian 因為對整個 $L\times|V|$ 狀態計算空間 Jacobian 而極不穩定。</p>
+    <p>交叉熵並非在所有設定下都勝過平方誤差。App. D 的舊版兩階段平方誤差蒸餾在 LM1B 一步得 102.49（第一階段）／104.37（第二階段），entropy 4.13／4.12，與交叉熵版 119.34／4.16 相比 entropy 相當、PPL 較低；OWT 只有第一階段，一步 129.32，entropy 4.53，對交叉熵版 168.30／5.17，PPL 較低是以 entropy 大幅下降換來的。只有 LM1B 的比較 entropy 相當。在同一套單階段設定下，交叉熵最好。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 23 兩項各做什麼？Alg. 7 如何取 $(s,u,t)$？為何需要邊界取樣？</p>
+    <p class="a">離對角項讓 $\delta_{s,t}(I_s)$ 逼近停止梯度的半群教師 $\mathrm{sg}(\gamma\delta_{s,u}+(1-\gamma)\delta_{u,t}(X_{s,u}))$，對角項讓 $\delta_{t,t}$ 逼近凍結的 FLM $\hat D_t$；$h\sim U[0,1]$、$\tau(s)\sim U[0,1-h]$、$\tau(t)=\tau(s)+h$、$\tau(u)$ 取 $\tau$ 空間中點；$\tau(t)$ 在 $t=0$ 附近平坦，$s$ 很少落在 0，所以以 $p=1/32$ 直接取 $(s,t)=(0,1)$；無邊界取樣一步 142.61 / 3.81，有則 119.34 / 4.16（Table 18）。</p>
+  </div></details>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="nomap" data-toc="09" data-tt="離散沒有 flow map">
+  <div class="ch-num">09 · 離散沒有 flow map</div>
+  <h2>離散狀態空間沒有樣本層級的 flow map</h2>
+  <div class="prose">
+    <p>離散擴散能不能也學 flow map？先定義 pushforward：對映射 $f:S\to S$ 與 $S$ 上的分布 $\mu$，$f_\#\mu$ 是把每個點 $x$ 上的機率整塊搬到 $f(x)$ 後得到的分布。確定性的樣本層級 flow map 做的事，就是把初始分布 pushforward 成目標分布。下圖在只有 4 個狀態的集合上列舉所有確定性映射。</p>
+  </div>
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>確定性映射能推出哪些分布</h3></div>
+    <p class="plate-lead">選擇初始分布 μ，拖動目標值 ν(y₀)：數線上的實心點是 256 個映射能推出的所有 ν(y₀)。</p>
+    <div class="ctl-row" style="gap:16px;margin-bottom:14px;align-items:flex-end">
+      <div class="seg" id="c4-mu" role="group" aria-label="初始分布 μ"><button type="button" data-v="A">A (0.4, 0.3, 0.2, 0.1)</button><button type="button" data-v="B">B 均勻</button><button type="button" data-v="C">C 點質量</button></div>
+      <div class="rng" style="flex:1;min-width:200px"><label class="lbl" for="c4-t">目標 ν(y₀)<output id="c4-to">0.050</output></label><input id="c4-t" type="range" min="0" max="1" step="0.005" value="0.05" aria-valuetext="ν(y₀) = 0.050"></div>
+    </div>
+    <div class="pg two">
+      <div class="fig" id="c4-mubar"><p class="figcap">μ 在 4 個狀態上的機率</p><svg role="img" aria-label="μ 的直條圖"></svg></div>
+      <div class="fig" id="c4-line"><p class="figcap">可達的 ν(y₀)</p><svg role="img" aria-label="可達值數線"></svg>
+        <ul class="mk-legend">
+          <li><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4.5" fill="var(--c-par)"/></svg>可達值</li>
+          <li><svg viewBox="0 0 16 16"><path d="M8 2 L14 8 L8 14 L2 8 Z" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.5"/></svg>μ_min / 2</li>
+          <li><svg viewBox="0 0 16 16"><path d="M8 14 L3 4 L13 4 Z" fill="var(--accent)"/></svg>目標</li>
+        </ul></div>
+    </div>
+    <p class="readout" id="c4-ro" aria-live="polite" style="margin-top:12px"></p>
+    <p class="cap">對照：連續空間中，高斯經單調映射可以推出任何一維連續分布（文字對照，本圖不計算）。</p>
+    <p class="plate-f">S = {y₀, y₁, y₂, y₃}。列舉全部 4⁴ = 256 個 f : S → S，對每個 f 計算 ν = f#μ（四捨五入到 1e−10 後去重）。</p>
+  </div>
+  <div class="prose">
+    <p>確定性映射只能整塊搬移機率，不能把一個點的機率拆開：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\nu(y)=\sum_{x\in f^{-1}(y)}\mu(x)$$</div><span class="eq-n">Eq. 70</span></div>
+  <div class="prose">
+    <p>每個 $\nu(y)$ 都是 $\mu$ 值的子集和。圖中 A 的可達值是 0, 0.1, …, 1.0，0.05 不可達；B 只有 0、0.25、0.5、0.75、1；C 只有 0 與 1，對應 masked diffusion 從全遮罩出發的情形。</p>
+    <p><b>Prop. 3.5</b>：設 $S$ 是有限集合且 $|S|\ge2$（$|S|=1$ 時唯一的分布就是 $\mu$ 本身）。對 $S$ 上任意分布 $\mu$，存在分布 $\nu$ 無法寫成任何確定性映射 $f:S\to S$ 的 $f_\#\mu$。證明：由 Eq. 70，$\nu$ 的每個正值至少是最小正質量 $\mu_{\min}:=\min\{\mu(x)\mid\mu(x)&gt;0\}$；取一個 $\nu(y_0)=\mu_{\min}/2$ 的分布，它就不可達。套用到離散擴散時取 $S=V^L$、$\mu=p_0$。</p>
+    <p>離散擴散的隨機過程是 CTMC（連續時間馬可夫鏈：離散狀態之間依速率跳躍的隨機過程）。它的分布滿足 master equation $\dot p_t=Q_tp_t$，這是描述 CTMC 分布隨時間變化的線性 ODE，$Q_t\in\mathbb R^{|V|^L\times|V|^L}$。所以分布層級的確定性演化與 flow map 存在，但這個矩陣無法計算或表示，只能用因子化近似；樣本層級則由 Prop. 3.5，一般不存在確定性的 flow map。連續 flow 有樣本層級的 flow map，可以學習並計算。</p>
+  </div>
+  <div class="callout">
+    <p class="ct">Prop. 3.5 沒有說的事</p>
+    <p>它沒有說真實資料分布不可達，也沒有量化近似誤差。<span class="tag">本頁推導</span>若 $\mu$ 在 $S$ 上均勻，可達的 $\nu$ 是機率皆為 $1/|S|$ 整數倍的分布，$|S|=|V|^L$ 時可以近似得任意細；若 $\mu$ 是 masked diffusion 全遮罩的點質量，$f_\#\mu$ 只能是點質量。實務上的障礙是第 01 節的因子化。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">命題說什麼？證明關鍵？它沒有說什麼？</p>
+    <p class="a">$S$ 有限時，對任意 $\mu$ 存在 $\nu$ 無法寫成確定性映射的 $f_\#\mu$；需 $|S|\ge2$；$\nu(y)$ 是 $\mu$ 值的子集和（Eq. 70），正值至少是最小正質量 $\mu_{\min}=\min\{\mu(x)\mid\mu(x)&gt;0\}$，取 $\nu(y_0)=\mu_{\min}/2$ 即不可達；它沒有說真實資料分布不可達，也沒有量化誤差。</p>
+  </div></details>
+</section>
+
+<!-- S9 ============================================================ -->
+<section class="ch" id="results" data-toc="10" data-tt="實驗結果">
+  <div class="ch-num">10 · 實驗結果</div>
+  <h2>FLM 的生成困惑度追平離散擴散，FMLM 一步勝過少步蒸餾基線</h2>
+  <div class="prose">
+    <p>資料集：LM1B（$L=128$，bert-base-uncased tokenizer，$|V|=30{,}522$）與 OpenWebText（OWT，$L=1024$，gpt-2 tokenizer，$|V|=50{,}257$）。每個模型取 1,024 個樣本，用 GPT-2 Large 計算生成困惑度 Gen. PPL（越低越好），另外報告逐樣本的 unigram entropy；真實資料的 entropy 是 LM1B 4.31、OWT 5.44。重複 token 會讓 Gen. PPL 偏低，entropy 低（例如 &lt; 4）代表重複，所以高品質是「PPL 低且 entropy 接近資料」。論文沒有報告 validation perplexity（腳註 1：需要額外訓練）。</p>
+  </div>
+  <div class="tscroll" style="max-width:760px"><table>
+    <caption>Table 10：1024 步生成（Gen. PPL ↓ / Entropy；資料 entropy LM1B 4.31、OWT 5.44）</caption>
+    <thead><tr><th>模型</th><th class="num">LM1B PPL</th><th class="num">LM1B Ent.</th><th class="num">OWT PPL</th><th class="num">OWT Ent.</th></tr></thead><tbody>
+    <tr><td>RDLM</td><td class="num">268.21</td><td class="num">4.33</td><td class="num">—</td><td class="num">—</td></tr>
+    <tr><td>CANDI</td><td class="num">120.99</td><td class="num">4.35</td><td class="num">143.13</td><td class="num">5.71</td></tr>
+    <tr><td>MDLM</td><td class="num">109.21</td><td class="num">4.32</td><td class="num">105.15</td><td class="num">5.63</td></tr>
+    <tr><td>Duo</td><td class="num">98.14</td><td class="num">4.31</td><td class="num">77.69</td><td class="num">5.55</td></tr>
+    <tr class="hl"><td>FLM（本文）</td><td class="num">96.91</td><td class="num">4.29</td><td class="num">62.23</td><td class="num">5.33</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>FLM 1024 步：LM1B 96.91 / 4.29、OWT 62.23 / 5.33；最強的離散基線 Duo 是 98.14 / 4.31、77.69 / 5.55。OWT 上 FLM 的 PPL 最低，但 entropy 5.33 低於資料 5.44；Duo 的 5.55 高於資料，兩者與資料各差 0.11，方向相反。所以 OWT 上 FLM 是「PPL 較低、entropy 略低」，不是全面勝出。Fig. 11 顯示 FLM 在步數少時退化，這時尚未蒸餾。</p>
+  </div>
+  <div class="tscroll t13" style="max-width:960px"><table>
+    <caption>Table 13：少步生成（Gen. PPL ↓ / Ent.），基線為少步蒸餾的離散擴散</caption>
+    <thead><tr><th class="sticky">資料 · 步數</th><th class="num">MDLM+SDTT</th><th class="num">Ent.</th><th class="num">MDLM+Di4C</th><th class="num">Ent.</th><th class="num">Duo+DCD</th><th class="num">Ent.</th><th class="num">Duo+Di4C</th><th class="num">Ent.</th><th class="num">FMLM</th><th class="num">Ent.</th></tr></thead><tbody>
+    <tr><td class="sticky">LM1B · 1</td><td class="num">1429.48</td><td class="num">4.31</td><td class="num">1217.10</td><td class="num">4.38</td><td class="num">1224.52</td><td class="num">4.33</td><td class="num">292.94</td><td class="num">3.79</td><td class="num"><b>119.34</b></td><td class="num">4.16</td></tr>
+    <tr><td class="sticky">LM1B · 2</td><td class="num">602.14</td><td class="num">4.28</td><td class="num">621.59</td><td class="num">4.37</td><td class="num">520.08</td><td class="num">4.20</td><td class="num">247.69</td><td class="num">3.87</td><td class="num"><b>110.19</b></td><td class="num">4.21</td></tr>
+    <tr><td class="sticky">LM1B · 4</td><td class="num">241.01</td><td class="num">4.28</td><td class="num">247.32</td><td class="num">4.00</td><td class="num">210.88</td><td class="num">4.23</td><td class="num">150.67</td><td class="num">4.00</td><td class="num"><b>98.76</b></td><td class="num">4.21</td></tr>
+    <tr><td class="sticky">OWT · 1</td><td class="num">1260.86</td><td class="num">5.26</td><td class="num">1298.80</td><td class="num">5.29</td><td class="num">5743.29</td><td class="num">6.02</td><td class="num">370.51</td><td class="num">3.92</td><td class="num"><b>168.30</b></td><td class="num">5.17</td></tr>
+    <tr><td class="sticky">OWT · 2</td><td class="num">877.22</td><td class="num">5.34</td><td class="num">758.23</td><td class="num">5.35</td><td class="num">891.16</td><td class="num">5.41</td><td class="num">210.22</td><td class="num">4.63</td><td class="num"><b>133.29</b></td><td class="num">5.25</td></tr>
+    <tr><td class="sticky">OWT · 4</td><td class="num">339.73</td><td class="num">5.38</td><td class="num">239.27</td><td class="num">5.40</td><td class="num">250.86</td><td class="num">5.37</td><td class="num">154.67</td><td class="num">4.85</td><td class="num"><b>111.31</b></td><td class="num">5.26</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>FMLM 一步：LM1B 119.34 / 4.16、OWT 168.30 / 5.17。最好的一步基線 Duo+Di4C 是 292.94 / 3.79、370.51 / 3.92，entropy 已低於 4。依 Sec. 5.2，FMLM 一步的品質在 LM1B 相當於基線 8–16 步，在 OWT 相當於 4–8 步（8 步以上的基線數字只在 Fig. 12）。基線有兩種失敗模式：PPL &gt; 1,000（文字不連貫）與 entropy 崩塌（重複）。</p>
+  </div>
+  <div class="callout">
+    <p class="ct">論文中「一步 vs 8 步」有四種說法，本頁採 Sec. 5.2</p>
+    <p>摘要寫一步品質「exceeds the 8-step quality」；貢獻段寫「nearing their 8-step quality」；Fig. 1 寫「matches the 8-step」；Sec. 5.2 寫 LM1B 相當於 8–16 步、OWT 相當於 4–8 步。Fig. 1 另寫 8.3× 加速，但沒有說明比較對象與硬體。</p>
+  </div>
+  <div class="tscroll" style="max-width:560px"><table>
+    <caption>Table 15：OWT 一步條件生成（50 token 前綴續寫 50 token；FMLM finetune 25k 步）</caption>
+    <thead><tr><th>模型</th><th class="num">Gen. PPL ↓</th><th class="num">Ent.</th></tr></thead><tbody>
+    <tr><td>MDLM + SDTT</td><td class="num">374.70</td><td class="num">4.09</td></tr>
+    <tr><td>MDLM + Di4C</td><td class="num">376.84</td><td class="num">4.10</td></tr>
+    <tr><td>Duo + DCD</td><td class="num">703.18</td><td class="num">4.18</td></tr>
+    <tr><td>Duo + Di4C</td><td class="num">451.29</td><td class="num">4.08</td></tr>
+    <tr class="hl"><td>FMLM（本文）</td><td class="num">141.66</td><td class="num">4.14</td></tr>
+    </tbody></table></div>
+  <p class="note" style="max-width:700px">FMLM 的 141.66 比 MDLM+SDTT 低 2.6 倍（256 個前綴、每個生成 5 次）。</p>
+  <div class="tscroll" style="max-width:860px"><table>
+    <caption>Table 18 摘錄：LM1B 消融（Gen. PPL ↓ / Entropy）。標 * 的組為 300k 步，只在組內比較</caption>
+    <thead><tr><th>組別</th><th>設定</th><th class="num">Gen. PPL</th><th class="num">Ent.</th></tr></thead><tbody>
+    <tr><td>FLM，1024 步</td><td>Velocity, MSE</td><td class="num">3801.36</td><td class="num">4.85</td></tr>
+    <tr><td></td><td>Denoiser, MSE</td><td class="num">129.04</td><td class="num">3.97</td></tr>
+    <tr><td></td><td>Denoiser + softmax, MSE</td><td class="num">120.16</td><td class="num">4.28</td></tr>
+    <tr class="hl"><td></td><td>Denoiser + softmax, CE</td><td class="num">96.91</td><td class="num">4.29</td></tr>
+    <tr><td>FMLM，一步</td><td>Average velocity, MSE</td><td class="num">199.01</td><td class="num">3.93</td></tr>
+    <tr class="hl"><td></td><td>δ-denoiser + softmax, CE（半群、蒸餾、p = 1/32）</td><td class="num">119.34</td><td class="num">4.16</td></tr>
+    <tr><td></td><td>Eulerian 目標</td><td class="num">149.13</td><td class="num">4.16</td></tr>
+    <tr><td></td><td>Lagrangian 目標</td><td class="num">193.08</td><td class="num">4.22</td></tr>
+    <tr><td></td><td>Self-distillation</td><td class="num">159.53</td><td class="num">4.14</td></tr>
+    <tr><td></td><td>無邊界取樣</td><td class="num">142.61</td><td class="num">3.81</td></tr>
+    <tr><td>時間重參數化 *</td><td>無重參數化</td><td class="num">149.18</td><td class="num">4.29</td></tr>
+    <tr><td></td><td>Learned entropic time [13]</td><td class="num">130.42</td><td class="num">4.27</td></tr>
+    <tr><td></td><td>Rank [20]</td><td class="num">121.28</td><td class="num">4.23</td></tr>
+    <tr class="hl"><td></td><td>解碼錯誤率（Eq. 25）</td><td class="num">106.98</td><td class="num">4.30</td></tr>
+    <tr><td>擴散框架</td><td>Riemannian（即 Table 10 的 RDLM）</td><td class="num">268.21</td><td class="num">4.33</td></tr>
+    <tr><td></td><td>Simplex</td><td class="num">85.07</td><td class="num">3.76</td></tr>
+    <tr><td></td><td>Euclidean（本文）</td><td class="num">96.91</td><td class="num">4.29</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>表示方式的子表（300k 步、learned entropic time，與 96.91 不可比）中，one-hot 的 130.42 優於所有 embedding，最好的 embedding 是 Learned w/ L2Norm 的 243.42。</p>
+    <p>Gen. PPL 不能單獨看，要與 entropy 一起看：重複的 token 會讓 Gen. PPL 偏低，entropy 低（例如 &lt; 4）代表重複。兩個例子：Simplex 擴散的 PPL 是 85.07，低於 FLM，但 entropy 只有 3.76；Duo+Di4C 一步的 PPL 是 292.94，entropy 3.79。FMLM 一步的 entropy 也低於資料（LM1B 4.16 對 4.31）。FLM 1024 步在 OWT 的 entropy 只略低於資料（5.33 對 5.44，差 0.11），程度遠小於前兩例。</p>
+    <p>Self-BLEU（Table 25，一步，1,024 個樣本）衡量樣本之間的 n-gram 重複，目標是接近真實資料（LM1B 0.047、OWT 0.046），不是越低越好。FMLM 是 0.073 / 0.121，遠低於全部樣本相同時的 1.000，用途只是排除 mode collapse。MDLM 基線的值低於資料（0.026 / 0.036 等），是因為它們的樣本不連貫（PPL &gt; 1,000），不代表比 FMLM 好。</p>
+  </div>
+  <details class="more"><summary>其他結果：guidance、Sudoku、擴展</summary><div class="body">
+    <p><b>Autoguidance</b>（Eq. 26）：以推論時 dropout 0.1 的模型作為 weak model。FLM 1024 步的 Gen. PPL 從 96.91 降到 51.62（η = 50，entropy 4.00）；Duo、MDLM 在 η ≥ 10 時崩潰（PPL &gt; 1900、&gt; 1750）。作者假設離散 guidance 的乘法形式 $\hat p^{(guided)}\propto(\hat p^{(weak)})^{1-\eta}\hat p^{\eta}$ 放大了因子化誤差。</p>
+    <p><b>Flow map reward guidance</b>（FMRG，Eq. 27）：flow map $X_{t,1}$ 提供可微分的終點預覽，獎勵模型只需在乾淨文字上訓練。Table 17 的例子：8 步、Sentiment，FMLM 102.0 / 0.948，MDLM+SDTT 117.0 / 0.477（Gen. PPL / 獎勵）。</p>
+    <p><b>Sudoku</b>（Table 22，$|V|=10$，長度 81，1,024 個樣本）：FMLM 無條件生成的有效率在 1／2／4／1024 步為 9.38% / 57.03% / 79.69% / 94.92%；held-out 條件生成 39.84% / 85.15% / 92.19% / 98.83%；Sudoku-Extreme 16.01% / 20.70% / 25.00% / 26.56%；離散基線一步皆為 0.00%。論文稱一步配合 rejection sampling 相對 81 步自回歸約有 7.6× 加速，沒有給算式；這個數字可由 81 × 9.38% 近似得到<span class="tag">本頁推導</span>，前提是一次 FMLM 前向與一次自回歸步成本相同（自回歸有 KV cache，實際每步較便宜），且拒絕取樣的期望嘗試次數為 1/0.0938。</p>
+    <p><b>擴展</b>（Table 27，OWT，150k 步）：179M / 424M / 870M 參數的 Gen. PPL 為 75.57 / 65.94 / 61.59。</p>
+  </div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">FLM 1024 步與 FMLM 一步在 LM1B、OWT 的 Gen. PPL / entropy？FMLM 一步相當於基線幾步？</p>
+    <p class="a">FLM：LM1B 96.91 / 4.29、OWT 62.23 / 5.33（Duo 98.14 / 4.31、77.69 / 5.55）；OWT 的 PPL 最低，但 entropy 5.33 低於資料 5.44（Duo 5.55 高於資料，各差 0.11、方向相反），所以是「PPL 較低、entropy 略低」；FMLM 一步：LM1B 119.34 / 4.16、OWT 168.30 / 5.17，最好的一步基線 Duo+Di4C 292.94 / 3.79、370.51 / 3.92；LM1B 相當於基線 8–16 步、OWT 4–8 步（Sec. 5.2）。</p>
+    <p class="q">為何不能只看 Gen. PPL？舉兩個例子。</p>
+    <p class="a">重複 token 會讓 Gen. PPL 偏低，entropy 低（例如 &lt; 4）代表重複；Simplex 擴散 PPL 85.07 但 entropy 3.76；Duo+Di4C 一步 292.94 但 entropy 3.79；FMLM 一步 entropy 也低於資料（LM1B 4.16 對 4.31）；FLM 1024 步在 OWT 只略低（5.33 對 5.44，差 0.11）。</p>
+  </div></details>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="impl" data-toc="11" data-tt="實作">
+  <div class="ch-num">11 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="tscroll" style="max-width:860px"><table class="stack">
+    <caption>Sec. 5 與 App. E 的設定</caption>
+    <thead><tr><th>項目</th><th>設定</th></tr></thead><tbody>
+    <tr><td>資料</td><td data-h="設定">LM1B：$L=128$、bert-base-uncased、$|V|=30{,}522$；OWT：$L=1024$、gpt-2、$|V|=50{,}257$</td></tr>
+    <tr><td>網路</td><td data-h="設定">179M 參數 DiT，12 層，RoPE，AdaLN；輸出層逐 token softmax</td></tr>
+    <tr><td>FLM 訓練</td><td data-h="設定">1M 步，batch 512，Adam（β₁ 0.9、β₂ 0.999），lr 3×10⁻⁴，2,500 步 warmup，attention softcapping</td></tr>
+    <tr><td>FMLM 蒸餾</td><td data-h="設定">100k 步，其餘同 FLM；每個 batch 對半分成對角與離對角，離對角中以 p = 1/32 取 (s, t) = (0, 1)</td></tr>
+    <tr><td>時間重參數化</td><td data-h="設定">訓練前以 Gauss–Hermite 求積在 1,000 個等距 t 上建表，cubic spline 擬合 τ(t) 與 t(τ)</td></tr>
+    <tr><td>取樣器</td><td data-h="設定">App. E：FLM 用 Euler，FMLM 用 Kim et al. [91] 的「γ-sampling」；App. G 稱兩者為確定性取樣（見常見錯誤第 10 條）</td></tr>
+    <tr><td>評估</td><td data-h="設定">每個模型 1,024 個樣本，GPT-2 Large 計算 Gen. PPL，另報 unigram entropy</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <h3>常見錯誤</h3>
+    <ol>
+      <li><b>時間方向弄反。</b>本文 $t=0$ 是噪聲、$t=1$ 是資料。</li>
+      <li><b>一步生成從 softmax 抽樣。</b>Alg. 8 是確定性合成後取 argmax（$g$）。</li>
+      <li><b>把 $\delta_{s,t}$ 當成 $x_t$ 處的 denoiser 或終點預測。</b>它的輸入是 $x_s$，是 $s$ 到 $t$ 沿軌跡 denoiser 的加權平均（Eq. 82），只有 $s=t$ 時等於 $D_s$。</li>
+      <li><b>把 denoiser 當成一步 flow map。</b>$D_t$ 是步長 $1-t$ 的 Euler 步、後驗平均（Eq. 77）。</li>
+      <li><b>$\gamma$ 用 $t$ 空間的中點公式。</b>中點取在 $\tau$ 空間，$\gamma$ 必須用一般式。</li>
+      <li><b>在 $t\to1$ 直接用 Eq. 9 換算速度。</b>$(1-t)^{-1}$ 奇異；Alg. 6 只在 $t_n&lt;1$ 評估 denoiser。</li>
+      <li><b>省略邊界取樣。</b>一步 Gen. PPL 變成 142.61，entropy 3.81（Table 18）。</li>
+      <li><b>只看 Gen. PPL。</b>Simplex 85.07 但 entropy 3.76；Duo+Di4C 292.94 但 3.79。</li>
+      <li><b>以為 $\tau(t)$ 是學出來的。</b>它是預先算好的查表加 spline。</li>
+      <li><b>取樣器的出入。</b>App. E 寫 FLM 用 Euler、FMLM 用 Kim et al. [91] 的「γ-sampling」（γ 值未給，與半群的 γ 同符號不同義）；App. G 又稱兩者為 deterministic sampling，與 Alg. 6、8 一致。論文引用 [91, 92] 取最佳 γ 值，但沒有說明 γ-sampling 與 Alg. 8 的關係。本頁以 Alg. 8 為準；一步時兩者沒有差別。</li>
+    </ol>
+  </div>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="history" data-toc="12" data-tt="研究脈絡">
+  <div class="ch-num">12 · 研究脈絡</div>
+  <h2>研究脈絡（由 notes/timeline.json 提供）</h2>
+  <div class="prose">
+    <p>自回歸生成的序列瓶頸推動了平行解碼（非自回歸翻譯）與離散擴散（D3PM、SEDD、MDLM、Duo）；少步取樣時的品質下降（SDTT）指向因子化誤差。另一條路是連續 embedding 擴散（Diffusion-LM、CDCD）；Analog Bits 是類似 one-hot 的連續表示先例。flow matching 提供確定性的 ODE 框架，Li 與 He 的 <i>Back to Basics</i>（arXiv 2511.13720）說明為何要改學 denoiser 而不是速度。flow map 一線從 consistency models 到 flow map matching、self-distillation 與 MeanFlow，處理少步生成。本文把 one-hot 表示、交叉熵 denoiser 與 two-time denoiser 接在一起，$P_e$ 指標沿用自 Duo 與 CANDI。Analog Bits 與 Back to Basics 不在時間線中。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="next" data-toc="13" data-tt="限制與延伸">
+  <div class="ch-num">13 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>one-hot 表示每一步都要對完整的 $|V|\times d$ embedding 矩陣求值與反向傳播，比只更新相關 embedding 的 embedding diffusion 多約 30% 的時間與記憶體（Sec. 6）；App. F 另寫比 MDLM 多 15–20% 記憶體但 wall-clock 較快（Table 32 算得 1.16–1.24 倍），兩處數字不同。作者建議以稀疏梯度或結構化表示改善，並看好把一步生成用於 RL finetuning 的 rollout。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="fmlm-lineage-overview.html">Flow Map Language Models 的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="fmlm-parallel-decoding-motivation.html">自回歸的序列瓶頸與平行解碼的動機</a><span>第 01 節的動機</span></div></li>
+    <li><div><a href="fmlm-discrete-diffusion-factorization.html">離散擴散語言模型與少步時的因子化誤差</a><span>第 01 節</span></div></li>
+    <li><div><a href="fmlm-continuous-text-diffusion.html">連續空間的文字擴散：從 Diffusion-LM 到 CDCD</a><span>第 02 節</span></div></li>
+    <li><div><a href="fmlm-flow-matching-interpolant.html">Flow matching、interpolant 與速度場／denoiser 的關係</a><span>第 02–03 節</span></div></li>
+    <li><div><a href="fmlm-flow-map-distillation-lineage.html">Flow map 與少步蒸餾的發展：consistency model 到 MeanFlow</a><span>第 06 節</span></div></li>
+    <li><div><a href="fmlm-onehot-denoiser-two-time.html">FMLM 的設計：one-hot flow、CE denoiser 與 two-time denoiser</a><span>第 03–08 節</span></div></li>
+    <li><div><a href="continuous-flow-lm-overview.html">2026 年連續 flow / flow matching 語言模型總覽</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="flow-map-few-step-distillation.html">連續 flow 語言模型的少步生成：flow map / consistency / 分佈匹配蒸餾</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="hybrid-continuous-discrete-lm.html">混合連續—離散擴散語言模型</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="self-conditioning-flow-lm.html">self-conditioning 在連續 flow 語言模型中的作用與理論解釋</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="cdlm-training-objective.html">連續擴散語言模型的訓練目標與參數化：從 MSE 到 CE 去噪器</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="cdlm-noise-schedule.html">連續擴散語言模型的噪聲／時間排程</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="x-prediction-manifold-view.html">x-prediction 與流形觀點：JiT 與 pixel-space 的近期結果</a><span>站內既有筆記</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Chanhyuk Lee, Jaehoon Yoo, Manan Agarwal, Sheel Shah, Jerry Huang, Aditi Raghunathan, Seunghoon Hong, Nicholas M. Boffi, Jinwoo Kim. Flow Map Language Models: One-step Language Modeling via Continuous Denoising. <a href="https://arxiv.org/abs/2602.16813">arXiv:2602.16813</a>.</p>
+  <p>本頁的方程式與數字取自論文 v3；標示「本頁推導」的內容為本頁自行推導，並非論文結論。互動元件的數值在瀏覽器中即時計算，玩具數字不是論文結果。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>

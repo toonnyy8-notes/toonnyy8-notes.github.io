@@ -1,0 +1,853 @@
+學習擴散語言模型的解遮罩策略
+
+跳到內容
+
+ No. 13
+ 學習擴散語言模型的解遮罩策略
+
+00 摘要01 遮罩擴散02 信心度規則03 MDP04 策略網路05 Bernoulli 策略06 GRPO07 乘法獎勵08 玩具模型09 半自回歸結果10 完整擴散11 遷移與消融12 實作13 研究脈絡14 限制與延伸
+
+00摘要
+01遮罩擴散
+02信心度規則
+03MDP
+04策略網路
+05Bernoulli 策略
+06GRPO
+07乘法獎勵
+08玩具模型
+09半自回歸結果
+10完整擴散
+11遷移與消融
+12實作
+13研究脈絡
+14限制與延伸
+
+ No. 13 · 互動教學 · arXiv 2512.09106 · Apple、University of Amsterdam、MIT
+
+ 學習擴散語言模型的解遮罩策略
+
+ 這篇論文把「每一步解開哪些 token」寫成馬可夫決策過程，用強化學習訓練一個 300K 參數的策略取代手工的信心度規則。
+
+ Metod Jazbec、Theo X. Olausson、Louis Béthune、Pierre Ablin、Michael Kirchhof、João Monteiro、Victor Turrisi、Jason Ramapuram、Marco Cuturi（v4，2026-06-01）〈Learning Unmasking Policies for Diffusion Language Models〉
+
+ 第 0 步
+
+第 1 步
+
+第 2 步
+
+ 01 · 選擇擴散語言模型從全部遮住的句子開始，每一步決定要解開哪些位置。這個選擇同時決定答案品質與需要幾步。
+
+ 02 · 小網路本文把這個選擇交給一個約 30 萬參數的小網路。它只看語言模型對每個位置的信心度，不改動語言模型本身。
+
+ 03 · 結果小網路用強化學習訓練，獎勵 = 答對 × 速度因子（用的步數越少，因子越大）。在不分區塊的設定下，它在約 12 個步數（NFE，見 01）時答對約一半的小學數學應用題 GSM8K，信心度規則不超過 30%（Sec. 4.2 的約略敘述；Table 4 為 13.0 NFE、48.3%）。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+ 程式碼 ↗
+
+ 01 · 遮罩擴散
+
+ 遮罩擴散模型逐步解開遮罩來生成文字
+
+ 自回歸（autoregressive, AR）語言模型由左到右一次產生一個 token。遮罩擴散模型（masked diffusion model, MDM）從一個全部是遮罩符號 [M] 的序列出發，每一步可以同時決定多個位置的 token。本論文把這類模型稱為擴散語言模型（dLLM）。
+
+ 訓練：前向過程與 ELBO
+
+ 訓練時取一段乾淨序列 x0 $x_0$ ​，再選一個遮罩率 t∈[0,1] $t\in[0,1]$ 。前向過程（Sec. 2.1）讓每個 token 獨立地以機率 t $t$ 變成 [M]，以機率 1−t $1-t$ 保持原樣，得到加噪序列 xt $x_t$ ​。這裡的 t $t$ 是訓練時的遮罩率，與下面生成時的步數 t $t$ 是不同的量。模型 pθ $p_\theta$ ​ 看到 xt $x_t$ ​，對每個被遮住的位置預測原本的 token：
+
+ L(θ)=Et∼U[0,1], x0, xt[1t∑k=1L1[xtk=M] log⁡pθ(x0k∣xt)] $\mathcal L(\theta)=\mathbb E_{t\sim U[0,1],\,x_0,\,x_t}\Big[\frac1t\sum_{k=1}^{L}\mathbb 1[x_t^k=M]\,\log p_\theta(x_0^k\mid x_t)\Big]$ ​,xt​​[t1​k=1∑L​1[xtk​=M]logpθ​(x0k​∣xt​)]
+Eq. 2.1
+
+ 式中只有 xtk=M $x_t^k=M$ k​=M 的位置計入對數似然，總和再乘上 1/t $1/t$ 。L(θ) $\mathcal L(\theta)$ 是 ELBO，即 L(θ)≤Elog⁡pθ(x0) $\mathcal L(\theta)\le\mathbb E\log p_\theta(x_0)$ ​(x0​)。
+
+ 生成：每一步選出要解開的位置
+
+ 生成時給定提示 x $x$ ，答案從 yT=(M,…,M) $y_T=(M,\dots,M)$ ​=(M,…,M) 開始，步數索引 t $t$ 由 T $T$ 倒數到 1。第 t $t$ 步的部分遮罩答案記為 yt $y_t$ ​，其第 k $k$ 個位置記為 ytk $y_t^k$ k​，仍被遮住的位置集合記為 Mt $\mathcal M_t$ ​。dLLM 對所有位置輸出 token 分布 ptk=pθ(y0k=⋅∣x,yt) $p_t^k=p_\theta(y_0^k=\cdot\mid x,y_t)$ k​=pθ​(y0k​=⋅∣x,yt​)；取樣策略再選出這一步要解開（unmask）的位置集合 Ut⊆Mt $U_t\subseteq\mathcal M_t$ ​⊆Mt​（Eq. 2.2）：
+
+ yt−1k={y∼ptk,k∈Utytk,k∉Ut $y_{t-1}^k=\begin{cases}y\sim p_t^k, & k\in U_t\\[2pt] y_t^k, & k\notin U_t\end{cases}$ k​={y∼ptk​,ytk​,​k∈Ut​k∈/Ut​​
+Eq. 2.2
+
+ Ut $U_t$ ​ 內的位置抽出 token，其他位置不變。生成速度以 NFE（network function evaluations）計，NFE 等於取樣步數，每一步是一次 dLLM 前向計算。標準 MDM 每步在隨機位置解開固定數量的 token（Sec. 1）。溫度 τ=0 $\tau=0$ 表示每個位置直接取機率最大的 token，不隨機抽樣；本論文的評測與訓練都取 τ=0 $\tau=0$ 。後面 S5 的 τπ $\tau_\pi$ ​ 是策略的溫度，與 τ $\tau$ 是不同的量。
+
+ C1前向加遮罩與逐步生成
+
+ 「前向」模式：拖動遮罩率 t，看哪些位置被遮住。「生成」模式：選每步解開的數量 K，逐步解開到沒有 [M] 為止。
+
+ 前向（訓練）生成
+
+ M
+M
+10
+suits
+,
+M
+M
+M
+750
+.
+M
+M
+$
+7500
+M
+M
+
+ 遮罩率 t0.50
+
+ 重新抽樣
+
+ 訓練時只在 [M] 位置計算 log pθ，再乘 1/t（Eq. 2.1）。
+
+ 每步解開數 K1234816
+
+ 下一步自動播放重設
+
+ 位置以隨機順序解開，數量固定為 K（標準 MDM，Sec. 1）。玩具中解開的位置直接顯示正確 token，相當於 τ = 0 且模型完全正確。
+
+ 遮住數 9 / 16
+期望 tL = 8.00
+ELBO 權重 1/t = 2.00
+seed = 7
+
+ 玩具設定：L = 16，答案取 App. D 的 GSM8K 例題風格。前向模式中每個位置固定一個均勻亂數 uk（mulberry32，seed 由 7 起），uk < t 即遮住，所以拖動 t 時遮住的集合單調變化。生成模式以部分 Fisher–Yates 抽樣。讀數由本頁依 Sec. 2.1 與 Eq. 2.2 即時計算。
+
+ t 越大，遮住的位置越多，期望數量是 tL $tL$ ；K 越大，NFE 越少，玩具中 NFE =⌈L/K⌉ $=\lceil L/K\rceil$ 。C1 的生成順序與「這個 token 好不好猜」無關。Eq. 2.2 沒有規定 Ut $U_t$ ​ 怎麼選，這個選擇就是本論文要學習的對象。
+
+ 符號表
+
+ 本頁使用的符號（位置索引一律用 k）
+ 符號意義
+
+ L $L$ 、V $V$ 、[L] $[L]$ 生成長度、詞彙表大小、集合 {1,…,L} $\{1,\dots,L\}$ 
+
+ M $M$ 遮罩 token，頁面顯示為 [M]
+
+ x $x$ 、y $y$ 提示、參考答案
+
+ x0 $x_0$ ​、xt $x_t$ ​訓練用乾淨序列、遮罩率 t $t$ 下的加噪序列
+
+ t∈[0,1] $t\in[0,1]$ 訓練時的遮罩率（Sec. 2.1）
+
+ t∈{T,…,1} $t\in\{T,\dots,1\}$ 生成時的步數索引，倒數（Sec. 2.1、Sec. 3.1）
+
+ yt $y_t$ ​、ytk $y_t^k$ k​第 t $t$ 步的部分遮罩答案、其第 k $k$ 個位置
+
+ ptk $p_t^k$ k​dLLM 在第 t $t$ 步對位置 k $k$ 的 token 分布
+
+ ctk $c_t^k$ k​、ct $c_t$ ​信心度 max⁡vptk(v) $\max_vp_t^k(v)$ ​ptk​(v)；ct=(ct1,…,ctL) $c_t=(c_t^1,\dots,c_t^L)$ ​=(ct1​,…,ctL​)
+
+ Mt $\mathcal M_t$ ​、Ut $U_t$ ​仍被遮住的位置集合、這一步要解開的位置集合
+
+ K $K$ 、λ $\lambda$ top-K 規則每步解開的數量、Fast-dLLM 的信心度門檻
+
+ BL $BL$ semi-AR 的區塊長度；BL=L $BL=L$ 即完整擴散
+
+ τ $\tau$ 、τπ $\tau_\pi$ ​dLLM 的取樣溫度（取 0）、策略溫度
+
+ fϕ $f_\phi$ ​、bt $b_t$ ​、stk $s_t^k$ k​策略網路、其輸出的 logit、Bernoulli 機率 σ(btk/τπ) $\sigma(b_t^k/\tau_\pi)$ k​/τπ​)
+
+ πϕ $\pi_\phi$ ​、πϕold $\pi_{\phi_{\rm old}}$ ​​由 fϕ $f_\phi$ ​ 定義的解遮罩策略、產生 rollout 的舊策略
+
+ σ $\sigma$ sigmoid 函數 σ(x)=1/(1+e−x) $\sigma(x)=1/(1+e^{-x})$ )
+
+ ut $u_t$ ​、mt $m_t$ ​動作 ut∈{0,1}L $u_t\in\{0,1\}^L$ ​∈{0,1}L、遮罩向量 mtk=1[k∈Mt] $m_t^k=\mathbb 1[k\in\mathcal M_t]$ k​=1[k∈Mt​]
+
+ T $T$ 、T^ $\hat T$ 最大步數、所有位置都解開的第一個時刻；所用步數 T−T^ $T-\hat T$ = NFE
+
+ r $r$ 、α $\alpha$ 、R $R$ 正確性分數、速度懲罰指數、總獎勵（Eq. 3.1）
+
+ G $G$ 、Atg $A_t^g$ g​、ρtg $\rho_t^g$ g​、ϵ $\epsilon$ GRPO 組大小、優勢、似然比、截斷幅度
+
+ Rˉ $\bar R$ 組內平均獎勵 1G∑iRi $\frac1G\sum_iR^i$ 1​∑i​Ri
+
+ β $\beta$ 、βKL $\beta_{\rm KL}$ ​測試時的機率縮放 min⁡{1,βs} $\min\{1,\beta s\}$ ；App. H Table 1 的 KL 係數（本文取 0）
+
+ E $E$ expert steering 混入的專家數
+
+ 延伸閱讀：Masked diffusion 的離散擴散脈絡、LLaDA 與 Dream：可比擬 AR 的 dLLM
+
+ 02 · 信心度規則
+
+ 信心度規則在完整擴散下失效
+
+ 第 t $t$ 步位置 k $k$ 的信心度（confidence）定義為 ctk=max⁡vptk(v) $c_t^k=\max_vp_t^k(v)$ k​=maxv​ptk​(v)，即 dLLM 對該位置最可能 token 的機率。兩種常用規則都只看信心度（Sec. 2.2）：
+
+ 高信心 top-K（Chang et al., 2022，MaskGIT）：每步解開信心度最高的固定 K $K$ 個遮罩位置。
+
+ Fast-dLLM 門檻（Wu et al., 2025）：解開所有信心度超過門檻 λ $\lambda$ 的遮罩位置，每步解開的數量可變。
+
+ UtK=arg⁡max⁡I⊆Mt, ∣I∣=K ∑k∈Ictk,Utλ={k∈Mt∣ctk>λ} $U_t^K=\arg\max_{I\subseteq\mathcal M_t,\ |I|=K}\ \sum_{k\in I}c_t^k,\qquad U_t^\lambda=\{k\in\mathcal M_t\mid c_t^k>\lambda\}$ K​=argI⊆Mt​, ∣I∣=Kmax​ k∈I∑​ctk​,Utλ​={k∈Mt​∣ctk​>λ}
+Sec. 2.2
+
+ 半自回歸與區塊長度
+
+ 半自回歸（semi-autoregressive, semi-AR）生成把長度 L $L$ 的答案切成長度 BL $BL$ 的連續區塊，一次只對一個區塊解遮罩，區塊依序由左到右。BL=L $BL=L$ 時只有一個區塊，稱為完整擴散（full diffusion）。下圖以 L=256 $L=256$ 為例。
+
+ semi-AR，BL = 32：256 個位置分成 8 個區塊
+
+ 完成完成目前鎖定鎖定鎖定鎖定鎖定
+
+ 165–96 為目前區塊256
+
+ 完整擴散，BL = 256：只有一個區塊，任何遮罩位置都可以解開
+
+ 1 – 256 全部可解開
+
+ C2解遮罩規則比較：隨機 K、top-K、門檻
+
+ 同一個信心度向量下比較三種規則選出的位置。點 token 格可把該位置設成「已解開」，規則只作用在仍遮住的位置。切到情境 B，看門檻規則從哪裡開始。
+
+ A · 一般區塊B · 尾端填充 token
+
+ 隨機 Ktop-K門檻 λ
+
+ 信心度 c（長條高度）門檻 λ本步解開 ✓遮住
+
+ 1
+M
+2
+M
+3
+M
+4
+M
+5
+M✓
+6
+M
+7
+M
+8
+M
+9
+M
+10
+M✓
+11
+M
+12
+M
+13
+M
+14
+M
+15
+M
+16
+M
+
+ 每步解開數 K4
+
+ 門檻 λ0.90
+
+ 空集合時 fallback重新抽樣全部遮住
+
+ |𝓜| = 16　|U| = 2
+U = {5, 10}
+右鄰也被選的比例 0%
+
+ 玩具設定：兩組 token 與信心度都是本頁設定的數值，情境 B 模仿 App. C.3 描述的現象。門檻規則用嚴格大於；空集合時解開信心度最大的一個位置（推定：論文只說策略的 fallback「similar to Fast-dLLM」）。「右鄰比例」是本步被選位置中右邊鄰居也被選的比例；App. C.1 在 BL32-slow 設定下對整段生成統計，Fast-dLLM 約 65%、策略約 20%。讀數由本頁依 Sec. 2.2 即時計算。
+
+ 解開 2 個位置：{5, 10}
+
+ 完整擴散下的失效
+
+ Fig. 1 比較三種規則在 LLaDA、GSM8K、L=256 $L=256$ 的表現（數字取自 App. J Table 2、Table 4）。semi-AR（BL = 32）時，Fast-dLLM 最高 79.7%（82.2 NFE）。完整擴散（BL = 256）時，Fast-dLLM 最高只有 38.7%（32.1 NFE），256 NFE 時 33.6%；隨機解遮罩在 256 NFE 有 51.6%。也就是說，完整擴散下信心度規則低於隨機，而且多給 NFE 不再改善。高信心 top-K 在 32 NFE 達 43.6% 後下降，256 NFE 時為 33.6%。
+
+ LLaDA、GSM8K、L = 256 的正確率（App. J Table 2、Table 4）
+ 設定規則NFE正確率（%）
+
+ semi-AR，BL = 32Fast-dLLM 最高點82.279.7
+
+ 完整擴散，BL = 256Fast-dLLM 最高點32.138.7
+
+ 完整擴散，BL = 256Fast-dLLM25633.6
+
+ 完整擴散，BL = 256高信心 top-K3243.6
+
+ 完整擴散，BL = 256高信心 top-K25633.6
+
+ 完整擴散，BL = 256隨機25651.6
+
+ App. C.3 描述的現象：完整擴散下，Fast-dLLM 的生成順序常呈現右到左（Fig. 7 說明文字寫「somewhat reverse」，另見 Fig. 26）。作者推測（原文「likely stems from」）原因是 LLaDA 的 SFT 沒有把填充 token（padding）排除在損失之外，模型對填充 token 過擬合、信心度偏高，信心度規則因此常先解開序列尾端的填充 token。C2 情境 B 中，門檻 0.9 選出位置 10–16，7 個中 6 個是 <EOS> 或 <EoT>。手工規則沒有機制辨認並略過填充 token 偏高的信心度，作者因此改為學習規則。
+
+ 延伸閱讀：Confidence 門檻式 unmasking heuristic、Semi-AR 區塊生成
+
+ 03 · MDP
+
+ 取樣可以寫成馬可夫決策過程
+
+ 作者把取樣寫成馬可夫決策過程（Markov decision process, MDP）（Sec. 3.1）。「策略」（policy）指依目前狀態給出動作機率的函數。時間沿用生成的倒數記號 t=T,T−1,…,1 $t=T,T-1,\dots,1$ 。MDP 的四個組成如下：
+
+ 狀態：(x,yt) $(x,y_t)$ ​)，即提示與目前的部分遮罩答案；初始狀態 yT $y_T$ ​ 全部遮住。
+
+ 動作：ut∈{0,1}L $u_t\in\{0,1\}^L$ ​∈{0,1}L，utk=1 $u_t^k=1$ k​=1 表示這一步解開位置 k $k$ 。動作由策略抽出，ut∼πϕ(⋅∣yt) $u_t\sim\pi_\phi(\cdot\mid y_t)$ ​∼πϕ​(⋅∣yt​)。
+
+ 轉移：yt−1∼P(yt−1∣yt,ut;τ) $y_{t-1}\sim P(y_{t-1}\mid y_t,u_t;\tau)$ ​∼P(yt−1​∣yt​,ut​;τ)，就是 Eq. 2.2，其中 Utπ={k∈Mt∣utk=1} $U_t^\pi=\{k\in\mathcal M_t\mid u_t^k=1\}$ π​={k∈Mt​∣utk​=1}。
+
+ 獎勵：R(y,yt) $R(y,y_t)$ ​) 只在所有位置都解開的第一個時刻 T^=max⁡{t∈[T]∣ytk≠M ∀k} $\hat T=\max\{t\in[T]\mid y_t^k\ne M\ \forall k\}$ =max{t∈[T]∣ytk​=M ∀k} 給出，y $y$ 是參考答案。獎勵要同時鼓勵正確（yT^ $y_{\hat T}$ ​ 接近 y $y$ ）與效率（所用步數 T−T^ $T-\hat T$ 少）。
+
+ 目標是最大化期望總獎勵（Sec. 3.1 無編號式）：
+
+ max⁡ϕ E[∑t=1TR(y,yt)] $\max_\phi\ \mathbb E\Big[\sum_{t=1}^{T}R(y,y_t)\Big]$ max​ E[t=1∑T​R(y,yt​)]
+Sec. 3.1
+
+ 在這個 MDP 中，凍結的 dLLM 是環境，不是策略，參數完全不變（Fig. 2：dLLM 約 7–8B 參數，策略約 300K 參數）。所用步數 T−T^ $T-\hat T$ 就是 NFE。下圖是一步的資料流。
+
+ 目前的答案 yt $y_t$ ​部分位置是 [M]
+
+ 凍結的 dLLM pθ $p_\theta$ ​（環境）約 7–8B 參數，不更新；輸出每個位置的 token 分布 ptk $p_t^k$ k​
+
+ 信心度 ct $c_t$ ​、遮罩 mt $m_t$ ​、步數 t $t$ ctk $c_t^k$ k​ 是 ptk $p_t^k$ k​ 的最大機率
+
+ 策略 fϕ $f_\phi$ ​（訓練對象）約 300K 參數；輸出 logit bt $b_t$ ​
+
+ 機率 st $s_t$ ​ → 動作 ut $u_t$ ​stk=σ(btk/τπ) $s_t^k=\sigma(b_t^k/\tau_\pi)$ k​=σ(btk​/τπ​)，每個遮罩位置獨立抽樣
+
+ 解開 Utπ $U_t^\pi$ π​，得到 yt−1 $y_{t-1}$ ​回到第 1 格，直到沒有 [M]；獎勵在 T^ $\hat T$ 給出
+
+ 04 · 策略網路
+
+ 策略只看信心度、遮罩與步數
+
+ 策略網路 fϕ $f_\phi$ ​ 的輸入只有三項：信心度向量 ct $c_t$ ​、遮罩向量 mt $m_t$ ​ 與步數 t $t$ 。它不看 token 本身（Sec. 3.2）：
+
+ bt=fϕ(ct,mt,t)∈RL $b_t=f_\phi(c_t,m_t,t)\in\mathbb R^L$ ​=fϕ​(ct​,mt​,t)∈RL
+Sec. 3.2
+
+ 作者給出三個理由：信心度在每一步本來就算好，不增加計算；啟發式規則也只用信心度；改用 dLLM 的隱藏狀態需要大得多的策略，而且沒有穩定改善。Sec. 4.4 的消融中，隱藏狀態策略（約 300M 參數）表現較差，訓練也較不穩定。
+
+ 架構是單層 transformer，以 adaptive layer norm（AdaLN）接收步數條件（Sec. 4.1、App. H Table 1、App. I）：hidden 128、feedforward 512、2 個 head。總參數約 300K，不到 dLLM 的 0.01%（Sec. 3.2）。以 LLaDA-8B 為例，300K / 8B = 0.00375%本頁推導 · LLaDA 的示例。
+
+ 策略網路的組成（App. H Table 1；資料流依 App. I 的圖排列推定）
+ 部分設定用途
+
+ 輸入c $c$ 經線性投影、m $m$ 經嵌入，兩者相加每個位置一個向量；主實驗只用最大信心度
+
+ 步數條件t $t$ 經正弦嵌入與 MLP，時間嵌入維度 128AdaLN：用步數嵌入調整 layer norm 的縮放與平移
+
+ 注意力1 層、2 個 head、RoPERoPE 在注意力中編碼位置
+
+ 前饋層hidden 128、feedforward 512，各接殘差逐位置轉換
+
+ 輸出LN 與線性投影，形狀 (L,) $(L,)$ 每個位置一個 logit btk $b_t^k$ k​
+
+ 參數量約 300K不到 dLLM 的 0.01%
+
+ 因為輸入只有信心度、不含 token 嵌入，同一個策略可以直接搬到另一個 dLLM 上使用（S11）。
+
+ 延伸閱讀：Unmasking 作為 MDP 與輕量 policy 設計
+
+ 05 · Bernoulli 策略
+
+ 每個位置獨立以 Bernoulli 機率決定是否解開
+
+ 策略輸出的 logit btk $b_t^k$ k​ 經 sigmoid 函數 σ(x)=1/(1+e−x) $\sigma(x)=1/(1+e^{-x})$ ) 轉成機率；sigmoid 把任意實數映到 0 到 1 之間。每個仍被遮住的位置獨立地以這個機率決定是否解開，utk∼Ber(stk) $u_t^k\sim\mathrm{Ber}(s_t^k)$ k​∼Ber(stk​)（Sec. 3.2）。Sec. 3.2 先以 stk=σ(btk) $s_t^k=\sigma(b_t^k)$ k​=σ(btk​) 定義似然；生成時再加上策略溫度 τπ $\tau_\pi$ ​：
+
+ utk∼Ber(stk),stk=σ ⁣(btk/τπ) $u_t^k\sim\mathrm{Ber}(s_t^k),\qquad s_t^k=\sigma\!\left(b_t^k/\tau_\pi\right)$ k​∼Ber(stk​),stk​=σ(btk​/τπ​)
+Sec. 3.2
+
+ τπ $\tau_\pi$ ​ 越小，機率越接近 0 或 1。實驗用 τπ=0.5 $\tau_\pi=0.5$ ​=0.5（BL = 32）與 τπ=1 $\tau_\pi=1$ ​=1（BL = 256）。一個動作的機率可以寫成閉式：
+
+ πϕ(ut)=∏k∈Mt(stk)utk(1−stk)1−utk $\pi_\phi(u_t)=\prod_{k\in\mathcal M_t}\big(s_t^k\big)^{u_t^k}\big(1-s_t^k\big)^{1-u_t^k}$ ​(ut​)=k∈Mt​∏​(stk​)utk​(1−stk​)1−utk​
+Sec. 3.2
+
+ 乘積只算仍遮住的位置：已解開的位置不計入似然（Sec. 3.3），Alg. 1 第 16 行把它們的 u $u$ 設為 0。這個似然可以精確計算，不需要近似；對 dLLM 本身做 RL 後訓練時則需要近似似然（Zhao et al., 2025a）。
+
+ Bernoulli 抽樣可能讓所有位置都是 0。測試時遇到 ut=0 $u_t=0$ ​=0，就解開 stk $s_t^k$ k​ 最大的位置（Alg. 1 第 17–18 行；作者寫「similar to Fast-dLLM」）。這個 fallback 只在測試時使用：訓練時強制解遮罩容易造成 reward hacking。訓練時不用 fallback，若 T $T$ 步內沒有解完就終止，帶著剩下的遮罩評分；這類樣本的正確性分數很低或為零，策略很快學會不留遮罩。
+
+ Sec. 4.1 另外定義測試時的機率縮放：把 s $s$ 換成 min⁡{1,βs} $\min\{1,\beta s\}$ 。β>1 $\beta>1$ 每步解開更多，β<1 $\beta<1$ 更少。結果在 S9 討論。
+
+ C2BBernoulli 策略：τπ、β 與 fallback
+
+ 每格上方的實心長條是信心度 c，空心長條是解遮罩機率 s。調整 τπ 與 β，看期望解開數、全部為 0 的機率 P0 與這次抽樣的對數似然。
+
+ A · 一般區塊B · 尾端填充 token
+
+ 信心度 c機率 s抽到解開 ✓，fallback ↑
+
+ 1
+M✓
+2
+M✓
+3
+M
+4
+M
+5
+M✓
+6
+M
+7
+M
+8
+M✓
+9
+M
+10
+M✓
+11
+M
+12
+M✓
+13
+M✓
+14
+M
+15
+M✓
+16
+M✓
+
+ 策略溫度 τπ1.00
+
+ 0.511.5
+
+ 機率縮放 β0.250.50.7511.5234
+
+ 測試時 fallback重新抽樣
+
+ E|U| = 5.515（Σs = 5.515）
+P0 = Π(1 − s) = 4.936e-5
+本次 |U| = 9
+log π(u) = -6.6364
+以抽樣出的 u（fallback 前）計算；fallback 只在測試使用，不計入似然
+右鄰比例 33%
+
+ 玩具設定：示意 logit bk = 8(ck − 0.7)，不是論文訓練出的網路；真實策略是 transformer，輸入整個 ct、mt、t。sk = min{1, β·σ(bk/τπ)}。E|U| = Σsk + P0·[fallback 開]，P0 = Π(1 − sk)。log π(u) 一律以抽樣出的 u（fallback 前）計算：fallback 只在測試使用，不計入似然。讀數由本頁依 Sec. 3.2 即時計算。
+
+ 期望解開 5.52 個，本次 9 個
+
+ 降低 τπ $\tau_\pi$ ​ 使 s $s$ 更接近 0 或 1；β<1 $\beta<1$ 減少每步解開數、提高 P0 $P_0$ ​；β>1 $\beta>1$ 使部分 s $s$ 截到 1。
+
+ 06 · GRPO
+
+ GRPO 以組內相對獎勵更新策略
+
+ 策略以 GRPO（Shao et al., 2024）訓練。GRPO 是 PPO（Schulman et al., 2017）的變體，以同一組樣本的平均獎勵代替價值網路。策略梯度法有三個要點：優勢（advantage）為正的動作，更新後機率提高；為負則降低。ρ $\rho$ 是新舊策略對同一個動作給出的機率比。截斷限制單次更新可以把 ρ $\rho$ 推離 1 多遠。
+
+ 對每個提示 x $x$ ，用舊策略 πϕold $\pi_{\phi_{\rm old}}$ ​​ 抽 G $G$ 條軌跡（G=8 $G=8$ ，Table 1）。dLLM 溫度固定為 τ=0 $\tau=0$ （貪婪解碼），所以同組樣本的差異只來自解遮罩動作。第 g $g$ 條軌跡的優勢是它的獎勵減去組內平均，不除以標準差（依 Zhao et al., 2025a 的建議）：
+
+ Atg=R(y,yT^gg)−1G∑i=1GR(y,yT^ii) $A_t^g=R\big(y,y^g_{\hat T_g}\big)-\frac1G\sum_{i=1}^{G}R\big(y,y^i_{\hat T_i}\big)$ g​=R(y,yT^g​g​)−G1​i=1∑G​R(y,yT^i​i​)
+Sec. 3.3
+
+ 獎勵只在最後一步給出，最後一步的獎勵傳給該軌跡的所有步驟，所以同一條軌跡的每一步使用相同的優勢。目標函數如下（Sec. 3.3 無編號式）：
+
+ J(ϕ)=E[1G∑g=1G1T−T^g∑t=T^gTmin⁡(ρtgAtg, clip(ρtg,1−ϵ,1+ϵ)Atg)],ρtg=πϕ(utg)πϕold(utg) $J(\phi)=\mathbb E\Big[\frac1G\sum_{g=1}^{G}\frac{1}{T-\hat T_g}\sum_{t=\hat T_g}^{T}\min\big(\rho_t^gA_t^g,\ \mathrm{clip}(\rho_t^g,1-\epsilon,1+\epsilon)A_t^g\big)\Big],\quad \rho_t^g=\frac{\pi_\phi(u_t^g)}{\pi_{\phi_{\rm old}}(u_t^g)}$ 1​g=1∑G​T−T^g​1​t=T^g​∑T​min(ρtg​Atg​, clip(ρtg​,1−ϵ,1+ϵ)Atg​)],ρtg​=πϕold​​(utg​)πϕ​(utg​)​
+Sec. 3.3
+
+ 照原文；求和 t=T^g,…,T $t=\hat T_g,\dots,T$ g​,…,T 的項數為 T−T^g+1 $T-\hat T_g+1$ g​+1，正規化因子是 T−T^g $T-\hat T_g$ g​。依 Alg. 1，有動作的步數是 T−T^g $T-\hat T_g$ g​本頁推導。
+
+ ρtg $\rho_t^g$ g​ 是新舊策略對同一個動作的機率比，clip $\mathrm{clip}$ 把它截斷到 [1−ϵ,1+ϵ] $[1-\epsilon,1+\epsilon]$ ，ϵ=0.5 $\epsilon=0.5$ （expert steering 時為 0.2）。比值與截斷用來穩定 off-policy 更新。策略從頭訓練，所以移除 KL 正則項（Table 1：βKL=0 $\beta_{\rm KL}=0$ ​=0）。Bernoulli 策略的比值可以在對數空間逐位置相加本頁推導：
+
+ log⁡ρtg=∑k∈Mt[uklog⁡sksoldk+(1−uk)log⁡1−sk1−soldk] $\log\rho_t^g=\sum_{k\in\mathcal M_t}\Big[u^k\log\frac{s^k}{s^k_{\rm old}}+(1-u^k)\log\frac{1-s^k}{1-s^k_{\rm old}}\Big]$ g​=k∈Mt​∑​[uklogsoldk​sk​+(1−uk)log1−soldk​1−sk​]
+本頁推導
+
+ 截斷的作用是標準 PPO 截斷的性質本頁推導：只有當截斷項是 min 的取值時（A>0 $A>0$ 且 ρ>1+ϵ $\rho>1+\epsilon$ ，或 A<0 $A<0$ 且 ρ<1−ϵ $\rho<1-\epsilon$ ），目標對 ρ $\rho$ 是常數，梯度為 0；其他區域目標等於 ρA $\rho A$ ，包括 A>0,ρ<1−ϵ $A>0,\rho<1-\epsilon$ 與 A<0,ρ>1+ϵ $A<0,\rho>1+\epsilon$ 兩區。下圖的獎勵暫時只看對錯，R=r $R=r$ ，相當於下一節 Eq. 3.1 取 α = 0。
+
+ C3a組內優勢與截斷
+
+ 左：切換 8 個樣本的對錯，看優勢 A = R − R̄ 的正負。右：選一個優勢值，拖動 ρ，看截斷後的目標在哪一側不再隨 ρ 改變。
+
+ 預設組混合全部答錯全部答對
+
+ #1答對 ✓#2答對 ✓#3答錯 ✗#4答對 ✓#5答錯 ✗#6答錯 ✗#7答對 ✓#8答錯 ✗
+
+ R̄ = 0.500　優勢 > 0 的樣本數 4
+
+ 截斷圖的優勢 A
+ A = +0.25
+ A = −0.25
+ 選用某列
+ 第 1 列第 2 列第 3 列第 4 列第 5 列第 6 列第 7 列第 8 列
+
+ 機率比 ρ1.00
+
+ 截斷幅度 ε0.50.2（ES）
+
+ f(ρ) = min(ρA, clip(ρ)A)未截斷 ρA
+
+ R = r（暫不含速度），Ag = rg − (1/8)Σr。f(ρ) = min(ρA, clip(ρ, 1−ε, 1+ε)A)。灰色區段的梯度為 0（本頁推導，標準 PPO 截斷）。讀數由本頁依 Sec. 3.3 即時計算。
+
+ 優勢為正 4 個；ρ = 1.00，f = 0.250
+
+ 混合組的優勢是 ±0.5。全部答錯或全部答對時，優勢全為 0，這一組不更新策略。A = +0.25、ε = 0.5 時，ρ > 1.5 之後 f 不再增加；ρ < 0.5 時 f = ρA。GRPO 只看組內相對獎勵，所以獎勵如何組合正確與速度，直接決定哪些樣本被強化，這是下一節的主題。
+
+ 延伸閱讀：dLLM 的強化學習後訓練與 GRPO
+
+ 07 · 乘法獎勵
+
+ 乘法獎勵只在答對時鼓勵加速
+
+ 作者的獎勵把正確性分數 r $r$ 與速度因子相乘（Eq. 3.1）：
+
+ R(y,yt)={r(y,yt)⋅(1−T−tT)α,t=T^0,otherwise $R(y,y_t)=\begin{cases}r(y,y_t)\cdot\Big(1-\dfrac{T-t}{T}\Big)^{\alpha}, & t=\hat T\\[6pt] 0, & \text{otherwise}\end{cases}$ ​)=⎩⎨⎧​r(y,yt​)⋅(1−TT−t​)α,0,​t=T^otherwise​
+Eq. 3.1
+
+ 「0, otherwise」指 t≠T^ $t\ne\hat T$ =T^ 的非終止步：獎勵只在最後一步給一次，不是指未完成的樣本。r $r$ 是任務的正確性分數；Eq. 3.1 的說明以二元獎勵為例，實作用 d1（Zhao et al., 2025a）的獎勵（Table 1），論文沒有寫出它的組成。α≥0 $\alpha\ge0$ 控制正確率與速度的權衡：α 越大越重視速度，訓練出的策略越快，但正確率較低（Fig. 3、Sec. 4.1）。
+
+ 在 t=T^ $t=\hat T$ 時 1−T−T^T=T^/T $1-\frac{T-\hat T}{T}=\hat T/T$ T−T^​=T^/T，即剩下的步數預算比例，所以 R=r (T^/T)α $R=r\,(\hat T/T)^\alpha$ /T)α本頁推導。Sec. 3.1 定義 T^∈[T] $\hat T\in[T]$ ∈[T]，即 T^≥1 $\hat T\ge1$ ≥1，字面上速度因子至少是 (1/T)α $(1/T)^\alpha$ 。推定若以 T^=0 $\hat T=0$ =0 表示用滿 T $T$ 步，速度因子為 0（α>0 $\alpha>0$ ）；α=0 $\alpha=0$ 時取 00=1 $0^0=1$ =1，獎勵只看正確性。
+
+ 加法獎勵為什麼失敗
+
+ 另一種寫法是加法獎勵 r−αT−T^T $r-\alpha\frac{T-\hat T}{T}$ T−T^​（Graves, 2016 的形式）。Sec. 3.3 指出它會 reward hacking：訓練初期一組樣本常常全部答錯，這時加法獎勵下較快的錯誤樣本得到較高的獎勵，因而得到正優勢，策略被推向更快而不是更正確。Fig. 9b 中，加法獎勵訓練出一次解開全部位置的策略，步數收斂到最小值。
+
+ 本頁推導 · 前提：r 為二元若 r∈{0,1} $r\in\{0,1\}$ （論文例示；d1 獎勵的細節論文未列），乘法獎勵下錯誤樣本 R=0≤Rˉ $R=0\le\bar R$ ，其中 Rˉ=1G∑iRi $\bar R=\frac1G\sum_iR^i$ =G1​∑i​Ri 是組內平均獎勵，所以錯誤樣本的優勢 −Rˉ≤0 $-\bar R\le0$ ≤0，等號只在整組獎勵都是 0 時成立；正優勢只給答對的樣本。這與 Sec. 4.4 的描述「assigning a positive advantage only if the generation is correct」一致。若 d1 獎勵對錯誤答案也給正分（例如格式分），這個結論不成立。答對但很慢的樣本仍可能得到負優勢，例如下圖預設 P2 的第 4 列。
+
+ C3b乘法與加法獎勵下的優勢
+
+ 每個樣本有對錯與所用步數 n = T − T̂。比較同一組樣本在兩種獎勵下的優勢；P1 是訓練初期常見的「全部答錯」。
+
+ 預設組P1 · 全部答錯P2 · 混合P3 · 全部答對
+
+ 速度指數 α00.31310
+
+ #1答錯 ✗20推定：T̂ = 0，用滿 T 步#2答錯 ✗40推定：T̂ = 0，用滿 T 步#3答錯 ✗60推定：T̂ = 0，用滿 T 步#4答錯 ✗80推定：T̂ = 0，用滿 T 步#5答錯 ✗100推定：T̂ = 0，用滿 T 步#6答錯 ✗120推定：T̂ = 0，用滿 T 步#7答錯 ✗160推定：T̂ = 0，用滿 T 步#8答錯 ✗200推定：T̂ = 0，用滿 T 步
+
+ 答錯但優勢 > 0 的樣本數：乘法 0　加法 4
+R̄× = 0.000　R̄+ = -0.381
+
+ T = 256（與 App. C 的 L = T = 256 一致；訓練時的 T 論文未寫）。R× = r·(1 − n/T)α，R+ = r − α·n/T，A = R − R̄。α = 0 時 00 定義為 1。本元件的 r 只有 0 與 1（論文例示的二元獎勵）；論文實作用 d1 的獎勵，其組成論文未列。讀數由本頁依 Eq. 3.1 即時計算。
+
+ α = 1：答錯但優勢為正，乘法 0 個、加法 4 個
+
+ P1 下乘法獎勵的優勢全為 0；加法獎勵（α = 1）下最快的 4 個錯誤樣本優勢為正。P2 加法（α = 3）下，答錯的第 3、8 列優勢為正。r $r$ 為二元時，乘法下答錯樣本的優勢一律 ≤ 0。P3 全部答對時，兩種獎勵都依速度排序。
+
+ 08 · 玩具模型
+
+ 在玩具模型中 α 決定最佳解遮罩速度
+
+ 玩具設定本頁推導論文沒有這一節。這裡用一個可以精確計算期望值的玩具 MDP，觀察 Eq. 3.1 的 α 如何改變最佳策略。設定如下：
+
+ L $L$ 個位置，T=L $T=L$ 。策略只有一個參數 s $s$ ：每一步每個仍被遮住的位置獨立以機率 s $s$ 解開，忽略信心度。
+
+ 正確率模型：答案正確的機率 =p0∏步γmax⁡(j−1,0) $=p_0\prod_{\text{步}}\gamma^{\max(j-1,0)}$ ​∏步​γmax(j−1,0)，j $j$ 是該步同時解開的數量；每多一個同時解開的 token，正確機率乘上 γ $\gamma$ 。這個模型只用來表達「平行解開越多越容易錯」，不是論文的模型。
+
+ 訓練模式（同論文，無 fallback）：j=0 $j=0$ 的步驟浪費掉。T $T$ 步內沒有解完的樣本記為 r=0 $r=0$ 、步數 N=T $N=T$ ，乘法獎勵得 0，加法獎勵得 −α $-\alpha$ 。測試模式（有 fallback）：j=0 $j=0$ 時改為解開 1 個。
+
+ 期望值以（步數，剩餘遮罩數）的動態規劃精確計算；s $s$ 取 0.005 到 1 的 200 個網格點。
+
+ 預設（L=T=16 $L=T=16$ 、γ=0.9 $\gamma=0.9$ 、p0=0.8 $p_0=0.8$ ​=0.8）下，乘法獎勵的最佳 s∗ $s^*$ 隨 α 增加：α = 0、0.3、1、3、10 分別為 0.290、0.375、0.720、1.000、1.000。α 大到一定程度後，最佳值停在上限 s=1 $s=1$ （一步解開全部）。加法獎勵在 α ≥ 0.3 時 s∗=1 $s^*=1$ =1，方向與 Fig. 9b 相同。α = 0 的最佳值不在 s→0 $s\to0$ ：步數上限 T=L $T=L$ 下，浪費的步會造成未完成。
+
+ C4玩具 MDP：α 與獎勵形式決定最佳解遮罩速度
+
+ 左：訓練模式（無 fallback）下期望獎勵對 s 的曲線，橘點是最佳 s*。右：測試模式（有 fallback）下，所有 s 構成的 NFE–正確率曲線，與五個 α 的訓練最佳點。
+
+ 速度指數 α00.31310
+
+ 目前策略 s0.500
+
+ 進階設定
+
+ 位置數 L（T = L）81632
+
+ 每多一個平行 token 的正確率乘數 γ0.90
+
+ 基礎正確率 p00.80
+
+ 獎勵形式乘法 r·(1 − N/T)α加法 r − α·N/T
+
+ 目前 α其他 α（線型各異）● 乘法獎勵的訓練最佳點□ 加法獎勵的訓練最佳點＋ 目前 s
+
+ 目前 s = 0.500：訓練 E[R×] = 0.1551　未完成機率 0.0002（未完成：乘法得 0，加法得 −α）
+測試 NFE = 4.48　測試正確率 = 0.239
+最佳 s*（α = 1，乘法，L = 16）= 0.720　五個 α 的乘法 s*：0.290 / 0.375 / 0.720 / 1.000 / 1.000
+
+ 此模型忽略信心度、用單一參數 s，正確率模型 γ 是玩具設定。
+
+ α 大到一定程度後，最佳值停在上限 s = 1（一步解開全部），所以 α = 3 與 α = 10 的 s* 相同；這與論文 App. B.5 的「α 不平滑」是不同的現象。
+
+ 論文對加法獎勵失敗的解釋是優勢符號（C3b）；這裡顯示的是期望獎勵最佳值，兩者方向一致但不是同一件事。
+
+ 玩具只算期望獎勵的最佳值，不說明 GRPO 訓練是否穩定；乘法獎勵在大 α 時的 s* = 1 也是玩具的期望最佳值，論文只主張乘法獎勵避開了整組答錯時的正優勢機制。讀數由本頁依 Eq. 3.1 與動態規劃即時計算。
+
+ α = 1，s* = 0.720；目前 s = 0.500
+
+ 這個玩具與論文的對應與不對應：玩具只算期望獎勵的最佳值，不說明 GRPO 訓練是否穩定；論文對加法獎勵失敗的解釋是 S7 的優勢符號機制，玩具顯示的是期望獎勵最佳值，兩者方向一致但不是同一件事；論文對乘法獎勵的主張只是它避開「整組答錯時較快錯誤樣本得到正優勢」的機制，不是「乘法獎勵永遠不會收斂到一步解開全部」。
+
+ 09 · 半自回歸結果
+
+ 半自回歸下學到的策略與 Fast-dLLM 相當
+
+ 設定（Sec. 4.1）：環境是 LLaDA-8B-Instruct（Dream-7B-Instruct 的結果見 App. B.4）。五個策略 α∈{10,3,1,0.3,0} $\alpha\in\{10,3,1,0.3,0\}$ 以 BL = 32 在 GSM8K 與 MATH 訓練集的混合資料上訓練一個 epoch（約 15,000 筆）。每個 α 有兩個訓練 seed，依最終訓練損失選一個；測試結果平均三個 seed。基準：隨機與 top-K 用 K∈{8,16,32,64,128,256} $K\in\{8,16,32,64,128,256\}$ ，Fast-dLLM 用 λ∈{0.1,0.2,…,1.0} $\lambda\in\{0.1,0.2,\dots,1.0\}$ ；全部 τ=0 $\tau=0$ 。
+
+ 結果：策略優於隨機與 top-K，在中高 NFE 與 Fast-dLLM 相當，沒有超越；作者推測 Fast-dLLM 在 semi-AR 下接近最佳。α = 10 訓練較不穩定，但成功時在約 10 NFE 優於 Fast-dLLM：Table 2 中策略 10.3 NFE 35.2%，Fast-dLLM 10.6 NFE 17.5%。作者歸因於策略在最後一個區塊產生數字答案時放慢（Fig. 5b）；App. C.2 在 N = 100 個樣本上的對應數字為約 38% 對約 18%。
+
+ BL = 32 的摘錄（App. J Table 2：GSM8K；Table 3：MATH；策略為三個 seed 的平均）
+ 方法GSM8K NFEGSM8K %MATH NFEMATH %
+
+ Fast-dLLM10.617.511.47.4
+
+ Fast-dLLM32.654.043.920.0
+
+ Fast-dLLM43.272.657.628.4
+
+ Fast-dLLM51.976.668.132.4
+
+ Fast-dLLM82.279.7100.734.4
+
+ 策略10.335.210.815.3
+
+ 策略46.275.559.131.5
+
+ 策略50.776.664.631.9
+
+ 策略82.780.0100.234.1
+
+ 策略135.880.5153.435.1
+
+ 改變 α 不能平滑地調整速度
+
+ 改變訓練時的 α 不能平滑地走遍 Pareto 前緣：α = 3 的行為與 α = 1 幾乎相同；在更密的網格 {10,9,…,1,0.3,0} $\{10,9,\dots,1,0.3,0\}$ 中，α ≥ 4 收斂到接近 α = 3 或 α = 10 的策略，沒有中間值（App. B.5、Fig. 14）。
+
+ 測試時控制（Fig. 6）：仿照 Chen et al. (2025a)，把解遮罩機率改為 utk∼Ber(min⁡{1,βstk}) $u_t^k\sim\mathrm{Ber}(\min\{1,\beta s_t^k\})$ k​∼Ber(min{1,βstk​})。以 α = 1 的策略改變 β，NFE 與正確率沿 Pareto 前緣連續變化；MATH-500 約 25 NFE 時，策略 20%、Fast-dLLM 10%。τπ $\tau_\pi$ ​ 也能小幅調整（Fig. 16：τπ∈{1.5,1.0,0.5} $\tau_\pi\in\{1.5,1.0,0.5\}$ ​∈{1.5,1.0,0.5}；semi-AR 以 0.5 最佳，完整擴散以 1 最佳）。
+
+ 解遮罩行為與 Fast-dLLM 不同
+
+ App. C.1 在 BL32-slow 設定下比較兩者（BL = 32，Fast-dLLM λ = 0.9 對策略 α = 0.3，兩者總 NFE 與正確率幾乎相同；N = 100 個 GSM8K 測試樣本，L=T=256 $L=T=256$ ）。在這個設定下，策略同時解開相鄰 token 的比例約 20%，Fast-dLLM 約 65%（Fig. 24）；Fast-dLLM 第一個區塊約 17 NFE，逐漸降到最後一個區塊約 4 NFE，策略每個區塊約 10 NFE（Fig. 5a）。
+
+ 10 · 完整擴散
+
+ 完整擴散下策略勝過規則，expert steering 補上探索
+
+ Sec. 4.2 以 BL = L = 256 訓練與測試，其餘設定不變。所有方法都比 semi-AR 差，但策略下降最少：GSM8K 約 12 NFE 時約 50%，啟發式規則（不論是否 semi-AR）≤ 30%（Sec. 4.2 的敘述）；Table 4 中策略為 13.0 NFE 48.3%。
+
+ 理論上，BL = L 的策略可以自己學出 semi-AR 的順序；實際上在中高 NFE 仍不如 BL = 32 的策略。作者認為策略離最佳還很遠，原因可能是探索不足。App. F 的論證是：若 AR 順序明顯最好，從隨機初始化的策略抽到純 AR 軌跡的機率約 1/L!≈0 $1/L!\approx0$ 。log⁡10(256!)≈506.93 $\log_{10}(256!)\approx506.93$ ​(256!)≈506.93，即約 10−507 $10^{-507}$ ；L=8 $L=8$ 時為 1/40320 $1/40320$ 本頁推導 · 粗略量級。這個數只把一種 AR 排列與 L! $L!$ 種排列相比，忽略每步可解開多個 token 的動作空間。
+
+ Expert steering
+
+ Expert steering（ES）在訓練時把策略換成混合分布（App. F）：
+
+ πϕES=GG+E πϕ+EG+E∑e=1Eδe $\pi_\phi^{\rm ES}=\frac{G}{G+E}\,\pi_\phi+\frac{E}{G+E}\sum_{e=1}^{E}\delta_e$ ES​=G+EG​πϕ​+G+EE​e=1∑E​δe​
+App. F
+
+ 每組抽 G+E $G+E$ 個樣本，其中 E $E$ 個來自專家 δe $\delta_e$ ​。計算似然比時要用 πϕES $\pi_\phi^{\rm ES}$ ES​：專家樣本在 πϕ $\pi_\phi$ ​ 下的似然約為 0，若用 πϕ $\pi_\phi$ ​ 會造成不穩定。實作用一個專家：Fast-dLLM（λ = 0.9、BL = 32），每組固定混入一條（E=1 $E=1$ ）。策略比專家差時，專家樣本傾向得到正優勢，策略的更新方向偏向專家樣本；策略比專家好時，專家樣本得到負優勢，策略的正確率仍可高於專家。
+
+ 結果：高 NFE 時接近 semi-AR 的最佳正確率（Sec. 4.2 的參考值為 GSM8K 約 80%、MATH 約 35%）；Table 4 中 GSM8K 達 77.2%（70.5 NFE），Table 5 中 MATH 達 31.4%（86.7 NFE）。ES 的結果點不連續：Table 4 的 ES 列在 20.6 與 70.5 NFE 之間沒有點，Table 5 在 23.1 與 86.7 NFE 之間沒有點，所以不能讀成一條平滑的前緣。代價是訓練明顯不穩定，多個 α 收斂到幾乎相同的策略。
+
+ BL = 256 的摘錄（App. J Table 4：GSM8K；Table 5：MATH）。ES 列全部列出
+ 方法GSM8K NFEGSM8K %MATH NFEMATH %
+
+ 隨機（256 NFE）25651.625618.5
+
+ Fast-dLLM 最高點32.138.749.920.8
+
+ 策略13.048.314.518.8
+
+ 策略18.551.922.319.8
+
+ 策略27.154.833.719.9
+
+ 策略50.556.161.621.0
+
+ 策略93.361.8121.522.9
+
+ 策略（ES）15.750.617.517.7
+
+ 策略（ES）20.651.923.119.8
+
+ 策略（ES）70.577.286.731.4
+
+ 策略（ES）72.476.790.130.1
+
+ 策略（ES）87.975.198.031.0
+
+ 生成順序（Fig. 7、App. C.3）：Fast-dLLM 常呈現右到左；不用 ES 的策略接近隨機順序，作者解讀為策略不依賴填充 token 偏高的信心度；用 ES 的策略改為由左到右生成。以 Spearman 相關比較生成順序，Fast-dLLM 對策略為 0.26 ± 0.21，對 ES 策略為 −0.24 ± 0.51。
+
+ 11 · 遷移與消融
+
+ 策略可跨模型與長度遷移，跨領域較弱
+
+ 模型遷移 LLaDA → Dream（Fig. 8a）：多數策略接近 Fast-dLLM，與直接在 Dream 上訓練的策略相近；例外是 α = 10，它退回 Fast-dLLM 的水準，作者認為陡峭的獎勵使它過擬合 LLaDA 的信心度模式。策略只看信心度、不看 token 嵌入，所以能跨模型使用。
+
+ 領域遷移 數學 → 程式（HumanEval、MBPP；Fig. 8b–c）：沒有完全遷移，HumanEval 尤其明顯；改用 KodCode-RL-10K 訓練的策略縮小了 HumanEval 的差距，並改善 MBPP 在低 NFE 的表現。
+
+ 長度遷移 L = 256 → 512（Fig. 8d、Fig. 18）：基準方法進一步變差，策略的表現與 L = 256 時相近。transformer 可以接受不同長度的輸入，MLP 不行。
+
+ 非貪婪解碼（τ=0.8 $\tau=0.8$ ；Fast-dLLM λ = 0.6 對策略 α = 1、τπ=0.5 $\tau_\pi=0.5$ ​=0.5，BL = 32）：策略的 pass@k 較高，差距隨 k 擴大（Sec. 4.3：跨資料集平均 k = 1 時 +0.98%、k = 32 時 +2.56%）；多數決與 ORM 選答也較好（Fig. 19）。非貪婪時，信心度定義為抽到的 token 的機率（Sec. 4.3 註 2）。
+
+ 設計消融
+
+ Sec. 4.4、Fig. 9、Fig. 20 的消融：乘法獎勵優於加法獎勵（S7）；Bernoulli 與 DPLS 表現相近，DPLS 對 α 的可控性略好；只用每個位置的最大信心度略優於 top-50 信心度；隱藏狀態策略（約 300M 參數）較差且訓練較不穩定。測試時把 t $t$ 或 mt $m_t$ ​ 歸零都會降低正確率，移除 mt $m_t$ ​ 比移除 t $t$ 的正確率下降更多（GSM8K 只歸零 t $t$ 為例外），NFE 變化最多 1.2（基準為 GSM8K 75.1% / 45.8 NFE、MATH-500 34.0% / 58.4 NFE）。
+
+ 相關工作
+
+ Sec. 5 的比較：Hong et al.（2025b）同樣以 GRPO 學習解遮罩策略，但每步解開固定數量，本文以 Bernoulli 讓數量可變；DiFFPO（Zhao et al., 2025b）同時學習自適應門檻並更新基礎模型；Bansal & Sanghavi 與 Bao et al. 以蒸餾而非 RL 訓練小型模組，作者預期它們承襲啟發式規則在非 semi-AR 設定的困難；Azangulov et al. 建模 token 之間的相依性；Kim et al.（2025a）與 Ben-Hamu et al. 的規則出現在 Fig. 11 的額外基準比較。
+
+ 延伸閱讀：學習式 unmasking 與 dLLM 加速的相關工作
+
+ 12 · 實作
+
+ 實作設定與常見錯誤
+
+ App. H Table 1 與正文的設定
+ 類別項目值
+
+ 訓練learning rate / scheduler / warmup3e-5 / cosine / 100 steps
+
+ 訓練effective batch size / weight decay / max grad norm16 / 0.1 / 0.2
+
+ 訓練clipping factor ε0.5（expert steering 0.2）
+
+ 訓練資料 / epochGSM8K + MATH 訓練集混合 / 1
+
+ GRPOgroup size G / βKL / 正確性獎勵8 / 0.0 / d1（Zhao et al., 2025a）的獎勵
+
+ 策略網路blocks / hidden / FF / heads / 時間嵌入 / 參數量1 / 128 / 512 / 2 / 128 / 300K
+
+ 正文環境模型 / L / 訓練 BLLLaDA-8B-Instruct / 256 / 32（Sec. 4.1）或 256（Sec. 4.2）
+
+ 正文測試 τπ / dLLM τ0.5（BL = 32）、1（BL = 256） / 0
+
+ App. B.3硬體A100；牆鐘時間與 NFE 曲線幾乎相同（Fig. 12）
+
+ Alg. 1 逐行對照
+
+ 完整擴散（BL = L）下的策略取樣（App. A，Algorithm 1）。左欄照原文轉錄，右欄說明。
+
+ Algorithm 1 Policy Sampling
+說明
+
+ 3: y_T ← (M, …, M)
+4: M_T ← {1, …, L}從全部遮住的序列開始；仍遮住的位置集合是全部位置。
+
+ 5: for t = T, T − 1, …, 1 do
+6: if M_t = ∅ then
+7: break步數倒數；全部解開就停止。
+
+ 9: p_t^k ← p_θ(· | x, y_t), ∀k ∈ [L]
+10: c_t^k ← max_v p_t^k(v), ∀k ∈ [L]
+12: m_t^k ← 1[k ∈ M_t], ∀k ∈ [L]一次 dLLM 前向計算（1 NFE），得到所有位置的分布、信心度與遮罩向量。
+
+ 13: b_t ← f_ϕ(c_t, m_t, t)
+14: s_t^k ← σ(b_t^k / τ_π), ∀k ∈ M_t
+15: u_t^k ∼ Ber(s_t^k), ∀k ∈ M_t策略輸出 logit，經溫度與 sigmoid 得到機率，每個遮罩位置獨立抽樣。
+
+ 16: u_t^k ← 0, ∀k ∉ M_t已解開的位置設為 0，不計入似然。
+
+ 17: if Σ_{k=1}^{L} u_t^k = 0 then
+18: u_t^{k*} ← 1, k* = argmax_{k∈M_t} s_t^k全部為 0 時解開機率最大的位置。這個 fallback 只在測試使用，訓練時不用。
+
+ 20: U_t^π ← {k ∈ M_t | u_t^k = 1}
+21: y_{t−1}^k ∼ p_t^k, ∀k ∈ U_t^π
+22: y_{t−1}^k ← y_t^k, ∀k ∉ U_t^π
+23: M_{t−1} ← M_t \ U_t^π就是 Eq. 2.2：只抽樣被選的位置，其他不變。
+
+ 25: T̂ ← t
+26: return y_T̂, T − T̂回傳答案與所用步數 T − T̂，即 NFE。
+
+ 常見錯誤
+
+ 混淆兩個 t $t$ 。Sec. 2.1 訓練時 t∈[0,1] $t\in[0,1]$ 是遮罩率；生成與 MDP 中 t=T,…,1 $t=T,\dots,1$ 是倒數的步數。App. C、D 的圖又把時間軸改成正向。
+
+ NFE 與 T^ $\hat T$ 。NFE = 步數 T−T^ $T-\hat T$ 。推定：若以 T^=0 $\hat T=0$ =0 表示用滿 T $T$ 步，乘法獎勵的速度因子為 0；Sec. 3.1 字面上 T^≥1 $\hat T\ge1$ ≥1，因子至少 (1/T)α $(1/T)^\alpha$ 。訓練時的 T $T$ 論文未寫；App. C 的分析用 L=T=256 $L=T=256$ 。
+
+ 訓練時用了 fallback。fallback 只用在測試；訓練時不強制解遮罩，未解完就終止並評分。玩具模型中未完成樣本 r=0 $r=0$ 、步數 N=T $N=T$ ：乘法得 0，加法得 −α $-\alpha$ （不是 0）。Eq. 3.1 的「0, otherwise」指非終止步，不是未完成樣本。
+
+ rollout 時 dLLM 用了隨機取樣。GRPO rollout 時 dLLM 用 τ=0 $\tau=0$ ；隨機性只來自策略的 Bernoulli 抽樣。
+
+ 似然與優勢的細節。已解開的位置不計入似然；優勢不除以標準差；不加 KL。
+
+ 用加法獎勵。加法獎勵的訓練收斂到一步解開全部（Fig. 9b）；用乘法獎勵。
+
+ 期待改 α 就能平滑調速。改 α 不保證平滑的速度—正確率權衡；測試時用 β $\beta$ 或 τπ $\tau_\pi$ ​ 調整。
+
+ ES 的似然比用錯分布。Expert steering 的似然比必須用混合分布 πϕES $\pi_\phi^{\rm ES}$ ES​。
+
+ 輸入加入更多資訊。只用每個位置的最大信心度作輸入；top-50 信心度或隱藏狀態沒有幫助。
+
+ 附註：App. E 的 DPLS 是另一種動作分布。它以 Plackett–Luce 模型加上固定效用 bSTOP=0 $b_{\rm STOP}=0$ ​=0 的 STOP token，依 softmax(bt/τπ) $\mathrm{softmax}(b_t/\tau_\pi)$ ​/τπ​) 逐一抽取不放回，抽到 STOP 即停，所以每步至少解開一個位置。消融顯示它與 Bernoulli 表現相近（Fig. 9c），作者因 Bernoulli 較簡單而採用 Bernoulli。
+
+ 13 · 研究脈絡
+
+ 研究脈絡
+
+ 離散擴散從 D3PM 開始；MaskGIT 在影像生成中提出依信心度解遮罩；MDLM 與 SEDD 把遮罩擴散用在語言模型上；LLaDA 與 Dream 把規模擴大到可與 AR 模型比較；區塊擴散提出 semi-AR 生成；Fast-dLLM 以信心度門檻加速推論。另一條線是強化學習：PPO 與其變體 GRPO，以及把 RL 用在 dLLM 後訓練的 d1。同期的學習式解遮罩（Hong et al.）與本文都把解遮罩順序交給學到的策略。每張卡片連到對應的研究筆記。
+
+ 離散擴散信心度規則dLLMsemi-ARRL同期學習式本文
+
+ 2021離散擴散Structured Denoising Diffusion Models in Discrete State-Spaces
+Austin et al.
+離散擴散（D3PM）
+arXiv ↗筆記
+2022信心度規則MaskGIT: Masked Generative Image Transformer
+Chang et al.
+confidence 式 unmasking 先例
+arXiv ↗筆記
+2023離散擴散Discrete Diffusion Modeling by Estimating the Ratios of the Data Distribution
+Lou et al.
+離散擴散語言模型
+arXiv ↗筆記
+2024RLDeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models
+Shao et al.
+GRPO 的來源
+arXiv ↗筆記
+2024離散擴散Simple and Effective Masked Diffusion Language Models
+Sahoo et al.
+MDM 訓練方法
+arXiv ↗筆記
+2025dLLMLarge Language Diffusion Models
+Nie et al.
+LLaDA，環境模型
+arXiv ↗筆記
+2025semi-ARBlock Diffusion: Interpolating Between Autoregressive and Diffusion Language Models
+Arriola et al.
+semi-AR 區塊生成
+arXiv ↗筆記
+2025RLd1: Scaling Reasoning in Diffusion Large Language Models via Reinforcement Learning
+Zhao et al.
+dLLM 的 RL 後訓練
+arXiv ↗筆記
+2025信心度規則Fast-dLLM: Training-free Acceleration of Diffusion LLM by Enabling KV Cache and Parallel Decoding
+Wu et al.
+confidence 門檻 heuristic 基準
+arXiv ↗筆記
+2025dLLMDream 7B: Diffusion Large Language Models
+Ye et al.
+Dream，環境模型
+arXiv ↗筆記
+2025同期學習式Improving Discrete Diffusion Unmasking Policies Beyond Explicit Reference Policies
+Hong et al.
+同期的 GRPO unmasking policy
+arXiv ↗筆記
+2025本文Learning Unmasking Policies for Diffusion Language Models
+Jazbec et al.
+本論文
+arXiv ↗筆記
+
+ 14 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ Sec. 6 列出的限制：每個 α 要訓練一個策略，成本高，而且不一定給出夠細的速度控制；測試時介入（β $\beta$ 、τπ $\tau_\pi$ ​）有希望但尚無定論。未來方向包括擴大多領域訓練資料、學習重新遮罩（remask）已解開的 token，以及推廣到多模態遮罩擴散模型。
+
+ 研究筆記（依閱讀順序）
+
+ 擴散語言模型的 unmasking 策略：從 heuristic 到強化學習總覽總覽
+
+ Masked diffusion 的離散擴散脈絡D3PM、MDLM、SEDD
+
+ LLaDA 與 Dream：可比擬 AR 的 dLLM環境模型
+
+ Semi-AR 區塊生成區塊長度 BL
+
+ Confidence 門檻式 unmasking heuristictop-K 與 Fast-dLLM
+
+ dLLM 的強化學習後訓練與 GRPOPPO、GRPO、d1
+
+ 學習式 unmasking 與 dLLM 加速的相關工作同期工作
+
+ Unmasking 作為 MDP 與輕量 policy 設計本論文的方法
+
+ arXiv 2512.09106 ↗
+ 程式碼 apple/ml-rl-dllm ↗
+
+ Metod Jazbec, Theo X. Olausson, Louis Béthune, Pierre Ablin, Michael Kirchhof, João Monteiro, Victor Turrisi, Jason Ramapuram, Marco Cuturi. Learning Unmasking Policies for Diffusion Language Models. arXiv:2512.09106（v4，2026-06-01）.
+
+ 本頁的方程式與數字取自論文 v4；標示「本頁推導」的內容為本頁自行推導，「玩具設定」為本頁設定的示意數值，「推定」為依論文文字推測、論文未明寫的事實。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記

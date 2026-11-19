@@ -1,0 +1,148 @@
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="recurrent" data-toc="05" data-tt="遞迴狀態">
+  <div class="ch-num">05 · 遞迴狀態</div>
+  <h2>遞迴序列記憶把歷史壓進固定大小的狀態</h2>
+  <details class="box" open><summary>先備知識：向量、內積、外積、正交</summary><div>
+    <p>向量是一列數字，例如 $k=(1,0)$。兩個向量的內積 $k^\top q$ 是對應元素相乘再相加；內積為 0 時稱兩者<b>正交</b>，例如 $(1,0)$ 與 $(0,1)$。範數 $\|x\|=\sqrt{x^\top x}$ 是向量的長度，$\|k\|=1$ 稱為單位向量。</p>
+    <p><b>外積</b> $vk^\top$ 是一個矩陣：第 $i$ 列第 $j$ 欄的元素是 $v_ik_j$。例：$v=(0.6,0.8)$、$k=(1,0)$ 時，$vk^\top=\begin{pmatrix}0.6&0\\0.8&0\end{pmatrix}$。矩陣乘上向量 $(vk^\top)q=v\,(k^\top q)$，也就是「$v$ 乘上 $k$ 與 $q$ 的內積」。</p>
+  </div></details>
+  <div class="prose">
+    <h3>先看一個 2 維的例子</h3>
+    <p>令狀態 $S$ 是一個 $2\times2$ 矩陣，起始為 0。寫入一對 key–value 的方法是把外積 $vk^\top$ 加進 $S$；以 key $k$ 讀取的方法是計算 $Sk$。</p>
+    <p>第一次寫入 $k_1=(1,0)$、$v_1=(0.6,0.8)$：$S=v_1k_1^\top=\begin{pmatrix}0.6&0\\0.8&0\end{pmatrix}$，讀出 $Sk_1=(0.6,0.8)=v_1$。第二次寫入與 $k_1$ 正交的 $k_2=(0,1)$、$v_2=(1,0)$：$S=\begin{pmatrix}0.6&1\\0.8&0\end{pmatrix}$，讀 $Sk_1$ 仍是 $v_1$，因為 $k_2^\top k_1=0$。第三次寫入與 $k_1$ 不正交的 $k_3=(0.707,0.707)$：讀 $Sk_1$ 會多出 $0.707\,v_3$。這個多出來的部分稱為<b>串擾</b>：讀某個 key 時混進其他 key 的值。2 維空間最多只能放 2 個互相正交的 key。</p>
+    <p>遞迴序列記憶做的就是這件事：把歷史壓縮進一個與前向計算耦合、大小固定的潛狀態（§III-C）。經典的 RNN 與 LSTM、線性注意力遞迴與狀態空間模型（SSM）都屬此類。</p>
+  </div>
+  <details class="box" open><summary>符號與術語表</summary><div>
+    <div class="tscroll" style="margin:4px 0 0"><table class="stack">
+      <thead><tr><th>符號／術語</th><th>意義</th></tr></thead><tbody>
+      <tr><td data-h="符號">$x_t$</td><td data-h="意義">第 $t$ 個 token 的輸入表示</td></tr>
+      <tr><td data-h="符號">$q_t,k_t,v_t$</td><td data-h="意義">查詢（query）、鍵（key）、值（value）向量；$k_t\in\mathbb R^{d_k}$，$v_t\in\mathbb R^{d_v}$</td></tr>
+      <tr><td data-h="符號">$S_t$</td><td data-h="意義">線性注意力的矩陣值狀態，大小 $d_v\times d_k$（Fig. 3）</td></tr>
+      <tr><td data-h="符號">$\alpha_t,\beta_t,\gamma_t$</td><td data-h="意義">Fig. 3 遞迴式中的保留（衰減）、擦除、寫入係數</td></tr>
+      <tr><td data-h="符號">$h_t$；$A_t,B_t,C_t$</td><td data-h="意義">SSM 的隱藏狀態與狀態轉移、輸入、輸出矩陣；狀態大小 $d\times N$（Fig. 3）</td></tr>
+      <tr><td data-h="符號">$h$；$E$；$S(h)$；$g_i(h)$</td><td data-h="意義">MoE 的輸入隱藏狀態、專家數、被選中的小子集、閘控權重（Eq. 1，用於 08）</td></tr>
+      <tr><td data-h="符號">KV 快取</td><td data-h="意義">自迴歸推論時累積的過去 token 的 key–value 張量</td></tr>
+      <tr><td data-h="符號">隱式／顯式</td><td data-h="意義">記憶是否有獨立且可控的儲存或檢索介面（§II-A）</td></tr>
+      <tr><td data-h="符號">離線／線上</td><td data-h="意義">更新只在訓練期，或推論期也能更新（§II-B）</td></tr>
+      <tr><td data-h="符號">短期／長期</td><td data-h="意義">資訊能持續影響計算的有效視野（§II-C）</td></tr>
+      <tr><td data-h="符號">$L$、$W$</td><td data-h="意義">序列長度、滑動視窗大小（C3 使用）</td></tr>
+      <tr><td data-h="符號">$n$、$M$</td><td data-h="意義">雜湊查表中的不同鍵數、槽數（C4 使用，本頁符號）</td></tr>
+      </tbody></table></div>
+  </div></details>
+  <div class="prose">
+    <h3>從線性注意力到 delta rule</h3>
+    <p>線性注意力把注意力核化並利用矩陣乘法的結合律，把因果注意力寫成以線性時間更新的遞迴狀態；GLA 對矩陣值狀態加入資料相依的衰減；Mamba 與 Mamba-2 引入選擇性更新與 SSD 形式；Gated Delta Networks（GDN）以輸入條件的 delta rule 做內容感知的保留（§III-C b）。Fig. 3 把兩類遞迴寫成：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$S_t=\alpha_tS_{t-1}-\beta_tS_{t-1}k_tk_t^\top+\gamma_tv_tk_t^\top,\qquad \text{Memory Size}=d_v\times d_k$$</div><span class="eq-n">Fig. 3，線性注意力</span></div>
+  <div class="eq"><div class="eq-m">$$h_t=A_th_{t-1}+B_tx_t,\qquad \text{Memory Size}=d\times N$$</div><span class="eq-n">Fig. 3，SSM</span></div>
+  <div class="prose">
+    <p>SSM 的式子中，$h_t$ 是狀態，$A_t$ 是狀態轉移，$B_t$ 把輸入寫進狀態，$C_t$ 負責讀出；本頁的元件只使用第一條式子，不展開 SSM。圖中 $q_t$ 以虛線連到記憶方塊，表示讀取。<span class="pill-rd">本頁推導</span>讀出寫成 $o_t=S_tq_t$，以某個 key 查詢時為 $S_tk_i$；論文圖中沒有寫出讀出式。</p>
+    <p data-lo="LO7">Fig. 3 的線性注意力狀態更新式是 $S_t=\alpha_tS_{t-1}-\beta_tS_{t-1}k_tk_t^\top+\gamma_tv_tk_t^\top$，狀態大小為 $d_v\times d_k$。<span class="pill-rd">本頁推導</span>三項各有作用：$\alpha_tS_{t-1}$ 讓整個狀態以比例 $\alpha_t$ 保留，$\alpha_t&lt;1$ 即衰減（遺忘）；$-\beta_tS_{t-1}k_tk_t^\top$ 擦除狀態在 $k_t$ 方向上原本存的值；$+\gamma_tv_tk_t^\top$ 把新值 $v_t$ 綁到 $k_t$ 上寫入。係數與文獻的對應為：線性注意力取 $\alpha=1,\beta=0,\gamma=1$，即純加法寫入；delta rule 取 $\alpha=1,\beta=\gamma$。這些對應是本頁依 §III-C 的描述與原論文的標準形式整理，論文沒有逐一寫出。</p>
+    <p>衰減式（GLA 類）對應 $\beta=0$、$\alpha&lt;1$，這是兩層簡化：原方法的衰減是資料相依的，而且 GLA 的衰減是逐通道（對角矩陣），本頁用一個常數純量 $\alpha$ 代替。Mamba 本身對應 Fig. 3 的第二條式子，本頁不把它寫成第一條式子的某組係數。Gated delta（GDN）的原式是 $S_t=\alpha_t(S_{t-1}-b_tS_{t-1}k_tk_t^\top)+b_tv_tk_t^\top$，展開後對應 $\alpha=\alpha_t$、$\beta=\alpha_tb_t$、$\gamma=b_t$。</p>
+    <h3>覆寫與串擾</h3>
+    <p data-lo="LO8"><span class="pill-rd">本頁推導</span>同一個單位 key 寫入兩次時，兩種規則讀出的結果不同。若 $\|k_t\|=1$ 且 $\alpha=\beta=\gamma=1$，寫入後 $S_tk_t=S_{t-1}k_t-S_{t-1}k_t(k_t^\top k_t)+v_t(k_t^\top k_t)=v_t$：delta rule 讀出新值，舊值被完全取代，這稱為<b>覆寫</b>（新值取代同一個 key 的舊值）。純加法寫入則讀出 $S_{t-1}k_t+v_t$，也就是舊值＋新值。一般而言，$T$ 筆加法寫入後以 $k_i$ 讀取，得到 $S_Tk_i=v_i(k_i^\top k_i)+\sum_{j\ne i}v_j(k_j^\top k_i)$。只有所有鍵互相正交時，交叉項 $\sum_{j\ne i}v_j(k_j^\top k_i)$ 才為 0，而 $d_k$ 維空間中最多只有 $d_k$ 個互相正交的鍵；隨機單位鍵在 $T&gt;1$ 時就會互相干擾。</p>
+    <p><span class="pill-rd">本頁推導</span>隨機單位鍵時，每個交叉項的 $(k_j^\top k_i)^2$ 期望為 $1/d_k$。下方元件把串擾定義為 $e_i=\|r_i-c_iv_i\|$，扣掉了落在 $v_i$ 方向的分量，粗估其均方根約為 $\sqrt{(T-1)(d-1)}/d$。以 20 個 seed 平均：$d=8,T=16$ 為 1.264（粗估 1.281）；$d=32,T=16$ 為 0.672（粗估 0.674）。即使 $T&lt;d$（$d=32,T=16$），平均串擾仍有 0.674。這是 Table II「壓縮損失與狀態干擾」與 §III-D a「記憶跨度與表示保真度的權衡」的最小例子。</p>
+    <h3>其他變體（§III-C c–h）</h3>
+    <ul>
+      <li>Gated DeltaNet-2 分離 key 側的擦除與 value 側的寫入。</li>
+      <li>Kaczmarz Linear Attention 把寫入視為 key 正規化的投影步。</li>
+      <li>Kalman Linear Attention 與 Gated KalmaNet 以濾波或線上回歸，依估計品質調節更新。</li>
+      <li>RWKV-7 以向量值的狀態閘與上下文內學習率推廣 delta rule。</li>
+      <li>KDA（Kimi Linear 的遞迴核心）引入逐通道的對角衰減。</li>
+      <li>DeltaProduct 組合多個 Householder 更新；Comba 用純量加低秩轉移與閉迴路回饋。</li>
+      <li>Mamba-3 改進離散化並加入複數值更新與 MIMO 形式，狀態大小仍固定。</li>
+      <li>Log-Linear Attention 以 Fenwick tree 階層取代單一固定狀態，狀態數隨長度對數成長，介於常數狀態與逐 token KV 之間。</li>
+      <li>RetNet、Jamba、MoM 為遞迴–注意力混合或多狀態路由。</li>
+      <li>Next-Latent Prediction 以預測未來潛狀態的目標塑造隱藏表示，是離線、目標誘導的機制，不是新的測試時寫入規則。</li>
+    </ul>
+    <p>作者的歸納是：多數遞迴序列記憶屬於狀態轉移更新，差別在每個 token 如何改變並分配壓縮的狀態（§III-C h）。</p>
+  </div>
+
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>線性注意力狀態的寫入與讀取</h3></div>
+    <p class="plate-lead">依序寫入 T 對隨機的 (k, v)，再以每個 kᵢ 讀回。藍色實心長條是訊號 cᵢ（讀回值在 vᵢ 方向的分量，1＝完整取回），綠色斜線長條是串擾 eᵢ。</p>
+    <div class="ctl-row" id="c2-pre" role="group" aria-label="預設係數">
+      <button type="button" class="chip" data-p="1,0,1" aria-pressed="true">線性注意力（1, 0, 1）</button>
+      <button type="button" class="chip" data-p="0.9,0,1" aria-pressed="false">衰減（0.9, 0, 1）</button>
+      <button type="button" class="chip" data-p="1,1,1" aria-pressed="false">Delta rule（1, 1, 1）</button>
+      <button type="button" class="chip" data-p="0.9,0.9,1" aria-pressed="false">Gated delta（0.9, 0.9, 1）</button>
+    </div>
+    <p class="note" style="margin:8px 0 0;font-size:13px">括號為 (α, β, γ)。衰減是純量簡化（GLA 原為逐通道衰減）；Gated delta 對應 αₜ = 0.9、bₜ = 1，α ≠ 1，不屬於 LO7 的 delta rule 係數（α = 1、β = γ）。</p>
+    <div class="c2-sl">
+      <div class="rng"><label class="lbl" for="c2-a">保留 α<output id="c2-ao">1.00</output></label><input id="c2-a" type="range" min="0" max="1" step="0.01" value="1"></div>
+      <div class="rng"><label class="lbl" for="c2-b">擦除 β<output id="c2-bo">0.00</output></label><input id="c2-b" type="range" min="0" max="1" step="0.01" value="0"></div>
+      <div class="rng"><label class="lbl" for="c2-g">寫入 γ<output id="c2-go">1.00</output></label><input id="c2-g" type="range" min="0" max="1" step="0.01" value="1"></div>
+      <div class="rng"><label class="lbl" for="c2-d">維度 d（dₖ = dᵥ）<output id="c2-do">8</output></label><input id="c2-d" type="range" min="0" max="3" step="1" value="1"></div>
+      <div class="rng"><label class="lbl" for="c2-T">寫入數 T<output id="c2-To">16</output></label><input id="c2-T" type="range" min="1" max="48" step="1" value="16"></div>
+    </div>
+    <div class="ctl-row" style="margin:6px 0 16px">
+      <div class="seg" role="group" aria-label="鍵模式" id="c2-mode"><button type="button" data-v="rand" aria-pressed="true">隨機單位鍵</button><button type="button" data-v="ortho" aria-pressed="false">正交鍵（第 t 步用 e₍t mod d₎）</button></div>
+      <button class="small-btn" type="button" id="c2-re">重新抽樣</button>
+      <button class="small-btn" type="button" id="c2-avg">平均 20 次</button>
+    </div>
+    <div class="pg two">
+      <div class="fig" id="c2-fig"><svg role="img" aria-label="各寫入位置的訊號與串擾長條圖"></svg>
+        <div class="legend"><span class="lg par">訊號 cᵢ（實心）</span><span class="lg perp">串擾 eᵢ（斜線）</span><span class="lg ref">c = 1 完整取回</span></div>
+        <p class="cap" id="c2-clip"></p>
+      </div>
+      <div class="c2-hm-wrap">
+        <div class="lbl">狀態 S_T（d × d 熱圖：藍＝正、橘＝負，顏色越深絕對值越大）</div>
+        <div class="fig" id="c2-hm"><svg role="img"></svg></div>
+        <button class="small-btn" type="button" id="c2-numbtn" aria-pressed="false">以數字顯示</button>
+        <div class="tscroll c2-num hide" id="c2-num"></div>
+      </div>
+    </div>
+    <p class="readout" id="c2-ro" style="margin-top:14px"></p>
+    <p class="readout" id="c2-xt" style="margin-top:8px"></p>
+    <p class="plate-f">簡化：dₖ = dᵥ = d；鍵與值是隨機單位向量（不是學習的投影），由 mulberry32(seed) 產生，seed 從 7 起；係數為常數（原方法多為資料相依）；讀出用 S_T kᵢ。每步乘上的 αI − βkkᵀ 特徵值為 α 與 α − β，絕對值都 ≤ 1，所以不會放大舊狀態；但寫入項 γvkᵀ 每步都加進來，‖S‖F 仍會隨 T 成長。讀數由本頁依 Fig. 3 的遞迴式即時計算；係數與文獻的對應、讀出式為本頁推導。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <div class="prose" style="margin-top:20px">
+    <p>可以觀察四件事。第一，正交鍵且 $T\le d$ 時，線性注意力與 delta rule 的每一筆都是 $c_i=1,e_i=0$；衰減時 $c_i=\alpha^{T-i}$，$d=T=8,\alpha=0.9$ 的第 1 筆為 0.478。第二，隨機鍵時即使 $T&lt;d$ 也有串擾；預設 $d=8,T=16$ 的線性注意力平均 $e$ 為 1.054。delta rule 的最後一筆恆為 $c_T=1,e_T=0$：<span class="pill-rd">本頁推導</span>$\|k_T\|=1$ 時 $S_Tk_T=(\alpha-\beta)S_{T-1}k_T+\gamma v_T$，所以只要 $\alpha=\beta$ 且 $\gamma=1$ 就讀回 $v_T$，Delta rule (1, 1, 1) 與 Gated delta (0.9, 0.9, 1) 都滿足。第三，正交鍵、$d=8$、$T=9$ 時，第 9 步重用第 1 筆的 key，加法讀出 $v_1+v_9$，delta rule 讀出 $v_9$。第四，$d$ 加大時，同樣的 $T$ 下串擾變小：狀態大小 $d_v\times d_k$ 就是容量。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">寫出線性注意力的狀態更新式與狀態大小；線性注意力與 delta rule 各對應哪組係數？</p>
+    <p class="a">$S_t=\alpha_tS_{t-1}-\beta_tS_{t-1}k_tk_t^\top+\gamma_tv_tk_t^\top$，大小 $d_v\times d_k$；線性注意力 $\alpha=1,\beta=0,\gamma=1$；delta rule $\alpha=1,\beta=\gamma$（Fig. 3；係數對應為本頁推導）。</p>
+    <p class="q">同一個單位 key 寫入兩次時，加法與 delta rule（$\alpha=1,\beta=\gamma=1$）各讀出什麼？什麼條件下加法寫入才完全沒有串擾？</p>
+    <p class="a">加法讀出舊值＋新值，delta rule 讀出新值（$\|k\|=1$ 且 $\alpha=1,\beta=\gamma=1$ 時 $S_tk_t=v_t$）；只有所有鍵互相正交時交叉項 $\sum_{j\ne i}v_j(k_j^\top k_i)$ 才為 0，而 $d_k$ 維中最多 $d_k$ 個互相正交的鍵；隨機鍵在 $T&gt;1$ 時就會互相干擾（本頁推導）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="llmmem-implicit-recurrent-state.html">遞迴序列記憶：把歷史壓進固定大小的狀態</a>、<a href="ttt-linear-mlp.html">原版 TTT：TTT-Linear / TTT-MLP</a></p>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="limits" data-toc="06" data-tt="隱式的限制">
+  <div class="ch-num">06 · 隱式的限制</div>
+  <h2>隱式記憶受容量、讀寫語意與持續性限制</h2>
+  <div class="prose">
+    <p data-lo="LO9">§III-D 列出隱式記憶的三個限制。第一，<b>容量有界且難以控制</b>（a）：注意力模型的容量隨上下文視窗與 KV 快取大小而定，受平方或線性時間複雜度與硬體限制，長上下文模型常無法有效利用名目長度；狀態式模型原則上可處理無界序列，但壓縮進固定大小的狀態，產生記憶跨度與表示保真度的權衡。第二，<b>缺乏可調適的讀寫語意</b>（b）：資訊只依計算圖（注意力權重或狀態轉移）儲存與取回。第三，<b>跨脈絡持續性有限</b>（c）：內容常綁在少數前向傳遞或一次推論會話上，計算結束即丟棄；快取狀態快照或多狀態混合主要改善同一延伸序列內的保留，而非跨會話的持久。</p>
+    <p>作者認為這三點「劃定了僅靠計算耦合記憶能達到的邊界」，並由此引出把儲存與內部計算分開的顯式記憶（§III-D d）。下方的 C3 只示範第一點：比較各種機制每層需要保存的數值個數如何隨序列長度 $L$ 成長。</p>
+  </div>
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>每層記憶大小與序列長度</h3></div>
+    <p class="plate-lead">拖動序列長度 L。完整 KV 隨 L 線性成長，滑動視窗封頂，遞迴狀態固定；讀數表是主要的資訊來源。</p>
+    <div class="pg side">
+      <div class="fig" id="c3-fig"><svg role="img"></svg></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c3-L">序列長度 L<output id="c3-Lo">32,768</output></label><input id="c3-L" type="range" min="8" max="20" step="0.25" value="15"></div>
+        <div><div class="lbl" id="c3-wl" style="margin-bottom:6px">滑動視窗 W</div><div class="seg" role="group" aria-labelledby="c3-wl" id="c3-W"><button type="button" data-v="512" aria-pressed="false">512</button><button type="button" data-v="1024" aria-pressed="false">1024</button><button type="button" data-v="2048" aria-pressed="false">2048</button><button type="button" data-v="4096" aria-pressed="true">4096</button><button type="button" data-v="8192" aria-pressed="false">8192</button></div></div>
+        <div class="rng"><label class="lbl" for="c3-r">HAM 准入比例 ρ<output id="c3-ro">0.10</output></label><input id="c3-r" type="range" min="0" max="0.5" step="0.01" value="0.1"></div>
+        <div id="c3-chk" role="group" aria-label="顯示的曲線"></div>
+      </div>
+    </div>
+    <div class="tscroll" style="margin-top:16px"><table class="stack" id="c3-tab">
+      <thead><tr><th>機制</th><th class="num">目前大小（浮點數）</th><th class="num">相對完整 KV</th><th>可精確存取的過去 token</th></tr></thead><tbody></tbody></table></div>
+    <p class="plate-f">本頁示例設定（論文沒有數字）：頭數 nₕ = 8、每頭維度 dₕ = 128（dₖ = dᵥ = dₕ）、MLA 潛向量維度 d_c = 512（不含位置編碼分量）、SSM 狀態維度 N = 16、模型寬 d = nₕdₕ = 1024、StreamingLLM 的 sink 數 s = 4。只算每層要保存的浮點數個數，不算位元組與參數。公式：完整 KV 2Lnₕdₕ；視窗＋sink 2·min(L, W+s)·nₕdₕ；MLA L·d_c；線性狀態 nₕdₖdᵥ；SSM d·N；Log-Linear nₕdₖdᵥ·(⌊log₂L⌋+1)（本頁推導：以 Fenwick tree 前綴分解的層數上界估計狀態個數）；HAM nₕdₖdᵥ + 2⌈ρL⌉nₕdₕ（本頁推導：依 §V-A b 的最簡模型）。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+  <div class="prose" style="margin-top:20px">
+    <p>$L=32768$ 時，完整 KV 為 67,108,864 個數，是線性狀態 131,072 的 512 倍；$L$ 超過 $W+s$ 之後，滑動視窗封頂於 8,396,800。遞迴狀態與 SSM 不隨 $L$ 改變，但讀數表的「可精確存取」欄隨之變成「靠壓縮」。這把曲線連回 §II-C：KV 快取的有效視野等於它能存下的 token 數，儲存隨 token 數成長；遞迴狀態大小固定，有效視野靠壓縮維持，代價是 C2 的串擾。HAM 的斜率與完整 KV 相同，但乘上准入比例 $\rho$。SSM 比線性狀態小 8 倍，完全來自本頁選的 $N=16$ 對 $d_h=128$，不是 SSM 的固有優勢。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">§III-D 的三個限制是什麼？</p>
+    <p class="a">容量有界且難以控制；缺乏可調適的讀寫語意；跨脈絡持續性有限（§III-D a–c）。</p>
+    <p class="q">為什麼儲存隨 token 數成長的 KV 快取被歸為短期，而大小固定的遞迴狀態反而可能被歸為長期？</p>
+    <p class="a">持續性取決於儲存粒度與壓縮率：KV 快取高保真低壓縮，儲存隨 token 數成長，因而受視窗與快取預算限制；遞迴狀態大小固定，可以靠壓縮維持較長的有效視野（§II-C 用「may」，不是保證）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="llmmem-implicit-recurrent-state.html">遞迴序列記憶：把歷史壓進固定大小的狀態</a></p>
+</section>

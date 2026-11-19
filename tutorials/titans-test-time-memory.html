@@ -1,0 +1,1410 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Titans 測試時記憶</title>
+<meta name="description" content="圖解 Behrouz、Zhong、Mirrokni 的 Titans：以梯度（驚訝度）、動量與遺忘在測試時更新的深層神經記憶，chunk 平行化訓練，以及 MAC、MAG、MAL 三種架構。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+:is(details.check,details.more){max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+:is(details.check,details.more)>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+:is(details.check,details.more)>summary::-webkit-details-marker{display:none}
+:is(details.check,details.more)>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+:is(details.check,details.more)[open]>summary::before{transform:rotate(45deg)}
+:is(details.check,details.more) .qa{padding:0 20px 18px;font-size:15px}
+:is(details.check,details.more) .q{font-weight:600;margin:12px 0 4px}
+:is(details.check,details.more) .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+
+/* ---- 243 additions: context bands, token axis, C1–C4 ---- */
+:root{--band-a:color-mix(in oklab,var(--ink) 4%,transparent);--band-b:color-mix(in oklab,var(--ink) 9%,transparent)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--band-a:color-mix(in oklab,var(--ink) 7%,transparent);--band-b:color-mix(in oklab,var(--ink) 14%,transparent)}}
+:root[data-theme="dark"]{--band-a:color-mix(in oklab,var(--ink) 7%,transparent);--band-b:color-mix(in oklab,var(--ink) 14%,transparent)}
+svg .band-a{fill:var(--band-a)}
+svg .band-b{fill:var(--band-b)}
+svg .hatch-l{stroke:var(--c-par);stroke-width:1.5}
+svg .hatch-p{stroke:var(--ink-3);stroke-width:1.5}
+svg .cellbox{fill:var(--surface);stroke:var(--line);stroke-width:1}
+svg .cellacc{fill:none;stroke:var(--accent);stroke-width:2.5}
+svg .bar{fill:var(--accent)}
+svg .warn{fill:var(--accent)}
+svg .chunkline{stroke:var(--ink);stroke-width:2}
+.taxis{margin:8px 0 0}
+.taxis svg{display:block;width:100%;height:auto}
+.tlegend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:14px;margin:10px 0 0}
+.tlegend a,.tlegend span{display:inline-flex;align-items:center;gap:8px;min-height:32px}
+.sw{display:inline-block;width:18px;height:14px;border-radius:3px;border:1px solid var(--line);flex:none}
+.sw.persist{background:repeating-linear-gradient(45deg,var(--ink-3) 0 1.5px,transparent 1.5px 5px)}
+.sw.mem{background:repeating-linear-gradient(45deg,var(--c-par) 0 1.5px,transparent 1.5px 5px)}
+.sw.win{border:2px solid var(--accent)}
+.sw.direct{background:var(--accent);border-color:var(--accent)}
+.sw.none{background:var(--surface)}
+.hint{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);background:var(--accent-soft);border-radius:10px;padding:8px 12px;margin:0}
+.alert{font:500 13px/1.5 var(--f-body);color:var(--accent);margin:0}
+.alert:empty{display:none}
+.ctl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px 20px;margin:16px 0 0}
+.plate-top{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;margin:0 0 6px}
+.seed{font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.chipnote{font-size:12px;line-height:1.55;color:var(--ink-3);margin:2px 0 0}
+.lbl-s{font:500 13px/1.4 var(--f-body);color:var(--ink-2);margin:0 0 4px}
+.dtab{margin-top:12px}
+.dtab table{font-size:13px}
+.dtab td,.dtab th{padding:6px 12px}
+.vcards{display:grid;grid-template-columns:1fr;gap:16px;margin:16px 0 24px;max-width:960px}
+@media (min-width:768px){.vcards{grid-template-columns:repeat(3,1fr)}}
+.vcards .card p{margin:0 0 8px}
+.vcards .card p:last-child{margin:0}
+.twocol{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.twocol{grid-template-columns:1fr 1fr}}
+.twocol ul{margin:0;padding-left:1.2em;font-size:15px;color:var(--ink-2)}
+/* C4 matrix */
+.mx-wrap{overflow-x:auto;max-width:100%;padding:2px}
+.mx{--cw:20px;display:inline-block;min-width:max-content}
+.mx-groups,.mx-row{display:flex;align-items:center}
+.mx-groups{font:500 11px/1.3 var(--f-body);color:var(--ink-3);margin-bottom:4px;align-items:flex-end}
+.mx-groups span{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-bottom:1px solid var(--line);padding-bottom:2px}
+.mx-rl{width:40px;flex:none;font:500 11px/1 var(--f-mono);color:var(--ink-3)}
+.mx-row{min-height:max(24px,var(--cw));cursor:pointer;opacity:.4;border-radius:4px;outline-offset:1px}
+.mx-row.cur{opacity:1;box-shadow:inset 0 0 0 2px var(--ink)}
+.mx-row:focus-visible{outline:2px solid var(--accent)}
+.mx-c{width:var(--cw);height:var(--cw);flex:none;border:1px solid var(--line)}
+.mx-c.direct{background:var(--accent);border-color:var(--accent)}
+.mx-c.memory{background:repeating-linear-gradient(45deg,var(--c-par) 0 1.5px,transparent 1.5px 5px)}
+.mx-c.none{background:var(--surface)}
+.mx-gap{width:6px;flex:none}
+.flowline{font-size:14px;color:var(--ink-2);margin:10px 0 0;line-height:1.6}
+input[type=range]:disabled{opacity:.35;cursor:not-allowed}
+.ctl details.more{margin-top:0}
+.mx-rl{padding-left:4px}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 243</span>
+  <span class="ttl">Titans：在測試時學習記憶</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 243</b> · 互動教學 · arXiv 2501.00663 v1 · 2024</div>
+  <h1><span class="lat">Titans</span>：在測試時學習記憶</h1>
+  <p class="dek">這篇論文把長期記憶做成一個在測試時以梯度下降更新的 MLP，再與注意力、持久記憶組成三種架構。</p>
+  <p class="note" style="max-width:640px;margin:0 0 8px">測試時＝模型訓練完成、部署後處理新序列的時候；此時記憶模組的權重仍在更新。</p>
+  <p class="byline">Ali Behrouz、Peilin Zhong、Vahab Mirrokni（Google Research，2024）〈Titans: Learning to Memorize at Test Time〉。本頁依 arXiv v1。</p>
+  <div class="taxis" id="hero-axis" role="img" aria-label="token 軸：序列開頭是固定的持久記憶，最近的 token 在注意力視窗內，較早的 token 壓縮進長期記憶"></div>
+  <div class="tlegend">
+    <a href="#persistent"><span class="sw persist" aria-hidden="true"></span>持久記憶（S6）</a>
+    <a href="#variants"><span class="sw win" aria-hidden="true"></span>注意力視窗（S7）</a>
+    <a href="#surprise"><span class="sw mem" aria-hidden="true"></span>長期記憶（S2–S5）</a>
+  </div>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 記憶是網路</span><p>長期記憶是一個小型神經網路。每讀到一個新 token，它就做一步梯度下降，讓這個 token 的索引向量（key）能取回對應的內容向量（value）；部署後處理新序列時也照做。</p></div>
+    <div class="fact"><span class="n">02 · 驚訝度</span><p>梯度越大，表示新 token 與已記住的內容越不同。作者稱之為驚訝度，並加上動量（延續過去的驚訝度）與遺忘閘（衰減舊內容）。</p></div>
+    <div class="fact"><span class="n">03 · 三種架構</span><p>Titans 把這個記憶與注意力、持久記憶組合成三種架構。760M 參數時，三者在 Wikipedia 文字上的 perplexity（困惑度，越低越好）為 18.61–19.93，Transformer++ 為 25.21。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2501.00663">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-243">在關聯圖中查看</a>
+    <a class="btn" href="titans-lineage-overview.html">研究筆記總覽</a>
+  </div>
+</section>
+
+<!-- S1 ============================================================ -->
+<section class="ch" id="memory" data-toc="01" data-tt="寫入與讀取">
+  <div class="ch-num">01 · 寫入與讀取</div>
+  <h2>序列模型都有寫入與讀取兩個步驟</h2>
+  <div class="prose">
+    <p>注意力（attention）的輸入是 $N$ 個 token 向量，輸出是同樣 $N$ 個向量。第 $i$ 個輸出是前面各 token 內容的加權平均，權重由 token 之間的相似度決定；softmax 把一列分數轉成總和為 1 的正權重。</p>
+    <p>每個 token 經三個投影矩陣得到三個向量：query（我要找什麼）、key（我可以被什麼找到）、value（被找到時交出的內容）。第 $i$ 個 token 的 query 與第 $j$ 個 token 的 key 做內積，決定第 $i$ 個輸出給第 $j$ 個 token 多少權重。論文寫成（Sec. 2.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 1–2，可橫向捲動">$$Q=xW_Q,\ K=xW_K,\ V=xW_V,\qquad y_i=\sum_{j=1}^{i}\frac{\exp(Q_i^\top K_j/\sqrt{d_{in}})\,V_j}{\sum_{\ell=1}^{i}\exp(Q_i^\top K_\ell/\sqrt{d_{in}})}$$</div><span class="eq-n">Eq. 1–2</span></div>
+  <div class="prose">
+    <p>第 $i$ 個輸出要與前面全部 $i$ 個 token 比較，整段序列的成本與長度 $N$ 的平方成正比，因此實務上只能處理固定長度的視窗。線性注意力（linear attention）把 softmax 換成可分解的核函數；核取單位矩陣時（RetNet），可以寫成遞迴（Eq. 4–5）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 4–5，可橫向捲動">$$\mathcal M_t=\mathcal M_{t-1}+K_t^\top V_t,\qquad y_t=Q_t\mathcal M_t$$</div><span class="eq-n">Eq. 4–5</span></div>
+  <details class="more"><summary>線性注意力的一般形式（Eq. 3）</summary><div class="qa">
+    <p>把 softmax 換成核函數 $\phi$，並要求 $\phi(x,y)=\phi(x)\phi(y)$：</p>
+    <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 3，可橫向捲動">$$y_i=\sum_{j=1}^{i}\frac{\phi(Q_i)^\top\phi(K_j)}{\sum_{\ell=1}^{i}\phi(Q_i)^\top\phi(K_\ell)}V_j=\frac{\phi(Q_i)^\top\sum_{j=1}^{i}\phi(K_j)V_j}{\phi(Q_i)^\top\sum_{\ell=1}^{i}\phi(K_\ell)}$$</div><span class="eq-n">Eq. 3</span></div>
+    <p>兩個累加和在每一步都可以沿用上一步的結果，所以吞吐量較高；核取單位矩陣即得 Eq. 4–5。</p>
+  </div></details>
+  <div class="prose">
+    <p>線性注意力的記憶 $\mathcal M_t$ 是一個固定大小的矩陣：每讀一個 token，把 $K_t^\top V_t$ 加進去，這是寫入；輸出時用 $Q_t$ 乘上它，這是讀取。整段歷史被壓縮進固定大小的矩陣，每一步的成本與序列長度無關。作者把一般的遞迴模型寫成兩個函數（Eq. 6–7）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 6–7，可橫向捲動">$$\mathcal M_t=f(\mathcal M_{t-1},x_t)\ \ (\text{寫入}),\qquad y_t=g(\mathcal M_t,x_t)\ \ (\text{讀取})$$</div><span class="eq-n">Eq. 6–7</span></div>
+  <div class="prose">
+    <p>原文 Eq. 7 下方一句寫成「f is the read and g is the write」，與方程式旁的標籤相反。本頁依方程式標籤：$f$ 是寫入，$g$ 是讀取。</p>
+    <p>從這個角度看，Transformer 的記憶是持續變長的 key／value 快取：它把每個 token 的 key 與 value 直接附加到記憶、不壓縮，所以讀取精確，但成本隨長度成長。作者的觀察是，Eq. 4 的寫入只做加法，長上下文會使固定大小的記憶溢出（memory overflow）。既有的改進分成兩個方向：加入遺忘閘（GLA、LRU、Griffin、xLSTM、Mamba2），或改進寫入方式（delta rule：寫入前先移除該 key 的舊值，例如 DeltaNet、Gated DeltaNet）。</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table class="stack">
+    <caption>以寫入／讀取比較四類模型（Sec. 1「Memory Perspective」、Sec. 2.1）</caption>
+    <thead><tr><th>模型</th><th>記憶</th><th>寫入方式</th><th>壓縮</th></tr></thead><tbody>
+    <tr><td>RNN</td><td data-h="記憶">向量</td><td data-h="寫入方式">$f(\mathcal M_{t-1},x_t)$</td><td data-h="壓縮">壓縮成固定大小</td></tr>
+    <tr><td>線性 Transformer</td><td data-h="記憶">矩陣 $\mathcal M_t$</td><td data-h="寫入方式">加上 $K_t^\top V_t$</td><td data-h="壓縮">壓縮成固定大小</td></tr>
+    <tr><td>Transformer</td><td data-h="記憶">持續變長的 key／value</td><td data-h="寫入方式">附加</td><td data-h="壓縮">不壓縮</td></tr>
+    <tr><td>LMM（本文）</td><td data-h="記憶">深層 MLP 的參數</td><td data-h="寫入方式">一步梯度下降</td><td data-h="壓縮">壓縮進網路權重</td></tr>
+    </tbody></table></div>
+  <details class="more">
+    <summary>符號表</summary>
+    <div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+      <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td>$x_t$</td><td>第 $t$ 個 token（列向量）；$t$ 是 token 索引</td></tr>
+      <tr><td>$W_Q,W_K,W_V$</td><td>投影矩陣；$q_t=x_tW_Q$、$k_t=x_tW_K$、$v_t=x_tW_V$（Eq. 11、15）</td></tr>
+      <tr><td>$\mathcal M_t$</td><td>處理完第 $t$ 個 token 後的長期記憶（一個網路的參數狀態）。論文也寫作 $M$；本頁一律寫 $\mathcal M$，注意力遮罩寫「mask」</td></tr>
+      <tr><td>$\mathcal M(\cdot)$、$\mathcal M^*(\cdot)$</td><td>前向傳遞時會／不會調整權重；讀取用 $\mathcal M^*$</td></tr>
+      <tr><td>$\ell(\mathcal M_{t-1};x_t)$</td><td>聯想記憶損失 $\|\mathcal M_{t-1}(k_t)-v_t\|_2^2$（Eq. 12）</td></tr>
+      <tr><td>$S_t$、$\eta_t$、$\theta_t$</td><td>驚訝度（動量項）、驚訝度衰減、當下驚訝度的權重（學習率）</td></tr>
+      <tr><td>$\alpha_t\in[0,1]$</td><td>遺忘閘（weight decay）</td></tr>
+      <tr><td>$L_{\mathcal M}$</td><td>記憶 MLP 的層數</td></tr>
+      <tr><td>$b$、$t'$、$\beta_i$</td><td>chunk 大小；chunk 起點索引，本頁寫 $t'=t-1-\mathrm{mod}(t-1,b)$（S5）；$\beta_i=\prod_{j=1}^{i}(1-\alpha_j)$</td></tr>
+      <tr><td>$\|A\|_F$</td><td>Frobenius 範數：矩陣所有元素平方和的平方根</td></tr>
+      <tr><td>ppl</td><td>perplexity（困惑度）：模型對下一個 token 的平均不確定程度，越低越好</td></tr>
+      <tr><td>$p_1,\dots,p_{N_p}$</td><td>持久記憶（$N_p$ 個可學習向量，Eq. 19）</td></tr>
+      <tr><td>$S^{(i)}$、$C$、$h_t$、$N_l$</td><td>第 $i$ 個片段、片段長度、從記憶讀出的歷史資訊（Eq. 21）、Fig. 3a 說明中的長期記憶 token 數</td></tr>
+      <tr><td>SW-Attn、SW-Attn$^*$</td><td>滑動視窗注意力、帶前綴（prefix）的滑動視窗注意力</td></tr>
+      <tr><td>$\otimes$</td><td>任意非線性閘控（Sec. 4.2）</td></tr>
+      </tbody></table></div></div>
+  </details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">線性注意力的記憶如何寫入與讀取？Transformer 的記憶與它有何不同？</p>
+    <p class="a">$\mathcal M_t=\mathcal M_{t-1}+K_t^\top V_t$、$y_t=Q_t\mathcal M_t$（Eq. 4–5），壓縮成固定大小矩陣；Transformer 把 key／value 附加到記憶、不壓縮（Sec. 1、2.1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="memory-view-of-sequence-models.html">序列模型的記憶觀點：寫入、讀取與五個設計問題</a>、<a href="linear-attention-fast-weights.html">Linear attention 與 fast weight programs</a></p>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="surprise" data-toc="02" data-tt="驚訝度">
+  <div class="ch-num">02 · 驚訝度</div>
+  <h2>記憶以梯度學習 key 到 value 的對應</h2>
+  <div class="prose">
+    <p>作者認為，直接訓練一個網路記住訓練資料會限制泛化、帶來隱私問題，而且測試資料可能在訓練分布之外。因此需要一個在測試時學習如何記住與遺忘的線上模型。作者把訓練長期記憶視為線上學習：把 $x_1,\dots,x_{t-1}$ 壓縮進 $\mathcal M_t$ 的參數。最簡單的寫入是一步梯度下降（Sec. 3.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 8，可橫向捲動">$$\mathcal M_t=\mathcal M_{t-1}-\theta_t\underbrace{\nabla\ell(\mathcal M_{t-1};x_t)}_{\text{Surprise}}$$</div><span class="eq-n">Eq. 8</span></div>
+  <div class="prose">
+    <p>論文把這個梯度稱為驚訝度（surprise）。要注意它是對什麼求梯度：原文文字寫「its gradient with respect to the input」，但 Eq. 8 用這個梯度更新 $\mathcal M$ 的參數，所以它必須是損失對記憶參數的梯度。兩者不同，更新式只能用前者。梯度越大，表示 $x_t$ 與過去的資料（記憶已存的內容）差異越大。作者以神經心理學文獻為動機：違反預期的事件比較容易被記住。</p>
+    <p>損失 $\ell$ 是聯想記憶（associative memory）損失。每個 token 投影出 key 與 value，記憶要學會從 key 取回 value（Eq. 11–12）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 11–12，可橫向捲動">$$k_t=x_tW_K,\quad v_t=x_tW_V,\qquad \ell(\mathcal M_{t-1};x_t)=\|\mathcal M_{t-1}(k_t)-v_t\|_2^2$$</div><span class="eq-n">Eq. 11–12</span></div>
+  <div class="prose">
+    <p>因此 Eq. 8 的驚訝度就是聯想記憶損失 $\ell(\mathcal M_{t-1};x_t)$ 對記憶參數的梯度。這裡有兩層迴圈。內層迴圈最佳化記憶 $\mathcal M$ 的權重，以 $\|\mathcal M_{t-1}(k_t)-v_t\|_2^2$ 在測試時逐 token 更新；外層迴圈最佳化整個架構的其他參數，包括 $W_K,W_V$。在內層損失中，$W_K,W_V$ 是固定的超參數；作者以 meta-learning 類比這個結構。</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table class="stack">
+    <caption>內層與外層迴圈（Sec. 3.1，Eq. 11–12）</caption>
+    <thead><tr><th></th><th>內層迴圈</th><th>外層迴圈</th></tr></thead><tbody>
+    <tr><td>更新的參數</td><td data-h="內層">記憶 $\mathcal M$ 的權重</td><td data-h="外層">架構的其他參數（含 $W_K,W_V,W_Q$、注意力、持久記憶）</td></tr>
+    <tr><td>何時更新</td><td data-h="內層">訓練與測試時，每個 token</td><td data-h="外層">只在訓練時</td></tr>
+    <tr><td>損失</td><td data-h="內層">$\|\mathcal M_{t-1}(k_t)-v_t\|_2^2$</td><td data-h="外層">語言模型等任務損失</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <h3>五個設計問題</h3>
+    <p>記憶以梯度寫入之後，作者在 Sec. 1 提出五個問題，本頁依序回答：</p>
+    <ol>
+      <li>Q1 記憶要用什麼結構？（<a href="#deep">S4</a>）</li>
+      <li>Q2 適當的更新機制是什麼？（本節與 <a href="#momentum">S3</a>）</li>
+      <li>Q3 適當的讀取方式是什麼？（<a href="#deep">S4 的 Eq. 15</a>）</li>
+      <li>Q4 如何設計一個包含多個互相連結記憶模組的高效架構？（<a href="#variants">S7</a>）</li>
+      <li>Q5 是否需要深層記憶模組才能有效儲存久遠的過去？（<a href="#deep">S4</a>）</li>
+    </ol>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 8 的驚訝度是什麼？是對什麼求梯度？</p>
+    <p class="a">聯想記憶損失 $\ell(\mathcal M_{t-1};x_t)$ 的梯度，對記憶參數求梯度（更新式需要它）；梯度越大表示輸入與過去的資料差異越大（Eq. 8）。</p>
+    <p class="q">內層迴圈與外層迴圈各更新哪些參數？</p>
+    <p class="a">內層：記憶 $\mathcal M$ 的權重，以 $\|\mathcal M_{t-1}(k_t)-v_t\|_2^2$ 在測試時更新；外層：整個架構的其他參數（含 $W_K,W_V$，在內層損失中是超參數）（Eq. 11–12）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="titans-neural-memory-surprise-update.html">Titans 的神經長期記憶：surprise、動量、遺忘與平行訓練</a>、<a href="ttt-linear-mlp.html">原版 TTT：TTT-Linear / TTT-MLP</a></p>
+</section>
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="momentum" data-toc="03" data-tt="動量與遺忘">
+  <div class="ch-num">03 · 動量與遺忘</div>
+  <h2>動量延續驚訝度，遺忘閘清除舊內容</h2>
+  <div class="prose">
+    <h3>3a　動量</h3>
+    <p>作者指出 Eq. 8 的一個問題：一次很大的驚訝之後，梯度可能變得很小，使更新停在平坦區域，錯過後續的資訊。因此加入過去的驚訝度（Sec. 3.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 9–10，可橫向捲動">$$\begin{aligned}\mathcal M_t&=\mathcal M_{t-1}+S_t,\\ S_t&=\eta_t\underbrace{S_{t-1}}_{\text{past}}-\theta_t\underbrace{\nabla\ell(\mathcal M_{t-1};x_t)}_{\text{momentary}}\end{aligned}$$</div><span class="eq-n">Eq. 9–10</span></div>
+  <div class="prose">
+    <p>為什麼這能解決上面的問題：只用 Eq. 8 時，更新量就是當下的梯度，梯度一變小，記憶幾乎不再改變，之後的 token 即使帶有新資訊也寫不進去。加入 $\eta_tS_{t-1}$ 後，即使當下梯度接近 0，上一次大驚訝留下的 $S_{t-1}$ 仍推動 $\mathcal M_t$ 繼續更新，記憶不會停在平坦區域，因此仍能吸收後續的資訊。這個形式與帶動量的梯度下降相同，作者稱 $S_t$ 為跨序列長度的驚訝度記憶：$S_t=\eta_tS_{t-1}-\theta_t\nabla\ell$ 讓驚訝度延續到後續的 token。$\eta_t$ 與 $\theta_t$ 都依資料而定：$\eta_t\to0$ 時忽略上一次驚訝（例如語境改變），$\eta_t\to1$ 時完全納入上一次驚訝（token 與最近的過去高度相關）；$\theta_t$ 是當下驚訝度的權重，也就是學習率。論文沒有寫出三個係數如何由 $x_t$ 計算，只說它們依 token 而定、在外層迴圈學習；本頁元件用常數。常數 $\eta$ 下，持續同方向的梯度會累積成 $\theta/(1-\eta)$ 倍的步長，這一點在 C1 中很重要。</p>
+    <h3>3b　遺忘</h3>
+    <p>記憶的容量有限，長序列中需要清除不再需要的內容。作者加入遺忘閘 $\alpha_t\in[0,1]$（Sec. 3.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 13–14，可橫向捲動">$$\mathcal M_t=(1-\alpha_t)\mathcal M_{t-1}+S_t,\qquad S_t=\eta_tS_{t-1}-\theta_t\nabla\ell(\mathcal M_{t-1};x_t)$$</div><span class="eq-n">Eq. 13–14</span></div>
+  <div class="prose">
+    <p>$\alpha_t\to0$ 時更新不影響過去的內容；$\alpha_t\to1$ 時清空整個記憶。作者指出遺忘閘等同 weight decay，並與現代 RNN 的閘控機制密切相關（Mamba2、LRU）。</p>
+    <p><span class="tag">本頁推導</span>取線性記憶 $\mathcal M_t=W_t$、損失取 $\tfrac12\|\cdot\|^2$（與 App. C 相同），把 Eq. 13–14 展開到每一個 token：$e_t=\mathcal M_{t-1}k_t-v_t$，$g_t=e_tk_t^\top$，$S_t=\eta S_{t-1}-\theta g_t$，$\mathcal M_t=(1-\alpha)\mathcal M_{t-1}+S_t$。$\|k_t\|=1$ 時驚訝度大小 $\|g_t\|_F=\|e_t\|$（$\|\cdot\|_F$ 為 Frobenius 範數）。下面的 C1 就是這個演算法。</p>
+  </div>
+
+  <div class="plate" id="c1">
+    <div class="plate-top"><div class="plate-h"><span class="id">C1</span><h3>驚訝度、動量與遺忘：一個線性記憶的測試時學習</h3></div><span class="seed" id="c1-seed">seed 11</span></div>
+    <p class="plate-lead">序列先是情境 A，t = 33 切到情境 B，t = 65 回到 A。拖動三個係數，看驚訝度、動量 ‖S‖ 與兩個情境的回想誤差如何變化。</p>
+    <div class="pg side">
+      <div class="fig">
+        <p class="lbl-s">驚訝度 ‖gₜ‖（長條）與動量 ‖Sₜ‖_F（圓點折線）</p>
+        <div id="c1-top"><svg role="img" aria-label="驚訝度圖"></svg></div>
+        <p class="lbl-s" style="margin-top:14px">回想誤差（對數縱軸）</p>
+        <div id="c1-bot"><svg role="img" aria-label="回想誤差圖"></svg></div>
+        <div class="legend"><span class="lg acc">‖gₜ‖ 驚訝度</span><span class="lg par">‖Sₜ‖ 動量／情境 A 誤差</span><span class="lg perp">情境 B 誤差</span></div>
+      </div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1-th">θ 學習率<output id="c1-tho">0.30</output></label><input id="c1-th" type="range" min="0" max="1" step="0.01" value="0.3"></div>
+        <div class="rng"><label class="lbl" for="c1-et">η 動量<output id="c1-eto">0.60</output></label><input id="c1-et" type="range" min="0" max="0.95" step="0.01" value="0.6"></div>
+        <div class="rng"><label class="lbl" for="c1-al">α 遺忘<output id="c1-alo">0.020</output></label><input id="c1-al" type="range" min="0" max="0.2" step="0.005" value="0.02"></div>
+        <div class="ctl-row" role="group" aria-label="預設組合">
+          <button class="chip" type="button" data-p="0.3,0,0">η = 0、α = 0</button>
+          <button class="chip" type="button" data-p="0.3,0,0.02">η = 0、α = 0.02</button>
+          <button class="chip" type="button" data-p="0.3,0.6,0.02">η = 0.6、α = 0.02（預設）</button>
+          <button class="chip" type="button" data-p="0.75,0,0.02">θ = 0.75、η = 0（等效步長對照）</button>
+        </div>
+        <p class="chipnote">S8 會說明：前兩個組合中，前者即 DeltaNet 的更新規則（Eq. 34），後者論文稱與 Gated DeltaNet 等價（本頁只確認形式相近）。以上 θ 都是 0.3，最後一個除外。</p>
+        <div class="ctl-row"><button class="small-btn" type="button" id="c1-re">重新抽樣</button><button class="small-btn" type="button" id="c1-tab-b" aria-expanded="false" aria-controls="c1-tab">顯示資料表</button></div>
+        <p class="hint hide" id="c1-hint"><span id="c1-hint-t"></span><button class="small-btn" type="button" id="c1-back">回到 seed 11</button></p>
+        <p class="alert" role="alert" id="c1-alert"></p>
+        <p class="readout" id="c1-ro"></p>
+        <details class="more"><summary>全部讀數</summary><div class="qa"><p class="readout" id="c1-ro2" style="margin-top:8px"></p></div></details>
+      </div>
+    </div>
+    <div class="tscroll dtab hide" id="c1-tab" tabindex="0"><table><caption id="c1-cap"></caption><thead><tr><th class="num">t</th><th class="num">‖gₜ‖</th><th class="num">‖Sₜ‖</th><th class="num">E_A</th><th class="num">E_B</th></tr></thead><tbody></tbody></table></div>
+    <p class="plate-f">設定（推定）：d = 8；兩個情境各有 4 個單位長度 key 與一個對應矩陣，value = A_c·k；序列長 96，每個 token 從該情境的 4 個 key 中均勻抽一個。E_c(t) 是處理完第 t 個 token 後，情境 c 四個 key 的平均 ½‖𝓜k − A_c k‖²。本元件的損失取 ½‖·‖²，θ = 0.3 相當於照 Eq. 12（無 ½）寫法的 θ = 0.15。讀數由本頁依 Eq. 13–14 即時計算；設定值為本頁推定，論文未給。</p>
+    <p class="sr" aria-live="polite" id="c1-live"></p>
+  </div>
+
+  <div class="prose">
+    <p>C1 的預設情境（seed 11，θ = 0.3、η = 0.6、α = 0.02）可以讀出幾件事。每次切換情境（t = 33、65），驚訝度升高，之後下降。動量使驚訝度下降後 $\|S_t\|$ 仍延續：$\|S_{40}\|$ 在 η = 0.6 時為 0.152，η = 0 時為 0.092。情境 B 結束時的回想誤差 $E_B(64)$ 由 0.025（η = 0）降到 0.008（η = 0.6），但常數 η 讓有效步長變成 θ/(1−η) = 0.75，而「θ = 0.75、η = 0」也降到 0.011。seed 11–30 的中位數為 0.0087（η = 0.6）對 0.0083（θ = 0.75、η = 0），η = 0.6 只在 14／20 個 seed 低於對照。所以在這個玩具中，誤差下降大多來自步長放大，不能當作動量本身的好處；作者主張的「驚訝度延續」，本元件只能以 $\|S_t\|$ 的延續呈現。η 太大（0.9）時更新來回震盪，誤差變大。<span class="tag">本頁推導</span></p>
+    <p>遺忘的效果：θ = 0.3、η = 0.6 固定時，α 越大，回到情境 A 之前的 A 回想誤差 $E_A(64)$ 越大（α = 0：0.387；α = 0.02：0.457；α = 0.1：0.582）。遺忘的代價是保留較少。這個玩具只呈現遺忘的代價；作者論證的好處是長序列中的容量管理，證據是 Table 5 中移除 weight decay 的 ppl 29.04 最差（S9）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼要加入過去的驚訝度 $S_{t-1}$？$\eta_t\to0$ 代表什麼？</p>
+    <p class="a">大驚訝之後梯度可能變小，使更新停在平坦區域而錯過後續資訊；$S_t=\eta_tS_{t-1}-\theta_t\nabla\ell$ 讓驚訝度延續；$\eta_t\to0$ 忽略上一次驚訝（例如語境改變）（Eq. 9–10）。</p>
+    <p class="q">Eq. 13 中 $\alpha_t\to0$ 與 $\alpha_t\to1$ 各代表什麼？它等同什麼？</p>
+    <p class="a">$\alpha_t\to0$ 不影響過去的內容；$\alpha_t\to1$ 清空記憶；等同 weight decay，與現代 RNN 的閘控相關（Eq. 13–14）。</p>
+    <p class="q">在 C1 預設情境（seed 11）中，動量與遺忘各帶來什麼可觀察的效果？為什麼要和「θ = 0.75、η = 0」比較？</p>
+    <p class="a">動量使驚訝度下降後 $\|S_t\|$ 仍延續（$\|S_{40}\|$：η = 0.6 為 0.152，η = 0 為 0.092）。$E_B(64)$ 由 0.025（η = 0）降到 0.008（η = 0.6），但常數 η 的有效步長是 θ/(1−η) = 0.75，θ = 0.75、η = 0 也降到 0.011；seed 11–30 中位數 0.0087 對 0.0083，所以誤差下降大多來自步長放大。遺忘（θ = 0.3、η = 0.6）使 $E_A(64)$ 變大（α = 0：0.387；0.02：0.457；0.1：0.582），代價是保留較少。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="gated-linear-recurrence-forgetting.html">閘控線性遞迴：以資料相依的遺忘處理記憶溢出</a></p>
+</section>
+
+<!-- S4 ============================================================ -->
+<section class="ch" id="deep" data-toc="04" data-tt="深層記憶">
+  <div class="ch-num">04 · 深層記憶</div>
+  <h2>深層記憶能存下非線性的對應</h2>
+  <div class="prose">
+    <p>Q1 問記憶的結構。作者的論點（Sec. 3.1）：以矩陣 $\mathcal M=W\in\mathbb R^{d_{in}\times d_{in}}$ 為記憶，等價於最佳化 $\|W_{t-1}k_t-v_t\|_2^2$，這是線上線性迴歸；它的最佳解假設歷史資料中 key 與 value 的依賴關係是線性的。至少兩層的 MLP 比線性模型更有表達力（Hornik et al. 1989），所以作者把記憶設計成 $L_{\mathcal M}\ge1$ 層的 MLP，$L_{\mathcal M}=1$ 即矩陣記憶。</p>
+    <p>Q3 問讀取方式。讀取是不更新權重的前向傳遞（Eq. 15）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 15，可橫向捲動">$$q_t=x_tW_Q,\qquad y_t=\mathcal M^*(q_t)$$</div><span class="eq-n">Eq. 15</span></div>
+  <div class="prose">
+    <p>論文沒有寫 MLP 的寬度、是否含偏置與啟動函數；C2 的設定是本頁推定<span class="tag">推定</span>。C2 用純量 key 與 value $v=\sin(2k)$，在同一串 token 上比較線性記憶與 MLP 記憶在測試時能學到什麼。</p>
+  </div>
+
+  <div class="plate" id="c2">
+    <div class="plate-top"><div class="plate-h"><span class="id">C2</span><h3>記憶深度：線性記憶與 MLP 記憶</h3></div><button class="small-btn" type="button" id="c2-tab-b" aria-expanded="false" aria-controls="c2-tab">顯示資料表</button></div>
+    <p class="plate-lead">選擇層數後按「執行」：每個 token 做一步 Eq. 13–14 的更新。左圖是記憶目前的讀出，右圖是格點 MSE。</p>
+    <div class="ctl-row" style="margin-bottom:14px"><span class="lbl-s" style="margin:0">層數 L<sub>𝓜</sub></span><div class="seg" id="c2-L" role="group" aria-label="記憶層數"><button type="button" data-v="1">1</button><button type="button" data-v="2">2</button><button type="button" data-v="3">3</button><button type="button" data-v="4">4</button></div>
+      <button class="small-btn pri" type="button" id="c2-run">執行</button><button class="small-btn" type="button" id="c2-reset">重設</button><button class="small-btn" type="button" id="c2-cmp">比較四種深度</button></div>
+    <div class="pg two">
+      <div class="fig" id="c2-fn"><svg role="img" aria-label="記憶讀出與目標函數"></svg></div>
+      <div class="fig" id="c2-mse"><svg role="img" aria-label="格點 MSE 對 token 數"></svg></div>
+    </div>
+    <div class="legend"><span class="lg ref">目標 v = sin 2k</span><span class="lg acc">記憶讀出 𝓜*(k)</span><span class="lg pt">最近寫入的 30 個 key</span></div>
+    <div class="ctl-grid">
+      <div class="rng"><label class="lbl" for="c2-th">θ<output id="c2-tho">0.010</output></label><input id="c2-th" type="range" min="0" max="0.05" step="0.001" value="0.01"></div>
+      <div class="rng"><label class="lbl" for="c2-et">η<output id="c2-eto">0.90</output></label><input id="c2-et" type="range" min="0" max="0.95" step="0.01" value="0.9"></div>
+      <div class="rng"><label class="lbl" for="c2-al">α<output id="c2-alo">0.0000</output></label><input id="c2-al" type="range" min="0" max="0.01" step="0.0005" value="0"></div>
+    </div>
+    <p class="alert" role="alert" id="c2-alert"></p>
+    <p class="readout" id="c2-ro" style="margin-top:12px"></p>
+    <div class="tscroll hide" id="c2-cmpbox" style="margin-top:12px"><table><caption id="c2-cmpcap">四種深度的格點 MSE</caption><thead><tr><th class="num">L<sub>𝓜</sub></th><th class="num">參數數</th><th class="num">t = 100</th><th class="num">300</th><th class="num">1000</th><th class="num">3000</th></tr></thead><tbody></tbody></table></div>
+    <div class="tscroll dtab hide" id="c2-tab" tabindex="0"><table><caption id="c2-cap"></caption><thead><tr><th class="num">token 數</th><th class="num">格點 MSE</th></tr></thead><tbody></tbody></table></div>
+    <p class="plate-f">設定（推定）：k ~ U[−2, 2]（資料 seed 9），v = sin 2k；L = 1 時 𝓜(k) = wk（無偏置，對應矩陣記憶，w 隨機初始）；L ≥ 2 時為寬度 16 的 MLP，隱藏層 SiLU、含偏置（初始化 seed 5）。損失 ½(𝓜(k) − v)²，共 3000 個 token。MSE 在 [−2, 2] 的 201 個等距格點上計算；虛線「最佳線性」是同一格點上無偏置線性最小平方解 w = 0.1660 的 MSE。讀數由本頁依 Eq. 13–15 即時計算；設定值為本頁推定，論文未給。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+
+  <div class="prose">
+    <p>預設設定（θ = 0.01、η = 0.9）下，$L_{\mathcal M}=1$ 的格點 MSE 停在 0.40–0.48，不會低於最佳線性解 0.402；$L_{\mathcal M}\ge2$ 在 3000 個 token 內遠低於線性解：$L=2$ 約 $2\times10^{-3}$（0.00235），$L=3$、4 低於 $1.5\times10^{-4}$（0.00010、0.00014）。代價是參數與計算量：四種深度的參數數為 1、48、320、592，每個 token 的乘加數約為參數數的 3 倍。θ = 0、α > 0 時記憶衰減到 0，MSE 趨近 0.439。<span class="tag">推定</span></p>
+    <p>論文的對應實驗在 Sec. 5.5（Fig. 7–8）：以 Pile 子集、Mamba 為基準，比較 $L_{\mathcal M}=1,2,3,4$。記憶越深，各序列長度的 perplexity 都越好；參數較少時，深層記憶對序列長度更穩健。吞吐量方面，所有模型的 tokens/s 不隨上下文長度改變，但記憶越深訓練越慢，訓練吞吐量隨深度線性下降，作者稱之為效果與效率的權衡。本頁不重繪 Fig. 7–8；C2 也不測量時間，只顯示乘加數。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">矩陣記憶等價於什麼問題？Sec. 5.5 的深度實驗結論是什麼？</p>
+    <p class="a">線上線性迴歸 $\|W_{t-1}k_t-v_t\|^2$，假設依賴關係是線性的；$L_{\mathcal M}$ 越大 perplexity 越好、對序列長度越穩健，但訓練吞吐量隨深度線性下降（Sec. 3.1、5.5，Fig. 7–8）。</p>
+  </div></details>
+</section>
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="parallel" data-toc="05" data-tt="chunk 平行化">
+  <div class="ch-num">05 · chunk 平行化</div>
+  <h2>把序列切成 chunk 就能用矩陣乘法訓練</h2>
+  <div class="prose">
+    <p>逐 token 更新必須依序做 $N$ 步，無法充分利用 GPU／TPU 的矩陣運算。作者沿用 TTT 的做法（Sec. 3.2）：把序列切成大小 $b\ge1$ 的 chunk，chunk 內所有梯度都在 chunk 起點的記憶 $\mathcal M_{t'}$ 上計算，等同 mini-batch 梯度下降。先看不含動量的情形：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 16，可橫向捲動">$$\begin{aligned}\mathcal M_t&=(1-\alpha_t)\mathcal M_{t-1}-\theta_t\nabla\ell(\mathcal M_{t-1};x_t)\\&=\beta_t\mathcal M_0-\sum_{i=1}^{t}\theta_i\frac{\beta_t}{\beta_i}\nabla\ell(\mathcal M_{t'};x_i)\end{aligned}$$</div><span class="eq-n">Eq. 16</span></div>
+  <div class="prose">
+    <p>其中 $\beta_i=\prod_{j=1}^{i}(1-\alpha_j)$。論文把 $t'$ 印成 $t-\mathrm{mod}(t,b)$，但下一句說第一個 chunk 的 $t=b$、所以 $t'=0$；照公式 $t=b$ 時 $t'=b$，而且 $b=1$ 時梯度會在更新後的 $\mathcal M_t$ 上計算。本頁依論文文字，把 $t'$ 讀成 chunk 的起點 $t'=t-1-\mathrm{mod}(t-1,b)$<span class="tag">本頁推導</span>。在這個讀法下，$b=1$ 時 $\mathcal M_{t'}=\mathcal M_{t-1}$，與逐 token 更新完全相同。另外，第二個等號只在單一 chunk 內成立：跨 chunk 時，第 $i$ 項的梯度點是 $i$ 所在 chunk 的起點，不是同一個 $\mathcal M_{t'}$，這也是論文只寫第一個 chunk 的原因。</p>
+    <p>對線性記憶 $\mathcal M_t=W_t$，第一個 chunk 內的梯度加權和可以寫成一次矩陣乘法（Eq. 17）。論文的寫法把 key 與 value 都寫成 $x$，並省略 $\|\cdot\|^2$ 求導的係數 2。一般形式如下（損失取 $\tfrac12\|\cdot\|^2$，$K=[k_1\cdots k_b]$、$V=[v_1\cdots v_b]$ 為行向量排成的矩陣，$c_i=\theta_i\beta_b/\beta_i$）<span class="tag">本頁推導</span>：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 17 一般形式，可橫向捲動">$$\sum_{i=1}^{b}c_i\nabla\ell(W_0;x_i)=(W_0K-V)\,\mathrm{diag}(c)\,K^\top$$</div><span class="eq-n">Eq. 17（一般形式）</span></div>
+  <div class="prose">
+    <p>每個 chunk 只需存自己的係數。動量也能平行（Eq. 18）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 18，可橫向捲動">$$S_t=\eta_tS_{t-1}-\theta_t u_t,\qquad u_t=\nabla\ell(\mathcal M_{t'};x_t)$$</div><span class="eq-n">Eq. 18</span></div>
+  <div class="prose">
+    <p>所有 $u_t$ 都在 $\mathcal M_{t'}$ 上計算，可以同時算出；Eq. 18 因此是以 $u_t$ 為輸入、$\eta_t$ 為轉移值的線性遞迴，可以用平行 associative scan 計算。associative scan 的意思是<span class="tag">本頁推導</span>：$S_t=\eta_tS_{t-1}+x_t$ 這種線性遞迴的每一步都可寫成一對 $(\eta_t,x_t)$；兩個相鄰步驟可以先合併成一步 $(\eta_2\eta_1,\ \eta_2x_1+x_2)$，而且合併的順序不影響結果。因此可以像比賽淘汰表一樣兩兩合併，$N$ 步只需約 $\log_2N$ 輪平行運算。</p>
+    <p>把動量與遺忘一起寫成矩陣乘法（常數 $\alpha,\eta,\theta$，chunk 內有 $n$ 個 token，索引 $l,m=1,\dots,n$，約定 $0^0=1$）<span class="tag">本頁推導</span>：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="含動量的 chunk 公式，可橫向捲動">$$\begin{aligned}\mathcal M_{\text{end}}&=(1-\alpha)^n\mathcal M_{t'}+c_S\,S_{t'}-\theta\,E\,\mathrm{diag}(w)\,K^\top,\\ S_{\text{end}}&=\eta^nS_{t'}+E\,\mathrm{diag}(q)\,K^\top\end{aligned}$$</div><span class="eq-n">本頁推導</span></div>
+  <div class="prose">
+    <p>其中 $E=\mathcal M_{t'}K-V$，$w_l=\sum_{m=l}^{n}(1-\alpha)^{n-m}\eta^{m-l}$，$c_S=\sum_{m=1}^{n}(1-\alpha)^{n-m}\eta^{m}$，$q_l=-\theta\eta^{n-l}$。$\eta=0$ 時 $w_l=(1-\alpha)^{n-l}=\beta_n/\beta_l$，$q_l$ 只剩 $l=n$ 一項，回到 Eq. 16–17。</p>
+    <p>數值上要注意<span class="tag">本頁推導</span>：Eq. 16 的 $\beta_t/\beta_i$ 若照字面先算 $\beta$ 再相除，$\alpha_j=1$ 時 $\beta_i=0$ 會得到 0/0，$\alpha$ 接近 1 時連乘會下溢；應直接以 $\prod_{j=i+1}^{t}(1-\alpha_j)$ 計算比值。實驗中 $\alpha,\theta,\eta$ 依 token 而定；論文 v1 沒有寫實驗用的 chunk 大小 $b$。</p>
+  </div>
+  <details class="more"><summary>進階：chunk 內參數為常數時</summary><div class="qa">
+    <p>若 $\alpha,\theta,\eta$ 在一個 chunk 內為常數，Eq. 17 的 $\Theta$ 只需一個純量，Eq. 18 變成線性非時變系統（LTI），可以用全域卷積計算（Sec. 3.2 末段）。作者把依 chunk 而定的參數留作未來工作。</p>
+  </div></details>
+  <div class="algo">
+    <div class="row hd"><div>chunk 演算法</div><div class="ex-h">說明</div></div>
+    <div class="row"><code>for each chunk [t'+1 .. t'+b]:</code><div class="ex">逐 chunk 處理；chunk 之間仍是依序的。</div></div>
+    <div class="row"><code>  E = M_{t'} K - V</code><div class="ex">所有誤差一次算出（矩陣乘法）。</div></div>
+    <div class="row"><code>  U_l = E[:,l] K[:,l]^T</code><div class="ex">各 token 的梯度，都在 M_{t'} 上計算。</div></div>
+    <div class="row"><code>  S_t = η S_{t-1} - θ U_t</code><div class="ex">線性遞迴，可以用 associative scan 平行計算。</div></div>
+    <div class="row"><code>  M_t = (1-α) M_{t-1} + S_t</code><div class="ex">衰減權重直接連乘，不用 β_t/β_i 相除。</div></div>
+  </div>
+
+  <div class="plate" id="c3">
+    <div class="plate-top"><div class="plate-h"><span class="id">C3</span><h3>chunk 平行化：凍結的梯度點與矩陣乘法形式</h3></div><button class="small-btn" type="button" id="c3-tab-b" aria-expanded="false" aria-controls="c3-tab">顯示資料表</button></div>
+    <p class="plate-lead">沿用 C1 的資料流（θ = 0.3、α = 0.02）。選 chunk 大小 b：上方方格以粗線分出 chunk，三角形標出每個 chunk 的梯度點 𝓜<sub>t′</sub>。</p>
+    <div class="ctl-row" style="margin-bottom:12px"><span class="lbl-s" style="margin:0">chunk 大小 b</span><div class="seg" id="c3-b" role="group" aria-label="chunk 大小"><button type="button" data-v="1">1</button><button type="button" data-v="2">2</button><button type="button" data-v="4">4</button><button type="button" data-v="8">8</button><button type="button" data-v="16">16</button><button type="button" data-v="32">32</button></div>
+      <span class="lbl-s" style="margin:0">η</span><div class="seg" id="c3-eta" role="group" aria-label="動量 η"><button type="button" data-v="0">0</button><button type="button" data-v="0.6">0.6</button></div></div>
+    <div class="fig" id="c3-strip"><svg role="img" aria-label="96 個 token 依 chunk 分組"></svg></div>
+    <div class="pg side" style="margin-top:8px">
+      <div class="fig"><div id="c3-fig"><svg role="img" aria-label="目前情境的回想誤差"></svg></div>
+        <div class="legend"><span class="lg ref">逐 token（b = 1）</span><span class="lg acc" id="c3-lg">chunk = 4</span></div></div>
+      <div class="ctl"><p class="readout" id="c3-ro"></p><p class="note" style="margin:0" id="c3-seedn"></p></div>
+    </div>
+    <div class="tscroll dtab hide" id="c3-tab" tabindex="0"><table><caption id="c3-cap"></caption><thead><tr><th class="num">t</th><th class="num">逐 token</th><th class="num" id="c3-th">chunk</th></tr></thead><tbody></tbody></table></div>
+    <p class="cap">b 大時，同一 chunk 內同一個 key 會被重複套用同一個（過時的）誤差，效果接近把 θ 放大，因此在這組固定參數下 b ≥ 16 誤差快速增大。論文中 θ<sub>t</sub> 依 token 而定，也沒有給出實驗用的 b。<span class="tag">本頁推導</span></p>
+    <p class="plate-f">主圖畫目前情境的回想誤差（t ≤ 32 與 t > 64 為 E_A，其餘為 E_B），對數縱軸；超出上限的值畫在上緣並以三角形標記。「兩形式最大差」比較逐 token 迴圈（梯度凍結在 chunk 起點）與上方的矩陣乘法公式在所有 chunk 終點的結果。讀數由本頁依 Eq. 16–18 即時計算；設定值為本頁推定，論文未給。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+
+  <div class="prose">
+    <p>C3 中兩種形式在所有 chunk 終點完全相同（最大差小於 $3\times10^{-14}$）：平行化不改變數學，只改變計算方式。$b=1$ 與逐 token 更新相同；$b$ 越大，順序步數越少，但偏離越大（η = 0.6 時，$\|\mathcal M^{(b)}_{96}-\mathcal M^{(1)}_{96}\|_F$ 為 0.130、0.714、2.05、202，對應 b = 2、4、8、16）。η = 0 時較不敏感：b = 8 的 $E_A(96)$ 為 0.050，η = 0.6 時為 0.600。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">chunk 內的梯度在哪個記憶上計算？$b=1$ 時與逐 token 更新的關係？動量如何平行？</p>
+    <p class="a">都在 chunk 起點 $\mathcal M_{t'}$（Eq. 16；本頁把 $t'$ 寫成 $t-1-\mathrm{mod}(t-1,b)$，因為論文印的 $t-\mathrm{mod}(t,b)$ 與其「第一個 chunk 的 $t'=0$」不符）；在這個讀法下 $b=1$ 時完全相同；動量 Eq. 18 是以 $u_t$ 為輸入的線性遞迴，用平行 associative scan 計算（Sec. 3.2）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="ttt-linear-mlp.html">原版 TTT：TTT-Linear / TTT-MLP</a>、<a href="lact-large-chunk-ttt.html">從 One-Minute Video 到 LaCT：大 chunk Test-Time Training</a></p>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="persistent" data-toc="06" data-tt="持久記憶">
+  <div class="ch-num">06 · 持久記憶</div>
+  <h2>持久記憶是放在序列開頭的可學習參數</h2>
+  <div class="prose">
+    <p>長期記憶是情境記憶：它的內容完全由輸入決定。作者認為還需要一組可學習、但不依賴輸入的參數，用來儲存任務本身的知識。做法是把 $N_p$ 個可學習向量接在序列前面（Sec. 3.3）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 19，可橫向捲動">$$x_{new}=[p_1\ p_2\ \cdots\ p_{N_p}]\ \|\ x$$</div><span class="eq-n">Eq. 19</span></div>
+  <div class="prose">
+    <p>作者給三個動機：</p>
+    <ol>
+      <li><b>記憶觀點</b>：掌握一個任務需要記住「如何做」這個任務；持久記憶用來儲存任務知識，這部分不依賴當下的輸入。</li>
+      <li><b>前饋網路觀點</b>：Sukhbaatar et al.（2019）指出，把 FFN 的 ReLU 換成 Softmax，會得到類似注意力、但權重不依賴資料的形式（Eq. 20）。持久記憶放在序列開頭，會產生不依賴資料的注意力權重。</li>
+      <li><b>技術觀點</b>：因果遮罩的注意力偏向序列最前面的 token；在開頭放可學習參數可以重新分配注意力權重，緩解因果注意力偏向開頭 token 的現象（Han et al. 2024；Xiao et al. 2024）。</li>
+    </ol>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 20，可橫向捲動">$$FFN(x)=W_V\,\mathrm{Softmax}(W_Kx)$$</div><span class="eq-n">Eq. 20</span></div>
+  <div class="prose">
+    <p>測試時持久記憶的參數固定、不更新，只有長期記憶在測試時持續學習（Sec. 4.1）。在下一節的三種架構中，持久記憶都接在序列開頭，但進入注意力的方式不同。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">持久記憶如何加入序列？列出作者的三個動機。測試時是否更新？</p>
+    <p class="a">把 $N_p$ 個可學習向量接在序列前面（Eq. 19）；記憶觀點（儲存任務知識）、前饋網路觀點（不依賴資料的注意力權重，Eq. 20）、技術觀點（緩解因果注意力偏向開頭 token）；測試時固定（Sec. 3.3、4.1）。</p>
+  </div></details>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="variants" data-toc="07" data-tt="三種架構">
+  <div class="ch-num">07 · 三種架構</div>
+  <h2>Titans 以三種方式結合記憶與注意力</h2>
+  <div class="prose">
+    <p>作者把注意力解讀為短期記憶：依賴關係精確，但視窗有限；神經記憶則是長期記憶。Sec. 4 回答 Q4，給出三種組合方式。</p>
+    <h3>MAC：記憶作為上下文</h3>
+    <p>MAC（Memory as a Context）把序列切成長度 $C$ 的片段 $S^{(i)}$。處理一個片段時，先用片段的 query 從記憶讀出歷史資訊 $h_t=\mathcal M^*_{t-1}(q_t)$，把持久記憶與 $h_t$ 接在片段前，做片段內注意力，再以注意力輸出 $y_t$ 更新記憶：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 21–25，可橫向捲動">$$\begin{aligned}h_t&=\mathcal M^*_{t-1}(q_t),\quad q_t=S^{(t)}W_Q\\ \tilde S^{(t)}&=[p_1\cdots p_{N_p}]\ \|\ h_t\ \|\ S^{(t)},\quad y_t=\mathrm{Attn}(\tilde S^{(t)})\\ \mathcal M_t&=\mathcal M_{t-1}(y_t),\quad o_t=y_t\otimes\mathcal M^*_t(y_t)\end{aligned}$$</div><span class="eq-n">Eq. 21–25</span></div>
+  <div class="prose">
+    <p>片段內是完整因果注意力（Fig. 3a）；Eq. 24 表示以 $y_t$ 經前向傳遞更新記憶。作者列出三個優點：注意力同時看到歷史與當前，可以決定是否需要長期記憶的資訊；注意力幫助記憶只存有用的資訊；測試時持久記憶固定、注意力權重做 in-context learning、長期記憶持續學習。</p>
+    <h3>MAG：記憶作為閘控分支</h3>
+    <p>MAG（Memory as Gating）不切片段。一支以輸入更新記憶，另一支用帶前綴的滑動視窗注意力 SW-Attn$^*$，兩支以非線性閘控 $\otimes$ 結合（Sec. 4.2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 26–28，可橫向捲動">$$\tilde x=[p_1\cdots p_{N_p}]\ \|\ x,\qquad y=\text{SW-Attn}^*(\tilde x),\qquad o=y\otimes\mathcal M(\tilde x)$$</div><span class="eq-n">Eq. 26–28</span></div>
+  <div class="prose">
+    <p>$\mathcal M(\tilde x)$ 是對序列遞迴後記憶的輸出。實驗中以可學習的向量權重分別正規化 $y$ 與 $\mathcal M(\tilde x)$，再接非線性 $\sigma(\cdot)$；論文沒有寫 $\sigma$ 的形式。作者稱滑動視窗注意力為精確的短期記憶，神經記憶為逐漸淡去的記憶（fading memory）。</p>
+    <h3>MAL：記憶作為一層</h3>
+    <p>MAL（Memory as a Layer）在記憶層之後接滑動視窗注意力（Sec. 4.3）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 29–31，可橫向捲動">$$\tilde x=[p_1\cdots p_{N_p}]\ \|\ x,\qquad y=\mathcal M(\tilde x),\qquad o=\text{SW-Attn}(y)$$</div><span class="eq-n">Eq. 29–31</span></div>
+  <div class="prose">
+    <p>Eq. 31 是不帶前綴的 SW-Attn，Eq. 27 是帶前綴的 SW-Attn$^*$；依方程式，MAL 的持久記憶只能經由記憶層進入注意力。文獻中常見的混合模型都是這種逐層堆疊；作者指出其缺點是模型能力受限於每一層，無法利用注意力與記憶的互補。把 LMM 單獨當作序列模型（沒有注意力）是 MAL 的特例，論文記為 Titans (LMM)。</p>
+  </div>
+  <div class="vcards">
+    <div class="card"><span class="k">MAC · Eq. 21–25</span><h3>記憶作為上下文</h3><p>讀記憶 → 片段注意力 → 以 $y_t$ 寫記憶。</p><p>片段內完整因果注意力＋記憶 token＋持久記憶。</p></div>
+    <div class="card"><span class="k">MAG · Eq. 26–28</span><h3>記憶作為閘控分支</h3><p>記憶分支與注意力分支並行，以閘控結合。</p><p>帶前綴的滑動視窗注意力 SW-Attn$^*$。</p></div>
+    <div class="card"><span class="k">MAL · Eq. 29–31</span><h3>記憶作為一層</h3><p>記憶層的輸出再進入注意力。</p><p>不帶前綴的滑動視窗注意力 SW-Attn。</p></div>
+  </div>
+
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>三種架構的注意力範圍與記憶路徑</h3></div>
+    <p class="plate-lead">每一列是一個 query 位置，每一欄是一個可被注意的 token。點選一列、或用上下方向鍵，看這個 query 直接注意哪些 token、哪些只能經由長期記憶到達。</p>
+    <div class="ctl-row" style="margin-bottom:10px"><div class="seg" id="c4-v" role="group" aria-label="架構"><button type="button" data-v="MAC">MAC</button><button type="button" data-v="MAG">MAG</button><button type="button" data-v="MAL">MAL</button></div></div>
+    <div class="pg side">
+      <div class="fig">
+        <div class="mx-wrap" id="c4-wrap" tabindex="-1"><div class="mx" id="c4-mx" role="grid" aria-label="注意力矩陣"></div></div>
+        <div class="tlegend"><span><span class="sw direct" aria-hidden="true"></span>直接注意</span><span><span class="sw mem" aria-hidden="true"></span>經由記憶</span><span><span class="sw none" aria-hidden="true"></span>不可見</span></div>
+      </div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c4-t">query 位置 t<output id="c4-to">10</output></label><input id="c4-t" type="range" min="1" max="16" step="1" value="10"></div>
+        <div class="rng"><label class="lbl" for="c4-C">片段長度 C<output id="c4-Co">4</output></label><input id="c4-C" type="range" min="0" max="2" step="1" value="1"></div>
+        <div class="rng"><label class="lbl" for="c4-w">視窗 w<output id="c4-wo">4</output></label><input id="c4-w" type="range" min="0" max="2" step="1" value="1"></div>
+        <div class="rng"><label class="lbl" for="c4-Np"><span>持久記憶 N<sub>p</sub></span><output id="c4-Npo">2</output></label><input id="c4-Np" type="range" min="0" max="4" step="1" value="2"></div>
+        <div class="rng"><label class="lbl" for="c4-Nl"><span>記憶 token N<sub>l</sub></span><output id="c4-Nlo">2</output></label><input id="c4-Nl" type="range" min="0" max="4" step="1" value="2"></div>
+        <p class="chipnote" id="c4-note"></p>
+        <p class="readout" id="c4-ro"></p>
+        <p class="flowline" id="c4-flow"></p>
+      </div>
+    </div>
+    <p class="plate-f">序列長度 N = 16。MAC：持久記憶與 N<sub>l</sub> 個記憶 token 直接可見，同片段且不晚於 t 的 token 直接可見，先前片段經由記憶（Eq. 24）。MAG：持久記憶與最近 w 個 token 直接可見（SW-Attn*），更早的經由記憶分支。MAL：最近 w 個 token 直接可見（注意的是記憶層輸出），持久記憶與更早的 token 經由記憶層（Eq. 31 不帶前綴）。Eq. 21 的 h<sub>t</sub> 長度等於片段長度，Fig. 3a 的說明寫 N<sub>l</sub> 個記憶 token；本頁依 Fig. 3a 把 N<sub>l</sub> 當作獨立參數，並讓片段內所有 query 都看得到 h（推定）。配對數由本頁依 Eq. 21–31 計算。</p>
+    <p class="sr" aria-live="polite" id="c4-live"></p>
+  </div>
+
+  <div class="prose">
+    <p>預設設定（N = 16、N<sub>p</sub> = 2、C = 4、N<sub>l</sub> = 2、w = 4）下，t = 10 的 query：MAC 直接注意 6 個、經由記憶 8 個、不可見 6 個；MAG 為 6／6／6；MAL 為 4／8／6。所有 query 加總的注意力配對數：MAC 104、MAG 90、MAL 58，完整因果注意力加前綴為 168；N 增大時 MAC 與 MAG 的配對數只隨 N 線性成長<span class="tag">本頁推導</span>。片段開頭的 token（例如 MAC 的 t = 9）直接注意的範圍最小，較早的資訊全靠記憶 token $h$。</p>
+    <p>哪一種在長上下文任務最好？論文認為是 MAC：Table 5 的 Long Context 一欄 MAC 97.95 最高，BABILong（Fig. 6）也只報告 MAC。但 Table 2 並非每格最好：16K 的 N 欄 MAG 98.6 高於 MAC 97.4<span class="tag">本頁核對</span>。</p>
+    <h3>架構細節（Sec. 4.4）</h3>
+    <ul>
+      <li>所有區塊使用殘差連接。</li>
+      <li>計算 query、key、value 時使用 SiLU，query 與 key 做 ℓ2 正規化。</li>
+      <li>query、key、value 投影後各接一層 1D depthwise-separable 卷積。</li>
+      <li>最終輸出投影前，以正規化與線性層做閘控（Mehta et al. 2023）。</li>
+    </ul>
+    <h3>Theorem 4.1（論文宣稱，本頁不展開）</h3>
+    <p>論文宣稱 Transformer、對角線性遞迴模型與 DeltaNet 受限於 TC⁰，Titans 能解決 TC⁰ 以外的問題，因此在狀態追蹤任務上理論表達力更強。TC⁰ 是計算複雜度理論中的一個電路類別；論文把 Transformer 等模型能解的問題歸在此類，並宣稱 Titans 能解此類以外的問題。v1 正文沒有附證明。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">MAC、MAG、MAL 各如何結合記憶與注意力？哪一種在長上下文任務最好？</p>
+    <p class="a">MAC：把 $h_t=\mathcal M^*_{t-1}(q_t)$ 與持久記憶接在片段前，做片段內注意力，再以 $y_t$ 更新記憶；MAG：帶前綴 SWA 與記憶並行、以閘控結合；MAL：記憶層之後接 SWA；論文認為 MAC 在長上下文最好：Table 5 Long Context 97.95 最高，BABILong（Fig. 6）只報告 MAC；但 Table 2 並非每格最好（16K 的 N 欄 MAG 98.6 > MAC 97.4）（Eq. 21–31，Sec. 5）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="titans-architectures-mac-mag-mal.html">Titans 的三種架構：記憶作為上下文、閘控分支與一層</a>、<a href="recurrent-memory-segment-transformers.html">分段 Transformer 與外掛記憶：Transformer-XL、RMT、Memory Layers</a></p>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="relations" data-toc="08" data-tt="與遞迴模型的關係">
+  <div class="ch-num">08 · 與遞迴模型的關係</div>
+  <h2>LMM 推廣了 DeltaNet、Longhorn 與 TTT</h2>
+  <div class="prose">
+    <p>App. C 取線性記憶 $\mathcal M_t=W_t$、損失 $\tfrac12\|\mathcal M_tk_t-v_t\|_2^2$，把 LMM 寫成（Eq. 32–33，轉置依本頁「行向量 key、$\mathcal M k$」慣例統一）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 32–33，可橫向捲動">$$\mathcal M_t=\mathrm{diag}(1-\alpha_t)\mathcal M_{t-1}+S_t,\qquad S_t=\mathrm{diag}(\eta_t)S_{t-1}-\mathrm{diag}(\theta_t)(\mathcal M_{t-1}k_t-v_t)k_t^\top$$</div><span class="eq-n">Eq. 32–33</span></div>
+  <div class="prose">
+    <p>原文 Eq. 32 右邊寫成 $\mathcal M_t$，應為 $\mathcal M_{t-1}$。DeltaNet 可以視為最佳化 $\tfrac12\|S_tk_t-v_t\|_2^2$ 的線上學習（Eq. 34）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 34，可橫向捲動">$$S_{t+1}=S_t-\theta_t\nabla L=S_t\big(I-\theta_tk_tk_t^\top\big)+\theta_tv_tk_t^\top$$</div><span class="eq-n">Eq. 34</span></div>
+  <div class="prose">
+    <p>Gated DeltaNet 是 Eq. 34 再加 weight decay。論文寫，令 $\eta_t=0$ 時兩者等價（App. C）。本頁能從論文自己的方程式驗證的是<span class="tag">本頁推導</span>：Eq. 13–14 取 $\eta=0$ 得 $\mathcal M_t=\mathcal M_{t-1}\big((1-\alpha_t)I-\theta_tk_tk_t^\top\big)+\theta_tv_tk_t^\top$；再取 $\alpha_t=0$ 即 Eq. 34，也就是 η = 0、α = 0 時即 DeltaNet。本論文沒有寫出 Gated DeltaNet 的遞迴式，所以本頁只能說：上式與 Gated DeltaNet 的更新規則形式相近，細節（衰減是否也作用在修正項）需查原論文。</p>
+    <p>作者列出 LMM 推廣 Gated DeltaNet 的三點：(1) 動量規則，同時考慮過去與當下的驚訝度；(2) 深層記憶，Gated DeltaNet 需要閉式遞迴，只能用矩陣記憶；(3) 非線性遞迴：chunk 之間非線性、chunk 內線性。作者說 RWKV-7 也用同樣的形式與損失。</p>
+    <p>Longhorn 以隱式線上學習推得（Eq. 35），但缺少遺忘閘：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 35，可橫向捲動">$$S_{t+1}=S_t\big(I-\delta_tk_tk_t^\top\big)+\delta_tv_tk_t^\top,\qquad \delta_t=\frac{\theta_t}{1+\theta_tk_tk_t^\top}$$</div><span class="eq-n">Eq. 35</span></div>
+  <div class="prose">
+    <p>TTT layer 與 LMM 有三個差異：TTT 沒有遺忘機制；TTT 只用當下驚訝度，沒有動量；TTT 允許深層記憶，但沒有以實驗評估深層記憶的利弊。作者宣稱 LMM 是第一個使用動量更新規則的線性遞迴模型。App. A.1 把線性遞迴模型分成三代：第一代是資料無關的衰減，第二代加入閘控，第三代以線上學習或 delta rule 更新。App. A 另稱 Titans (MAC) 是 RMT 的推廣，以神經記憶取代小型向量記憶。</p>
+  </div>
+  <div class="tscroll" style="max-width:760px"><table class="stack">
+    <caption>App. C 的對照（只填論文寫明的內容）</caption>
+    <thead><tr><th>模型</th><th>遺忘閘</th><th>動量</th><th>深層記憶</th><th>遞迴型態</th></tr></thead><tbody>
+    <tr><td>DeltaNet</td><td data-h="遺忘閘">無（Eq. 34）</td><td data-h="動量">無</td><td data-h="深層記憶">無，矩陣記憶</td><td data-h="遞迴型態">線性</td></tr>
+    <tr><td>Gated DeltaNet</td><td data-h="遺忘閘">有（weight decay）</td><td data-h="動量">無</td><td data-h="深層記憶">無，需閉式遞迴</td><td data-h="遞迴型態">線性</td></tr>
+    <tr><td>Longhorn</td><td data-h="遺忘閘">無</td><td data-h="動量">論文未比較</td><td data-h="深層記憶">論文未比較</td><td data-h="遞迴型態">線性（Eq. 35）</td></tr>
+    <tr><td>TTT</td><td data-h="遺忘閘">無</td><td data-h="動量">無，只用當下驚訝度</td><td data-h="深層記憶">允許，未評估</td><td data-h="遞迴型態">論文未比較</td></tr>
+    <tr class="hl"><td>LMM</td><td data-h="遺忘閘">有（$\alpha_t$）</td><td data-h="動量">有（$\eta_t$）</td><td data-h="深層記憶">有（$L_{\mathcal M}\ge1$）</td><td data-h="遞迴型態">chunk 間非線性、chunk 內線性</td></tr>
+    </tbody></table></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">令 $\eta_t=0$ 時 LMM 的線性版本對應哪個模型？LMM 推廣了它的哪三點？與 TTT 的差異？</p>
+    <p class="a">論文稱等價於 Gated DeltaNet（DeltaNet 加 weight decay，Eq. 32–34）；本頁能驗證的是 η = 0、α = 0 時即 DeltaNet（Eq. 34），與 Gated DeltaNet 只是更新規則形式相近；動量規則、深層記憶、chunk 間非線性遞迴；TTT 沒有遺忘、只用當下驚訝度、未評估深層記憶（App. C）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="delta-rule-deltanet-family.html">Delta rule 與 DeltaNet、Gated DeltaNet</a>、<a href="ttt-sequence-modeling-overview.html">Test-Time Training 作為序列建模架構</a>、<a href="ttt-theory-and-applications.html">TTT 的理論還原與應用擴散</a></p>
+</section>
+
+<!-- S9 ============================================================ -->
+<section class="ch" id="results" data-toc="09" data-tt="實驗結果">
+  <div class="ch-num">09 · 實驗結果</div>
+  <h2>實驗中 Titans 在多數指標上優於同規模的 Transformer 與線性遞迴模型</h2>
+  <div class="prose">
+    <p>Sec. 5.1 的語言模型有四種規模：170M、340M、400M、760M；前三者以 FineWeb-Edu 的 15B token 訓練，760M 用 30B token。訓練流程沿用 Gated DeltaNet（S10）。Table 1 報告 Wikipedia perplexity（Wiki ppl，越低越好）與 8 個常識推理任務的平均準確率（Avg acc，越高越好），摘錄如下：</p>
+  </div>
+  <div class="tscroll"><table>
+    <caption>Table 1 摘錄：Wiki ppl ↓ ／ Avg acc ↑</caption>
+    <thead><tr><th>模型</th><th class="num">340M / 15B</th><th class="num">760M / 30B</th></tr></thead><tbody>
+    <tr><td>Transformer++</td><td class="num">31.52 / 42.92</td><td class="num">25.21 / 48.69</td></tr>
+    <tr><td>Gated DeltaNet</td><td class="num">27.01 / 45.42</td><td class="num">21.18 / 49.69</td></tr>
+    <tr><td>TTT</td><td class="num">27.44 / 44.51</td><td class="num">24.17 / 47.32</td></tr>
+    <tr><td>Samba（混合）</td><td class="num">—</td><td class="num">20.63 / 51.08</td></tr>
+    <tr><td>Gated DeltaNet-H2（混合）</td><td class="num">—</td><td class="num">19.88 / 51.49</td></tr>
+    <tr><td>Titans (LMM)</td><td class="num">26.18 / 46.17</td><td class="num">20.04 / 51.56</td></tr>
+    <tr class="hl"><td>Titans (MAC)</td><td class="num">25.43 / 47.36</td><td class="num">19.93 / 52.51</td></tr>
+    <tr class="hl"><td>Titans (MAG)</td><td class="num">25.07 / 47.54</td><td class="num">18.61 / 52.50</td></tr>
+    <tr class="hl"><td>Titans (MAL)</td><td class="num">24.69 / 46.55</td><td class="num">19.07 / 50.97</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>760M 時 Titans (MAG) 的 Wiki ppl 為 18.61，Transformer++ 為 25.21（Table 1）。作者的解讀（Sec. 5.2）<span class="tag">作者宣稱</span>：非混合模型中 LMM 最好；三種 Titans 都優於 Samba 與 Gated DeltaNet-H2；MAC 與 MAG 接近，MAC 在較長依賴上較好；MAG、MAC 都優於 MAL。表格中有與這些說法不一致的格子<span class="tag">本頁核對</span>：</p>
+    <ol>
+      <li>Wiki ppl 上 MAL 優於 MAC 與 MAG：340M 為 24.69，對 25.43、25.07；400M 為 23.93，對 MAC 25.61。</li>
+      <li>760M Wiki ppl：MAC 19.93 高於 Gated DeltaNet-H2 19.88（ppl 越低越好）。400M：Gated DeltaNet-H2 24.19 低於 MAC 25.61。</li>
+      <li>760M Avg acc：MAL 50.97 低於 Samba 51.08 與 Gated DeltaNet-H2 51.49。</li>
+      <li>760M MAL 的 SIQA 為 30.98，比相鄰各列（38.98–41.87）低約 10；Avg 50.97 與 8 欄平均一致，所以不是 Avg 算錯，疑似該格筆誤。本頁照錄。</li>
+    </ol>
+    <p>本頁的整理：Avg acc 上 MAC、MAG 在列有混合基準的 400M 與 760M 都高於 Samba 與 Gated DeltaNet-H2（340M 未列混合基準）；MAL 的 Avg 與各模型的 Wiki ppl 則不是每格都最好。</p>
+    <p>needle-in-a-haystack 測試（S-NIAH，RULER）在 2K–16K 長度下找出插入的字串。16K 欄如下（PK／N／W 為三種設定）：</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table>
+    <caption>Table 2，16K 欄：PK ／ N ／ W</caption>
+    <thead><tr><th>模型</th><th class="num">PK</th><th class="num">N</th><th class="num">W</th></tr></thead><tbody>
+    <tr><td>TTT</td><td class="num">88.4</td><td class="num">4.4</td><td class="num">0.0</td></tr>
+    <tr><td>Mamba2</td><td class="num">5.4</td><td class="num">0.0</td><td class="num">0.0</td></tr>
+    <tr><td>DeltaNet</td><td class="num">71.4</td><td class="num">5.4</td><td class="num">0.0</td></tr>
+    <tr><td>Titans (LMM)</td><td class="num">96.2</td><td class="num">80.2</td><td class="num">80.6</td></tr>
+    <tr class="hl"><td>Titans (MAC)</td><td class="num">98.4</td><td class="num">97.4</td><td class="num">95.2</td></tr>
+    <tr class="hl"><td>Titans (MAG)</td><td class="num">97.4</td><td class="num">98.6</td><td class="num">88.2</td></tr>
+    <tr class="hl"><td>Titans (MAL)</td><td class="num">97.8</td><td class="num">96.4</td><td class="num">90.4</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>三種 Titans 中沒有一種在 16K 欄每格都最好（N 欄 MAG 98.6 高於 MAC 97.4）。作者把 LMM 的優勢歸因於：相對 TTT 有動量與遺忘、相對 Mamba2 有深層非線性記憶與移除記憶的能力、相對 DeltaNet 有遺忘機制。BABILong（Fig. 6）有 few-shot 與 fine-tuning 兩種設定，作者報告 Titans (MAC) 優於所有基準（含 GPT-4），且參數比 Llama3.1-8B + RAG 少約 70 倍；正文沒有給出數值，本頁不估讀圖值。</p>
+    <p>消融實驗（Table 5）以 400M 模型移除或替換元件：</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table>
+    <caption>Table 5：ppl ↓ ／ Reasoning acc ↑ ／ Long Context acc ↑</caption>
+    <thead><tr><th>模型</th><th class="num">ppl</th><th class="num">Reasoning</th><th class="num">Long Context</th></tr></thead><tbody>
+    <tr><td>LMM</td><td class="num">27.01</td><td class="num">47.83</td><td class="num">92.68</td></tr>
+    <tr><td>+Attn (MAC)</td><td class="num">26.67</td><td class="num">48.65</td><td class="num">97.95</td></tr>
+    <tr><td>+Attn (MAG)</td><td class="num">25.70</td><td class="num">48.60</td><td class="num">96.70</td></tr>
+    <tr><td>+Attn (MAL)</td><td class="num">25.91</td><td class="num">47.87</td><td class="num">96.91</td></tr>
+    <tr><td>Linear Memory</td><td class="num">28.49</td><td class="num">46.97</td><td class="num">85.34</td></tr>
+    <tr><td>w/o Convolution</td><td class="num">28.73</td><td class="num">45.82</td><td class="num">90.28</td></tr>
+    <tr><td>w/o Momentum</td><td class="num">28.98</td><td class="num">45.49</td><td class="num">87.12</td></tr>
+    <tr class="hl"><td>w/o Weight Decay</td><td class="num">29.04</td><td class="num">45.11</td><td class="num">85.60</td></tr>
+    <tr><td>w/o Persistent Memory</td><td class="num">27.63</td><td class="num">46.35</td><td class="num">92.49</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>作者稱所有元件都有正面貢獻，貢獻由大到小為 weight decay、動量、卷積、持久記憶。這個排序在 ppl 與 Reasoning 上成立<span class="tag">本頁核對</span>：依 ppl，移除 weight decay 傷害最大（ppl 29.04，LMM 為 27.01），其次是移除動量 28.98、移除卷積 28.73；Reasoning 的順序相同（45.11 &lt; 45.49 &lt; 45.82 &lt; 46.35）。Long Context 上最差的則是 Linear Memory 85.34，其次才是 w/o Weight Decay 85.60、w/o Momentum 87.12。</p>
+    <p>其他任務各一句。時間序列（Table 3）以 Simba 框架、把 Mamba 模組換成神經記憶，例如 ETTm1 的 MSE／MAE 為 0.358／0.387（Simba 0.383／0.396）；作者寫「outperforming all baselines」，但 Traffic 的 MAE 0.289 高於 iTransformer 的 0.282（MSE 0.415 仍最低）<span class="tag">本頁核對</span>。DNA（Table 4，GenomicsBenchmarks top-1 準確率）：LMM 在 Enhancer Cohn 75.2、Enhancer Ens 89.6 最高，Human Reg. 89.3 低於 HyenaDNA 93.8，作者用詞為「competitive」。效率（Fig. 9）：記憶模組比 Mamba2 與 Gated DeltaNet 稍慢，作者歸因於深層記憶、更有表達力的轉移與 Mamba2 高度最佳化的核心；Titans (MAL) 比基準與記憶模組本身快，原因是以 FlashAttention 實作的滑動視窗注意力。作者並聲稱 Titans 可擴展到超過 2M 的上下文視窗（Abstract、Sec. 6），正文沒有對應的數值表格。</p>
+  </div>
+  <details class="more"><summary>表格內部一致性（本頁推導，不改原數字）</summary><div class="qa">
+    <ol>
+      <li>Table 5 的四個 LMM／Titans 列等於 Table 1 的 400M 列：ppl = (Wiki ppl + LMB ppl)/2（27.01、26.67、25.70、25.91 完全一致），Reasoning = Table 1 的 Avg；Long Context = Table 2 該模型 12 格的平均（92.68、97.95、96.70、96.91 完全一致）。正文稱 Long Context 為「long context NIAH (BABILong)」，但數值與 S-NIAH 一致。</li>
+      <li>Table 1 的 Avg 欄與 8 個準確率欄的平均不符的列：760M TTT（表列 47.32，平均 49.37）、400M Gated DeltaNet-H2（47.69 對 47.80）、400M Titans (LMM)（47.83 對 47.865）。其餘列一致。</li>
+      <li>760M 的三個 Titans 列沒有標混合模型的星號（340M、400M 有）。Fig. 7b 標題寫 360M，與 Sec. 5.1 的 340M 不同。</li>
+    </ol>
+  </div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">760M 時 Titans (MAG) 與 Transformer++ 的 Wiki ppl？依 ppl，消融中移除哪個元件傷害最大？</p>
+    <p class="a">MAG 18.61 vs Transformer++ 25.21（Table 1）；依 ppl（與 Reasoning）是移除 weight decay（ppl 29.04，LMM 為 27.01），其次動量 28.98、卷積 28.73；Long Context 上最差的則是 Linear Memory 85.34（Table 5）。</p>
+  </div></details>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="impl" data-toc="10" data-tt="實作">
+  <div class="ch-num">10 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="tscroll" style="max-width:700px"><table class="stack">
+    <caption>Sec. 5.1 的訓練設定</caption>
+    <thead><tr><th>項目</th><th>設定</th></tr></thead><tbody>
+    <tr><td>規模與資料</td><td data-h="設定">170M、340M、400M：FineWeb-Edu 15B token；760M：30B token</td></tr>
+    <tr><td>Tokenizer</td><td data-h="設定">Llama 2 tokenizer，詞彙 32K</td></tr>
+    <tr><td>訓練長度</td><td data-h="設定">4K token</td></tr>
+    <tr><td>最佳化</td><td data-h="設定">AdamW，學習率 4e-4，cosine annealing，weight decay 0.1</td></tr>
+    <tr><td>Batch</td><td data-h="設定">0.5M token</td></tr>
+    <tr><td>基準數字</td><td data-h="設定">400M 基準取自 Gated DeltaNet 論文（App. B）</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>架構細節見 S7 的 Sec. 4.4 清單。以下是閱讀與復現時容易出錯的地方：</p>
+    <ol>
+      <li>把驚訝度當成對輸入的梯度：更新式需要損失對記憶參數的梯度（S2）。</li>
+      <li>把 Eq. 7 下方的 read／write 文字當真：$f$ 是寫入、$g$ 是讀取（S1）。</li>
+      <li>忘記 chunk 內的梯度都在 $\mathcal M_{t'}$ 計算：$b&gt;1$ 時結果與逐 token 更新不同，$b=1$ 才相同（S5、C3）。</li>
+      <li>以 $\beta_t/\beta_i$ 相除計算衰減權重：$\alpha=1$ 時得到 0/0，應直接連乘（S5）。</li>
+      <li>Eq. 17 的 $(W_0x_t-x_t)x_t^\top$ 是 key = value = $x$ 的簡寫；一般情形是 $(W_0k_t-v_t)k_t^\top$，係數 2 取決於損失是否乘 ½（S5）。</li>
+      <li>MAC 與 MAG／MAL 的注意力範圍不同：MAC 是片段內完整因果注意力＋記憶 token＋持久記憶；MAG 是帶前綴的 SWA；MAL 是不帶前綴的 SWA（S7、C4）。</li>
+      <li>Eq. 32 右邊的 $\mathcal M_t$ 應為 $\mathcal M_{t-1}$（S8）。</li>
+      <li>論文 v1 未說明：chunk 大小、記憶 MLP 寬度、$\eta_t,\theta_t,\alpha_t$ 的參數化、片段長度 $C$、視窗大小、$N_p$、$N_l$、閘控非線性 $\sigma$ 的形式。復現時這些都要自行決定。</li>
+      <li>照字面使用 Eq. 16 的 $t'=t-\mathrm{mod}(t,b)$：$t=b$ 時得到 $b$ 而非 0，$b=1$ 時梯度會在更新後的 $\mathcal M_t$ 上計算；應取 chunk 起點 $t'=t-1-\mathrm{mod}(t-1,b)$（S5）。</li>
+    </ol>
+  </div>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="history" data-toc="11" data-tt="研究脈絡">
+  <div class="ch-num">11 · 研究脈絡</div>
+  <h2>研究脈絡（由 notes/timeline.json 提供）</h2>
+  <div class="prose">
+    <p>依 Titans 的轉述，這條脈絡從外部記憶與分段記憶開始（NTM、Transformer-XL、RMT），經過線性注意力與快速權重（Schmidhuber 1992 的 fast weight 不在 arXiv，未列入時間線），再到閘控線性遞迴（Mamba、Griffin）與 delta rule（DeltaNet、Gated DeltaNet），然後是以梯度更新隱藏狀態的 TTT，本文再加入動量、遺忘與深層記憶。Longhorn、Mamba2、RetNet 在內文中出現，但不在時間線上。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+  <p class="read">總覽筆記：<a href="titans-lineage-overview.html">Titans 的研究脈絡總覽</a></p>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="next" data-toc="12" data-tt="限制與延伸">
+  <div class="ch-num">12 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>作者沒有獨立的限制章節。以下依論文內容整理，不加入論文以外的評論。v1 是初版：作者在註腳表示仍在完成更大模型的結果，程式碼「將會釋出」（Sec. 6）。</p>
+  </div>
+  <div class="twocol">
+    <div class="card"><h3>論文寫明的</h3><ul>
+      <li>四種規模（170M–760M）的語言模型與常識推理結果</li>
+      <li>S-NIAH 2K–16K、BABILong、時間序列、DNA</li>
+      <li>深度與吞吐量的權衡（Fig. 7–9）</li>
+      <li>消融：weight decay、動量、卷積、持久記憶</li>
+    </ul></div>
+    <div class="card"><h3>論文未寫明的</h3><ul>
+      <li>超過 2M 上下文的數值結果（只在 Abstract、Sec. 1、Sec. 6 提到）</li>
+      <li>Theorem 4.1 的證明</li>
+      <li>chunk 大小、MLP 寬度、$\eta_t,\theta_t,\alpha_t$ 的參數化、$C$、視窗、$N_p$、$N_l$、$\sigma$</li>
+      <li>更大模型的結果（v1 註腳預告下一版）</li>
+    </ul></div>
+  </div>
+  <div class="prose"><h3>研究筆記（依閱讀順序）</h3></div>
+  <ol class="rl">
+    <li><div><a href="titans-lineage-overview.html">Titans 的研究脈絡總覽：從 attention 與 linear recurrence 到測試時學習的長期記憶</a><span>總覽</span></div></li>
+    <li><div><a href="memory-view-of-sequence-models.html">序列模型的記憶觀點：寫入、讀取與五個設計問題</a><span>S1–S2</span></div></li>
+    <li><div><a href="linear-attention-fast-weights.html">Linear attention 與 fast weight programs：矩陣值記憶的起點</a><span>S1</span></div></li>
+    <li><div><a href="gated-linear-recurrence-forgetting.html">閘控線性遞迴：以資料相依的遺忘處理記憶溢出</a><span>S3</span></div></li>
+    <li><div><a href="delta-rule-deltanet-family.html">Delta rule 與 DeltaNet、Gated DeltaNet：把寫入視為線上回歸</a><span>S8</span></div></li>
+    <li><div><a href="recurrent-memory-segment-transformers.html">分段 Transformer 與外掛記憶：Transformer-XL、RMT、Memory Layers</a><span>S7</span></div></li>
+    <li><div><a href="titans-neural-memory-surprise-update.html">Titans 的神經長期記憶：surprise、動量、遺忘與平行訓練</a><span>S2–S5</span></div></li>
+    <li><div><a href="titans-architectures-mac-mag-mal.html">Titans 的三種架構：記憶作為上下文、閘控分支與一層</a><span>S7</span></div></li>
+    <li><div><a href="ttt-sequence-modeling-overview.html">Test-Time Training 作為序列建模架構：主系列演進總覽</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="ttt-linear-mlp.html">原版 TTT：TTT-Linear / TTT-MLP</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="lact-large-chunk-ttt.html">從 One-Minute Video 到 LaCT：大 chunk Test-Time Training</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="ttt-theory-and-applications.html">TTT 的理論還原與應用擴散</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="test-time-training-naming.html">「Test-Time Training」的命名混淆</a><span>站內既有筆記</span></div></li>
+  </ol>
+  <div class="links" style="margin-top:24px"><a class="btn" href="https://arxiv.org/abs/2501.00663">arXiv:2501.00663 ↗</a></div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Ali Behrouz, Peilin Zhong, Vahab Mirrokni. Titans: Learning to Memorize at Test Time. <a href="https://arxiv.org/abs/2501.00663">arXiv:2501.00663</a>（v1，2024-12-31）。</p>
+  <p>本頁的方程式與數字取自論文 v1；標示「本頁推導」「本頁核對」的內容為本頁自行推導或核對，並非論文結論；標示「推定」的數值為本頁選定。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2014, "title": "Neural Turing Machines", "authors_short": "Graves et al.", "arxiv": "1410.5401", "role": "外部可讀寫記憶", "source": "Titans §2.1 引用為記憶設計的早期例子"}, {"year": 2017, "title": "Attention Is All You Need", "authors_short": "Vaswani et al.", "arxiv": "1706.03762", "role": "Transformer 與 attention", "source": "Titans §1 的基準架構"}, {"year": 2019, "title": "Transformer-XL", "authors_short": "Dai et al.", "arxiv": "1901.02860", "role": "片段式 Transformer", "source": "Titans 附錄 A.2"}, {"year": 2020, "title": "Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention", "authors_short": "Katharopoulos et al.", "arxiv": "2006.16236", "role": "linear attention 的遞迴形式", "source": "Titans §2.1 式 3-5"}, {"year": 2021, "title": "Linear Transformers Are Secretly Fast Weight Programmers", "authors_short": "Schlag et al.", "arxiv": "2102.11174", "role": "linear attention 與 fast weight 的對應", "source": "Titans §2.1、附錄 A.3 引用"}, {"year": 2022, "title": "Recurrent Memory Transformer", "authors_short": "Bulatov et al.", "arxiv": "2207.06881", "role": "以記憶向量跨片段傳遞", "source": "Titans 附錄 A.2；MAC 為其推廣"}, {"year": 2023, "title": "Mamba: Linear-Time Sequence Modeling with Selective State Spaces", "authors_short": "Gu & Dao", "arxiv": "2312.00752", "role": "資料相依的選擇性狀態空間", "source": "Titans §2.1 遺忘機制"}, {"year": 2024, "title": "Griffin: Mixing Gated Linear Recurrences with Local Attention", "authors_short": "De et al.", "arxiv": "2402.19427", "role": "閘控線性遞迴加局部 attention", "source": "Titans §2.1、附錄 A.1"}, {"year": 2024, "title": "Parallelizing Linear Transformers with the Delta Rule over Sequence Length", "authors_short": "Yang et al.", "arxiv": "2406.06484", "role": "可平行訓練的 DeltaNet", "source": "Titans §2.1、附錄 C"}, {"year": 2024, "title": "Learning to (Learn at Test Time): RNNs with Expressive Hidden States", "authors_short": "Sun et al.", "arxiv": "2407.04620", "role": "以梯度更新隱藏狀態模型的 TTT 層", "source": "Titans §3.2 平行化所依據，附錄 C 比較"}, {"year": 2024, "title": "Gated Delta Networks: Improving Mamba2 with Delta Rule", "authors_short": "Yang, Kautz, Hatamizadeh", "arxiv": "2412.06464", "role": "DeltaNet 加遺忘閘", "source": "Titans 附錄 C，LMM 為其推廣"}, {"year": 2024, "title": "Memory Layers at Scale", "authors_short": "Berges et al.", "arxiv": "2412.09764", "role": "可替換記憶架構的候選", "source": "Titans §3.1 列為未來可替換 MLP 的方向"}, {"year": 2024, "title": "Titans: Learning to Memorize at Test Time", "authors_short": "Behrouz, Zhong, Mirrokni", "arxiv": "2501.00663", "role": "深層神經長期記憶，以 surprise 動量更新", "source": "本論文"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+// linear / log scales clamp to the axis range; NaN, 0 and negatives go to the lower edge (no -Infinity in paths)
+const scaleLin=(d0,d1,r0,r1)=>v=>{if(!(v>=d0))v=d0;if(v>d1)v=d1;return r0+(v-d0)/(d1-d0)*(r1-r0)};
+const scaleLog=(d0,d1,r0,r1)=>{const a=Math.log(d0),b=Math.log(d1);return v=>{if(!(v>d0))v=d0;if(v>d1)v=d1;return r0+(Math.log(v)-a)/(b-a)*(r1-r0)}};
+function linePath(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+const f4=v=>Number.isFinite(v)?v.toFixed(4):'—';
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function frame(svg,o){
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m=o.m,x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=m.t;
+  const X=scaleLin(o.x[0],o.x[1],x0,x1),Y=(o.ylog?scaleLog:scaleLin)(o.y[0],o.y[1],y0,y1);
+  const g=el('g',null,svg);
+  if(o.bands)o.bands.forEach(([a,b,cls,lab])=>{el('rect',{x:X(a),y:y1,width:X(b)-X(a),height:y0-y1,class:cls},g);if(lab)tx(g,(X(a)+X(b))/2,y1+14,lab,{class:'al','text-anchor':'middle'})});
+  (o.yt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:String(v),yy=Y(val);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},g);tx(g,x0-8,yy+4,lab,{class:'tk','text-anchor':'end'})});
+  (o.xt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:String(v),xx=X(val);el('line',{x1:xx,x2:xx,y1:y0,y2:y0+4,class:'axl'},g);tx(g,xx,y0+18,lab,{class:'tk','text-anchor':'middle'})});
+  el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  if(o.xl)tx(g,(x0+x1)/2,o.H-4,o.xl,{class:'al','text-anchor':'middle'});
+  return {X,Y,g,x0,x1,y0,y1};
+}
+// out-of-range marker: triangle at the top (up) or bottom (down) edge
+function edgeMark(F,x,up){const y=up?F.y1:F.y0,d=up?-1:1;el('path',{d:`M${x-5} ${y-d*2}L${x+5} ${y-d*2}L${x} ${y+d*6}Z`,class:'warn'},F.g)}
+function markOut(F,xs,vals,lo,hi){let st=0;for(let i=0;i<vals.length;i++){const v=vals[i],s=v>hi?1:(!(v>lo)?-1:0);if(s&&s!==st)edgeMark(F,xs[i],s>0);st=s}}
+const LOGT=[[1e-3,'10⁻³'],[1e-2,'10⁻²'],[1e-1,'10⁻¹'],[1,'1'],[10,'10'],[100,'10²'],[1e3,'10³']];
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+function toggleTable(btn,box){btn.addEventListener('click',()=>{const open=box.classList.toggle('hide')===false;btn.setAttribute('aria-expanded',String(open));btn.textContent=open?'隱藏資料表':'顯示資料表'})}
+
+/* ---------- reference math (copied from verify/widgets.js, algorithms unchanged) ---------- */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+function gauss(r){const u1=r(),u2=r();return Math.sqrt(-2*Math.log(1-u1))*Math.cos(2*Math.PI*u2);}
+const D=8,T=96,POOL=4;
+const ctxOf=t=>(t<=32||t>64)?0:1;
+const streamCache=new Map();
+function makeStream(seed){if(streamCache.has(seed))return streamCache.get(seed);const r=mulberry32(seed);const keys=[];for(let c=0;c<2;c++){const pool=[];for(let i=0;i<POOL;i++){const k=Array.from({length:D},()=>gauss(r));const n=Math.hypot(...k);pool.push(k.map(x=>x/n));}keys.push(pool);}
+  const mats=[0,1].map(()=>Array.from({length:D},()=>Array.from({length:D},()=>gauss(r)/Math.sqrt(D))));
+  const seq=[];for(let t=1;t<=T;t++){seq.push([ctxOf(t),Math.min(POOL-1,Math.floor(r()*POOL))]);}const s={keys,mats,seq};streamCache.set(seed,s);return s;}
+const mv=(M,k)=>M.map(row=>row.reduce((s,x,j)=>s+x*k[j],0));
+const BIG=1e3;
+function runC1({seed=11,theta=0.3,eta=0.6,alpha=0.02,chunk=1}={}){
+  const {keys,mats,seq}=makeStream(seed);const V=[0,1].map(c=>keys[c].map(k=>mv(mats[c],k)));
+  let M=Array.from({length:D},()=>new Array(D).fill(0)),S=Array.from({length:D},()=>new Array(D).fill(0)),Mref=M;const out=[];let diverged=null;
+  for(let t=1;t<=T;t++){const [c,j]=seq[t-1];if((t-1)%chunk===0)Mref=M.map(r=>r.slice());
+    const k=keys[c][j],v=V[c][j],e=mv(Mref,k).map((x,i)=>x-v[i]);const surprise=Math.hypot(...e);
+    let mx=0;for(let a=0;a<D;a++)for(let b=0;b<D;b++){S[a][b]=eta*S[a][b]-theta*e[a]*k[b];M[a][b]=(1-alpha)*M[a][b]+S[a][b];mx=Math.max(mx,Math.abs(M[a][b]));}
+    const Sn=Math.hypot(...S.flat());const rec=[0,1].map(cc=>keys[cc].reduce((s,kk,i)=>{const p=mv(M,kk);return s+0.5*p.reduce((q,x,m)=>q+(x-V[cc][i][m])**2,0);},0)/POOL);
+    out.push({t,c,surprise,S:Sn,EA:rec[0],EB:rec[1]});
+    if(!(mx<BIG)){diverged=t;break;}}
+  return{out,M,diverged};}
+function matmulEnds({seed=11,theta=0.3,eta=0.6,alpha=0.02,b=8}={}){
+  const {keys,mats,seq}=makeStream(seed);let M=Array.from({length:D},()=>new Array(D).fill(0)),S=M.map(r=>r.slice());const ends=[];const g=1-alpha;
+  for(let s0=0;s0<T;s0+=b){const idx=[];for(let t=s0;t<Math.min(T,s0+b);t++)idx.push(t);const n=idx.length;
+    const K=idx.map(t=>keys[seq[t][0]][seq[t][1]]);const E=idx.map((t,i)=>{const v=mv(mats[seq[t][0]],K[i]);return mv(M,K[i]).map((x,m)=>x-v[m]);});
+    const w=[],q=[];for(let l=0;l<n;l++){let s=0;for(let m=l;m<n;m++)s+=g**(n-1-m)*eta**(m-l);w.push(s);q.push(-theta*eta**(n-1-l));}
+    let cS=0;for(let m=0;m<n;m++)cS+=g**(n-1-m)*eta**(m+1);const cM=g**n,en=eta**n;
+    const nM=M.map((row,a)=>row.map((x,c)=>{let s=0;for(let l=0;l<n;l++)s+=w[l]*E[l][a]*K[l][c];return cM*x+cS*S[a][c]-theta*s;}));
+    const nS=S.map((row,a)=>row.map((x,c)=>{let s=0;for(let l=0;l<n;l++)s+=q[l]*E[l][a]*K[l][c];return en*x+s;}));
+    M=nM;S=nS;ends.push(M.map(r=>r.slice()));}
+  return ends;}
+function loopEnds(o){const {keys,mats,seq}=makeStream(o.seed??11);const th=o.theta??0.3,et=o.eta??0.6,al=o.alpha??0.02,b=o.b;
+  let M=Array.from({length:D},()=>new Array(D).fill(0)),S=M.map(r=>r.slice()),Mref=M;const ends=[];
+  for(let t=0;t<T;t++){const [c,j]=seq[t];if(t%b===0)Mref=M.map(r=>r.slice());const k=keys[c][j],v=mv(mats[c],k),e=mv(Mref,k).map((x,i)=>x-v[i]);
+    for(let a=0;a<D;a++)for(let cc=0;cc<D;cc++){S[a][cc]=et*S[a][cc]-th*e[a]*k[cc];M[a][cc]=(1-al)*M[a][cc]+S[a][cc];}
+    if((t+1)%b===0||t===T-1)ends.push(M.map(r=>r.slice()));}return ends;}
+const H=16;const sig=a=>a>=0?1/(1+Math.exp(-a)):Math.exp(a)/(1+Math.exp(a));const target=k=>Math.sin(2*k);
+function initMLP(L,seed){const r=mulberry32(seed);if(L===1)return[{W:[[gauss(r)]],b:null}];const dims=[1,...Array(L-1).fill(H),1];const P=[];
+  for(let l=0;l<L;l++){const fi=dims[l],fo=dims[l+1];const W=Array.from({length:fo},()=>Array.from({length:fi},()=>gauss(r)*Math.sqrt(1/fi)));const b=l<L-1?Array.from({length:fo},()=>gauss(r)*0.5):null;P.push({W,b});}return P;}
+function fwd(P,k){const hs=[[k]],As=[];for(let l=0;l<P.length;l++){const p=P[l],h=hs[hs.length-1];const a=p.W.map((wr,i)=>wr.reduce((s,x,j)=>s+x*h[j],0)+(p.b?p.b[i]:0));
+  if(l<P.length-1){As.push(a);hs.push(a.map(x=>x*sig(x)));}else return{out:a[0],hs,As};}}
+function step(P,S,k,v,theta,eta,alpha){const {out,hs,As}=fwd(P,k);let d=[out-v];
+  for(let l=P.length-1;l>=0;l--){const p=P[l],s=S[l],h=hs[l];let dh=null;
+    if(l>0){dh=h.map((_,j)=>p.W.reduce((q,wr,i)=>q+wr[j]*d[i],0));}
+    for(let i=0;i<p.W.length;i++){for(let j=0;j<h.length;j++){s.W[i][j]=eta*s.W[i][j]-theta*d[i]*h[j];p.W[i][j]=(1-alpha)*p.W[i][j]+s.W[i][j];}
+      if(p.b){s.b[i]=eta*s.b[i]-theta*d[i];p.b[i]=(1-alpha)*p.b[i]+s.b[i];}}
+    if(l>0){const a=As[l-1];d=dh.map((x,j)=>{const sg=sig(a[j]);return x*sg*(1+a[j]*(1-sg));});}}
+  return 0.5*(out-v)**2;}
+function evalMSE(P,n=201){let s=0;for(let i=0;i<n;i++){const k=-2+4*i/(n-1);s+=(fwd(P,k).out-target(k))**2;}return s/n;}
+function runDeep({L=2,theta=0.01,eta=0.9,alpha=0,Tn=3000,seed=5,dataSeed=9,cps=[100,300,1000,3000]}={}){
+  const P=initMLP(L,seed),S=P.map(p=>({W:p.W.map(r=>r.map(()=>0)),b:p.b?p.b.map(()=>0):null}));const r=mulberry32(dataSeed);const res={};let div=null;
+  for(let t=1;t<=Tn;t++){const k=-2+4*r();const loss=step(P,S,k,target(k),theta,eta,alpha);
+    let mx=0;for(const p of P)for(const row of p.W)for(const x of row)mx=Math.max(mx,Math.abs(x));
+    if(!Number.isFinite(loss)||!(mx<=BIG)){div=t;break;}if(cps.includes(t))res[t]=evalMSE(P);}
+  return{res,div,P};}
+function maskRow(v,{N=16,Np=2,C=4,Nl=2,w=4,t}){
+  const seq=[];for(let j=1;j<=N;j++){let cat='none';
+    if(v==='MAC'){const seg=Math.ceil(t/C),sj=Math.ceil(j/C);if(j<=t)cat=(sj===seg)?'direct':'memory';}
+    else{if(j<=t)cat=(j>t-w)?'direct':'memory';}seq.push(cat);}
+  const persist=new Array(Np).fill(v==='MAL'?'memory':'direct');const mem=v==='MAC'?new Array(Nl).fill('direct'):[];return{persist,mem,seq};}
+function counts(v,o){const r=maskRow(v,o);const all=[...r.persist,...r.mem,...r.seq];return{direct:all.filter(x=>x==='direct').length,memory:all.filter(x=>x==='memory').length,none:all.filter(x=>x==='none').length};}
+function pairs(v,o){let s=0;for(let t=1;t<=o.N;t++)s+=counts(v,{...o,t}).direct;return s;}
+const nParams=P=>P.reduce((s,p)=>s+p.W.length*p.W[0].length+(p.b?p.b.length:0),0);
+
+/* ---------- hero token axis ---------- */
+function heroAxis(){const box=$('#hero-axis'),narrow=box.clientWidth<480,n=narrow?8:16,W=narrow?360:720,cw=W/n,H=120,np=2,nw=narrow?3:4;
+  box.innerHTML='';const s=el('svg',{viewBox:`0 0 ${W} ${H}`,'aria-hidden':'true'},box);
+  const defs=el('defs',null,s);
+  [['hx-mem','hatch-l'],['hx-per','hatch-p']].forEach(([id,cls])=>{const p=el('pattern',{id,width:6,height:6,patternUnits:'userSpaceOnUse',patternTransform:'rotate(45)'},defs);el('line',{x1:0,y1:0,x2:0,y2:6,class:cls},p)});
+  const by=40,bh=14,cy=62,ch=cw-8>34?34:cw-8;
+  // bands above the cells
+  el('rect',{x:np*cw+2,y:by,width:(n-np-nw)*cw-4,height:bh,fill:'url(#hx-mem)',class:'',rx:3},s);
+  tx(s,np*cw+4,by-8,'長期記憶（已壓縮）',{class:'al'});
+  el('rect',{x:(n-nw)*cw+2,y:by,width:nw*cw-4,height:bh,rx:3,class:'cellacc'},s);
+  tx(s,W-4,by-8,'注意力視窗',{class:'al','text-anchor':'end'});
+  for(let i=0;i<n;i++){const x=i*cw+4;el('rect',{x,y:cy,width:cw-8,height:ch,rx:4,class:'cellbox'},s);if(i<np)el('rect',{x,y:cy,width:cw-8,height:ch,rx:4,fill:'url(#hx-per)'},s)}
+  tx(s,4,by-8,'持久記憶',{class:'al'});
+  el('line',{x1:np*cw,x2:W,y1:cy+ch+6,y2:cy+ch+6,class:'axl'},s);
+  tx(s,W-4,cy+ch+20,'token →',{class:'tk','text-anchor':'end'});
+}
+
+/* ---------- C1 ---------- */
+const c1={seed:11,theta:.3,eta:.6,alpha:.02,alerted:''};
+function c1params(){return{seed:c1.seed,theta:c1.theta,eta:c1.eta,alpha:c1.alpha}}
+function renderC1(){
+  const R=runC1(c1params()),div=R.diverged,out=div?R.out.slice(0,-1):R.out;
+  $('#c1-tho').textContent=c1.theta.toFixed(2);$('#c1-eto').textContent=c1.eta.toFixed(2);$('#c1-alo').textContent=c1.alpha.toFixed(3);
+  $('#c1-th').setAttribute('aria-valuetext','θ = '+c1.theta.toFixed(2));$('#c1-et').setAttribute('aria-valuetext','η = '+c1.eta.toFixed(2));$('#c1-al').setAttribute('aria-valuetext','α = '+c1.alpha.toFixed(3));
+  $$('#c1 .chip').forEach(c=>{const [a,b,d]=c.dataset.p.split(',').map(Number);c.setAttribute('aria-pressed',String(Math.abs(a-c1.theta)<1e-9&&Math.abs(b-c1.eta)<1e-9&&Math.abs(d-c1.alpha)<1e-9))});
+  $('#c1-seed').textContent='seed '+c1.seed;
+  $('#c1-hint').classList.toggle('hide',c1.seed===11);$('#c1-hint-t').textContent=`內文數字依 seed 11；目前 seed 為 ${c1.seed}，數值會不同。`;
+  const bands=[[.5,32.5,'band-a','情境 A'],[32.5,64.5,'band-b','情境 B'],[64.5,96.5,'band-a','情境 A']];
+  const xt=[1,16,32,48,64,80,96];
+  // top
+  const bt=$('#c1-top'),W=widthOf(bt,280,640);
+  const F=frame($('svg',bt),{W,H:190,m:{l:40,r:56,t:22,b:34},x:[.5,96.5],y:[0,2],xt,yt:[[0,'0'],[.5,'0.5'],[1,'1'],[1.5,'1.5'],[2,'2']],xl:'token t',bands});
+  const bw=Math.max(1.5,(F.X(2)-F.X(1))*.6);
+  out.forEach(o=>{const x=F.X(o.t),y=F.Y(o.surprise);el('rect',{x:x-bw/2,y,width:bw,height:Math.max(0,F.y0-y),class:'bar'},F.g)});
+  markOut(F,out.map(o=>F.X(o.t)),out.map(o=>o.surprise),-1,2);
+  const sp=out.map(o=>[F.X(o.t),F.Y(o.S)]);el('path',{d:linePath(sp),class:'par',style:'stroke-width:2'},F.g);
+  sp.forEach((p,i)=>{if(i%2===0)el('circle',{cx:p[0],cy:p[1],r:2.2,class:'par-f'},F.g)});
+  markOut(F,sp.map(p=>p[0]),out.map(o=>o.S),-1,2);
+  if(sp.length)tx(F.g,F.x1+6,sp[sp.length-1][1]+4,'‖S‖',{class:'labm',style:'fill:var(--c-par)'});
+  // bottom
+  const bb=$('#c1-bot'),W2=widthOf(bb,280,640);
+  const G=frame($('svg',bb),{W:W2,H:210,m:{l:40,r:56,t:22,b:34},x:[.5,96.5],y:[1e-3,1e3],ylog:true,xt,yt:LOGT.filter((_,i)=>i%2===0),xl:'token t',bands});
+  const pa=out.map(o=>[G.X(o.t),G.Y(o.EA)]),pb=out.map(o=>[G.X(o.t),G.Y(o.EB)]);
+  el('path',{d:linePath(pa),class:'par'},G.g);el('path',{d:linePath(pb),class:'perp dash'},G.g);
+  markOut(G,pa.map(p=>p[0]),out.map(o=>o.EA),1e-3,1e3);markOut(G,pb.map(p=>p[0]),out.map(o=>o.EB),1e-3,1e3);
+  if(pa.length){let ya=pa[pa.length-1][1],yb=pb[pb.length-1][1];if(Math.abs(ya-yb)<14){if(ya<yb){ya-=7;yb+=7}else{ya+=7;yb-=7}}
+    tx(G.g,G.x1+6,ya+4,'情境 A',{class:'lab',style:'fill:var(--c-par)'});tx(G.g,G.x1+6,yb+4,'情境 B',{class:'lab',style:'fill:var(--c-perp)'})}
+  // readouts
+  const at=t=>R.out[t-1]&&(!div||t<div)?R.out[t-1]:null;
+  const v=(t,k)=>{const o=at(t);return o?f4(o[k]):'—'};
+  const ms=(a,b)=>{if(!at(b))return'—';let s=0;for(let t=a;t<=b;t++)s+=R.out[t-1].surprise;return f4(s/(b-a+1))};
+  $('#c1-ro').innerHTML=`E_B(64) = <b class="acc">${v(64,'EB')}</b>　動量／步長<br>E_A(64) = <b>${v(64,'EA')}</b>　遺忘<br>‖S₄₀‖_F = <b>${v(40,'S')}</b>　動量延續`;
+  $('#c1-ro2').innerHTML=`‖g₁‖ = <b>${v(1,'surprise')}</b><br>平均驚訝度 t = 33–40：<b>${ms(33,40)}</b><br>平均驚訝度 t = 65–72：<b>${ms(65,72)}</b><br>E_A(32) = <b>${v(32,'EA')}</b><br>E_A(96) = <b>${v(96,'EA')}</b>`;
+  const msg=div?`第 ${div} 步數值發散：θ 或 η 太大`:'';const key=div?JSON.stringify(c1params()):'';
+  if(key!==c1.alerted){$('#c1-alert').textContent=msg;c1.alerted=key}
+  const summ=`seed ${c1.seed}，θ ${c1.theta.toFixed(2)}、η ${c1.eta.toFixed(2)}、α ${c1.alpha.toFixed(3)}：E_B(64) ${v(64,'EB')}，E_A(64) ${v(64,'EA')}，‖S₄₀‖ ${v(40,'S')}`;
+  $('#c1-top svg').setAttribute('aria-label','驚訝度與動量圖。'+summ+'。逐點值見資料表。');$('#c1-bot svg').setAttribute('aria-label','回想誤差圖。'+summ+'。逐點值見資料表。');
+  $('#c1-cap').textContent=`每 8 步一列；${summ}`;
+  $('#c1-tab tbody').innerHTML=Array.from({length:12},(_,i)=>{const t=8*(i+1),o=at(t);return`<tr><td class="num">${t}</td><td class="num">${o?f4(o.surprise):'—'}</td><td class="num">${o?f4(o.S):'—'}</td><td class="num">${o?f4(o.EA):'—'}</td><td class="num">${o?f4(o.EB):'—'}</td></tr>`}).join('');
+  c1.summary=summ;
+  return R;
+}
+function initC1(){
+  const bind=(id,k)=>{const n=$(id);n.addEventListener('input',()=>{c1[k]=+n.value;renderC1();renderC3()});n.addEventListener('change',()=>announce('c1',c1.summary))};
+  bind('#c1-th','theta');bind('#c1-et','eta');bind('#c1-al','alpha');
+  $$('#c1 .chip').forEach(c=>c.addEventListener('click',()=>{const [a,b,d]=c.dataset.p.split(',').map(Number);c1.theta=a;c1.eta=b;c1.alpha=d;$('#c1-th').value=a;$('#c1-et').value=b;$('#c1-al').value=d;renderC1();announce('c1',c1.summary)}));
+  $('#c1-re').addEventListener('click',()=>{c1.seed++;renderC1();renderC3();announce('c1',c1.summary)});
+  $('#c1-back').addEventListener('click',()=>{c1.seed=11;renderC1();renderC3();announce('c1',c1.summary);$('#c1-re').focus()});
+  toggleTable($('#c1-tab-b'),$('#c1-tab'));
+  renderC1();}
+
+/* ---------- C2 ---------- */
+const C2T=3000,C2PER=30,REF_LIN=0.4018,REF_ZERO=0.4389;
+const c2={L:2,theta:.01,eta:.9,alpha:0,st:null,raf:0};
+function c2new(){const P=initMLP(c2.L,5),S=P.map(p=>({W:p.W.map(r=>r.map(()=>0)),b:p.b?p.b.map(()=>0):null}));
+  return{P,S,r:mulberry32(9),t:0,div:null,hist:[[0,evalMSE(P)]],recent:[],running:false,alerted:false}}
+function c2advance(st,n){for(let i=0;i<n&&st.t<C2T&&!st.div;i++){const k=-2+4*st.r();st.t++;const loss=step(st.P,st.S,k,target(k),c2.theta,c2.eta,c2.alpha);
+  let mx=0;for(const p of st.P)for(const row of p.W)for(const x of row)mx=Math.max(mx,Math.abs(x));
+  if(!Number.isFinite(loss)||!(mx<=BIG)){st.div=st.t;break}
+  st.recent.push(k);if(st.recent.length>30)st.recent.shift();if(st.t%50===0)st.hist.push([st.t,evalMSE(st.P)])}}
+function renderC2(){const st=c2.st;
+  $$('#c2-L button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.v===c2.L)));
+  $('#c2-tho').textContent=c2.theta.toFixed(3);$('#c2-eto').textContent=c2.eta.toFixed(2);$('#c2-alo').textContent=c2.alpha.toFixed(4);
+  // function plot
+  const fb=$('#c2-fn'),W=widthOf(fb,260,460);
+  const F=frame($('svg',fb),{W,H:250,m:{l:40,r:12,t:16,b:36},x:[-2,2],y:[-1.6,1.6],xt:[-2,-1,0,1,2],yt:[[-1.5,'−1.5'],[-1,'−1'],[0,'0'],[1,'1'],[1.5,'1.5']],xl:'key k'});
+  const tg=[];for(let i=0;i<=120;i++){const k=-2+4*i/120;tg.push([F.X(k),F.Y(target(k))])}el('path',{d:linePath(tg),class:'ref'},F.g);
+  st.recent.forEach(k=>el('circle',{cx:F.X(k),cy:F.Y(target(k)),r:3,class:'hollow',style:'stroke-width:1.5'},F.g));
+  if(!st.div){const mp=[],ys=[];for(let i=0;i<=120;i++){const k=-2+4*i/120,y=fwd(st.P,k).out;mp.push([F.X(k),F.Y(y)]);ys.push(y)}el('path',{d:linePath(mp),class:'acc',style:'stroke-width:2.5'},F.g);markOut(F,mp.map(p=>p[0]),ys,-1.6,1.6)}
+  // mse plot
+  const mb=$('#c2-mse'),W2=widthOf(mb,260,460);
+  const G=frame($('svg',mb),{W:W2,H:250,m:{l:44,r:12,t:16,b:36},x:[0,C2T],y:[1e-5,10],ylog:true,xt:[[0,'0'],[1000,'1000'],[2000,'2000'],[3000,'3000']],yt:[[1e-5,'10⁻⁵'],[1e-3,'10⁻³'],[1e-1,'10⁻¹'],[10,'10']],xl:'token 數'});
+  [[REF_LIN,'最佳線性 0.402',-6],[REF_ZERO,'記憶為 0：0.439',14]].forEach(([v,l,dy])=>{el('line',{x1:G.x0,x2:G.x1,y1:G.Y(v),y2:G.Y(v),class:'ref'},G.g);tx(G.g,G.x1,G.Y(v)+dy,l,{class:'al','text-anchor':'end'})});
+  const hp=st.hist.map(([t,v])=>[G.X(t),G.Y(v)]);el('path',{d:linePath(hp),class:'acc',style:'stroke-width:2.5'},G.g);
+  markOut(G,hp.map(p=>p[0]),st.hist.map(h=>h[1]),1e-5,10);
+  if(hp.length)el('circle',{cx:hp[hp.length-1][0],cy:hp[hp.length-1][1],r:4,class:'kdot'},G.g);
+  const np=nParams(st.P),cur=st.div?NaN:(st.t%50===0?st.hist[st.hist.length-1][1]:evalMSE(st.P));
+  $('#c2-ro').innerHTML=`token 數 <b>${st.t}</b>　格點 MSE <b class="acc">${st.div?'—':cur.toFixed(5)}</b><br>參數數 <b>${np}</b>　相對計算量（每 token 乘加約 3 × 參數數）<b>${3*np}</b>`;
+  if(st.div&&!st.alerted){$('#c2-alert').textContent=`第 ${st.div} 步數值發散：θ 或 η 太大`;st.alerted=true}
+  const run=$('#c2-run');run.textContent=st.running?'暫停':(st.t>=C2T||st.div?'已完成':'執行');run.disabled=!st.running&&(st.t>=C2T||!!st.div);
+  const summ=`L = ${c2.L}，θ ${c2.theta.toFixed(3)}、η ${c2.eta.toFixed(2)}、α ${c2.alpha.toFixed(4)}，token ${st.t}，MSE ${st.div?'發散':cur.toFixed(5)}`;
+  $('#c2-mse svg').setAttribute('aria-label','格點 MSE 對 token 數。'+summ+'。逐點值見資料表。');c2.summary=summ;
+  $('#c2-cap').textContent=`每 250 個 token 一列；${summ}`;
+  const hm=new Map(st.hist);
+  $('#c2-tab tbody').innerHTML=Array.from({length:12},(_,i)=>{const t=250*(i+1),v=hm.get(t);return`<tr><td class="num">${t}</td><td class="num">${v===undefined?'—':v.toFixed(5)}</td></tr>`}).join('')+`<tr class="hl"><td class="num">目前 ${st.t}</td><td class="num">${st.div?'—':cur.toFixed(5)}</td></tr>`;
+}
+function c2stop(){const st=c2.st;st.running=false;cancelAnimationFrame(c2.raf);renderC2();announce('c2',c2.summary)}
+function c2run(){const st=c2.st;if(st.running){c2stop();return}if(st.t>=C2T||st.div)return;st.running=true;
+  if(RM){c2advance(st,C2T);c2stop();return}
+  const tick=()=>{if(!st.running)return;c2advance(st,C2PER);renderC2();if(st.t<C2T&&!st.div)c2.raf=requestAnimationFrame(tick);else c2stop()};c2.raf=requestAnimationFrame(tick)}
+function c2reset(){if(c2.st){c2.st.running=false;cancelAnimationFrame(c2.raf)}c2.st=c2new();$('#c2-alert').textContent='';renderC2()}
+function initC2(){
+  $$('#c2-L button').forEach(b=>b.addEventListener('click',()=>{c2.L=+b.dataset.v;c2reset();announce('c2',c2.summary)}));
+  [['#c2-th','theta',3],['#c2-et','eta',2],['#c2-al','alpha',4]].forEach(([id,k,d])=>{const n=$(id);
+    n.addEventListener('input',()=>{$(id+'o').textContent=(+n.value).toFixed(d)});
+    n.addEventListener('change',()=>{c2[k]=+n.value;c2reset();announce('c2',c2.summary)})});
+  $('#c2-run').addEventListener('click',c2run);$('#c2-reset').addEventListener('click',()=>{c2reset();announce('c2',c2.summary)});
+  $('#c2-cmp').addEventListener('click',()=>{const rows=[1,2,3,4].map(L=>{const r=runDeep({L,theta:c2.theta,eta:c2.eta,alpha:c2.alpha});const cells=[100,300,1000,3000].map(t=>r.res[t]!==undefined?r.res[t].toFixed(5):(r.div?`第 ${r.div} 步發散`:'—'));return`<tr${L===c2.L?' class="hl"':''}><td class="num">${L}</td><td class="num">${nParams(r.P)}</td>${cells.map(c=>`<td class="num">${c}</td>`).join('')}</tr>`});
+    $('#c2-cmpbox tbody').innerHTML=rows.join('');$('#c2-cmpcap').textContent=`四種深度的格點 MSE（θ ${c2.theta.toFixed(3)}、η ${c2.eta.toFixed(2)}、α ${c2.alpha.toFixed(4)}）`;$('#c2-cmpbox').classList.remove('hide');announce('c2','已填入四種深度的比較表')});
+  toggleTable($('#c2-tab-b'),$('#c2-tab'));
+  document.addEventListener('visibilitychange',()=>{if(document.hidden&&c2.st&&c2.st.running)c2stop()});
+  c2reset();}
+
+/* ---------- C3 ---------- */
+const c3={b:4,eta:.6};
+function c3compute(){const seed=c1.seed,p={seed,theta:.3,eta:c3.eta,alpha:.02};
+  const R1=runC1({...p,chunk:1}),Rb=runC1({...p,chunk:c3.b});
+  const A=loopEnds({...p,b:c3.b}),B=matmulEnds({...p,b:c3.b});let md=0;A.forEach((M,i)=>M.forEach((r,a)=>r.forEach((x,c)=>{md=Math.max(md,Math.abs(x-B[i][a][c]))})));
+  const f1=R1.M.flat(),dev=Math.hypot(...Rb.M.flat().map((x,i)=>x-f1[i]));
+  return{R1,Rb,md,dev,seed}}
+function renderC3(){
+  $$('#c3-b button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.v===c3.b)));$$('#c3-eta button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.v===c3.eta)));
+  const r=c3compute(),b=c3.b;
+  // token strip
+  const sb=$('#c3-strip'),W=widthOf(sb,280,900),cw=(W-8)/T,s=$('svg',sb),Hs=46;s.textContent='';s.setAttribute('viewBox',`0 0 ${W} ${Hs}`);s.setAttribute('width',W);s.setAttribute('height',Hs);
+  for(let t=0;t<T;t++){el('rect',{x:4+t*cw,y:18,width:cw,height:16,class:ctxOf(t+1)?'band-b':'band-a'},s)}
+  for(let s0=0;s0<=T;s0+=b){const x=4+s0*cw;el('line',{x1:x,x2:x,y1:16,y2:36,class:'chunkline'},s);if(s0<T)el('path',{d:`M${x} 14L${x-3.5} 7L${x+3.5} 7Z`,class:'warn'},s)}
+  el('line',{x1:4,x2:W-4,y1:18,y2:18,class:'axl'},s);el('line',{x1:4,x2:W-4,y1:34,y2:34,class:'axl'},s);
+  tx(s,4,Hs-1,'t = 1',{class:'tk'});tx(s,W-4,Hs-1,'96',{class:'tk','text-anchor':'end'});
+  $('#c3-strip svg').setAttribute('aria-label',`96 個 token 分成 ${Math.ceil(T/b)} 個 chunk，每個 chunk ${b} 個 token；三角形標出每個 chunk 的梯度點`);
+  // main chart
+  const fb=$('#c3-fig'),W2=widthOf(fb,280,640);
+  const F=frame($('svg',fb),{W:W2,H:230,m:{l:40,r:16,t:22,b:34},x:[.5,96.5],y:[1e-3,1e3],ylog:true,xt:[1,16,32,48,64,80,96],yt:LOGT.filter((_,i)=>i%2===0),xl:'token t',bands:[[.5,32.5,'band-a','情境 A'],[32.5,64.5,'band-b','情境 B'],[64.5,96.5,'band-a','情境 A']]});
+  const cur=o=>o.c===0?o.EA:o.EB;
+  const p1=r.R1.out.map(o=>[F.X(o.t),F.Y(cur(o))]),pb=r.Rb.out.map(o=>[F.X(o.t),F.Y(cur(o))]);
+  el('path',{d:linePath(p1),class:'ref'},F.g);el('path',{d:linePath(pb),class:'acc',style:'stroke-width:2.5'},F.g);
+  markOut(F,pb.map(p=>p[0]),r.Rb.out.map(cur),1e-3,1e3);
+  $('#c3-lg').textContent='chunk = '+b;
+  const ea96=r.Rb.out[95]?r.Rb.out[95].EA:NaN,fmtBig=v=>!Number.isFinite(v)?'—':(v>=100?v.toFixed(2):v.toFixed(4));
+  $('#c3-ro').innerHTML=`順序步數 ⌈96/b⌉ = <b>${Math.ceil(T/b)}</b><br>兩形式最大差 <b>${r.md<1e-12?'&lt; 1e-12，兩者相同':r.md.toExponential(1)}</b><br>E_A(96) = <b class="acc">${fmtBig(ea96)}</b>${ea96>1e3?'（超出上限）':''}<br>‖𝓜⁽ᵇ⁾₉₆ − 𝓜⁽¹⁾₉₆‖_F = <b>${fmtBig(r.dev)}</b>`;
+  $('#c3-seedn').textContent=r.seed===11?'資料流與 C1 相同（seed 11）。':`資料流與 C1 相同（目前 seed ${r.seed}；內文數字依 seed 11）。`;
+  const summ=`b = ${b}，η = ${c3.eta}：E_A(96) ${fmtBig(ea96)}，偏離 ${fmtBig(r.dev)}`;c3.summary=summ;
+  $('#c3-fig svg').setAttribute('aria-label','目前情境的回想誤差。'+summ+'。逐點值見資料表。');
+  $('#c3-th').textContent='chunk = '+b;$('#c3-cap').textContent=`每 8 步一列，目前情境的回想誤差；${summ}`;
+  $('#c3-tab tbody').innerHTML=Array.from({length:12},(_,i)=>{const t=8*(i+1),a=r.R1.out[t-1],c=r.Rb.out[t-1];return`<tr><td class="num">${t}</td><td class="num">${a?fmtBig(cur(a)):'—'}</td><td class="num">${c?fmtBig(cur(c)):'—'}</td></tr>`}).join('');
+}
+function initC3(){$$('#c3-b button').forEach(x=>x.addEventListener('click',()=>{c3.b=+x.dataset.v;renderC3();announce('c3',c3.summary)}));
+  $$('#c3-eta button').forEach(x=>x.addEventListener('click',()=>{c3.eta=+x.dataset.v;renderC3();announce('c3',c3.summary)}));
+  toggleTable($('#c3-tab-b'),$('#c3-tab'));renderC3()}
+
+/* ---------- C4 ---------- */
+const OPT=[2,4,8];
+const c4={v:'MAC',t:10,C:4,w:4,Np:2,Nl:2,N:16};
+const FLOW={MAC:'MAC：讀記憶 → 片段注意力 → 以 yₜ 寫記憶。',MAG:'MAG：記憶分支與帶前綴的滑動視窗注意力並行 → 閘控結合。',MAL:'MAL：記憶層 → 不帶前綴的滑動視窗注意力。'};
+const CATN={direct:'直接',memory:'經由記憶',none:'不可見'};
+function c4opts(t){return{N:c4.N,Np:c4.Np,C:c4.C,Nl:c4.Nl,w:c4.w,t}}
+function renderC4(focus){
+  $$('#c4-v button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===c4.v)));
+  $('#c4-to').textContent=c4.t;$('#c4-Co').textContent=c4.C;$('#c4-wo').textContent=c4.w;$('#c4-Npo').textContent=c4.Np;$('#c4-Nlo').textContent=c4.Nl;
+  const mac=c4.v==='MAC';$('#c4-C').disabled=!mac;$('#c4-Nl').disabled=!mac;$('#c4-w').disabled=mac;
+  $('#c4-note').textContent=mac?'視窗 w 只用於 MAG／MAL。':'片段長度 C 與記憶 token N_l 只用於 MAC。';
+  const nl=mac?c4.Nl:0,cols=c4.Np+nl+c4.N,wrap=$('#c4-wrap'),gaps=(c4.Np?6:0)+(nl?6:0),avail=(wrap.clientWidth||600)-40-gaps-4;
+  const cw=Math.max(14,Math.min(28,Math.floor(avail/cols)));const mx=$('#c4-mx');mx.style.setProperty('--cw',cw+'px');
+  const grp=(n,l)=>n?`<span style="width:${n*cw}px" title="${l}">${l}</span>`:'';
+  let h=`<div class="mx-groups" aria-hidden="true"><span class="mx-rl" style="border:0"></span>${grp(c4.Np,'持久記憶')}${c4.Np?'<i class="mx-gap"></i>':''}${grp(nl,'記憶 token h（本片段）')}${nl?'<i class="mx-gap"></i>':''}${grp(c4.N,'序列')}</div>`;
+  for(let t=1;t<=c4.N;t++){const r=maskRow(c4.v,c4opts(t)),cur=t===c4.t,cn=counts(c4.v,c4opts(t));
+    const cell=(cat,lab)=>`<span class="mx-c ${cat}" role="gridcell"${cur?` aria-label="${lab}：${CATN[cat]}"`:' aria-hidden="true"'}></span>`;
+    h+=`<div class="mx-row${cur?' cur':''}" role="row" data-t="${t}" tabindex="${cur?0:-1}" aria-label="query ${t}：直接 ${cn.direct}、經由記憶 ${cn.memory}、不可見 ${cn.none}"><span class="mx-rl" aria-hidden="true">${t}</span>`;
+    h+=r.persist.map((c,i)=>cell(c,'持久記憶 p'+(i+1))).join('')+(c4.Np?'<i class="mx-gap"></i>':'');
+    h+=r.mem.map((c,i)=>cell(c,'記憶 token h'+(i+1))).join('')+(nl?'<i class="mx-gap"></i>':'');
+    h+=r.seq.map((c,j)=>cell(c,'key '+(j+1))).join('')+'</div>'}
+  mx.innerHTML=h;
+  const cn=counts(c4.v,c4opts(c4.t)),o={N:c4.N,Np:c4.Np,C:c4.C,Nl:c4.Nl,w:c4.w},pr=pairs(c4.v,o);let full=0;for(let t=1;t<=c4.N;t++)full+=c4.Np+t;
+  $('#c4-ro').innerHTML=`query t = <b>${c4.t}</b><br>直接 <b class="acc">${cn.direct}</b>　經由記憶 <b>${cn.memory}</b>　不可見 <b>${cn.none}</b><br>配對數 <b>${pr}</b>／完整因果＋前綴 <b>${full}</b>（${(pr/full).toFixed(2)}）`;
+  $('#c4-flow').textContent=FLOW[c4.v];
+  c4.summary=`${c4.v}，query ${c4.t}：直接 ${cn.direct}、經由記憶 ${cn.memory}、不可見 ${cn.none}；配對數 ${pr}，完整注意力 ${full}`;
+  if(focus){const row=$(`.mx-row[data-t="${c4.t}"]`,mx);row&&row.focus()}
+}
+function c4setT(t,focus){c4.t=Math.max(1,Math.min(c4.N,t));$('#c4-t').value=c4.t;renderC4(focus);announce('c4',c4.summary)}
+function initC4(){
+  $$('#c4-v button').forEach(b=>b.addEventListener('click',()=>{c4.v=b.dataset.v;renderC4();announce('c4',c4.summary)}));
+  $('#c4-t').addEventListener('input',e=>{c4.t=+e.target.value;renderC4()});$('#c4-t').addEventListener('change',()=>announce('c4',c4.summary));
+  [['#c4-C','C',1],['#c4-w','w',1],['#c4-Np','Np',0],['#c4-Nl','Nl',0]].forEach(([id,k,opt])=>{$(id).addEventListener('input',e=>{c4[k]=opt?OPT[+e.target.value]:+e.target.value;renderC4()});$(id).addEventListener('change',()=>announce('c4',c4.summary))});
+  $('#c4-C').setAttribute('aria-valuetext','C = 4');
+  const mx=$('#c4-mx');
+  mx.addEventListener('click',e=>{const row=e.target.closest('.mx-row');if(row)c4setT(+row.dataset.t,true)});
+  mx.addEventListener('keydown',e=>{const m={ArrowDown:c4.t+1,ArrowUp:c4.t-1,Home:1,End:c4.N}[e.key];if(m!==undefined){e.preventDefault();c4setT(m,true)}});
+  ['#c4-C','#c4-w'].forEach(id=>$(id).addEventListener('input',e=>e.target.setAttribute('aria-valuetext',(id==='#c4-C'?'C = ':'w = ')+OPT[+e.target.value])));
+  $('#c4-w').setAttribute('aria-valuetext','w = 4');
+  renderC4()}
+
+/* ---------- timeline ---------- */
+const TL_GROUP={'1410.5401':['ext','recurrent-memory-segment-transformers'],'1901.02860':['ext','recurrent-memory-segment-transformers'],'2207.06881':['ext','recurrent-memory-segment-transformers'],'2412.09764':['ext','recurrent-memory-segment-transformers'],
+ '1706.03762':['attn','memory-view-of-sequence-models'],'2006.16236':['lin','linear-attention-fast-weights'],'2102.11174':['lin','linear-attention-fast-weights'],
+ '2312.00752':['gate','gated-linear-recurrence-forgetting'],'2402.19427':['gate','gated-linear-recurrence-forgetting'],
+ '2406.06484':['delta','delta-rule-deltanet-family'],'2412.06464':['delta','delta-rule-deltanet-family'],'2407.04620':['ttt','ttt-linear-mlp'],'2501.00663':['me','titans-neural-memory-surprise-update']};
+const TL_NAME={ext:'外部與分段記憶',attn:'注意力',lin:'線性注意力與快速權重',gate:'閘控線性遞迴',delta:'Delta rule',ttt:'梯度式更新',me:'本文 · 動量＋遺忘＋深層記憶',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  data=data.map((e,i)=>({e,i})).sort((a,b)=>(+a.e.year||0)-(+b.e.year||0)||a.i-b.i).map(o=>o.e);
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const slug=g[1];const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${slug?`<a href="${slug}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k].split(' · ')[0];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+
+/* ---------- toc, theme, appbar ---------- */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));
+  addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+/* ---------- self test (acceptance tables, design.md §5 / §6.2) ---------- */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t)=>Math.abs(a-b)<=t+1e-12,rel=(a,b,r)=>Math.abs(a-b)<=r*Math.abs(b);
+  // C1
+  const d=runC1();ok(near(d.out[63].EB,.0084,5e-4),'C1 EB64 '+d.out[63].EB);ok(near(d.out[63].EA,.4571,5e-4),'C1 EA64 '+d.out[63].EA);ok(near(d.out[39].S,.1518,5e-4),'C1 S40');ok(near(d.out[0].surprise,1.0973,5e-4),'C1 g1');
+  ok(runC1({theta:1,eta:.95,alpha:0}).diverged===71,'C1 div 71');
+  ok(near(runC1({theta:.75,eta:0}).out[63].EB,.0106,5e-4),'C1 step-size control EB64');
+  const c1t=[[{theta:.3,eta:0,alpha:0},[.7419,.6049,.0160,.0182,.2927,.0118,.1015]],[{theta:.3,eta:0,alpha:.02},[.6848,.6949,.0306,.0251,.4167,.0333,.0917]],[{theta:.3,eta:.6,alpha:0},[.6627,.5924,.0085,.0051,.3872,.0109,.1573]],[{theta:.3,eta:.6,alpha:.1},[.5875,.6958,.0498,.0494,.5816,.0787,.1482]],[{theta:.3,eta:.9,alpha:.02},[.7400,.9681,.2126,.4188,.9215,2.6196,.4433]]];
+  c1t.forEach(([p,v])=>{const o=runC1(p).out,ms=(a,b)=>o.slice(a-1,b).reduce((s,x)=>s+x.surprise,0)/(b-a+1);const got=[ms(33,40),ms(65,72),o[31].EA,o[63].EB,o[63].EA,o[95].EA,o[39].S];got.forEach((g,i)=>ok(near(g,v[i],5e-4),`C1 ${JSON.stringify(p)} col${i} ${g}`))});
+  // C3
+  [[.6],[0]].forEach(([eta])=>{const A=loopEnds({eta,b:4}),B=matmulEnds({eta,b:4});let m=0;A.forEach((M,i)=>M.forEach((r,a)=>r.forEach((x,c)=>{m=Math.max(m,Math.abs(x-B[i][a][c]))})));ok(m<1e-12,'C3 maxdiff eta='+eta+' '+m)});
+  ok(near(runC1({chunk:8}).out[95].EA,.6,5e-4),'C3 b8 EA96');
+  [[.6,4,.1420,.7140],[0,8,.0500,.2136],[.6,16,8880.80,201.86]].forEach(([eta,b,ea,dv])=>{const p={theta:.3,eta,alpha:.02},R=runC1({...p,chunk:b}),f1=runC1({...p,chunk:1}).M.flat(),dev=Math.hypot(...R.M.flat().map((x,i)=>x-f1[i]));
+    ok(ea>100?rel(R.out[95].EA,ea,1e-3):near(R.out[95].EA,ea,5e-4),`C3 eta${eta} b${b} EA96 ${R.out[95].EA}`);ok(dv>100?rel(dev,dv,1e-3):near(dev,dv,5e-4),`C3 eta${eta} b${b} dev ${dev}`)});
+  // C2
+  ok(rel(runDeep({L:1}).res[3000],.45461,.01),'C2 L1 3000');ok(near(runDeep({L:3}).res[3000],.0001,2e-5),'C2 L3 3000');ok(rel(runDeep({L:2}).res[1000],.05388,.01),'C2 L2 1000');
+  ok(runDeep({L:2,theta:.05,eta:.95}).div===103,'C2 div 103');ok(runDeep({L:2,theta:.05,eta:.95,alpha:.01}).div===2082,'C2 div 2082');ok(runDeep({L:4,theta:.05,eta:.95}).div===58,'C2 div L4 58');
+  {let sk=0,kk=0;for(let i=0;i<201;i++){const k=-2+4*i/200;sk+=k*target(k);kk+=k*k}const w=sk/kk;ok(near(w,.1660,1e-4),'C2 ref w '+w);
+    ok(near(evalMSE([{W:[[w]],b:null}]),.4018,1e-4),'C2 ref best-linear mse');ok(near(evalMSE([{W:[[0]],b:null}]),.4389,1e-4),'C2 ref zero mse');
+    ok(near(REF_LIN,.4018,1e-4)&&near(REF_ZERO,.4389,1e-4),'C2 plotted ref lines')}
+  // scales and NaN-free paths
+  const sl=scaleLog(1e-3,1e3,200,0);ok([0,-1,NaN].every(v=>Number.isFinite(sl(v))&&sl(v)===200),'scaleLog floor');
+  {const sv=[c1.theta,c1.eta,c1.alpha];c1.theta=0;renderC1();const bad=$$('#c1 path').some(p=>/NaN|Infinity/.test(p.getAttribute('d')||''));ok(!bad,'C1 theta=0 paths finite');[c1.theta,c1.eta,c1.alpha]=sv;renderC1()}
+  // C4
+  const o={N:16,Np:2,C:4,Nl:2,w:4};
+  [['MAC',10,[6,8,6]],['MAG',10,[6,6,6]],['MAL',10,[4,8,6]],['MAC',4,[8,0,12]],['MAG',4,[6,0,12]],['MAL',4,[4,2,12]]].forEach(([v,t,e])=>{const c=counts(v,{...o,t});ok(c.direct===e[0]&&c.memory===e[1]&&c.none===e[2],`C4 ${v} t=${t}`)});
+  ok(pairs('MAC',o)===104&&pairs('MAG',o)===90&&pairs('MAL',o)===58,'C4 pairs');
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ---------- boot ---------- */
+initTheme();initToc();heroAxis();initC1();initC2();initC3();initC4();renderTimeline();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{heroAxis();renderC1();renderC2();renderC3();renderC4()})});
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false})}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath()});
+if(/[?&]test\b/.test(location.search))selfTest();
+})();
+</script>
+</body>
+</html>

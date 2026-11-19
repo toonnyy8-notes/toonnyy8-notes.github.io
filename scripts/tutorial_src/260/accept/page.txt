@@ -1,0 +1,940 @@
+{"H":28556,"top":109,"f2":2155,"c1":4057,"c2":6431,"c2b":19386,"c3":11455,"c4":14414,"c5":22636,"f12":21662,"history":26204}
+
+跳到內容
+
+ No. 260
+ 用自我蒸餾做強化學習：以加入回饋後的同一模型分布作為逐 token 訓練目標
+
+00 摘要01 RLVR 與 RLRF02 GRPO03 自我教師04 損失05 梯度06 top-K 近似07 穩定性08 無文字回饋09 程式題10 消融11 測試時12 實作13 研究脈絡14 限制與延伸
+
+00摘要
+01RLVR 與 RLRF
+02GRPO
+03自我教師
+04損失
+05梯度
+06top-K 近似
+07穩定性
+08無文字回饋
+09程式題
+10消融
+11測試時
+12實作
+13研究脈絡
+14限制與延伸
+
+ No. 260 · 互動教學 · arXiv 2601.20802
+
+ 用自我蒸餾做強化學習：以加入回饋後的同一模型分布作為逐 token 訓練目標
+
+ SDPO 把同一個模型在提示中加入回饋後的下一個 token 分布當作目標，蒸餾回不看回饋的模型，得到逐 token 的訓練訊號。
+
+ Jonas Hübotter、Frederike Lübeck、Lejs Behric、Anton Baumann 等（2026）〈Reinforcement Learning via Self-Distillation〉
+
+ 〔示意〕本頁構造的數值，不是論文數據以 Fig. 4 的題目為背景：回答 return list(range(1, n + 1))，回饋「Don't include n.」
+
+ GRPOSDPO
+def
+−0.38
+0.00
+
+␣numbers_up_to_n
+−0.38
+0.00
+
+(n):
+−0.38
+−0.01
+
+␣return
+−0.38
++0.02
+
+␣list
+−0.38
+−0.03
+
+(range
+−0.38
+0.00
+
+(1,
+−0.38
+−0.02
+
+␣n
+−0.38
+−0.03
+
+␣+
+−0.38
+−2.65
+
+␣1
+−0.38
+−0.89
+
+))
+−0.38
+−0.02
+
+ GRPO：同組 8 次嘗試中 3 次成功，這次失敗，所以每個 token 的優勢都是 0 − 3/8 = −0.375。SDPO：每個 token 各有一個值。
+
+ 01 · 文字回饋一般的強化學習訓練中，模型每次嘗試只得到一個分數；程式環境其實還會回傳錯誤訊息。本文把這些文字回饋直接變成訓練訊號。
+
+ 02 · 自己當教師教師就是模型自己：把錯誤訊息放進提示，重新計算原回答每個 token 的機率。在論文的例子中，機率明顯下降的 token 正好是錯誤所在；這是一個例子，不是保證。
+
+ 03 · 一個結果在 LiveCodeBench v6 上，Qwen3-8B 以 SDPO 訓練達到 48.8%，GRPO 為 41.2%。
+
+ 閱讀原文 arXiv ↗
+ 程式碼 GitHub ↗
+ 在關聯圖中查看
+ 研究脈絡總覽
+
+ 01 · RLVR 與 RLRF
+
+ 純量獎勵只含一個數字，文字回饋還帶有環境狀態
+
+ 語言模型可以看成一個策略（policy）：給定問題 x $x$ ，逐 token 產生回答 y=(y1,…,y∣y∣) $y=(y_1,\dots,y_{|y|})$ ​,…,y∣y∣​)，
+
+ πθ(y∣x)=∏t=1∣y∣πθ(yt∣x,y<t) $\pi_\theta(y\mid x)=\prod_{t=1}^{|y|}\pi_\theta(y_t\mid x,y_{\lt t})$ ​(y∣x)=t=1∏∣y∣​πθ​(yt​∣x,y<t​)
+
+ θ $\theta$ 是模型參數，y<t $y_{\lt t}$ ​ 是第 t $t$ 個 token 之前的前綴。對一題取樣一次完整回答稱為一個 rollout。強化學習依環境對 rollout 的評價調整 θ $\theta$ ，讓評價高的回答更常出現。
+
+ 目前多數做法屬於 RLVR（reinforcement learning with verifiable rewards，以可驗證獎勵做強化學習）：取樣 y∼πθ(⋅∣x) $y\sim\pi_\theta(\cdot\mid x)$ ​(⋅∣x) 後，環境只回傳一個純量獎勵 r∈R $r\in\mathbb R$ ，常為二元，例如程式題的單元測試全部通過得 1、否則得 0。許多環境其實能回傳更多資訊：執行錯誤、未通過的測試、LLM 評審的文字意見。論文把這個設定稱為 RLRF（reinforcement learning with rich feedback，以豐富回饋做強化學習）：環境回傳 token 化的回饋 f $f$ ，可同時包含獎勵與環境狀態的觀察（Sec. 1）。
+
+ 作者的主張是：RLVR 的主要限制不在 RL 本身，而在資訊量。純量獎勵只含一個數字，告訴模型「錯了」，卻沒有把環境狀態（例如錯誤訊息）傳回模型，模型無從得知錯在哪裡（Sec. 1；Fig. 2 的說明文字稱之為 information bottleneck）。從經典 RL 的角度看，這些環境是部分可觀測的（POMDP），RLVR 丟掉了觀察通道（App. C）。
+
+ Fig. 2 重繪同一個錯誤答案，兩種環境回傳的東西
+
+ Q　How much impulse did the thrusters generate for the Mars Climate Orbiter?
+A　100 lbf-s
+
+ 依論文 Fig. 2 的結構重繪。細線表示只帶一個數字的獎勵，粗線表示帶有環境狀態的文字回饋。
+
+ Fig. 3 是論文程式環境回傳的回饋（仿 LeetCode 的格式）。它不只說明這次嘗試失敗，也指出失敗的位置與輸入：
+
+ Runtime Error
+ZeroDivisionError: division by zero
+Line 73 in separateSquares (Solution.py)
+Last Executed Input
+[[26,30,2],[11,23,1]]
+
+ 本文要回答的問題是：沒有更強的外部教師時，如何把這種文字回饋轉成逐 token 的信用分配（credit assignment，判斷回答中哪些 token 該為結果負責）。
+
+ 符號表
+
+ 符號意義
+
+ x $x$ 問題（prompt）
+
+ y=(y1,…,y∣y∣) $y=(y_1,\dots,y_{|y|})$ ​,…,y∣y∣​)模型的回答（一個 rollout）；yt $y_t$ ​ 為第 t $t$ 個 token，y<t $y_{\lt t}$ ​ 為其前綴；App. A 以 T $T$ 表示長度
+
+ V $V$ 、y^t $\hat y_t$ ​t​詞彙表；位置 t $t$ 上任一候選 token（不一定是實際取樣的 yt $y_t$ ​）
+
+ πθ(⋅∣x,y<t) $\pi_\theta(\cdot\mid x,y_{\lt t})$ ​(⋅∣x,y<t​)學生：目前的策略（語言模型），參數 θ $\theta$ 
+
+ f $f$ 豐富回饋：環境輸出（如執行錯誤）及／或同組中成功的解答
+
+ πθ(⋅∣x,f,y<t) $\pi_\theta(\cdot\mid x,f,y_{\lt t})$ ​(⋅∣x,f,y<t​)、qθ $q_\theta$ ​自我教師：同一組參數，提示中多了 f $f$ ；App. A 記為 qθ(⋅∣x,f):=πθ(⋅∣reprompt(x,f)) $q_\theta(\cdot\mid x,f):=\pi_\theta(\cdot\mid\mathrm{reprompt}(x,f))$ ​(⋅∣x,f):=πθ​(⋅∣reprompt(x,f))
+
+ r $r$ 、G $G$ 純量獎勵（常為 0/1）；每題的 rollout 數（群組大小）
+
+ J(θ) $J(\theta)$ 目標：期望獎勵 J(θ)=Ex, y∼πθ[r] $J(\theta)=\mathbb E_{x,\,y\sim\pi_\theta}[r]$ ​​[r]
+
+ Ai,t $A_{i,t}$ ​第 i $i$ 個 rollout、位置 t $t$ 的優勢（advantage）
+
+ K $K$ top-K 蒸餾保留的 token 數（Table 12：100 或 20）
+
+ α $\alpha$ 教師正規化的更新率（EMA 或信任域，Eq. 10）；與 λ $\lambda$ 無關
+
+ λ $\lambda$ 、λL $\lambda_L$ ​、λent $\lambda_{\mathrm{ent}}$ ​Eq. 3 中 GRPO 與 SDPO 優勢的混合權重（λ=0.9 $\lambda=0.9$ ）；信任域的 Lagrange 乘子；Eq. 17 的熵係數
+
+ k $k$ Sec. 5 的嘗試次數（discovery@k、pass@k）；本頁不以 k $k$ 表示其他東西
+
+ 延伸閱讀：豐富回饋、事後回顧與 feedback-conditioned policy
+
+ 02 · GRPO
+
+ GRPO 用群組平均估計優勢
+
+ ∇log⁡π $\nabla\log\pi$ 是什麼。模型在一個位置對每個候選 token 輸出分數（logit）z $z$ ，經 softmax 得機率 π $\pi$ 。∇zlog⁡π(y^)=ey^−π $\nabla_z\log\pi(\hat y)=e_{\hat y}-\pi$ ​logπ(y^​)=ey^​​−π：讓被選 token 的分數上升、其他依機率下降。數值例：三個候選 π=(0.5,0.3,0.2) $\pi=(0.5,0.3,0.2)$ ，選第 1 個，方向是 (+0.5,−0.3,−0.2) $(+0.5,-0.3,-0.2)$ 。乘上優勢 A $A$ ：A>0 $A>0$ 時沿此方向走（提高這個 token 的機率），A<0 $A\lt 0$ 時反向走。
+
+ 訓練目標是期望獎勵 J(θ)=Ex, y∼πθ[r] $J(\theta)=\mathbb E_{x,\,y\sim\pi_\theta}[r]$ ​​[r]。策略梯度把它的梯度寫成
+
+ ∇J(θ)=E[∑tAt ∇θlog⁡πθ(yt∣x,y<t)] $\nabla J(\theta)=\mathbb E\Big[\sum_t A_t\,\nabla_\theta\log\pi_\theta(y_t\mid x,y_{\lt t})\Big]$ ∑​At​∇θ​logπθ​(yt​∣x,y<t​)]
+
+ 優勢 A $A$ 表示這個動作比平均好多少：比平均好就提高它的機率，比平均差就降低。GRPO（Group Relative Policy Optimization）不另外訓練價值網路，而是對每題取樣 G $G$ 個 rollout，以群組平均當基準（Sec. 2.1）：
+
+ Ai,tGRPO:=ri−mean{ri}i=1G $A^{\mathrm{GRPO}}_{i,t}:=r_i-\mathrm{mean}\{r_i\}_{i=1}^{G}$ GRPO​:=ri​−mean{ri​}i=1G​
+Sec. 2.1
+
+ 本文的 GRPO 優勢不除以標準差（footnote 3，沿用 Liu et al. 2025b）。它有三個性質：(1) 優勢只施加在實際取樣的 token yi,t $y_{i,t}$ ​ 上；(2) 同一 rollout 內所有位置的優勢相同，與 t $t$ 無關；(3) 一組 G $G$ 個 rollout 的獎勵全部相同（全對或全錯）時，所有優勢為 0，這一題沒有梯度，學習停止（Sec. 1）。例如 G=8 $G=8$ 中 2 個通過：rˉ=0.25 $\bar r=0.25$ =0.25，通過者的優勢是 +0.75，失敗者是 −0.25，總和為 0。
+
+ 〔本頁推導〕若每個 rollout 獨立、成功機率都是 p $p$ ，一組優勢全為 0 的機率是 (1−p)G+pG $(1-p)^G+p^G$ +pG。G=8 $G=8$ 、p=0.1 $p=0.1$ 時為 0.98+0.18=0.4305 $0.9^8+0.1^8=0.4305$ +0.18=0.4305；每批 32 題（Table 12 的 question batch size）中，期望約 32×0.4305=13.8 $32\times0.4305=13.8$ 題沒有梯度。p=0.5 $p=0.5$ 時只有 0.0078。這是獨立、同機率的簡化；實際上各 rollout 的成功率隨題目與訓練改變。
+
+ 要得到逐 token 的稠密監督，一個辦法是從更強的教師蒸餾。但線上學習的目標是超越現有模型，通常沒有更強的教師（Sec. 1）。本文的做法是讓模型自己在看到回饋後擔任教師（下一章）。
+
+ C1GRPO 的群組優勢與「優勢全為 0」的機率
+
+ 點每一列左側的按鈕切換通過（✓）或失敗（✗）。每一列是一個 rollout 的 12 個 token，長條是該 rollout 的優勢：同一列每格都相同。
+
+ 群組大小 G
+ 4816
+
+ 全部失敗
+ 全部通過
+ 依 p 隨機取樣
+
+ ✓
++0.750
+✗
+−0.250
+✗
+−0.250
+✓
++0.750
+✗
+−0.250
+✗
+−0.250
+✗
+−0.250
+✗
+−0.250
+
+所有優勢為 0：這一題本步沒有梯度。
+
+ 單次成功率 p0.10
+
+ 右圖用 p；左圖用手動切換的結果，按「依 p 隨機取樣」可用 p 產生一組。
+
+ r̄ = 0.250 · A = [+0.750, −0.250, −0.250, +0.750, −0.250, −0.250, −0.250, −0.250] · 總和 = 0.000
+P8(p) = (1 − p)8 + p8 = 0.4305（p = 0.10）· 每批 32 題中約 13.8 題沒有梯度
+
+ 優勢依 Sec. 2.1（不除以標準差）計算；右圖假設各 rollout 獨立、成功率相同〔本頁推導〕。隨機取樣用 mulberry32，seed 從 1 開始、每按一次加 1。讀數由本頁即時計算。
+
+ 平均 0.250，優勢全為 0 的機率 0.4305
+
+ 延伸閱讀：RLVR、GRPO 與信用分配瓶頸、On-policy 蒸餾與線上模仿學習
+
+ 03 · 自我教師
+
+ 同一個模型看到回饋後成為自我教師
+
+ 核心觀察（Sec. 2）
+同一個策略扮演兩個角色：初次作答的學生，與事後判斷動作價值的教師。
+
+ SDPO（Self-Distillation Policy Optimization）的自我教師是同一組參數 θ $\theta$ 、但提示中多了回饋 f $f$ 的模型 πθ(⋅∣x,f) $\pi_\theta(\cdot\mid x,f)$ ​(⋅∣x,f)（App. A 記為 qθ $q_\theta$ ​）。學生 πθ(⋅∣x) $\pi_\theta(\cdot\mid x)$ ​(⋅∣x) 看不到 f $f$ 。教師看到更多資訊，因此「應該」比學生準確（Sec. 2）。教師的提示依 Table 2 的模板組成：
+
+ User
+prompt
+
+ User
+同組有成功的解答時才放，否則略過Correct solution:
+successful_previous_rollout
+
+ User
+原嘗試失敗、且沒有成功解時才放，否則略過The following is feedback from your unsuccessful earlier attempt:
+environment_output
+
+ User
+Correctly solve the original question.
+
+ Assistant
+學生原本的回答；教師不重新生成，只重新計算它的 log 機率original_response
+
+ 放入規則（Table 2 的說明）：同組有成功的解答時，放入「Correct solution」段落，否則略過；原嘗試失敗、且沒有成功解時，放入環境輸出段落，否則略過；若原嘗試本身成功，就把它當作 correct solution 傳入。Assistant 段的 original_response 是學生原本的回答，只用來在教師條件下重新計算每個 token 的 log 機率，教師不重新生成。因此額外成本只有一次前向傳播，不需要重新取樣（Sec. 1）。
+
+ Fig. 4 的例子（Qwen3-8B）：問題是「Write a python function that returns all numbers from 1 to n. Answer briefly.」，學生回答 return list(range(1, n + 1))，回饋是「Don't include n.」。圖中逐 token 顯示 log⁡(Pteacher/Pstudent) $\log(P_{\text{teacher}}/P_{\text{student}})$ ​/Pstudent​)：負值集中在少數幾個位置，其他位置接近 0。作者強調，教師沒有拿到解答，只靠回顧就定位出錯誤，而且這個訊號是稀疏的。下方 C2 以同一題為背景、用本頁構造的玩具數值重現這個現象；數值為本頁構造，不是論文 Fig. 4 的數據。
+
+ C2自我教師的逐 token 機率比
+〔示意〕本頁構造的數值
+
+ 每一格是學生回答中的一個 token。SDPO 列是 log(q/π)：教師相對學生的機率比（05 章會說明它就是 SDPO 的優勢）。點選一格（或用 ← → 鍵）看該位置三個候選與「尾」（其餘 token 合計）的機率。
+
+ 無回饋（教師上下文與學生相同）環境回饋：Don't include n.
+
+ GRPO 列：同組其他 7 個 rollout 中的成功數 c3
+
+ GRPOSDPO
+def
+−0.38
+0.00
+
+␣numbers_up_to_n
+−0.38
+0.00
+
+(n):
+−0.38
+−0.01
+
+␣return
+−0.38
++0.02
+
+␣list
+−0.38
+−0.03
+
+(range
+−0.38
+0.00
+
+(1,
+−0.38
+−0.02
+
+␣n
+−0.38
+−0.03
+
+␣+
+−0.38
+−2.65
+
+␣1
+−0.38
+−0.89
+
+))
+−0.38
+−0.02
+
+ 位置 9「␣+」
+SDPO：log(q/π) = −2.651（取樣 token）
+其他候選：)) +1.883、␣- +0.693、尾 +0.693
+GRPO：−0.375（c = 3，每格相同）
+學生 π（實心）教師 q（斜線）
+
+ 〔示意〕數值為本頁構造，分詞為示意分詞，不是論文 Fig. 4 的數據。尾 = max(0, 1 − 三個候選機率之和)。GRPO 列假設被畫的 rollout 本身失敗（r = 0），G = 8，值為 0 − c/8。讀數由本頁即時計算。
+
+ 位置 9，log(q/π) −2.651，GRPO −0.375
+
+ 在這組示意數值中，大多數位置的 ∣log⁡(q/π)∣<0.04 $|\log(q/\pi)|\lt 0.04$ ，只有 +（−2.65）與 1（−0.89）明顯為負。教師在 + 位置把機率移到 ))（該候選的 log 比值為 +1.88），等於指出「應該在 n 後面直接結束括號」。GRPO 則對每個 token 給相同的值；同組沒有成功解時（c=0 $c=0$ ），GRPO 值全為 0，SDPO 仍有訊號，因為環境輸出不需要成功解。
+
+ 延伸閱讀：Context distillation 與自蒸餾
+
+ 04 · 損失
+
+ SDPO 的損失是學生到自我教師的逐 token KL
+
+ KL 散度 KL(p∥q)=∑ip(i)log⁡p(i)q(i) $\mathrm{KL}(p\|q)=\sum_i p(i)\log\frac{p(i)}{q(i)}$ ​p(i)logq(i)p(i)​ 衡量分布 p $p$ 與 q $q$ 的差距：p=q $p=q$ 時為 0，否則為正。例：p=(0.5,0.5) $p=(0.5,0.5)$ 、q=(0.9,0.1) $q=(0.9,0.1)$ 時，KL(p∥q)=0.5log⁡0.50.9+0.5log⁡0.50.1=0.511 $\mathrm{KL}(p\|q)=0.5\log\frac{0.5}{0.9}+0.5\log\frac{0.5}{0.1}=0.511$ 0.5​+0.5log0.10.5​=0.511。
+
+ SDPO 在學生自己取樣的回答 y $y$ 上，對每個位置 t $t$ 計算學生與教師下一個 token 分布的 KL，再加總成損失：
+
+ LSDPO(θ):=∑tKL(πθ(⋅∣x,y<t) ∥ stopgrad(πθ(⋅∣x,f,y<t))) $\mathcal L_{\mathrm{SDPO}}(\theta):=\sum_t \mathrm{KL}\Big(\pi_\theta(\cdot\mid x,y_{\lt t})\,\Big\|\,\mathrm{stopgrad}\big(\pi_\theta(\cdot\mid x,f,y_{\lt t})\big)\Big)$ ​(θ):=t∑​KL(πθ​(⋅∣x,y<t​)​stopgrad(πθ​(⋅∣x,f,y<t​)))
+Eq. 1
+
+ 學生分布放在 KL 的第一個位置，所以期望是對學生分布取的（reverse KL 方向）。stopgrad 表示計算梯度時把教師分布當作常數：梯度只流入學生的計算路徑，不流入教師。教師與學生共用參數，若不加 stopgrad，最小化 KL 也會把教師分布拉向學生分布，訓練訊號就不再反映回饋 f $f$ （Sec. 2）。
+
+ Alg. 1 的一次迭代如下。和 RLVR 管線相比，唯一新增的是第 4 列的教師 log 機率：
+
+ Alg. 1
+說明
+
+ 1 取一題 x與 RLVR 相同。
+
+ 2 取樣 G 個回答 y_i ~ π_θ(· | x)學生作答，看不到回饋。
+
+ 3 評估每個回答，得到回饋 f_i環境輸出，及／或同組成功的解答（Table 2）。
+
+ 4 計算 log π_θ(y_{i,t} | x, f_i, y_{i,<t})把回饋放進提示，對原回答做一次前向傳播；結果 stopgrad。
+
+ 5 對 L_SDPO 做一步梯度下降Eq. 1，只更新學生路徑。
+
+ 延伸閱讀：知識蒸餾基礎：logit 蒸餾與序列層級蒸餾
+
+ 05 · 梯度
+
+ KL 的梯度就是以自我教師打分的策略梯度
+
+ Prop. 2.1 把 Eq. 1 的梯度寫成策略梯度的形式（y^t $\hat y_t$ ​t​ 是位置 t $t$ 上任一候選 token）：
+
+ ∇LSDPO(θ)=Ey∼πθ(⋅∣x)[∑t=1∣y∣Ey^t∼πθ(⋅∣x,y<t)[log⁡πθ(y^t∣x,y<t)πθ(y^t∣x,f,y<t) ∇θlog⁡πθ(y^t∣x,y<t)]] $\nabla\mathcal L_{\mathrm{SDPO}}(\theta)=\mathbb E_{y\sim\pi_\theta(\cdot\mid x)}\Big[\sum_{t=1}^{|y|}\mathbb E_{\hat y_t\sim\pi_\theta(\cdot\mid x,y_{\lt t})}\Big[\log\frac{\pi_\theta(\hat y_t\mid x,y_{\lt t})}{\pi_\theta(\hat y_t\mid x,f,y_{\lt t})}\,\nabla_\theta\log\pi_\theta(\hat y_t\mid x,y_{\lt t})\Big]\Big]$ ​(θ)=Ey∼πθ​(⋅∣x)​[t=1∑∣y∣​Ey^​t​∼πθ​(⋅∣x,y<t​)​[logπθ​(y^​t​∣x,f,y<t​)πθ​(y^​t​∣x,y<t​)​∇θ​logπθ​(y^​t​∣x,y<t​)]]
+Eq. 2
+
+ 梯度下降沿負梯度方向走，所以最小化 Eq. 1 等於以下面這個優勢做策略梯度（Sec. 2.1）：
+
+ Ai,tSDPO(y^i,t)=log⁡πθ(y^i,t∣x,fi,yi,<t)πθ(y^i,t∣x,yi,<t) $A^{\mathrm{SDPO}}_{i,t}(\hat y_{i,t})=\log\frac{\pi_\theta(\hat y_{i,t}\mid x,f_i,y_{i,\lt t})}{\pi_\theta(\hat y_{i,t}\mid x,y_{i,\lt t})}$ SDPO​(y^​i,t​)=logπθ​(y^​i,t​∣x,yi,<t​)πθ​(y^​i,t​∣x,fi​,yi,<t​)​
+Sec. 2.1
+
+ 讀法：教師與學生對候選 token y^ $\hat y$ ​ 的機率完全一致時，優勢為 0；教師較看好的 token（教師機率大於學生）優勢為正，訓練會提高它的機率；教師較不看好的 token 優勢為負。03 章 C2 的 log(q/π) 就是這個優勢在取樣 token 上的值。實作上，只要把既有 RLVR 管線中的 GRPO 優勢換成 ASDPO $A^{\mathrm{SDPO}}$ 即可（Sec. 2.1）。
+
+ 與 GRPO 相比有兩點差異（Sec. 2.1）：(1) 回饋從 1 位元（通過／失敗）擴展到任意 token 序列；(2) 優勢變成稠密的 logit 層級：每個位置的每個候選 token 各有一個值，而不是整個 rollout 共用一個數字。
+
+ 兩種優勢的對照
+ AGRPO $A^{\mathrm{GRPO}}$ ASDPO $A^{\mathrm{SDPO}}$ 
+
+ 作用對象實際取樣的 token yi,t $y_{i,t}$ ​每個位置的每個候選 token y^ $\hat y$ ​（實作取學生 top-K 加尾）
+
+ 是否隨 t $t$ 變否，整個 rollout 同一值是
+
+ 何時為 0組內獎勵全部相同教師與學生對該 token 的機率相同
+
+ 需要什麼G $G$ 個 rollout 的純量獎勵回饋 f $f$ 與一次教師前向傳播
+
+ 適用範圍。Prop. 2.1 只對 Eq. 1 的 reverse KL 證明。Sec. 3 的實驗實際使用 Jensen–Shannon 散度（Table 12），論文沒有給 JS 的優勢形式；本頁寫到 JS 梯度時一律標〔本頁推導〕。
+
+ 推導：Prop. 2.1 的證明要點（App. B.1）
+
+ 固定位置 t $t$ ，記 π(y^)=πθ(y^∣x,y<t) $\pi(\hat y)=\pi_\theta(\hat y\mid x,y_{\lt t})$ ​)=πθ​(y^​∣x,y<t​)、A(y^)=log⁡q(y^)π(y^) $A(\hat y)=\log\frac{q(\hat y)}{\pi(\hat y)}$ ​)=logπ(y^​)q(y^​)​。則 KL(π∥q)=−∑y^π(y^)A(y^) $\mathrm{KL}(\pi\|q)=-\sum_{\hat y}\pi(\hat y)A(\hat y)$ ​​π(y^​)A(y^​)。對 θ $\theta$ 微分並用乘積法則得兩項：−∑∇π⋅A $-\sum\nabla\pi\cdot A$ 與 −∑π ∇A $-\sum\pi\,\nabla A$ 。教師被 stopgrad，所以 ∇A=−∇log⁡π $\nabla A=-\nabla\log\pi$ ，第二項成為 ∑π∇log⁡π=∑∇π=∇1=0 $\sum\pi\nabla\log\pi=\sum\nabla\pi=\nabla 1=0$ 。剩下 −∑∇π⋅A=−Eπ[A ∇log⁡π] $-\sum\nabla\pi\cdot A=-\mathbb E_\pi[A\,\nabla\log\pi]$ ​[A∇logπ]，即 Eq. 2。
+
+ 推導：KL 本身扮演 baseline〔本頁推導〕
+
+ 把單一位置的學生 logits z $z$ 當自由參數，代入 ∇zlog⁡π(y^)=ey^−π $\nabla_z\log\pi(\hat y)=e_{\hat y}-\pi$ ​logπ(y^​)=ey^​​−π：−∂L/∂zk=πk(Ak−Eπ[A]) $-\partial\mathcal L/\partial z_k=\pi_k\big(A_k-\mathbb E_\pi[A]\big)$ ​=πk​(Ak​−Eπ​[A])，且 Eπ[A]=−KL(π∥q) $\mathbb E_\pi[A]=-\mathrm{KL}(\pi\|q)$ ​[A]=−KL(π∥q)。也就是說，優勢減去的基準值正好是負的 KL。06 章 C3 在數值上顯示這個等式。
+
+ 推導：序列層級的估計式（App. A.1，Eq. 5–8）
+
+ App. A.1 指出：Eq. 5 的逐 token 估計式（假設產生 y $y$ 的取樣分布固定）就是 Prop. 2.1。若改用整條序列的 KL（Eq. 7），梯度會多一項 E[∑tKLt ∇log⁡Πθ(st)] $\mathbb E\big[\sum_t\mathrm{KL}_t\,\nabla\log\Pi_\theta(s_t)\big]$ ​KLt​∇logΠθ​(st​)]（Eq. 8，Amini et al. 2025），反映取樣分布本身也隨 θ $\theta$ 改變。作者試過這一項，「沒有可量測的增益」。
+
+ 推導：SDPO 與最大熵 RL（App. C.1）
+
+ 最大熵 RL arg⁡max⁡ E[∑tr(yt∣x,y<t)]+λentH[πθ] $\arg\max\,\mathbb E\big[\sum_t r(y_t\mid x,y_{\lt t})\big]+\lambda_{\mathrm{ent}}H[\pi_\theta]$ ​r(yt​∣x,y<t​)]+λent​H[πθ​]（Eq. 17）等價於最小化 ∑tKL(πθ∥π⋆) $\sum_t\mathrm{KL}(\pi_\theta\|\pi^\star)$ ​KL(πθ​∥π⋆)（Eq. 19）。取隱含獎勵 r=log⁡q(yt∣x,f,y<t) $r=\log q(y_t\mid x,f,y_{\lt t})$ ​∣x,f,y<t​)、λent=1 $\lambda_{\mathrm{ent}}=1$ ​=1 即得 Eq. 1。作者據此稱 SDPO 為以回顧模型隱含構造稠密獎勵的最大熵 RL，並連到逆強化學習。
+
+ 06 · top-K 近似
+
+ top-K 近似讓 logit 蒸餾放得進記憶體
+
+ SDPO 唯一額外的計算是教師的 log 機率。這一步可以平行化，遠快於逐 token 的序列生成。Fig. 5（micro batch size 2）中，每個訓練步的時間增加 +17.1%（無程式環境）與 +5.8%（含程式環境）。Fig. 14 的虛擬碼：
+
+ logprobs_student = compute_log_prob(batch) # T × V
+teacher_batch = reprompt(batch, teacher_context)
+logprobs_teacher = compute_log_prob(teacher_batch).detach() # stopgrad
+per_token_loss = divergence(logprobs_student, logprobs_teacher)
+loss = aggregate(per_token_loss, mode="token-mean")
+
+ divergence 可以是三種散度之一（π $\pi$ 為學生、q $q$ 為教師）：
+
+ reverse KL：KL(π∥q) $\mathrm{KL}(\pi\|q)$ ，即 Eq. 1；
+
+ forward KL：KL(q∥π) $\mathrm{KL}(q\|\pi)$ ；
+
+ Jensen–Shannon：12KL(π∥m)+12KL(q∥m) $\tfrac12\mathrm{KL}(\pi\|m)+\tfrac12\mathrm{KL}(q\|m)$ 1​KL(π∥m)+21​KL(q∥m)，m=π+q2 $m=\tfrac{\pi+q}{2}$ π+q​。論文只寫「symmetric Jensen–Shannon」，混合比例 1/2 為本頁採用；論文也沒有給 JS 的優勢形式。
+
+ 記憶體。完整的 KL 需要同時保留學生與教師在整個詞彙表上的 logits。Eq. 11 只對學生機率最高的 K $K$ 個 token 計算 KL 項，其餘 token 合併成一個「尾」類別：
+
+ L≈∑t[∑y^∈topK(π)π(y^)log⁡π(y^)q(y^)+(1−∑topKπ)log⁡1−∑topKπ1−∑topKq] $\mathcal L\approx\sum_t\Big[\sum_{\hat y\in\mathrm{top}_K(\pi)}\pi(\hat y)\log\frac{\pi(\hat y)}{q(\hat y)}+\Big(1-\sum_{\mathrm{top}_K}\pi\Big)\log\frac{1-\sum_{\mathrm{top}_K}\pi}{1-\sum_{\mathrm{top}_K}q}\Big]$ ∑​[y^​∈topK​(π)∑​π(y^​)logq(y^​)π(y^​)​+(1−topK​∑​π)log1−∑topK​​q1−∑topK​​π​]
+Eq. 11
+
+ top-K 依學生選。作者指出 K=100 $K=100$ 時幾乎沒有記憶體負擔，且保留大部分資訊（Sec. 2.2）；Table 12 中 Sec. 3 用 K=100 $K=100$ ，Sec. 4–5 用 K=20 $K=20$ 。Eq. 11 等於把非 top-K 的 token 合併成一個類別之後的精確 KL，因此近似值 ≤ 精確值，尾部所有 token 的 q/π $q/\pi$ 比值皆相同時兩者相等〔本頁推導〕。尾項不能省：省略它就不再是兩個機率分布之間的 KL。每個 rollout 因此有 ∣y∣⋅(K+1) $|y|\cdot(K+1)$ 個不同的優勢值（Sec. 4.2）。
+
+ 推導：為什麼近似值不會超過精確值〔本頁推導〕
+
+ log-sum 不等式：對非負的 ai,bi $a_i,b_i$ ​,bi​，∑iailog⁡aibi≥(∑iai)log⁡∑iai∑ibi $\sum_i a_i\log\frac{a_i}{b_i}\ge\big(\sum_i a_i\big)\log\frac{\sum_i a_i}{\sum_i b_i}$ ​ai​logbi​ai​​≥(∑i​ai​)log∑i​bi​∑i​ai​​，等號成立若且唯若 ai/bi $a_i/b_i$ ​/bi​ 全部相同。取 ai=π(y^i) $a_i=\pi(\hat y_i)$ ​=π(y^​i​)、bi=q(y^i) $b_i=q(\hat y_i)$ ​=q(y^​i​) 為所有非 top-K 的 token：左邊是精確 KL 中尾部各項之和，右邊是 Eq. 11 的尾項。top-K 部分兩者相同，所以近似值 ≤ 精確值；尾部各 token 的 π/q $\pi/q$ （等價地 q/π $q/\pi$ ）比值相同時相等。
+
+ 離策略。GRPO 基準用 Eq. 12：PPO 截斷、截斷重要性取樣 TIS（truncated importance sampling，以截斷後的機率比修正取樣分布與訓練分布的差異）、clip-higher、固定長度正規化。SDPO 推廣成 Eq. 13 的 logit 層級損失：對每個候選 token 以舊策略 πθold $\pi_{\theta_{\mathrm{old}}}$ ​​ 的機率加權；實驗中 TIS 施加在 token 層級，而不是 logit 層級（App. A.4）。
+
+ 下面的 C3 把 Eq. 1 縮小到一個位置：學生是 C2 第 9 格（ +）的分布，教師固定，看梯度下降如何把學生拉向教師。
+
+ C3單一位置的 logit 蒸餾
+〔示意〕本頁構造的數值
+
+ 簡化：把這個位置的 6 個學生 logits 當成獨立參數（實際模型中所有位置共用 θ）；教師固定（stopgrad）；純梯度下降。按「+1 步」看第一步的方向，按「執行到 200 步」看收斂。
+
+ reverse KLforward KLJS
+
+ 學習率 η
+ 0.512
+
+ +1 步
+ +10 步
+ 執行到 200 步
+ 重設
+
+ Eq. 11 的 K（只用於 reverse KL 近似）3
+
+ 步數 0 · reverse KL L = 1.9836 · π())) = 0.1400
+reverse KL 精確值 = 1.98356
+top-K 近似（K = 3）= 1.98274 · 差值 = 0.00081
+
+ −∇zL = π(A − Eπ[A])（Prop. 2.1 的單一位置版本〔本頁推導〕）
+−∇zL = [−0.5672, +0.5413, +0.0134, +0.0089, +0.0024, +0.0013]
+π(A − Eπ[A]) = [−0.5672, +0.5413, +0.0134, +0.0089, +0.0024, +0.0013]，Eπ[A] = −1.9836 = −L
+
+ 〔示意〕學生初始 π₀ 的前三個值與 C2 第 9 格相同，尾部拆成三個 token。reverse KL 的單一位置梯度等式與 JS 的梯度 ∂JS/∂π_j = ½ log(π_j/m_j) 為〔本頁推導〕；JS 的收斂行為只是這組玩具數值的結果。損失圖的 y 軸為對數 [1e-4, 3]，低於 1e-4 的值畫在下緣。讀數由本頁依 Eq. 1、Eq. 11 即時計算。
+
+ 在 C3 中，reverse KL 第 0 步時 + 的移動方向為負（−0.5672）、)) 為正（+0.5413），且 −∇zL $-\nabla_z\mathcal L$ ​L 與 πk(Ak−Eπ[A]) $\pi_k(A_k-\mathbb E_\pi[A])$ ​(Ak​−Eπ​[A]) 數值相同。三種散度都讓 π $\pi$ 收斂到 q $q$ ；在這組示意數值上 JS 起步較慢（初始梯度較小），這是本頁玩具例的結果，不是論文的結論。K $K$ 從 1 增加到 6，近似值單調不減（1.97797 → 1.98356），在 K=5 $K=5$ 時等於精確值 1.98356；K=2→3 $K=2\to3$ 時差值不變，因為 - 與其後尾部的 q/π $q/\pi$ 比值相同（都是 2）。
+
+ 07 · 穩定性
+
+ 正規化教師讓自舉保持穩定
+
+ 教師與學生共用參數，所以教師會隨訓練改變。這可以帶來自舉（bootstrapping）：學生進步，教師跟著進步；也可能讓訓練不穩定。作者提出兩個修正（Sec. 2.3）：(1) 正規化教師；(2) 改用對稱的 Jensen–Shannon 散度（Agarwal et al. 2024 在外部教師的線上蒸餾中也觀察到較穩定）。
+
+ 信任域教師。限制教師與初始教師 qθref $q_{\theta_{\mathrm{ref}}}$ ​​ 的距離：
+
+ ∑tKL(q ∥ qθref)≤ϵ $\sum_t\mathrm{KL}\big(q\,\|\,q_{\theta_{\mathrm{ref}}}\big)\le\epsilon$ ∑​KL(q∥qθref​​)≤ϵ
+Eq. 9
+
+ 閉式解（Prop. B.1）是初始教師與目前教師在 log 空間的加權平均：
+
+ q∗(yt∣x,f,y<t)∝exp⁡((1−α)log⁡qθref(yt∣x,f,y<t)+αlog⁡qθ(yt∣x,f,y<t)) $q^*(y_t\mid x,f,y_{\lt t})\propto\exp\big((1-\alpha)\log q_{\theta_{\mathrm{ref}}}(y_t\mid x,f,y_{\lt t})+\alpha\log q_\theta(y_t\mid x,f,y_{\lt t})\big)$ (yt​∣x,f,y<t​)∝exp((1−α)logqθref​​(yt​∣x,f,y<t​)+αlogqθ​(yt​∣x,f,y<t​))
+Eq. 10、16
+
+ 這裡 α=1/λL $\alpha=1/\lambda_L$ ​，λL $\lambda_L$ ​ 是約束的 Lagrange 乘子（寫成 λL $\lambda_L$ ​，與 Eq. 3 的混合權重 λ $\lambda$ 無關）。qθref $q_{\theta_{\mathrm{ref}}}$ ​​ 是初始教師，所以 q∗ $q^*$ 永遠以固定比例 1−α $1-\alpha$ 錨定在初始教師上。App. B.2 末提到 Chen et al. (2025c) 以初始學生 πθref $\pi_{\theta_{\mathrm{ref}}}$ ​​ 當參考，作者觀察到效果不如 qθref $q_{\theta_{\mathrm{ref}}}$ ​​。
+
+ EMA 教師。教師參數 θ′ $\theta'$ 是學生參數的指數移動平均：θ′←(1−α)θ′+αθ $\theta'\leftarrow(1-\alpha)\theta'+\alpha\theta$ ←(1−α)θ′+αθ。兩者的取捨：EMA 需要額外的 GPU 記憶體存放 θ′ $\theta'$ ，但沒有執行時間開銷；信任域要多算一次 qθref $q_{\theta_{\mathrm{ref}}}$ ​​ 的 log 機率，但若 θref $\theta_{\mathrm{ref}}$ ​ 本來就因 KL 正規化而保留在記憶體中，就不需要額外記憶體。
+
+ 〔本頁推導〕從 θ0′=θ0 $\theta'_0=\theta_0$ ′​=θ0​ 開始，經過 n $n$ 次 EMA 更新後，初始參數在 θ′ $\theta'$ 中的權重是 (1−α)n $(1-\alpha)^n$ ：α=0.01 $\alpha=0.01$ 、n=80 $n=80$ 為 0.4475，α=0.05 $\alpha=0.05$ 、n=80 $n=80$ 為 0.0165。論文沒有說 EMA 是每個優化步還是每批生成更新一次；Sec. 4 的 question batch 32、mini batch 1（Table 12）表示一個訓練步最多有 32 次優化步，若每個優化步都更新，訓練步數與 n $n$ 就不相同（第 80 個訓練步時 n $n$ 可達 2560）。
+
+ Table 4：LCBv6，至第 90 步，3 seeds 的標準誤（α=0.01 $\alpha=0.01$ ）
+ 教師最高正確率平均正確率
+
+ qθ $q_\theta$ ​（不正規化，最終發散）36.1 ± 1.629.8 ± 1.3
+
+ qθref $q_{\theta_{\mathrm{ref}}}$ ​​（凍結初始教師）48.8 ± 0.744.4 ± 0.2
+
+ 信任域50.6 ± 0.945.6 ± 0.2
+
+ EMA49.3 ± 0.345.3 ± 0.2
+
+ Table 4 中，不正規化的教師 qθ $q_\theta$ ​ 最佳只有 36.1，訓練最終發散；凍結初始教師 48.8；信任域 50.6；EMA 49.3。作者的解讀：信任域與 EMA 勝過凍結教師，表示教師透過與學生共享參數而進步；但凍結教師也表現不錯。
+
+ C4信任域教師與 EMA
+〔示意〕本頁構造的數值
+
+ 初始教師 q_ref 偏好 ))；漂移後的教師 q_θ 已偏向學生原本的答案 +。拖動 α，看信任域教師 q* 位在兩者之間的哪裡。
+
+ q_ref：初始教師（斜線）q*：信任域教師（實心）q_θ：漂移後的教師（空心）
+
+ 更新率 α0.01
+
+ 0.01（Table 4；Table 12 Sec. 4–5）0.05（Table 12 Sec. 3）0.51
+
+ EMA 更新次數 n80
+
+ 論文沒有說明 EMA 每個優化步還是每批生成更新一次；Sec. 4 一個訓練步最多有 32 次優化步，若每步都更新，訓練步數與 n 不相同。
+
+ α = 0.01 · q*( +) = 0.0621 · q*())) = 0.9175
+KL(q*‖q_ref) = 0.00004 · KL(q*‖q_θ) = 1.02526
+EMA：n = 80 次更新後初始參數權重 (1 − α)ⁿ = 0.4475 · 信任域：初始教師權重 1 − α = 0.99
+
+ 〔本頁推導〕兩者單位不同，不能直接比大小：左圖是參數的權重，會隨更新次數衰減；右圖是 log 分布內插中初始教師的權重，固定為 1 − α。
+
+ 〔示意〕q_ref 為 C3 的教師 q；q_θ =（.70, .25, .02, .02, .005, .005）。q* 依 Eq. 10 計算；EMA 權重 (1 − α)ⁿ 為〔本頁推導〕。讀數由本頁即時計算。
+
+ α 0.01，KL(q*‖q_ref) 0.00004，EMA 權重 0.4475
+
+ 在 C4 中，α=0.01 $\alpha=0.01$ 時 q∗ $q^*$ 幾乎等於初始教師（KL(q∗∥qref)=0.00004 $\mathrm{KL}(q^*\|q_{\mathrm{ref}})=0.00004$ ∥qref​)=0.00004），而且 KL(q∗∥qref) $\mathrm{KL}(q^*\|q_{\mathrm{ref}})$ ∥qref​) 隨 α $\alpha$ 單調上升。α=0.05 $\alpha=0.05$ 、n=80 $n=80$ 次 EMA 更新後，初始參數的權重只剩 0.0165；信任域在 log 內插中給初始教師的權重固定為 0.95，不隨時間改變。
+
+ 08 · 無文字回饋
+
+ 沒有文字回饋時以成功的 rollout 當回饋
+
+ 只有純量獎勵時，SDPO 把同批次、同題中成功的 rollout 當作失敗 rollout 的回饋 f $f$ （Table 2 的「Correct solution」段落），不需要修改既有的 RLVR 環境（Sec. 3）。
+
+ 設定。任務為 SciKnowEval L3 推理子集（化學、物理、生物、材料）與 ToolAlpaca 工具呼叫；模型為 Qwen3-8B 與 Olmo3-7B-Instruct；指標是 avg@16（每題取樣 16 次的平均正確率），對牆鐘訓練時間作圖（不含初始化與驗證）；每次實驗用 4 張 GH200，約 6 小時。基準是改良版 GRPO（非對稱截斷、不做有偏正規化、修正推論框架造成的離策略偏差），每批生成做 4 個離策略 mini batch 步；另報 on-policy GRPO。本節的 SDPO 嚴格 on-policy：每批生成只做一個梯度步（Table 12 Sec. 3 的 mini batch 32 等於 question batch 32）。
+
+ Table 3 摘錄：1 小時／5 小時內的最高 avg@16（%）。底色格為 5h 欄 GRPO 較高者
+ 模型與方法化學 1h化學 5h生物 1h生物 5h工具 1h工具 5h
+
+ Qwen3-8B + GRPO65.974.535.159.964.967.7
+
+ Qwen3-8B + SDPO73.280.950.656.868.068.5
+
+ Olmo3-7B-Instruct + GRPO39.756.735.655.856.465.0
+
+ Olmo3-7B-Instruct + SDPO68.080.048.052.860.862.1
+
+ Sec. 3.2 寫 SDPO 在「almost all runs」勝過 GRPO：Table 3 的 5h 欄有三格 GRPO 較高（Qwen3-8B 生物 59.9 > 56.8、Olmo3 生物 55.8 > 52.8、Olmo3 工具使用 65.0 > 62.1）。在 Olmo3 化學上，SDPO 在 50 分鐘就達到 GRPO 5 小時的正確率（6× 加速），5 小時正確率高出 10 個百分點以上，回答長度縮短 11×（Fig. 6）。論文報告的整體最終正確率是 SDPO 70.2%、GRPO 66.6%（Sec. 1）。
+
+ 註：70.2／66.6 的彙總方式論文沒有說明；本頁以 Table 3 十個 5h 欄位做算術平均得 SDPO 70.0、GRPO 66.8，Table 7 得 71.1／68.4。另外，App. E.2.1 說 Table 3 是「各模型各資料集分別選超參數」，Table 7 的標題卻說 Table 3 是「每個方法全域選一組」；本頁採表格標題的說法。
+
+ 回答變短。SDPO 的回答平均短 3.2×：Table 8（on-policy，各任務平均回答長度）中，Qwen3-8B 的 GRPO 為 820.8、SDPO 為 255.8；Olmo3 為 1095.4 對 343.9。Fig. 7 是訓練 50 步後同一題（分子在 pH 7.4 的 logD，正確答案 C）的回答摘錄：
+
+ … Wait I’m going in circles… Wait, perhaps the correct answer is B… 101.85 ≈ 69.3… Ah, this works… Wait I think I messed up… Hmm… 101.85 ≈ 69.3… Thus, the correct answer is likely B: 1.85.GRPO：5,549 tokens，答 B（錯）
+ … At pH 7.4, all functional groups are neutral… maintaining a balance between hydrophobic and hydrophilic character… with 2.61 (C) being a reasonable estimate…SDPO：764 tokens，答 C（對）
+
+ GRPO 的回答有 25 次「Wait」、9 次「No.」、5 次「Hmm.」，「101.85 ≈ 69.3」重複四次。這一例 SDPO 短 7× 以上，但 7× 只是單一例子，平均是 Table 8 的 3.2×。作者認為回答變短與稠密信用分配產生的稀疏優勢有關（Fig. 21），這是作者的解釋，論文沒有做因果實驗。
+
+ 09 · 程式題
+
+ 程式題的豐富回饋帶來更大的提升
+
+ 設定（Sec. 4）。LiveCodeBench v6（LCBv6）共 131 題（2025 年 2–5 月）。公開測試（私有測試的 50% 隨機子集）在訓練時產生回饋，私有測試用於驗證；報告 4 個 rollout 的平均正確率；預設模型為 Qwen3-8B。回饋同時包含環境輸出（如 Fig. 3）與同組成功解。
+
+ 主結果。SDPO 的最終正確率是 48.8%，GRPO 是 41.2%；作為參考，公開排行榜上最強的 instruct 模型 Claude Sonnet 4 為 40.5%、Claude Opus 4 為 39.7%。SDPO 以 4× 少的生成次數達到 GRPO 的最終正確率（Fig. 1）。Table 9 另外比較兩種 GRPO 類方法：GSPO（Group Sequence Policy Optimization，Zheng et al. 2025a，以整條序列的重要性比取代逐 token 的比值）與 CISPO（Chen et al. 2025a，截斷重要性權重本身而不截斷 token 的更新）。這兩個方法論文只引用、沒有說明，括號內是本頁的簡述。
+
+ Table 9：LCBv6，Qwen3-8B，3 seeds 的標準差
+ 方法第 80 步正確率至第 80 步平均
+
+ GRPO41.2 ± 0.838.2 ± 0.0
+
+ GRPO，只更新高熵 token（Wang et al. 2025）37.8 ± 2.235.9 ± 0.1
+
+ GSPO40.1 ± 2.337.7 ± 0.1
+
+ CISPO41.2 ± 1.837.8 ± 0.1
+
+ SDPO48.8 ± 0.643.8 ± 0.0
+
+ 依難度（Fig. 15）。易／中／難題上 GRPO 為 90.1%／37.8%／11.6%，SDPO 為 91.7%／46.6%／18.9%；圖中標示的相對提升為 +2%／+23%／+63%，提升集中在中、難題。
+
+ 模型規模（Fig. 8、17）。在 Qwen3 0.6B 到 8B 上，模型越大，SDPO 領先 GRPO 越多。在 Qwen2.5-Instruct 上，SDPO 在 7B 勝過 GRPO、在「8B」與 GRPO 相近、在 1.5B 落後 GRPO（照錄 Sec. 4.1 的文字；Fig. 17 的橫軸只有 1.5、3、7B）。作者認為自我教師的回顧能力似乎隨規模湧現。論文沒有給出規模曲線的數值，本頁只以文字呈現。
+
+ 教師演進（Sec. 4.3，Fig. 10 右）。訓練中自我教師的生成正確率顯著上升；學生在後期超過初始教師，所以這是自舉，而不只是模仿一個固定的教師。
+
+ 遺忘（Sec. 4.4，Table 5）。holdout 是不參與訓練的其他基準。SFT 基準是以自我教師的輸出做監督微調，需要 2× 的生成次數。
+
+ Table 5：LCBv6 與 holdout 平均（%）
+ 方法LCBv6holdout 平均
+
+ Base（Qwen3-8B）27.943.5
+
+ SFT on self-teacher42.741.4
+
+ GRPO41.241.8
+
+ SDPO48.842.4
+
+ SDPO 的 LCBv6 最高，holdout 平均 42.4 高於 GRPO 的 41.8 與 SFT 的 41.4，但仍低於 base 的 43.5：三種訓練方法都有一些遺忘，SDPO 最少。
+
+ 10 · 消融
+
+ 逐 logit 的信用分配與兩種回饋各有貢獻
+
+ 信用分配粒度（Sec. 4.2，Fig. 10 左）。論文比較三種 SDPO：
+
+ logit 層級：學生的前 K $K$ 個 token 加尾項，每個候選 token 各有一個優勢。Sec. 4.2 寫「學生前 100 個 token」；Sec. 4 主實驗的 Table 12 設定為 K=20 $K=20$ 。
+
+ token 層級：每個位置只用最可能的 token。是否含尾項論文沒有寫，本頁解讀為 top-1 加尾項，即 Eq. 11 取 K=1 $K=1$ 。
+
+ 序列層級：把 SDPO 優勢平均成單一純量，像 GRPO 一樣施加在整個 rollout 上。
+
+ 結果排序是 logit 層級 > token 層級 > 序列層級 > GRPO。即使序列層級（每個 rollout 只有一個數字）也勝過 GRPO，表示豐富回饋本身就帶來增益，不只靠稠密信用分配；稠密的信用分配再進一步提升。
+
+ C2b三種信用分配粒度給出的優勢
+〔示意〕本頁構造的數值
+
+ 同一組 C2 數值（有回饋），四列分別是 logit、token、序列層級 SDPO 與 GRPO。列名旁的數字是這個回答總共有幾個不同的優勢值。點選一格看該位置的數值。
+
+ logit · 44token · 22序列 · 1GRPO · 1
+def
+
+−0.33
+−0.38
+
+␣numbers_up_to_n
+
+−0.33
+−0.38
+
+(n):
+
+−0.33
+−0.38
+
+␣return
+
+−0.33
+−0.38
+
+␣list
+
+−0.33
+−0.38
+
+(range
+
+−0.33
+−0.38
+
+(1,
+
+−0.33
+−0.38
+
+␣n
+
+−0.33
+−0.38
+
+␣+
+
+−0.33
+−0.38
+
+␣1
+
+−0.33
+−0.38
+
+))
+
+−0.33
+−0.38
+
+ 第 9 格「␣+」 · logit：−2.651, +1.883, +0.693, +0.693（␣+、))、␣-、尾）· token：−2.651, +1.835（␣+、尾）· 序列：−0.330 · GRPO：−0.375
+Eq. 11 位置損失：K = 3 → 1.9827，K = 1 → 1.9780 · 11 格總損失：K = 3 → 2.7998，K = 1 → 2.7669 · Ā = −0.3296
+
+ 〔示意〕本例每格只有 3 個候選，logit 層級取 K = 3（每格 4 個值）；論文 Sec. 4 主實驗 K = 20，即每格 21 個。token 層級為本頁解讀（Eq. 11、K = 1）。GRPO 固定 c = 3（−0.375）。讀數由本頁依 Eq. 11 即時計算。
+
+ 第 9 格，K=3 損失 1.9827，K=1 損失 1.9780
+
+ 在 C2b 中，序列層級把第 9 格的 −2.65 稀釋成每格 −0.33；token 層級在第 9 格只剩取樣 token 與尾，看不到教師偏好的 ))（+1.88）；第 9 格的位置損失在 K=1 $K=1$ 與 K=3 $K=3$ 時幾乎相同（1.978 對 1.983），差別在其他候選的方向資訊。
+
+ 與 GRPO 結合
+
+ Sec. 4.5 把兩種優勢線性混合（Eq. 3）：ASDPO+GRPO=λAGRPO+(1−λ)ASDPO $A^{\mathrm{SDPO+GRPO}}=\lambda A^{\mathrm{GRPO}}+(1-\lambda)A^{\mathrm{SDPO}}$ =λAGRPO+(1−λ)ASDPO，λ=0.9 $\lambda=0.9$ 。GRPO 優勢是 J(θ) $J(\theta)$ 的無偏 Monte Carlo 估計；SDPO 優勢有偏，但通常變異較低（類似 bootstrap 估計）。結果：混合版在 Qwen3-0.6B 上明顯勝過 SDPO，在較強的模型上略遜（Fig. 11）。
+
+ 回饋種類
+
+ Table 6（訓練至第 60 步）比較教師上下文中放入哪些內容。「相同輸出比例」是教師的生成與學生原嘗試相同的比例，越低越好。
+
+ Table 6：回饋 f $f$ 的內容（LCBv6，至第 60 步）
+ f $f$ 訓練前教師正確率相同輸出比例 ↓SDPO 學生正確率平均熵
+
+ output32.5 ± 0.513.7 ± 0.639.9 ± 1.10.40
+
+ own solution42.4 ± 1.012.1 ± 0.742.6 ± 1.30.41
+
+ output + own solution42.5 ± 1.210.1 ± 0.248.3 ± 1.40.38
+
+ y $y$ + output + own solution39.3 ± 0.830.0 ± 0.944.5 ± 1.30.23
+
+ 環境輸出加成功解最好（學生 48.3），單獨使用任一種都較差（39.9、42.6），兩者互補。把學生原嘗試 y $y$ 也放進回饋，會讓教師偏向學生：相同輸出比例升到 30.0%，熵降到 0.23，探索減少，學生正確率降到 44.5。注意這和 Table 2 模板 Assistant 段的 original_response 不同：後者是被評分的對象，必須保留；被消融的是「回饋段落中也放入 y $y$ 」。作者也發現結果對模板的語法變化不敏感。
+
+ 11 · 測試時
+
+ 測試時自我蒸餾加速找到第一個解
+
+ 測試時（test time）面對單一難題，可以在同一題上反覆嘗試。Def. 5.1 把發現時間定義為第一次得到獎勵 1 的嘗試序號，並定義
+
+ discovery@k:=P(發現時間≤k) $\mathrm{discovery@}k:=P(\text{發現時間}\le k)$ 
+Eq. 4
+
+ 對固定模型做獨立取樣（best-of-k）時，discovery@k 等於 pass@k，也就是 1−(1−p)k $1-(1-p)^k$ ，p $p$ 是單次成功率。
+
+ 作者的論證（Sec. 5、footnote 9，沒有實驗量測）：在單一題目上做 RLVR 不會勝過 best-of-k，因為二元獎勵在第一次成功之前全為 0，沒有訊號。SDPO 每次嘗試都得到回饋，可以在找到解之前就修正；而且它把上下文 c=(yk,fk) $c=(y_k,f_k)$ ​,fk​) 壓縮進權重：把 πθ(⋅∣x,c) $\pi_\theta(\cdot\mid x,c)$ ​(⋅∣x,c) 蒸餾成 πθ′(⋅∣x) $\pi_{\theta'}(\cdot\mid x)$ ​(⋅∣x)（Fig. 12），因此不受上下文長度限制。
+
+ Fig. 12 重繪每一輪把上一輪的嘗試與回饋寫進參數
+
+ 第 1 輪問題 x
+θ₀
+回答 y₁
+回饋 f₁
+
+ 第 2 輪問題 x
+θ₀
+SDPO(y₁, f₁)
+θ₁
+回答 y₂
+回饋 f₂
+
+ 第 3 輪問題 x
+θ₀
+SDPO(y₁, f₁)
+θ₁
+SDPO(y₂, f₂)
+θ₂
+回答 y₃
+回饋 f₃
+
+ 上下文不放進提示，而是逐輪寫進參數；圖中每一輪畫成一次嘗試；實驗中每次 SDPO 更新用同一題的 16 個 rollout（Table 12 Sec. 5：question batch 1、rollouts 16）。SDPO 方框（綠框）表示把上一輪的 (y, f) 蒸餾進權重，θ 方框（藍框）是更新後的參數。
+
+ 設定。Qwen3-8B 的 pass@64 < 0.5 的題目稱為 hard、< 0.03 稱為 very hard；保留任一方法在 512 步、5 seeds 內至少解出一次的題目，得到 19 題 hard（其中 9 題 very hard）。best-of-k 以 2944 個獨立 rollout 做無偏的 pass@k 估計（Chen et al. 2021b）；多輪對話基準以先進先出的滑動視窗保留過去的回饋（最大 prompt 32k，模型上限 40k）；SDPO 每次更新用 question batch 1、16 個 rollout（Table 12 Sec. 5：學習率 1e-6、K=20 $K=20$ 、reverse KL、優勢截斷 5.0、EMA 0.01）。
+
+ 〔本頁推導〕pass@64 < 0.03 等價於單次成功率 p<1−0.971/64≈4.76×10−4 $p\lt 1-0.97^{1/64}\approx4.76\times10^{-4}$ ≈4.76×10−4，在 2944 次取樣中期望只成功約 1.4 次；pass@64 < 0.5 等價於 p<1.08×10−2 $p\lt 1.08\times10^{-2}$ （期望約 31.7 次）。C5 畫出固定 p $p$ 時的 best-of-k 曲線。
+
+ C5discovery@k 與難題門檻
+
+ 固定模型的 best-of-k：discovery@k = 1 − (1 − p)ᵏ。點「very hard 上限」看 p = 4.76e-4 時要多少次嘗試才有 22% 的機會找到解；切到「2944 次中成功 c 次」看論文用的無偏估計。
+
+ 單次成功率 p2944 次中成功 c 次
+
+ 線性 x 軸對數 x 軸
+
+ 單次成功率 p（對數）1.00e-3
+
+ very hard 上限（4.76e-4）hard 上限（1.08e-2）
+
+ 2944 次中成功次數 c1
+
+ p = 1.000e-3
+pass@64 = 0.0620
+discovery@2750 = 0.9362
+k(22%) = 249 · k(50%) = 693
+截斷平均首次成功 = 936.2
+
+ 論文 Sec. 5.2 的 discovery@2750（%）
+ 題組SDPObest-of-k多輪
+
+ very hard（9 題）53.241.535.6
+
+ hard（19 題）78——
+
+ 這些是 9／19 題、5 seeds 的平均，不是某個單一 p 的曲線；各題 p 不同時，平均曲線不等於平均 p 的曲線。
+
+ 曲線：p 模式為 −expm1(k·log1p(−p))；c 模式為無偏估計 1 − ∏(n − c − i)/(n − i)，n = 2944（Chen et al. 2021b）。截斷平均 = Σ_{j=0}^{2749} P(發現時間 > j)，與 Table 10 的截斷定義相同。門檻換算為〔本頁推導〕。讀數由本頁依 Eq. 4 即時計算。
+
+ pass@64 0.0620，discovery@2750 0.9362，達到 22% 需要 249 次
+
+ 在 C5 中，very hard 上限 p=4.76×10−4 $p=4.76\times10^{-4}$ 時 pass@64 = 0.030，要 523 次嘗試才有 22% 的機會找到解；p=10−4 $p=10^{-4}$ 時 2750 次內只有 24%。2944 次中只成功 1 次時，估計的 pass@64 為 0.0217，已低於 0.03。
+
+ 結果（Sec. 5.2）。very hard 題的 discovery@2750：SDPO 53.2%、best-of-k 41.5%、多輪 35.6%。在 very hard 題上，達到 22% 發現機率所需的生成數，SDPO 比 best-of-k 與多輪少約 3×；在 hard 題上，SDPO 的 discovery@2750 為 78%，達到 67% 發現機率時少約 2.4×。多輪與 best-of-k 分別只解出 68.4% 與 72.3% 的題目；多輪對話的上下文在 hard 題第 837（±466）步、very hard 題第 1007（±349）步用盡。
+
+ Q3 只有 SDPO 解出：最早一次在第 321 次嘗試找到解（20 次自我蒸餾更新，每次 16 個 rollout；論文沒有說是哪個 seed）；Table 10 中 Q3 的平均首次成功（5 seeds）是 1987，best-of-k ≥ 2750，加速 1.4×。
+
+ Table 10 摘錄：首次成功的平均生成數（截斷在 2750）。* 為 very hard
+ 題目SDPObest-of-k多輪加速（best-of-k → SDPO）
+
+ Hard（19 題，含 very hard）894114511411.3×
+
+ Very hard（9 題）1739218021211.2×
+
+ Q3*1987≥ 2750≥ 27501.4×
+
+ Q120243277013.6×
+
+ Q692801341340.5×
+
+ 以首次成功的平均生成數計，加速是 1.3×（Hard 列：包含 9 題 very hard 在內的全部 19 題）與 1.2×（very hard）；單題最高 13.6×（Q120），也有單題比 best-of-k 慢（例如 Q69 為 0.5×）。所以「3×」只對應 very hard 題、22% 發現機率這一個分位，「2.4×」對應 hard 題、67%。
+
+ Table 11：初始自我教師在 19 題中有 15 題（約 79%；論文正文寫 78%，為截斷值）的正確率恰為 0%，其餘都低於 7%（最高是 Q43 的 6.25%）。單輪回饋不足以讓教師直接解題，但它的信用分配足以逐步改進策略。
+
+ 延伸閱讀：測試時訓練與 test-time RL 與 SDPO 的 test-time self-distillation
+
+ 12 · 實作
+
+ 實作設定與常見錯誤
+
+ Table 12：SDPO 的設定
+ 項目Sec. 3（無文字回饋）Sec. 4（有文字回饋）Sec. 5（測試時）
+
+ 模型Qwen3-8B、Olmo3-7B-InstructQwen3-8BQwen3-8B
+
+ thinkingFalseFalseFalse
+
+ 最大 prompt／回答長度2048／8192同左同左
+
+ question batch／mini batch／rollouts32／32／832／1／81／1／16
+
+ 取樣溫度；驗證 rollouts、溫度、top-p1.0；16、0.6、0.951.0；4、0.6、0.951.0；—
+
+ top-K 蒸餾1002020
+
+ 散度Jensen–Shannonreverse KLreverse KL
+
+ 優勢截斷——5.0
+
+ 教師 EMA 更新率0.050.010.01
+
+ rollout IS clip222
+
+ AdamW 學習率（constant）／warmup1e-5／101e-6／01e-6／0
+
+ weight decay／梯度裁剪0.01／1.0同左同左
+
+ GRPO 基準（Table 13，Sec. 3）：mini batch 8（預設）或 32（on-policy），ε-high 0.28，KL 係數 0，學習率 1e-6（預設）或 1e-5（on-policy），warmup 10。超參數搜尋（App. E.2.1）：學習率 {1e-5, 1e-6}、mini batch {8, 32}；SDPO 另外搜尋 forward KL 與 Jensen–Shannon。環境：verl、FSDP2、vLLM、PyTorch 2.7.0、CUDA 12.8。
+
+ 常見錯誤
+
+ 忘記對教師 stopgrad。教師分布會被拉向學生分布，訊號不再反映回饋（Sec. 2）。
+
+ 把學生原嘗試 y $y$ 放進回饋段落。Table 6 中熵降到 0.23，學生 44.5，低於 48.3。模板 Assistant 段的 original_response 是被評分的對象，必須保留；要避免的是「回饋中也放入 y $y$ 」。
+
+ 不正規化教師。Table 4 中 qθ $q_\theta$ ​ 最佳只有 36.1，最終發散；用信任域或 EMA（α=0.01 $\alpha=0.01$ ）。
+
+ 同時保留兩份全詞彙 logits。記憶體翻倍；用 Eq. 11 的 top-K（依學生選）加尾項，尾項不能省。
+
+ 在弱模型上期待增益。Qwen2.5-1.5B 上 SDPO 落後 GRPO；可改用 SDPO+GRPO（λ=0.9 $\lambda=0.9$ ）。
+
+ 散度方向與種類。Eq. 1 是 KL(學生∥教師) $\mathrm{KL}(\text{學生}\|\text{教師})$ ；Table 12 中 Sec. 3 實際用 JS，Sec. 4–5 用 reverse KL。Prop. 2.1 的優勢形式只對 reverse KL 成立。
+
+ 基準設定。本文 GRPO 優勢不除以標準差（footnote 3）；離策略修正的 TIS 在 SDPO 中施加於 token 層級（App. A.4）。
+
+ 13 · 研究脈絡
+
+ 研究脈絡
+
+ SDPO 接在幾條路線的交會處：策略梯度與 PPO 提供優化框架，GRPO 與 RLVR 把它用在語言模型的推理上；知識蒸餾與線上蒸餾提供逐 token 的監督形式，但需要更強的教師；情境蒸餾與自我蒸餾讓同一個模型帶著額外上下文擔任教師。本文把額外上下文換成環境回饋，並證明蒸餾的梯度就是一種策略梯度。每張卡片連到對應的研究筆記，總覽見 SDPO 的研究脈絡總覽。
+
+ 策略梯度與 RLVR蒸餾線上蒸餾與模仿學習情境蒸餾／自我蒸餾測試時訓練本文
+
+ 2010線上蒸餾與模仿學習A Reduction of Imitation Learning and Structured Prediction to No-Regret Online Learning
+Ross et al.
+線上模仿學習，on-policy 蒸餾的前身
+arXiv ↗筆記
+2015蒸餾Distilling the Knowledge in a Neural Network
+Hinton et al.
+知識蒸餾的基礎，SDPO 損失的形式
+arXiv ↗筆記
+2016蒸餾Sequence-Level Knowledge Distillation
+Kim & Rush
+序列層級蒸餾
+arXiv ↗筆記
+2017情境蒸餾／自我蒸餾Thinking Fast and Slow with Deep Learning and Tree Search
+Anthony et al.
+Expert Iteration，學生模仿改進版自己
+arXiv ↗筆記
+2017策略梯度與 RLVRProximal Policy Optimization Algorithms
+Schulman et al.
+依賴價值網路的傳統 RL 演算法
+arXiv ↗筆記
+2020情境蒸餾／自我蒸餾Bootstrap your own latent: A new approach to self-supervised Learning
+Grill et al.
+自舉式學習，類比 augmented views
+arXiv ↗筆記
+2022情境蒸餾／自我蒸餾Learning by Distilling Context
+Snell et al.
+自蒸餾概念的最早提出
+arXiv ↗筆記
+2023策略梯度與 RLVRLet's Verify Step by Step
+Lightman et al.
+process reward model，逐步信用分配
+arXiv ↗筆記
+2023線上蒸餾與模仿學習On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes
+Agarwal et al.
+語言模型的 on-policy 蒸餾
+arXiv ↗筆記
+2024策略梯度與 RLVRDeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models
+Shao et al.
+提出 GRPO
+arXiv ↗筆記
+2025策略梯度與 RLVRDeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning
+DeepSeek-AI
+RLVR 提升推理的代表
+arXiv ↗筆記
+2025測試時訓練TTRL: Test-Time Reinforcement Learning
+Zuo et al.
+測試時 RL，多數決型 expert
+arXiv ↗筆記
+2026本文Reinforcement Learning via Self-Distillation
+Hübotter et al.
+本論文：以帶回饋的自己為老師做 on-policy 自蒸餾
+arXiv ↗
+
+ 14 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ SDPO 依賴模型的上下文學習能力：弱模型的自我教師可能無法從回饋找出錯誤，表現不如 GRPO。它也依賴回饋品質：沒有資訊或誤導的回饋無法帶來學習。在小模型、短生成的設定下，額外的教師 log 機率計算佔訓練時間的比例較大。作者列出的未來方向是長時程與代理環境、大規模多任務訓練、沒有驗證器的文字回饋任務，以及系統性研究推理行為的差異，例如模板的影響（Sec. 7）。
+
+ 研究筆記（依閱讀順序）
+
+ SDPO（Reinforcement Learning via Self-Distillation）的研究脈絡總覽總覽
+
+ RLVR、GRPO 與信用分配瓶頸SDPO 要解決的問題
+
+ 知識蒸餾基礎：logit 蒸餾與序列層級蒸餾SDPO 損失的形式
+
+ On-policy 蒸餾與線上模仿學習在學生自己的軌跡上由教師給回饋
+
+ Context distillation 與自蒸餾同一個模型帶額外上下文當教師
+
+ 豐富回饋、事後回顧與 feedback-conditioned policy前人如何使用文字回饋
+
+ 測試時訓練與 test-time RL 與 SDPO 的 test-time self-distillation對單一難題做專門化
+
+ 「Test-Time Training」的命名混淆：序列建模層 vs 分布偏移適應 vs 測試時 RL（TEMPO）站內既有筆記（對應 App. C 與測試時訓練的關係）
+
+ TTT 的理論還原與應用擴散（視覺、3D/4D、長上下文 LLM）站內既有筆記
+
+ Jonas Hübotter, Frederike Lübeck, Lejs Behric, Anton Baumann, et al. Reinforcement Learning via Self-Distillation. 2026. arXiv:2601.20802 · github.com/lasgroup/SDPO.
+
+ 本頁的方程式與數字取自論文 v2；標示「本頁推導」的內容為本頁自行推導，標示「示意」的數值為本頁構造，都不是論文結論。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記

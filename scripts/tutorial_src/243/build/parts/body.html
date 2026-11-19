@@ -1,0 +1,635 @@
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 243</span>
+  <span class="ttl">Titans：在測試時學習記憶</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 243</b> · 互動教學 · arXiv 2501.00663 v1 · 2024</div>
+  <h1><span class="lat">Titans</span>：在測試時學習記憶</h1>
+  <p class="dek">這篇論文把長期記憶做成一個在測試時以梯度下降更新的 MLP，再與注意力、持久記憶組成三種架構。</p>
+  <p class="note" style="max-width:640px;margin:0 0 8px">測試時＝模型訓練完成、部署後處理新序列的時候；此時記憶模組的權重仍在更新。</p>
+  <p class="byline">Ali Behrouz、Peilin Zhong、Vahab Mirrokni（Google Research，2024）〈Titans: Learning to Memorize at Test Time〉。本頁依 arXiv v1。</p>
+  <div class="taxis" id="hero-axis" role="img" aria-label="token 軸：序列開頭是固定的持久記憶，最近的 token 在注意力視窗內，較早的 token 壓縮進長期記憶"></div>
+  <div class="tlegend">
+    <a href="#persistent"><span class="sw persist" aria-hidden="true"></span>持久記憶（S6）</a>
+    <a href="#variants"><span class="sw win" aria-hidden="true"></span>注意力視窗（S7）</a>
+    <a href="#surprise"><span class="sw mem" aria-hidden="true"></span>長期記憶（S2–S5）</a>
+  </div>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 記憶是網路</span><p>長期記憶是一個小型神經網路。每讀到一個新 token，它就做一步梯度下降，讓這個 token 的索引向量（key）能取回對應的內容向量（value）；部署後處理新序列時也照做。</p></div>
+    <div class="fact"><span class="n">02 · 驚訝度</span><p>梯度越大，表示新 token 與已記住的內容越不同。作者稱之為驚訝度，並加上動量（延續過去的驚訝度）與遺忘閘（衰減舊內容）。</p></div>
+    <div class="fact"><span class="n">03 · 三種架構</span><p>Titans 把這個記憶與注意力、持久記憶組合成三種架構。760M 參數時，三者在 Wikipedia 文字上的 perplexity（困惑度，越低越好）為 18.61–19.93，Transformer++ 為 25.21。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2501.00663">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-243">在關聯圖中查看</a>
+    <a class="btn" href="titans-lineage-overview.html">研究筆記總覽</a>
+  </div>
+</section>
+
+<!-- S1 ============================================================ -->
+<section class="ch" id="memory" data-toc="01" data-tt="寫入與讀取">
+  <div class="ch-num">01 · 寫入與讀取</div>
+  <h2>序列模型都有寫入與讀取兩個步驟</h2>
+  <div class="prose">
+    <p>注意力（attention）的輸入是 $N$ 個 token 向量，輸出是同樣 $N$ 個向量。第 $i$ 個輸出是前面各 token 內容的加權平均，權重由 token 之間的相似度決定；softmax 把一列分數轉成總和為 1 的正權重。</p>
+    <p>每個 token 經三個投影矩陣得到三個向量：query（我要找什麼）、key（我可以被什麼找到）、value（被找到時交出的內容）。第 $i$ 個 token 的 query 與第 $j$ 個 token 的 key 做內積，決定第 $i$ 個輸出給第 $j$ 個 token 多少權重。論文寫成（Sec. 2.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 1–2，可橫向捲動">$$Q=xW_Q,\ K=xW_K,\ V=xW_V,\qquad y_i=\sum_{j=1}^{i}\frac{\exp(Q_i^\top K_j/\sqrt{d_{in}})\,V_j}{\sum_{\ell=1}^{i}\exp(Q_i^\top K_\ell/\sqrt{d_{in}})}$$</div><span class="eq-n">Eq. 1–2</span></div>
+  <div class="prose">
+    <p>第 $i$ 個輸出要與前面全部 $i$ 個 token 比較，整段序列的成本與長度 $N$ 的平方成正比，因此實務上只能處理固定長度的視窗。線性注意力（linear attention）把 softmax 換成可分解的核函數；核取單位矩陣時（RetNet），可以寫成遞迴（Eq. 4–5）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 4–5，可橫向捲動">$$\mathcal M_t=\mathcal M_{t-1}+K_t^\top V_t,\qquad y_t=Q_t\mathcal M_t$$</div><span class="eq-n">Eq. 4–5</span></div>
+  <details class="more"><summary>線性注意力的一般形式（Eq. 3）</summary><div class="qa">
+    <p>把 softmax 換成核函數 $\phi$，並要求 $\phi(x,y)=\phi(x)\phi(y)$：</p>
+    <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 3，可橫向捲動">$$y_i=\sum_{j=1}^{i}\frac{\phi(Q_i)^\top\phi(K_j)}{\sum_{\ell=1}^{i}\phi(Q_i)^\top\phi(K_\ell)}V_j=\frac{\phi(Q_i)^\top\sum_{j=1}^{i}\phi(K_j)V_j}{\phi(Q_i)^\top\sum_{\ell=1}^{i}\phi(K_\ell)}$$</div><span class="eq-n">Eq. 3</span></div>
+    <p>兩個累加和在每一步都可以沿用上一步的結果，所以吞吐量較高；核取單位矩陣即得 Eq. 4–5。</p>
+  </div></details>
+  <div class="prose">
+    <p>線性注意力的記憶 $\mathcal M_t$ 是一個固定大小的矩陣：每讀一個 token，把 $K_t^\top V_t$ 加進去，這是寫入；輸出時用 $Q_t$ 乘上它，這是讀取。整段歷史被壓縮進固定大小的矩陣，每一步的成本與序列長度無關。作者把一般的遞迴模型寫成兩個函數（Eq. 6–7）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 6–7，可橫向捲動">$$\mathcal M_t=f(\mathcal M_{t-1},x_t)\ \ (\text{寫入}),\qquad y_t=g(\mathcal M_t,x_t)\ \ (\text{讀取})$$</div><span class="eq-n">Eq. 6–7</span></div>
+  <div class="prose">
+    <p>原文 Eq. 7 下方一句寫成「f is the read and g is the write」，與方程式旁的標籤相反。本頁依方程式標籤：$f$ 是寫入，$g$ 是讀取。</p>
+    <p>從這個角度看，Transformer 的記憶是持續變長的 key／value 快取：它把每個 token 的 key 與 value 直接附加到記憶、不壓縮，所以讀取精確，但成本隨長度成長。作者的觀察是，Eq. 4 的寫入只做加法，長上下文會使固定大小的記憶溢出（memory overflow）。既有的改進分成兩個方向：加入遺忘閘（GLA、LRU、Griffin、xLSTM、Mamba2），或改進寫入方式（delta rule：寫入前先移除該 key 的舊值，例如 DeltaNet、Gated DeltaNet）。</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table class="stack">
+    <caption>以寫入／讀取比較四類模型（Sec. 1「Memory Perspective」、Sec. 2.1）</caption>
+    <thead><tr><th>模型</th><th>記憶</th><th>寫入方式</th><th>壓縮</th></tr></thead><tbody>
+    <tr><td>RNN</td><td data-h="記憶">向量</td><td data-h="寫入方式">$f(\mathcal M_{t-1},x_t)$</td><td data-h="壓縮">壓縮成固定大小</td></tr>
+    <tr><td>線性 Transformer</td><td data-h="記憶">矩陣 $\mathcal M_t$</td><td data-h="寫入方式">加上 $K_t^\top V_t$</td><td data-h="壓縮">壓縮成固定大小</td></tr>
+    <tr><td>Transformer</td><td data-h="記憶">持續變長的 key／value</td><td data-h="寫入方式">附加</td><td data-h="壓縮">不壓縮</td></tr>
+    <tr><td>LMM（本文）</td><td data-h="記憶">深層 MLP 的參數</td><td data-h="寫入方式">一步梯度下降</td><td data-h="壓縮">壓縮進網路權重</td></tr>
+    </tbody></table></div>
+  <details class="more">
+    <summary>符號表</summary>
+    <div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+      <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td>$x_t$</td><td>第 $t$ 個 token（列向量）；$t$ 是 token 索引</td></tr>
+      <tr><td>$W_Q,W_K,W_V$</td><td>投影矩陣；$q_t=x_tW_Q$、$k_t=x_tW_K$、$v_t=x_tW_V$（Eq. 11、15）</td></tr>
+      <tr><td>$\mathcal M_t$</td><td>處理完第 $t$ 個 token 後的長期記憶（一個網路的參數狀態）。論文也寫作 $M$；本頁一律寫 $\mathcal M$，注意力遮罩寫「mask」</td></tr>
+      <tr><td>$\mathcal M(\cdot)$、$\mathcal M^*(\cdot)$</td><td>前向傳遞時會／不會調整權重；讀取用 $\mathcal M^*$</td></tr>
+      <tr><td>$\ell(\mathcal M_{t-1};x_t)$</td><td>聯想記憶損失 $\|\mathcal M_{t-1}(k_t)-v_t\|_2^2$（Eq. 12）</td></tr>
+      <tr><td>$S_t$、$\eta_t$、$\theta_t$</td><td>驚訝度（動量項）、驚訝度衰減、當下驚訝度的權重（學習率）</td></tr>
+      <tr><td>$\alpha_t\in[0,1]$</td><td>遺忘閘（weight decay）</td></tr>
+      <tr><td>$L_{\mathcal M}$</td><td>記憶 MLP 的層數</td></tr>
+      <tr><td>$b$、$t'$、$\beta_i$</td><td>chunk 大小；chunk 起點索引，本頁寫 $t'=t-1-\mathrm{mod}(t-1,b)$（S5）；$\beta_i=\prod_{j=1}^{i}(1-\alpha_j)$</td></tr>
+      <tr><td>$\|A\|_F$</td><td>Frobenius 範數：矩陣所有元素平方和的平方根</td></tr>
+      <tr><td>ppl</td><td>perplexity（困惑度）：模型對下一個 token 的平均不確定程度，越低越好</td></tr>
+      <tr><td>$p_1,\dots,p_{N_p}$</td><td>持久記憶（$N_p$ 個可學習向量，Eq. 19）</td></tr>
+      <tr><td>$S^{(i)}$、$C$、$h_t$、$N_l$</td><td>第 $i$ 個片段、片段長度、從記憶讀出的歷史資訊（Eq. 21）、Fig. 3a 說明中的長期記憶 token 數</td></tr>
+      <tr><td>SW-Attn、SW-Attn$^*$</td><td>滑動視窗注意力、帶前綴（prefix）的滑動視窗注意力</td></tr>
+      <tr><td>$\otimes$</td><td>任意非線性閘控（Sec. 4.2）</td></tr>
+      </tbody></table></div></div>
+  </details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">線性注意力的記憶如何寫入與讀取？Transformer 的記憶與它有何不同？</p>
+    <p class="a">$\mathcal M_t=\mathcal M_{t-1}+K_t^\top V_t$、$y_t=Q_t\mathcal M_t$（Eq. 4–5），壓縮成固定大小矩陣；Transformer 把 key／value 附加到記憶、不壓縮（Sec. 1、2.1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="memory-view-of-sequence-models.html">序列模型的記憶觀點：寫入、讀取與五個設計問題</a>、<a href="linear-attention-fast-weights.html">Linear attention 與 fast weight programs</a></p>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="surprise" data-toc="02" data-tt="驚訝度">
+  <div class="ch-num">02 · 驚訝度</div>
+  <h2>記憶以梯度學習 key 到 value 的對應</h2>
+  <div class="prose">
+    <p>作者認為，直接訓練一個網路記住訓練資料會限制泛化、帶來隱私問題，而且測試資料可能在訓練分布之外。因此需要一個在測試時學習如何記住與遺忘的線上模型。作者把訓練長期記憶視為線上學習：把 $x_1,\dots,x_{t-1}$ 壓縮進 $\mathcal M_t$ 的參數。最簡單的寫入是一步梯度下降（Sec. 3.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 8，可橫向捲動">$$\mathcal M_t=\mathcal M_{t-1}-\theta_t\underbrace{\nabla\ell(\mathcal M_{t-1};x_t)}_{\text{Surprise}}$$</div><span class="eq-n">Eq. 8</span></div>
+  <div class="prose">
+    <p>論文把這個梯度稱為驚訝度（surprise）。要注意它是對什麼求梯度：原文文字寫「its gradient with respect to the input」，但 Eq. 8 用這個梯度更新 $\mathcal M$ 的參數，所以它必須是損失對記憶參數的梯度。兩者不同，更新式只能用前者。梯度越大，表示 $x_t$ 與過去的資料（記憶已存的內容）差異越大。作者以神經心理學文獻為動機：違反預期的事件比較容易被記住。</p>
+    <p>損失 $\ell$ 是聯想記憶（associative memory）損失。每個 token 投影出 key 與 value，記憶要學會從 key 取回 value（Eq. 11–12）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 11–12，可橫向捲動">$$k_t=x_tW_K,\quad v_t=x_tW_V,\qquad \ell(\mathcal M_{t-1};x_t)=\|\mathcal M_{t-1}(k_t)-v_t\|_2^2$$</div><span class="eq-n">Eq. 11–12</span></div>
+  <div class="prose">
+    <p>因此 Eq. 8 的驚訝度就是聯想記憶損失 $\ell(\mathcal M_{t-1};x_t)$ 對記憶參數的梯度。這裡有兩層迴圈。內層迴圈最佳化記憶 $\mathcal M$ 的權重，以 $\|\mathcal M_{t-1}(k_t)-v_t\|_2^2$ 在測試時逐 token 更新；外層迴圈最佳化整個架構的其他參數，包括 $W_K,W_V$。在內層損失中，$W_K,W_V$ 是固定的超參數；作者以 meta-learning 類比這個結構。</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table class="stack">
+    <caption>內層與外層迴圈（Sec. 3.1，Eq. 11–12）</caption>
+    <thead><tr><th></th><th>內層迴圈</th><th>外層迴圈</th></tr></thead><tbody>
+    <tr><td>更新的參數</td><td data-h="內層">記憶 $\mathcal M$ 的權重</td><td data-h="外層">架構的其他參數（含 $W_K,W_V,W_Q$、注意力、持久記憶）</td></tr>
+    <tr><td>何時更新</td><td data-h="內層">訓練與測試時，每個 token</td><td data-h="外層">只在訓練時</td></tr>
+    <tr><td>損失</td><td data-h="內層">$\|\mathcal M_{t-1}(k_t)-v_t\|_2^2$</td><td data-h="外層">語言模型等任務損失</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <h3>五個設計問題</h3>
+    <p>記憶以梯度寫入之後，作者在 Sec. 1 提出五個問題，本頁依序回答：</p>
+    <ol>
+      <li>Q1 記憶要用什麼結構？（<a href="#deep">S4</a>）</li>
+      <li>Q2 適當的更新機制是什麼？（本節與 <a href="#momentum">S3</a>）</li>
+      <li>Q3 適當的讀取方式是什麼？（<a href="#deep">S4 的 Eq. 15</a>）</li>
+      <li>Q4 如何設計一個包含多個互相連結記憶模組的高效架構？（<a href="#variants">S7</a>）</li>
+      <li>Q5 是否需要深層記憶模組才能有效儲存久遠的過去？（<a href="#deep">S4</a>）</li>
+    </ol>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 8 的驚訝度是什麼？是對什麼求梯度？</p>
+    <p class="a">聯想記憶損失 $\ell(\mathcal M_{t-1};x_t)$ 的梯度，對記憶參數求梯度（更新式需要它）；梯度越大表示輸入與過去的資料差異越大（Eq. 8）。</p>
+    <p class="q">內層迴圈與外層迴圈各更新哪些參數？</p>
+    <p class="a">內層：記憶 $\mathcal M$ 的權重，以 $\|\mathcal M_{t-1}(k_t)-v_t\|_2^2$ 在測試時更新；外層：整個架構的其他參數（含 $W_K,W_V$，在內層損失中是超參數）（Eq. 11–12）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="titans-neural-memory-surprise-update.html">Titans 的神經長期記憶：surprise、動量、遺忘與平行訓練</a>、<a href="ttt-linear-mlp.html">原版 TTT：TTT-Linear / TTT-MLP</a></p>
+</section>
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="momentum" data-toc="03" data-tt="動量與遺忘">
+  <div class="ch-num">03 · 動量與遺忘</div>
+  <h2>動量延續驚訝度，遺忘閘清除舊內容</h2>
+  <div class="prose">
+    <h3>3a　動量</h3>
+    <p>作者指出 Eq. 8 的一個問題：一次很大的驚訝之後，梯度可能變得很小，使更新停在平坦區域，錯過後續的資訊。因此加入過去的驚訝度（Sec. 3.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 9–10，可橫向捲動">$$\begin{aligned}\mathcal M_t&=\mathcal M_{t-1}+S_t,\\ S_t&=\eta_t\underbrace{S_{t-1}}_{\text{past}}-\theta_t\underbrace{\nabla\ell(\mathcal M_{t-1};x_t)}_{\text{momentary}}\end{aligned}$$</div><span class="eq-n">Eq. 9–10</span></div>
+  <div class="prose">
+    <p>這個形式與帶動量的梯度下降相同，作者稱 $S_t$ 為跨序列長度的驚訝度記憶：$S_t=\eta_tS_{t-1}-\theta_t\nabla\ell$ 讓驚訝度延續到後續的 token。$\eta_t$ 與 $\theta_t$ 都依資料而定：$\eta_t\to0$ 時忽略上一次驚訝（例如語境改變），$\eta_t\to1$ 時完全納入上一次驚訝（token 與最近的過去高度相關）；$\theta_t$ 是當下驚訝度的權重，也就是學習率。論文沒有寫出三個係數如何由 $x_t$ 計算，只說它們依 token 而定、在外層迴圈學習；本頁元件用常數。常數 $\eta$ 下，持續同方向的梯度會累積成 $\theta/(1-\eta)$ 倍的步長，這一點在 C1 中很重要。</p>
+    <h3>3b　遺忘</h3>
+    <p>記憶的容量有限，長序列中需要清除不再需要的內容。作者加入遺忘閘 $\alpha_t\in[0,1]$（Sec. 3.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 13–14，可橫向捲動">$$\mathcal M_t=(1-\alpha_t)\mathcal M_{t-1}+S_t,\qquad S_t=\eta_tS_{t-1}-\theta_t\nabla\ell(\mathcal M_{t-1};x_t)$$</div><span class="eq-n">Eq. 13–14</span></div>
+  <div class="prose">
+    <p>$\alpha_t\to0$ 時更新不影響過去的內容；$\alpha_t\to1$ 時清空整個記憶。作者指出遺忘閘等同 weight decay，並與現代 RNN 的閘控機制密切相關（Mamba2、LRU）。</p>
+    <p><span class="tag">本頁推導</span>取線性記憶 $\mathcal M_t=W_t$、損失取 $\tfrac12\|\cdot\|^2$（與 App. C 相同），把 Eq. 13–14 展開到每一個 token：$e_t=\mathcal M_{t-1}k_t-v_t$，$g_t=e_tk_t^\top$，$S_t=\eta S_{t-1}-\theta g_t$，$\mathcal M_t=(1-\alpha)\mathcal M_{t-1}+S_t$。$\|k_t\|=1$ 時驚訝度大小 $\|g_t\|_F=\|e_t\|$（$\|\cdot\|_F$ 為 Frobenius 範數）。下面的 C1 就是這個演算法。</p>
+  </div>
+
+  <div class="plate" id="c1">
+    <div class="plate-top"><div class="plate-h"><span class="id">C1</span><h3>驚訝度、動量與遺忘：一個線性記憶的測試時學習</h3></div><span class="seed" id="c1-seed">seed 11</span></div>
+    <p class="plate-lead">序列先是情境 A，t = 33 切到情境 B，t = 65 回到 A。拖動三個係數，看驚訝度、動量 ‖S‖ 與兩個情境的回想誤差如何變化。</p>
+    <div class="pg side">
+      <div class="fig">
+        <p class="lbl-s">驚訝度 ‖gₜ‖（長條）與動量 ‖Sₜ‖_F（圓點折線）</p>
+        <div id="c1-top"><svg role="img" aria-label="驚訝度圖"></svg></div>
+        <p class="lbl-s" style="margin-top:14px">回想誤差（對數縱軸）</p>
+        <div id="c1-bot"><svg role="img" aria-label="回想誤差圖"></svg></div>
+        <div class="legend"><span class="lg acc">‖gₜ‖ 驚訝度</span><span class="lg par">‖Sₜ‖ 動量／情境 A 誤差</span><span class="lg perp">情境 B 誤差</span></div>
+      </div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1-th">θ 學習率<output id="c1-tho">0.30</output></label><input id="c1-th" type="range" min="0" max="1" step="0.01" value="0.3"></div>
+        <div class="rng"><label class="lbl" for="c1-et">η 動量<output id="c1-eto">0.60</output></label><input id="c1-et" type="range" min="0" max="0.95" step="0.01" value="0.6"></div>
+        <div class="rng"><label class="lbl" for="c1-al">α 遺忘<output id="c1-alo">0.020</output></label><input id="c1-al" type="range" min="0" max="0.2" step="0.005" value="0.02"></div>
+        <div class="ctl-row" role="group" aria-label="預設組合">
+          <button class="chip" type="button" data-p="0.3,0,0">η = 0、α = 0</button>
+          <button class="chip" type="button" data-p="0.3,0,0.02">η = 0、α = 0.02</button>
+          <button class="chip" type="button" data-p="0.3,0.6,0.02">η = 0.6、α = 0.02（預設）</button>
+          <button class="chip" type="button" data-p="0.75,0,0.02">θ = 0.75、η = 0（等效步長對照）</button>
+        </div>
+        <p class="chipnote">S8 會說明：前兩個組合中，前者即 DeltaNet 的更新規則（Eq. 34），後者論文稱與 Gated DeltaNet 等價（本頁只確認形式相近）。以上 θ 都是 0.3，最後一個除外。</p>
+        <div class="ctl-row"><button class="small-btn" type="button" id="c1-re">重新抽樣</button><button class="small-btn" type="button" id="c1-tab-b" aria-expanded="false" aria-controls="c1-tab">顯示資料表</button></div>
+        <p class="hint hide" id="c1-hint"><span id="c1-hint-t"></span><button class="small-btn" type="button" id="c1-back">回到 seed 11</button></p>
+        <p class="alert" role="alert" id="c1-alert"></p>
+        <p class="readout" id="c1-ro"></p>
+        <details class="more"><summary>全部讀數</summary><div class="qa"><p class="readout" id="c1-ro2" style="margin-top:8px"></p></div></details>
+      </div>
+    </div>
+    <div class="tscroll dtab hide" id="c1-tab" tabindex="0"><table><caption id="c1-cap"></caption><thead><tr><th class="num">t</th><th class="num">‖gₜ‖</th><th class="num">‖Sₜ‖</th><th class="num">E_A</th><th class="num">E_B</th></tr></thead><tbody></tbody></table></div>
+    <p class="plate-f">設定（推定）：d = 8；兩個情境各有 4 個單位長度 key 與一個對應矩陣，value = A_c·k；序列長 96，每個 token 從該情境的 4 個 key 中均勻抽一個。E_c(t) 是處理完第 t 個 token 後，情境 c 四個 key 的平均 ½‖𝓜k − A_c k‖²。本元件的損失取 ½‖·‖²，θ = 0.3 相當於照 Eq. 12（無 ½）寫法的 θ = 0.15。讀數由本頁依 Eq. 13–14 即時計算；設定值為本頁推定，論文未給。</p>
+    <p class="sr" aria-live="polite" id="c1-live"></p>
+  </div>
+
+  <div class="prose">
+    <p>C1 的預設情境（seed 11，θ = 0.3、η = 0.6、α = 0.02）可以讀出幾件事。每次切換情境（t = 33、65），驚訝度升高，之後下降。動量使驚訝度下降後 $\|S_t\|$ 仍延續：$\|S_{40}\|$ 在 η = 0.6 時為 0.152，η = 0 時為 0.092。情境 B 結束時的回想誤差 $E_B(64)$ 由 0.025（η = 0）降到 0.008（η = 0.6），但常數 η 讓有效步長變成 θ/(1−η) = 0.75，而「θ = 0.75、η = 0」也降到 0.011。seed 11–30 的中位數為 0.0087（η = 0.6）對 0.0083（θ = 0.75、η = 0），η = 0.6 只在 14／20 個 seed 低於對照。所以在這個玩具中，誤差下降大多來自步長放大，不能當作動量本身的好處；作者主張的「驚訝度延續」，本元件只能以 $\|S_t\|$ 的延續呈現。η 太大（0.9）時更新來回震盪，誤差變大。<span class="tag">本頁推導</span></p>
+    <p>遺忘的效果：θ = 0.3、η = 0.6 固定時，α 越大，回到情境 A 之前的 A 回想誤差 $E_A(64)$ 越大（α = 0：0.387；α = 0.02：0.457；α = 0.1：0.582）。遺忘的代價是保留較少。這個玩具只呈現遺忘的代價；作者論證的好處是長序列中的容量管理，證據是 Table 5 中移除 weight decay 的 ppl 29.04 最差（S9）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼要加入過去的驚訝度 $S_{t-1}$？$\eta_t\to0$ 代表什麼？</p>
+    <p class="a">大驚訝之後梯度可能變小，使更新停在平坦區域而錯過後續資訊；$S_t=\eta_tS_{t-1}-\theta_t\nabla\ell$ 讓驚訝度延續；$\eta_t\to0$ 忽略上一次驚訝（例如語境改變）（Eq. 9–10）。</p>
+    <p class="q">Eq. 13 中 $\alpha_t\to0$ 與 $\alpha_t\to1$ 各代表什麼？它等同什麼？</p>
+    <p class="a">$\alpha_t\to0$ 不影響過去的內容；$\alpha_t\to1$ 清空記憶；等同 weight decay，與現代 RNN 的閘控相關（Eq. 13–14）。</p>
+    <p class="q">在 C1 預設情境（seed 11）中，動量與遺忘各帶來什麼可觀察的效果？為什麼要和「θ = 0.75、η = 0」比較？</p>
+    <p class="a">動量使驚訝度下降後 $\|S_t\|$ 仍延續（$\|S_{40}\|$：η = 0.6 為 0.152，η = 0 為 0.092）。$E_B(64)$ 由 0.025（η = 0）降到 0.008（η = 0.6），但常數 η 的有效步長是 θ/(1−η) = 0.75，θ = 0.75、η = 0 也降到 0.011；seed 11–30 中位數 0.0087 對 0.0083，所以誤差下降大多來自步長放大。遺忘（θ = 0.3、η = 0.6）使 $E_A(64)$ 變大（α = 0：0.387；0.02：0.457；0.1：0.582），代價是保留較少。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="gated-linear-recurrence-forgetting.html">閘控線性遞迴：以資料相依的遺忘處理記憶溢出</a></p>
+</section>
+
+<!-- S4 ============================================================ -->
+<section class="ch" id="deep" data-toc="04" data-tt="深層記憶">
+  <div class="ch-num">04 · 深層記憶</div>
+  <h2>深層記憶能存下非線性的對應</h2>
+  <div class="prose">
+    <p>Q1 問記憶的結構。作者的論點（Sec. 3.1）：以矩陣 $\mathcal M=W\in\mathbb R^{d_{in}\times d_{in}}$ 為記憶，等價於最佳化 $\|W_{t-1}k_t-v_t\|_2^2$，這是線上線性迴歸；它的最佳解假設歷史資料中 key 與 value 的依賴關係是線性的。至少兩層的 MLP 比線性模型更有表達力（Hornik et al. 1989），所以作者把記憶設計成 $L_{\mathcal M}\ge1$ 層的 MLP，$L_{\mathcal M}=1$ 即矩陣記憶。</p>
+    <p>Q3 問讀取方式。讀取是不更新權重的前向傳遞（Eq. 15）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 15，可橫向捲動">$$q_t=x_tW_Q,\qquad y_t=\mathcal M^*(q_t)$$</div><span class="eq-n">Eq. 15</span></div>
+  <div class="prose">
+    <p>論文沒有寫 MLP 的寬度、是否含偏置與啟動函數；C2 的設定是本頁推定<span class="tag">推定</span>。C2 用純量 key 與 value $v=\sin(2k)$，在同一串 token 上比較線性記憶與 MLP 記憶在測試時能學到什麼。</p>
+  </div>
+
+  <div class="plate" id="c2">
+    <div class="plate-top"><div class="plate-h"><span class="id">C2</span><h3>記憶深度：線性記憶與 MLP 記憶</h3></div><button class="small-btn" type="button" id="c2-tab-b" aria-expanded="false" aria-controls="c2-tab">顯示資料表</button></div>
+    <p class="plate-lead">選擇層數後按「執行」：每個 token 做一步 Eq. 13–14 的更新。左圖是記憶目前的讀出，右圖是格點 MSE。</p>
+    <div class="ctl-row" style="margin-bottom:14px"><span class="lbl-s" style="margin:0">層數 L<sub>𝓜</sub></span><div class="seg" id="c2-L" role="group" aria-label="記憶層數"><button type="button" data-v="1">1</button><button type="button" data-v="2">2</button><button type="button" data-v="3">3</button><button type="button" data-v="4">4</button></div>
+      <button class="small-btn pri" type="button" id="c2-run">執行</button><button class="small-btn" type="button" id="c2-reset">重設</button><button class="small-btn" type="button" id="c2-cmp">比較四種深度</button></div>
+    <div class="pg two">
+      <div class="fig" id="c2-fn"><svg role="img" aria-label="記憶讀出與目標函數"></svg></div>
+      <div class="fig" id="c2-mse"><svg role="img" aria-label="格點 MSE 對 token 數"></svg></div>
+    </div>
+    <div class="legend"><span class="lg ref">目標 v = sin 2k</span><span class="lg acc">記憶讀出 𝓜*(k)</span><span class="lg pt">最近寫入的 30 個 key</span></div>
+    <div class="ctl-grid">
+      <div class="rng"><label class="lbl" for="c2-th">θ<output id="c2-tho">0.010</output></label><input id="c2-th" type="range" min="0" max="0.05" step="0.001" value="0.01"></div>
+      <div class="rng"><label class="lbl" for="c2-et">η<output id="c2-eto">0.90</output></label><input id="c2-et" type="range" min="0" max="0.95" step="0.01" value="0.9"></div>
+      <div class="rng"><label class="lbl" for="c2-al">α<output id="c2-alo">0.0000</output></label><input id="c2-al" type="range" min="0" max="0.01" step="0.0005" value="0"></div>
+    </div>
+    <p class="alert" role="alert" id="c2-alert"></p>
+    <p class="readout" id="c2-ro" style="margin-top:12px"></p>
+    <div class="tscroll hide" id="c2-cmpbox" style="margin-top:12px"><table><caption id="c2-cmpcap">四種深度的格點 MSE</caption><thead><tr><th class="num">L<sub>𝓜</sub></th><th class="num">參數數</th><th class="num">t = 100</th><th class="num">300</th><th class="num">1000</th><th class="num">3000</th></tr></thead><tbody></tbody></table></div>
+    <div class="tscroll dtab hide" id="c2-tab" tabindex="0"><table><caption id="c2-cap"></caption><thead><tr><th class="num">token 數</th><th class="num">格點 MSE</th></tr></thead><tbody></tbody></table></div>
+    <p class="plate-f">設定（推定）：k ~ U[−2, 2]（資料 seed 9），v = sin 2k；L = 1 時 𝓜(k) = wk（無偏置，對應矩陣記憶，w 隨機初始）；L ≥ 2 時為寬度 16 的 MLP，隱藏層 SiLU、含偏置（初始化 seed 5）。損失 ½(𝓜(k) − v)²，共 3000 個 token。MSE 在 [−2, 2] 的 201 個等距格點上計算；虛線「最佳線性」是同一格點上無偏置線性最小平方解 w = 0.1660 的 MSE。讀數由本頁依 Eq. 13–15 即時計算；設定值為本頁推定，論文未給。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+
+  <div class="prose">
+    <p>預設設定（θ = 0.01、η = 0.9）下，$L_{\mathcal M}=1$ 的格點 MSE 停在 0.40–0.48，不會低於最佳線性解 0.402；$L_{\mathcal M}\ge2$ 在 3000 個 token 內遠低於線性解：$L=2$ 約 $2\times10^{-3}$（0.00235），$L=3$、4 低於 $1.5\times10^{-4}$（0.00010、0.00014）。代價是參數與計算量：四種深度的參數數為 1、48、320、592，每個 token 的乘加數約為參數數的 3 倍。θ = 0、α > 0 時記憶衰減到 0，MSE 趨近 0.439。<span class="tag">推定</span></p>
+    <p>論文的對應實驗在 Sec. 5.5（Fig. 7–8）：以 Pile 子集、Mamba 為基準，比較 $L_{\mathcal M}=1,2,3,4$。記憶越深，各序列長度的 perplexity 都越好；參數較少時，深層記憶對序列長度更穩健。吞吐量方面，所有模型的 tokens/s 不隨上下文長度改變，但記憶越深訓練越慢，訓練吞吐量隨深度線性下降，作者稱之為效果與效率的權衡。本頁不重繪 Fig. 7–8；C2 也不測量時間，只顯示乘加數。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">矩陣記憶等價於什麼問題？Sec. 5.5 的深度實驗結論是什麼？</p>
+    <p class="a">線上線性迴歸 $\|W_{t-1}k_t-v_t\|^2$，假設依賴關係是線性的；$L_{\mathcal M}$ 越大 perplexity 越好、對序列長度越穩健，但訓練吞吐量隨深度線性下降（Sec. 3.1、5.5，Fig. 7–8）。</p>
+  </div></details>
+</section>
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="parallel" data-toc="05" data-tt="chunk 平行化">
+  <div class="ch-num">05 · chunk 平行化</div>
+  <h2>把序列切成 chunk 就能用矩陣乘法訓練</h2>
+  <div class="prose">
+    <p>逐 token 更新必須依序做 $N$ 步，無法充分利用 GPU／TPU 的矩陣運算。作者沿用 TTT 的做法（Sec. 3.2）：把序列切成大小 $b\ge1$ 的 chunk，chunk 內所有梯度都在 chunk 起點的記憶 $\mathcal M_{t'}$ 上計算，等同 mini-batch 梯度下降。先看不含動量的情形：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 16，可橫向捲動">$$\begin{aligned}\mathcal M_t&=(1-\alpha_t)\mathcal M_{t-1}-\theta_t\nabla\ell(\mathcal M_{t-1};x_t)\\&=\beta_t\mathcal M_0-\sum_{i=1}^{t}\theta_i\frac{\beta_t}{\beta_i}\nabla\ell(\mathcal M_{t'};x_i)\end{aligned}$$</div><span class="eq-n">Eq. 16</span></div>
+  <div class="prose">
+    <p>其中 $\beta_i=\prod_{j=1}^{i}(1-\alpha_j)$。論文把 $t'$ 印成 $t-\mathrm{mod}(t,b)$，但下一句說第一個 chunk 的 $t=b$、所以 $t'=0$；照公式 $t=b$ 時 $t'=b$，而且 $b=1$ 時梯度會在更新後的 $\mathcal M_t$ 上計算。本頁依論文文字，把 $t'$ 讀成 chunk 的起點 $t'=t-1-\mathrm{mod}(t-1,b)$<span class="tag">本頁推導</span>。在這個讀法下，$b=1$ 時 $\mathcal M_{t'}=\mathcal M_{t-1}$，與逐 token 更新完全相同。另外，第二個等號只在單一 chunk 內成立：跨 chunk 時，第 $i$ 項的梯度點是 $i$ 所在 chunk 的起點，不是同一個 $\mathcal M_{t'}$，這也是論文只寫第一個 chunk 的原因。</p>
+    <p>對線性記憶 $\mathcal M_t=W_t$，第一個 chunk 內的梯度加權和可以寫成一次矩陣乘法（Eq. 17）。論文的寫法把 key 與 value 都寫成 $x$，並省略 $\|\cdot\|^2$ 求導的係數 2。一般形式如下（損失取 $\tfrac12\|\cdot\|^2$，$K=[k_1\cdots k_b]$、$V=[v_1\cdots v_b]$ 為行向量排成的矩陣，$c_i=\theta_i\beta_b/\beta_i$）<span class="tag">本頁推導</span>：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 17 一般形式，可橫向捲動">$$\sum_{i=1}^{b}c_i\nabla\ell(W_0;x_i)=(W_0K-V)\,\mathrm{diag}(c)\,K^\top$$</div><span class="eq-n">Eq. 17（一般形式）</span></div>
+  <div class="prose">
+    <p>每個 chunk 只需存自己的係數。動量也能平行（Eq. 18）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 18，可橫向捲動">$$S_t=\eta_tS_{t-1}-\theta_t u_t,\qquad u_t=\nabla\ell(\mathcal M_{t'};x_t)$$</div><span class="eq-n">Eq. 18</span></div>
+  <div class="prose">
+    <p>所有 $u_t$ 都在 $\mathcal M_{t'}$ 上計算，可以同時算出；Eq. 18 因此是以 $u_t$ 為輸入、$\eta_t$ 為轉移值的線性遞迴，可以用平行 associative scan 計算。associative scan 的意思是<span class="tag">本頁推導</span>：$S_t=\eta_tS_{t-1}+x_t$ 這種線性遞迴的每一步都可寫成一對 $(\eta_t,x_t)$；兩個相鄰步驟可以先合併成一步 $(\eta_2\eta_1,\ \eta_2x_1+x_2)$，而且合併的順序不影響結果。因此可以像比賽淘汰表一樣兩兩合併，$N$ 步只需約 $\log_2N$ 輪平行運算。</p>
+    <p>把動量與遺忘一起寫成矩陣乘法（常數 $\alpha,\eta,\theta$，chunk 內有 $n$ 個 token，索引 $l,m=1,\dots,n$，約定 $0^0=1$）<span class="tag">本頁推導</span>：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="含動量的 chunk 公式，可橫向捲動">$$\begin{aligned}\mathcal M_{\text{end}}&=(1-\alpha)^n\mathcal M_{t'}+c_S\,S_{t'}-\theta\,E\,\mathrm{diag}(w)\,K^\top,\\ S_{\text{end}}&=\eta^nS_{t'}+E\,\mathrm{diag}(q)\,K^\top\end{aligned}$$</div><span class="eq-n">本頁推導</span></div>
+  <div class="prose">
+    <p>其中 $E=\mathcal M_{t'}K-V$，$w_l=\sum_{m=l}^{n}(1-\alpha)^{n-m}\eta^{m-l}$，$c_S=\sum_{m=1}^{n}(1-\alpha)^{n-m}\eta^{m}$，$q_l=-\theta\eta^{n-l}$。$\eta=0$ 時 $w_l=(1-\alpha)^{n-l}=\beta_n/\beta_l$，$q_l$ 只剩 $l=n$ 一項，回到 Eq. 16–17。</p>
+    <p>數值上要注意<span class="tag">本頁推導</span>：Eq. 16 的 $\beta_t/\beta_i$ 若照字面先算 $\beta$ 再相除，$\alpha_j=1$ 時 $\beta_i=0$ 會得到 0/0，$\alpha$ 接近 1 時連乘會下溢；應直接以 $\prod_{j=i+1}^{t}(1-\alpha_j)$ 計算比值。實驗中 $\alpha,\theta,\eta$ 依 token 而定；論文 v1 沒有寫實驗用的 chunk 大小 $b$。</p>
+  </div>
+  <details class="more"><summary>進階：chunk 內參數為常數時</summary><div class="qa">
+    <p>若 $\alpha,\theta,\eta$ 在一個 chunk 內為常數，Eq. 17 的 $\Theta$ 只需一個純量，Eq. 18 變成線性非時變系統（LTI），可以用全域卷積計算（Sec. 3.2 末段）。作者把依 chunk 而定的參數留作未來工作。</p>
+  </div></details>
+  <div class="algo">
+    <div class="row hd"><div>chunk 演算法</div><div class="ex-h">說明</div></div>
+    <div class="row"><code>for each chunk [t'+1 .. t'+b]:</code><div class="ex">逐 chunk 處理；chunk 之間仍是依序的。</div></div>
+    <div class="row"><code>  E = M_{t'} K - V</code><div class="ex">所有誤差一次算出（矩陣乘法）。</div></div>
+    <div class="row"><code>  U_l = E[:,l] K[:,l]^T</code><div class="ex">各 token 的梯度，都在 M_{t'} 上計算。</div></div>
+    <div class="row"><code>  S_t = η S_{t-1} - θ U_t</code><div class="ex">線性遞迴，可以用 associative scan 平行計算。</div></div>
+    <div class="row"><code>  M_t = (1-α) M_{t-1} + S_t</code><div class="ex">衰減權重直接連乘，不用 β_t/β_i 相除。</div></div>
+  </div>
+
+  <div class="plate" id="c3">
+    <div class="plate-top"><div class="plate-h"><span class="id">C3</span><h3>chunk 平行化：凍結的梯度點與矩陣乘法形式</h3></div><button class="small-btn" type="button" id="c3-tab-b" aria-expanded="false" aria-controls="c3-tab">顯示資料表</button></div>
+    <p class="plate-lead">沿用 C1 的資料流（θ = 0.3、α = 0.02）。選 chunk 大小 b：上方方格以粗線分出 chunk，三角形標出每個 chunk 的梯度點 𝓜<sub>t′</sub>。</p>
+    <div class="ctl-row" style="margin-bottom:12px"><span class="lbl-s" style="margin:0">chunk 大小 b</span><div class="seg" id="c3-b" role="group" aria-label="chunk 大小"><button type="button" data-v="1">1</button><button type="button" data-v="2">2</button><button type="button" data-v="4">4</button><button type="button" data-v="8">8</button><button type="button" data-v="16">16</button><button type="button" data-v="32">32</button></div>
+      <span class="lbl-s" style="margin:0">η</span><div class="seg" id="c3-eta" role="group" aria-label="動量 η"><button type="button" data-v="0">0</button><button type="button" data-v="0.6">0.6</button></div></div>
+    <div class="fig" id="c3-strip"><svg role="img" aria-label="96 個 token 依 chunk 分組"></svg></div>
+    <div class="pg side" style="margin-top:8px">
+      <div class="fig"><div id="c3-fig"><svg role="img" aria-label="目前情境的回想誤差"></svg></div>
+        <div class="legend"><span class="lg ref">逐 token（b = 1）</span><span class="lg acc" id="c3-lg">chunk = 4</span></div></div>
+      <div class="ctl"><p class="readout" id="c3-ro"></p><p class="note" style="margin:0" id="c3-seedn"></p></div>
+    </div>
+    <div class="tscroll dtab hide" id="c3-tab" tabindex="0"><table><caption id="c3-cap"></caption><thead><tr><th class="num">t</th><th class="num">逐 token</th><th class="num" id="c3-th">chunk</th></tr></thead><tbody></tbody></table></div>
+    <p class="cap">b 大時，同一 chunk 內同一個 key 會被重複套用同一個（過時的）誤差，效果接近把 θ 放大，因此在這組固定參數下 b ≥ 16 誤差快速增大。論文中 θ<sub>t</sub> 依 token 而定，也沒有給出實驗用的 b。<span class="tag">本頁推導</span></p>
+    <p class="plate-f">主圖畫目前情境的回想誤差（t ≤ 32 與 t > 64 為 E_A，其餘為 E_B），對數縱軸；超出上限的值畫在上緣並以三角形標記。「兩形式最大差」比較逐 token 迴圈（梯度凍結在 chunk 起點）與上方的矩陣乘法公式在所有 chunk 終點的結果。讀數由本頁依 Eq. 16–18 即時計算；設定值為本頁推定，論文未給。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+
+  <div class="prose">
+    <p>C3 中兩種形式在所有 chunk 終點完全相同（最大差小於 $3\times10^{-14}$）：平行化不改變數學，只改變計算方式。$b=1$ 與逐 token 更新相同；$b$ 越大，順序步數越少，但偏離越大（η = 0.6 時，$\|\mathcal M^{(b)}_{96}-\mathcal M^{(1)}_{96}\|_F$ 為 0.130、0.714、2.05、202，對應 b = 2、4、8、16）。η = 0 時較不敏感：b = 8 的 $E_A(96)$ 為 0.050，η = 0.6 時為 0.600。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">chunk 內的梯度在哪個記憶上計算？$b=1$ 時與逐 token 更新的關係？動量如何平行？</p>
+    <p class="a">都在 chunk 起點 $\mathcal M_{t'}$（Eq. 16；本頁把 $t'$ 寫成 $t-1-\mathrm{mod}(t-1,b)$，因為論文印的 $t-\mathrm{mod}(t,b)$ 與其「第一個 chunk 的 $t'=0$」不符）；在這個讀法下 $b=1$ 時完全相同；動量 Eq. 18 是以 $u_t$ 為輸入的線性遞迴，用平行 associative scan 計算（Sec. 3.2）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="ttt-linear-mlp.html">原版 TTT：TTT-Linear / TTT-MLP</a>、<a href="lact-large-chunk-ttt.html">從 One-Minute Video 到 LaCT：大 chunk Test-Time Training</a></p>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="persistent" data-toc="06" data-tt="持久記憶">
+  <div class="ch-num">06 · 持久記憶</div>
+  <h2>持久記憶是放在序列開頭的可學習參數</h2>
+  <div class="prose">
+    <p>長期記憶是情境記憶：它的內容完全由輸入決定。作者認為還需要一組可學習、但不依賴輸入的參數，用來儲存任務本身的知識。做法是把 $N_p$ 個可學習向量接在序列前面（Sec. 3.3）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 19，可橫向捲動">$$x_{new}=[p_1\ p_2\ \cdots\ p_{N_p}]\ \|\ x$$</div><span class="eq-n">Eq. 19</span></div>
+  <div class="prose">
+    <p>作者給三個動機：</p>
+    <ol>
+      <li><b>記憶觀點</b>：掌握一個任務需要記住「如何做」這個任務；持久記憶用來儲存任務知識，這部分不依賴當下的輸入。</li>
+      <li><b>前饋網路觀點</b>：Sukhbaatar et al.（2019）指出，把 FFN 的 ReLU 換成 Softmax，會得到類似注意力、但權重不依賴資料的形式（Eq. 20）。持久記憶放在序列開頭，會產生不依賴資料的注意力權重。</li>
+      <li><b>技術觀點</b>：因果遮罩的注意力偏向序列最前面的 token；在開頭放可學習參數可以重新分配注意力權重，緩解因果注意力偏向開頭 token 的現象（Han et al. 2024；Xiao et al. 2024）。</li>
+    </ol>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 20，可橫向捲動">$$FFN(x)=W_V\,\mathrm{Softmax}(W_Kx)$$</div><span class="eq-n">Eq. 20</span></div>
+  <div class="prose">
+    <p>測試時持久記憶的參數固定、不更新，只有長期記憶在測試時持續學習（Sec. 4.1）。在下一節的三種架構中，持久記憶都接在序列開頭，但進入注意力的方式不同。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">持久記憶如何加入序列？列出作者的三個動機。測試時是否更新？</p>
+    <p class="a">把 $N_p$ 個可學習向量接在序列前面（Eq. 19）；記憶觀點（儲存任務知識）、前饋網路觀點（不依賴資料的注意力權重，Eq. 20）、技術觀點（緩解因果注意力偏向開頭 token）；測試時固定（Sec. 3.3、4.1）。</p>
+  </div></details>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="variants" data-toc="07" data-tt="三種架構">
+  <div class="ch-num">07 · 三種架構</div>
+  <h2>Titans 以三種方式結合記憶與注意力</h2>
+  <div class="prose">
+    <p>作者把注意力解讀為短期記憶：依賴關係精確，但視窗有限；神經記憶則是長期記憶。Sec. 4 回答 Q4，給出三種組合方式。</p>
+    <h3>MAC：記憶作為上下文</h3>
+    <p>MAC（Memory as a Context）把序列切成長度 $C$ 的片段 $S^{(i)}$。處理一個片段時，先用片段的 query 從記憶讀出歷史資訊 $h_t=\mathcal M^*_{t-1}(q_t)$，把持久記憶與 $h_t$ 接在片段前，做片段內注意力，再以注意力輸出 $y_t$ 更新記憶：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 21–25，可橫向捲動">$$\begin{aligned}h_t&=\mathcal M^*_{t-1}(q_t),\quad q_t=S^{(t)}W_Q\\ \tilde S^{(t)}&=[p_1\cdots p_{N_p}]\ \|\ h_t\ \|\ S^{(t)},\quad y_t=\mathrm{Attn}(\tilde S^{(t)})\\ \mathcal M_t&=\mathcal M_{t-1}(y_t),\quad o_t=y_t\otimes\mathcal M^*_t(y_t)\end{aligned}$$</div><span class="eq-n">Eq. 21–25</span></div>
+  <div class="prose">
+    <p>片段內是完整因果注意力（Fig. 3a）；Eq. 24 表示以 $y_t$ 經前向傳遞更新記憶。作者列出三個優點：注意力同時看到歷史與當前，可以決定是否需要長期記憶的資訊；注意力幫助記憶只存有用的資訊；測試時持久記憶固定、注意力權重做 in-context learning、長期記憶持續學習。</p>
+    <h3>MAG：記憶作為閘控分支</h3>
+    <p>MAG（Memory as Gating）不切片段。一支以輸入更新記憶，另一支用帶前綴的滑動視窗注意力 SW-Attn$^*$，兩支以非線性閘控 $\otimes$ 結合（Sec. 4.2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 26–28，可橫向捲動">$$\tilde x=[p_1\cdots p_{N_p}]\ \|\ x,\qquad y=\text{SW-Attn}^*(\tilde x),\qquad o=y\otimes\mathcal M(\tilde x)$$</div><span class="eq-n">Eq. 26–28</span></div>
+  <div class="prose">
+    <p>$\mathcal M(\tilde x)$ 是對序列遞迴後記憶的輸出。實驗中以可學習的向量權重分別正規化 $y$ 與 $\mathcal M(\tilde x)$，再接非線性 $\sigma(\cdot)$；論文沒有寫 $\sigma$ 的形式。作者稱滑動視窗注意力為精確的短期記憶，神經記憶為逐漸淡去的記憶（fading memory）。</p>
+    <h3>MAL：記憶作為一層</h3>
+    <p>MAL（Memory as a Layer）在記憶層之後接滑動視窗注意力（Sec. 4.3）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 29–31，可橫向捲動">$$\tilde x=[p_1\cdots p_{N_p}]\ \|\ x,\qquad y=\mathcal M(\tilde x),\qquad o=\text{SW-Attn}(y)$$</div><span class="eq-n">Eq. 29–31</span></div>
+  <div class="prose">
+    <p>Eq. 31 是不帶前綴的 SW-Attn，Eq. 27 是帶前綴的 SW-Attn$^*$；依方程式，MAL 的持久記憶只能經由記憶層進入注意力。文獻中常見的混合模型都是這種逐層堆疊；作者指出其缺點是模型能力受限於每一層，無法利用注意力與記憶的互補。把 LMM 單獨當作序列模型（沒有注意力）是 MAL 的特例，論文記為 Titans (LMM)。</p>
+  </div>
+  <div class="vcards">
+    <div class="card"><span class="k">MAC · Eq. 21–25</span><h3>記憶作為上下文</h3><p>讀記憶 → 片段注意力 → 以 $y_t$ 寫記憶。</p><p>片段內完整因果注意力＋記憶 token＋持久記憶。</p></div>
+    <div class="card"><span class="k">MAG · Eq. 26–28</span><h3>記憶作為閘控分支</h3><p>記憶分支與注意力分支並行，以閘控結合。</p><p>帶前綴的滑動視窗注意力 SW-Attn$^*$。</p></div>
+    <div class="card"><span class="k">MAL · Eq. 29–31</span><h3>記憶作為一層</h3><p>記憶層的輸出再進入注意力。</p><p>不帶前綴的滑動視窗注意力 SW-Attn。</p></div>
+  </div>
+
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>三種架構的注意力範圍與記憶路徑</h3></div>
+    <p class="plate-lead">每一列是一個 query 位置，每一欄是一個可被注意的 token。點選一列、或用上下方向鍵，看這個 query 直接注意哪些 token、哪些只能經由長期記憶到達。</p>
+    <div class="ctl-row" style="margin-bottom:10px"><div class="seg" id="c4-v" role="group" aria-label="架構"><button type="button" data-v="MAC">MAC</button><button type="button" data-v="MAG">MAG</button><button type="button" data-v="MAL">MAL</button></div></div>
+    <div class="pg side">
+      <div class="fig">
+        <div class="mx-wrap" id="c4-wrap" tabindex="-1"><div class="mx" id="c4-mx" role="grid" aria-label="注意力矩陣"></div></div>
+        <div class="tlegend"><span><span class="sw direct" aria-hidden="true"></span>直接注意</span><span><span class="sw mem" aria-hidden="true"></span>經由記憶</span><span><span class="sw none" aria-hidden="true"></span>不可見</span></div>
+      </div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c4-t">query 位置 t<output id="c4-to">10</output></label><input id="c4-t" type="range" min="1" max="16" step="1" value="10"></div>
+        <div class="rng"><label class="lbl" for="c4-C">片段長度 C<output id="c4-Co">4</output></label><input id="c4-C" type="range" min="0" max="2" step="1" value="1"></div>
+        <div class="rng"><label class="lbl" for="c4-w">視窗 w<output id="c4-wo">4</output></label><input id="c4-w" type="range" min="0" max="2" step="1" value="1"></div>
+        <div class="rng"><label class="lbl" for="c4-Np"><span>持久記憶 N<sub>p</sub></span><output id="c4-Npo">2</output></label><input id="c4-Np" type="range" min="0" max="4" step="1" value="2"></div>
+        <div class="rng"><label class="lbl" for="c4-Nl"><span>記憶 token N<sub>l</sub></span><output id="c4-Nlo">2</output></label><input id="c4-Nl" type="range" min="0" max="4" step="1" value="2"></div>
+        <p class="chipnote" id="c4-note"></p>
+        <p class="readout" id="c4-ro"></p>
+        <p class="flowline" id="c4-flow"></p>
+      </div>
+    </div>
+    <p class="plate-f">序列長度 N = 16。MAC：持久記憶與 N<sub>l</sub> 個記憶 token 直接可見，同片段且不晚於 t 的 token 直接可見，先前片段經由記憶（Eq. 24）。MAG：持久記憶與最近 w 個 token 直接可見（SW-Attn*），更早的經由記憶分支。MAL：最近 w 個 token 直接可見（注意的是記憶層輸出），持久記憶與更早的 token 經由記憶層（Eq. 31 不帶前綴）。Eq. 21 的 h<sub>t</sub> 長度等於片段長度，Fig. 3a 的說明寫 N<sub>l</sub> 個記憶 token；本頁依 Fig. 3a 把 N<sub>l</sub> 當作獨立參數，並讓片段內所有 query 都看得到 h（推定）。配對數由本頁依 Eq. 21–31 計算。</p>
+    <p class="sr" aria-live="polite" id="c4-live"></p>
+  </div>
+
+  <div class="prose">
+    <p>預設設定（N = 16、N<sub>p</sub> = 2、C = 4、N<sub>l</sub> = 2、w = 4）下，t = 10 的 query：MAC 直接注意 6 個、經由記憶 8 個、不可見 6 個；MAG 為 6／6／6；MAL 為 4／8／6。所有 query 加總的注意力配對數：MAC 104、MAG 90、MAL 58，完整因果注意力加前綴為 168；N 增大時 MAC 與 MAG 的配對數只隨 N 線性成長<span class="tag">本頁推導</span>。片段開頭的 token（例如 MAC 的 t = 9）直接注意的範圍最小，較早的資訊全靠記憶 token $h$。</p>
+    <p>哪一種在長上下文任務最好？論文認為是 MAC：Table 5 的 Long Context 一欄 MAC 97.95 最高，BABILong（Fig. 6）也只報告 MAC。但 Table 2 並非每格最好：16K 的 N 欄 MAG 98.6 高於 MAC 97.4<span class="tag">本頁核對</span>。</p>
+    <h3>架構細節（Sec. 4.4）</h3>
+    <ul>
+      <li>所有區塊使用殘差連接。</li>
+      <li>計算 query、key、value 時使用 SiLU，query 與 key 做 ℓ2 正規化。</li>
+      <li>query、key、value 投影後各接一層 1D depthwise-separable 卷積。</li>
+      <li>最終輸出投影前，以正規化與線性層做閘控（Mehta et al. 2023）。</li>
+    </ul>
+    <h3>Theorem 4.1（論文宣稱，本頁不展開）</h3>
+    <p>論文宣稱 Transformer、對角線性遞迴模型與 DeltaNet 受限於 TC⁰，Titans 能解決 TC⁰ 以外的問題，因此在狀態追蹤任務上理論表達力更強。TC⁰ 是計算複雜度理論中的一個電路類別；論文把 Transformer 等模型能解的問題歸在此類，並宣稱 Titans 能解此類以外的問題。v1 正文沒有附證明。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">MAC、MAG、MAL 各如何結合記憶與注意力？哪一種在長上下文任務最好？</p>
+    <p class="a">MAC：把 $h_t=\mathcal M^*_{t-1}(q_t)$ 與持久記憶接在片段前，做片段內注意力，再以 $y_t$ 更新記憶；MAG：帶前綴 SWA 與記憶並行、以閘控結合；MAL：記憶層之後接 SWA；論文認為 MAC 在長上下文最好：Table 5 Long Context 97.95 最高，BABILong（Fig. 6）只報告 MAC；但 Table 2 並非每格最好（16K 的 N 欄 MAG 98.6 > MAC 97.4）（Eq. 21–31，Sec. 5）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="titans-architectures-mac-mag-mal.html">Titans 的三種架構：記憶作為上下文、閘控分支與一層</a>、<a href="recurrent-memory-segment-transformers.html">分段 Transformer 與外掛記憶：Transformer-XL、RMT、Memory Layers</a></p>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="relations" data-toc="08" data-tt="與遞迴模型的關係">
+  <div class="ch-num">08 · 與遞迴模型的關係</div>
+  <h2>LMM 推廣了 DeltaNet、Longhorn 與 TTT</h2>
+  <div class="prose">
+    <p>App. C 取線性記憶 $\mathcal M_t=W_t$、損失 $\tfrac12\|\mathcal M_tk_t-v_t\|_2^2$，把 LMM 寫成（Eq. 32–33，轉置依本頁「行向量 key、$\mathcal M k$」慣例統一）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 32–33，可橫向捲動">$$\mathcal M_t=\mathrm{diag}(1-\alpha_t)\mathcal M_{t-1}+S_t,\qquad S_t=\mathrm{diag}(\eta_t)S_{t-1}-\mathrm{diag}(\theta_t)(\mathcal M_{t-1}k_t-v_t)k_t^\top$$</div><span class="eq-n">Eq. 32–33</span></div>
+  <div class="prose">
+    <p>原文 Eq. 32 右邊寫成 $\mathcal M_t$，應為 $\mathcal M_{t-1}$。DeltaNet 可以視為最佳化 $\tfrac12\|S_tk_t-v_t\|_2^2$ 的線上學習（Eq. 34）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 34，可橫向捲動">$$S_{t+1}=S_t-\theta_t\nabla L=S_t\big(I-\theta_tk_tk_t^\top\big)+\theta_tv_tk_t^\top$$</div><span class="eq-n">Eq. 34</span></div>
+  <div class="prose">
+    <p>Gated DeltaNet 是 Eq. 34 再加 weight decay。論文寫，令 $\eta_t=0$ 時兩者等價（App. C）。本頁能從論文自己的方程式驗證的是<span class="tag">本頁推導</span>：Eq. 13–14 取 $\eta=0$ 得 $\mathcal M_t=\mathcal M_{t-1}\big((1-\alpha_t)I-\theta_tk_tk_t^\top\big)+\theta_tv_tk_t^\top$；再取 $\alpha_t=0$ 即 Eq. 34，也就是 η = 0、α = 0 時即 DeltaNet。本論文沒有寫出 Gated DeltaNet 的遞迴式，所以本頁只能說：上式與 Gated DeltaNet 的更新規則形式相近，細節（衰減是否也作用在修正項）需查原論文。</p>
+    <p>作者列出 LMM 推廣 Gated DeltaNet 的三點：(1) 動量規則，同時考慮過去與當下的驚訝度；(2) 深層記憶，Gated DeltaNet 需要閉式遞迴，只能用矩陣記憶；(3) 非線性遞迴：chunk 之間非線性、chunk 內線性。作者說 RWKV-7 也用同樣的形式與損失。</p>
+    <p>Longhorn 以隱式線上學習推得（Eq. 35），但缺少遺忘閘：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="方程式 Eq. 35，可橫向捲動">$$S_{t+1}=S_t\big(I-\delta_tk_tk_t^\top\big)+\delta_tv_tk_t^\top,\qquad \delta_t=\frac{\theta_t}{1+\theta_tk_tk_t^\top}$$</div><span class="eq-n">Eq. 35</span></div>
+  <div class="prose">
+    <p>TTT layer 與 LMM 有三個差異：TTT 沒有遺忘機制；TTT 只用當下驚訝度，沒有動量；TTT 允許深層記憶，但沒有以實驗評估深層記憶的利弊。作者宣稱 LMM 是第一個使用動量更新規則的線性遞迴模型。App. A.1 把線性遞迴模型分成三代：第一代是資料無關的衰減，第二代加入閘控，第三代以線上學習或 delta rule 更新。App. A 另稱 Titans (MAC) 是 RMT 的推廣，以神經記憶取代小型向量記憶。</p>
+  </div>
+  <div class="tscroll" style="max-width:760px"><table class="stack">
+    <caption>App. C 的對照（只填論文寫明的內容）</caption>
+    <thead><tr><th>模型</th><th>遺忘閘</th><th>動量</th><th>深層記憶</th><th>遞迴型態</th></tr></thead><tbody>
+    <tr><td>DeltaNet</td><td data-h="遺忘閘">無（Eq. 34）</td><td data-h="動量">無</td><td data-h="深層記憶">無，矩陣記憶</td><td data-h="遞迴型態">線性</td></tr>
+    <tr><td>Gated DeltaNet</td><td data-h="遺忘閘">有（weight decay）</td><td data-h="動量">無</td><td data-h="深層記憶">無，需閉式遞迴</td><td data-h="遞迴型態">線性</td></tr>
+    <tr><td>Longhorn</td><td data-h="遺忘閘">無</td><td data-h="動量">論文未比較</td><td data-h="深層記憶">論文未比較</td><td data-h="遞迴型態">線性（Eq. 35）</td></tr>
+    <tr><td>TTT</td><td data-h="遺忘閘">無</td><td data-h="動量">無，只用當下驚訝度</td><td data-h="深層記憶">允許，未評估</td><td data-h="遞迴型態">論文未比較</td></tr>
+    <tr class="hl"><td>LMM</td><td data-h="遺忘閘">有（$\alpha_t$）</td><td data-h="動量">有（$\eta_t$）</td><td data-h="深層記憶">有（$L_{\mathcal M}\ge1$）</td><td data-h="遞迴型態">chunk 間非線性、chunk 內線性</td></tr>
+    </tbody></table></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">令 $\eta_t=0$ 時 LMM 的線性版本對應哪個模型？LMM 推廣了它的哪三點？與 TTT 的差異？</p>
+    <p class="a">論文稱等價於 Gated DeltaNet（DeltaNet 加 weight decay，Eq. 32–34）；本頁能驗證的是 η = 0、α = 0 時即 DeltaNet（Eq. 34），與 Gated DeltaNet 只是更新規則形式相近；動量規則、深層記憶、chunk 間非線性遞迴；TTT 沒有遺忘、只用當下驚訝度、未評估深層記憶（App. C）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="delta-rule-deltanet-family.html">Delta rule 與 DeltaNet、Gated DeltaNet</a>、<a href="ttt-sequence-modeling-overview.html">Test-Time Training 作為序列建模架構</a>、<a href="ttt-theory-and-applications.html">TTT 的理論還原與應用擴散</a></p>
+</section>
+
+<!-- S9 ============================================================ -->
+<section class="ch" id="results" data-toc="09" data-tt="實驗結果">
+  <div class="ch-num">09 · 實驗結果</div>
+  <h2>實驗中 Titans 在多數指標上優於同規模的 Transformer 與線性遞迴模型</h2>
+  <div class="prose">
+    <p>Sec. 5.1 的語言模型有四種規模：170M、340M、400M、760M；前三者以 FineWeb-Edu 的 15B token 訓練，760M 用 30B token。訓練流程沿用 Gated DeltaNet（S10）。Table 1 報告 Wikipedia perplexity（Wiki ppl，越低越好）與 8 個常識推理任務的平均準確率（Avg acc，越高越好），摘錄如下：</p>
+  </div>
+  <div class="tscroll"><table>
+    <caption>Table 1 摘錄：Wiki ppl ↓ ／ Avg acc ↑</caption>
+    <thead><tr><th>模型</th><th class="num">340M / 15B</th><th class="num">760M / 30B</th></tr></thead><tbody>
+    <tr><td>Transformer++</td><td class="num">31.52 / 42.92</td><td class="num">25.21 / 48.69</td></tr>
+    <tr><td>Gated DeltaNet</td><td class="num">27.01 / 45.42</td><td class="num">21.18 / 49.69</td></tr>
+    <tr><td>TTT</td><td class="num">27.44 / 44.51</td><td class="num">24.17 / 47.32</td></tr>
+    <tr><td>Samba（混合）</td><td class="num">—</td><td class="num">20.63 / 51.08</td></tr>
+    <tr><td>Gated DeltaNet-H2（混合）</td><td class="num">—</td><td class="num">19.88 / 51.49</td></tr>
+    <tr><td>Titans (LMM)</td><td class="num">26.18 / 46.17</td><td class="num">20.04 / 51.56</td></tr>
+    <tr class="hl"><td>Titans (MAC)</td><td class="num">25.43 / 47.36</td><td class="num">19.93 / 52.51</td></tr>
+    <tr class="hl"><td>Titans (MAG)</td><td class="num">25.07 / 47.54</td><td class="num">18.61 / 52.50</td></tr>
+    <tr class="hl"><td>Titans (MAL)</td><td class="num">24.69 / 46.55</td><td class="num">19.07 / 50.97</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>760M 時 Titans (MAG) 的 Wiki ppl 為 18.61，Transformer++ 為 25.21（Table 1）。作者的解讀（Sec. 5.2）<span class="tag">作者宣稱</span>：非混合模型中 LMM 最好；三種 Titans 都優於 Samba 與 Gated DeltaNet-H2；MAC 與 MAG 接近，MAC 在較長依賴上較好；MAG、MAC 都優於 MAL。表格中有與這些說法不一致的格子<span class="tag">本頁核對</span>：</p>
+    <ol>
+      <li>Wiki ppl 上 MAL 優於 MAC 與 MAG：340M 為 24.69，對 25.43、25.07；400M 為 23.93，對 MAC 25.61。</li>
+      <li>760M Wiki ppl：MAC 19.93 高於 Gated DeltaNet-H2 19.88（ppl 越低越好）。400M：Gated DeltaNet-H2 24.19 低於 MAC 25.61。</li>
+      <li>760M Avg acc：MAL 50.97 低於 Samba 51.08 與 Gated DeltaNet-H2 51.49。</li>
+      <li>760M MAL 的 SIQA 為 30.98，比相鄰各列（38.98–41.87）低約 10；Avg 50.97 與 8 欄平均一致，所以不是 Avg 算錯，疑似該格筆誤。本頁照錄。</li>
+    </ol>
+    <p>本頁的整理：Avg acc 上 MAC、MAG 在列有混合基準的 400M 與 760M 都高於 Samba 與 Gated DeltaNet-H2（340M 未列混合基準）；MAL 的 Avg 與各模型的 Wiki ppl 則不是每格都最好。</p>
+    <p>needle-in-a-haystack 測試（S-NIAH，RULER）在 2K–16K 長度下找出插入的字串。16K 欄如下（PK／N／W 為三種設定）：</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table>
+    <caption>Table 2，16K 欄：PK ／ N ／ W</caption>
+    <thead><tr><th>模型</th><th class="num">PK</th><th class="num">N</th><th class="num">W</th></tr></thead><tbody>
+    <tr><td>TTT</td><td class="num">88.4</td><td class="num">4.4</td><td class="num">0.0</td></tr>
+    <tr><td>Mamba2</td><td class="num">5.4</td><td class="num">0.0</td><td class="num">0.0</td></tr>
+    <tr><td>DeltaNet</td><td class="num">71.4</td><td class="num">5.4</td><td class="num">0.0</td></tr>
+    <tr><td>Titans (LMM)</td><td class="num">96.2</td><td class="num">80.2</td><td class="num">80.6</td></tr>
+    <tr class="hl"><td>Titans (MAC)</td><td class="num">98.4</td><td class="num">97.4</td><td class="num">95.2</td></tr>
+    <tr class="hl"><td>Titans (MAG)</td><td class="num">97.4</td><td class="num">98.6</td><td class="num">88.2</td></tr>
+    <tr class="hl"><td>Titans (MAL)</td><td class="num">97.8</td><td class="num">96.4</td><td class="num">90.4</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>三種 Titans 中沒有一種在 16K 欄每格都最好（N 欄 MAG 98.6 高於 MAC 97.4）。作者把 LMM 的優勢歸因於：相對 TTT 有動量與遺忘、相對 Mamba2 有深層非線性記憶與移除記憶的能力、相對 DeltaNet 有遺忘機制。BABILong（Fig. 6）有 few-shot 與 fine-tuning 兩種設定，作者報告 Titans (MAC) 優於所有基準（含 GPT-4），且參數比 Llama3.1-8B + RAG 少約 70 倍；正文沒有給出數值，本頁不估讀圖值。</p>
+    <p>消融實驗（Table 5）以 400M 模型移除或替換元件：</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table>
+    <caption>Table 5：ppl ↓ ／ Reasoning acc ↑ ／ Long Context acc ↑</caption>
+    <thead><tr><th>模型</th><th class="num">ppl</th><th class="num">Reasoning</th><th class="num">Long Context</th></tr></thead><tbody>
+    <tr><td>LMM</td><td class="num">27.01</td><td class="num">47.83</td><td class="num">92.68</td></tr>
+    <tr><td>+Attn (MAC)</td><td class="num">26.67</td><td class="num">48.65</td><td class="num">97.95</td></tr>
+    <tr><td>+Attn (MAG)</td><td class="num">25.70</td><td class="num">48.60</td><td class="num">96.70</td></tr>
+    <tr><td>+Attn (MAL)</td><td class="num">25.91</td><td class="num">47.87</td><td class="num">96.91</td></tr>
+    <tr><td>Linear Memory</td><td class="num">28.49</td><td class="num">46.97</td><td class="num">85.34</td></tr>
+    <tr><td>w/o Convolution</td><td class="num">28.73</td><td class="num">45.82</td><td class="num">90.28</td></tr>
+    <tr><td>w/o Momentum</td><td class="num">28.98</td><td class="num">45.49</td><td class="num">87.12</td></tr>
+    <tr class="hl"><td>w/o Weight Decay</td><td class="num">29.04</td><td class="num">45.11</td><td class="num">85.60</td></tr>
+    <tr><td>w/o Persistent Memory</td><td class="num">27.63</td><td class="num">46.35</td><td class="num">92.49</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>作者稱所有元件都有正面貢獻，貢獻由大到小為 weight decay、動量、卷積、持久記憶。這個排序在 ppl 與 Reasoning 上成立<span class="tag">本頁核對</span>：依 ppl，移除 weight decay 傷害最大（ppl 29.04，LMM 為 27.01），其次是移除動量 28.98、移除卷積 28.73；Reasoning 的順序相同（45.11 &lt; 45.49 &lt; 45.82 &lt; 46.35）。Long Context 上最差的則是 Linear Memory 85.34，其次才是 w/o Weight Decay 85.60、w/o Momentum 87.12。</p>
+    <p>其他任務各一句。時間序列（Table 3）以 Simba 框架、把 Mamba 模組換成神經記憶，例如 ETTm1 的 MSE／MAE 為 0.358／0.387（Simba 0.383／0.396）；作者寫「outperforming all baselines」，但 Traffic 的 MAE 0.289 高於 iTransformer 的 0.282（MSE 0.415 仍最低）<span class="tag">本頁核對</span>。DNA（Table 4，GenomicsBenchmarks top-1 準確率）：LMM 在 Enhancer Cohn 75.2、Enhancer Ens 89.6 最高，Human Reg. 89.3 低於 HyenaDNA 93.8，作者用詞為「competitive」。效率（Fig. 9）：記憶模組比 Mamba2 與 Gated DeltaNet 稍慢，作者歸因於深層記憶、更有表達力的轉移與 Mamba2 高度最佳化的核心；Titans (MAL) 比基準與記憶模組本身快，原因是以 FlashAttention 實作的滑動視窗注意力。作者並聲稱 Titans 可擴展到超過 2M 的上下文視窗（Abstract、Sec. 6），正文沒有對應的數值表格。</p>
+  </div>
+  <details class="more"><summary>表格內部一致性（本頁推導，不改原數字）</summary><div class="qa">
+    <ol>
+      <li>Table 5 的四個 LMM／Titans 列等於 Table 1 的 400M 列：ppl = (Wiki ppl + LMB ppl)/2（27.01、26.67、25.70、25.91 完全一致），Reasoning = Table 1 的 Avg；Long Context = Table 2 該模型 12 格的平均（92.68、97.95、96.70、96.91 完全一致）。正文稱 Long Context 為「long context NIAH (BABILong)」，但數值與 S-NIAH 一致。</li>
+      <li>Table 1 的 Avg 欄與 8 個準確率欄的平均不符的列：760M TTT（表列 47.32，平均 49.37）、400M Gated DeltaNet-H2（47.69 對 47.80）、400M Titans (LMM)（47.83 對 47.865）。其餘列一致。</li>
+      <li>760M 的三個 Titans 列沒有標混合模型的星號（340M、400M 有）。Fig. 7b 標題寫 360M，與 Sec. 5.1 的 340M 不同。</li>
+    </ol>
+  </div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">760M 時 Titans (MAG) 與 Transformer++ 的 Wiki ppl？依 ppl，消融中移除哪個元件傷害最大？</p>
+    <p class="a">MAG 18.61 vs Transformer++ 25.21（Table 1）；依 ppl（與 Reasoning）是移除 weight decay（ppl 29.04，LMM 為 27.01），其次動量 28.98、卷積 28.73；Long Context 上最差的則是 Linear Memory 85.34（Table 5）。</p>
+  </div></details>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="impl" data-toc="10" data-tt="實作">
+  <div class="ch-num">10 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="tscroll" style="max-width:700px"><table class="stack">
+    <caption>Sec. 5.1 的訓練設定</caption>
+    <thead><tr><th>項目</th><th>設定</th></tr></thead><tbody>
+    <tr><td>規模與資料</td><td data-h="設定">170M、340M、400M：FineWeb-Edu 15B token；760M：30B token</td></tr>
+    <tr><td>Tokenizer</td><td data-h="設定">Llama 2 tokenizer，詞彙 32K</td></tr>
+    <tr><td>訓練長度</td><td data-h="設定">4K token</td></tr>
+    <tr><td>最佳化</td><td data-h="設定">AdamW，學習率 4e-4，cosine annealing，weight decay 0.1</td></tr>
+    <tr><td>Batch</td><td data-h="設定">0.5M token</td></tr>
+    <tr><td>基準數字</td><td data-h="設定">400M 基準取自 Gated DeltaNet 論文（App. B）</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>架構細節見 S7 的 Sec. 4.4 清單。以下是閱讀與復現時容易出錯的地方：</p>
+    <ol>
+      <li>把驚訝度當成對輸入的梯度：更新式需要損失對記憶參數的梯度（S2）。</li>
+      <li>把 Eq. 7 下方的 read／write 文字當真：$f$ 是寫入、$g$ 是讀取（S1）。</li>
+      <li>忘記 chunk 內的梯度都在 $\mathcal M_{t'}$ 計算：$b&gt;1$ 時結果與逐 token 更新不同，$b=1$ 才相同（S5、C3）。</li>
+      <li>以 $\beta_t/\beta_i$ 相除計算衰減權重：$\alpha=1$ 時得到 0/0，應直接連乘（S5）。</li>
+      <li>Eq. 17 的 $(W_0x_t-x_t)x_t^\top$ 是 key = value = $x$ 的簡寫；一般情形是 $(W_0k_t-v_t)k_t^\top$，係數 2 取決於損失是否乘 ½（S5）。</li>
+      <li>MAC 與 MAG／MAL 的注意力範圍不同：MAC 是片段內完整因果注意力＋記憶 token＋持久記憶；MAG 是帶前綴的 SWA；MAL 是不帶前綴的 SWA（S7、C4）。</li>
+      <li>Eq. 32 右邊的 $\mathcal M_t$ 應為 $\mathcal M_{t-1}$（S8）。</li>
+      <li>論文 v1 未說明：chunk 大小、記憶 MLP 寬度、$\eta_t,\theta_t,\alpha_t$ 的參數化、片段長度 $C$、視窗大小、$N_p$、$N_l$、閘控非線性 $\sigma$ 的形式。復現時這些都要自行決定。</li>
+      <li>照字面使用 Eq. 16 的 $t'=t-\mathrm{mod}(t,b)$：$t=b$ 時得到 $b$ 而非 0，$b=1$ 時梯度會在更新後的 $\mathcal M_t$ 上計算；應取 chunk 起點 $t'=t-1-\mathrm{mod}(t-1,b)$（S5）。</li>
+    </ol>
+  </div>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="history" data-toc="11" data-tt="研究脈絡">
+  <div class="ch-num">11 · 研究脈絡</div>
+  <h2>研究脈絡（由 notes/timeline.json 提供）</h2>
+  <div class="prose">
+    <p>依 Titans 的轉述，這條脈絡從外部記憶與分段記憶開始（NTM、Transformer-XL、RMT），經過線性注意力與快速權重（Schmidhuber 1992 的 fast weight 不在 arXiv，未列入時間線），再到閘控線性遞迴（Mamba、Griffin）與 delta rule（DeltaNet、Gated DeltaNet），然後是以梯度更新隱藏狀態的 TTT，本文再加入動量、遺忘與深層記憶。Longhorn、Mamba2、RetNet 在內文中出現，但不在時間線上。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+  <p class="read">總覽筆記：<a href="titans-lineage-overview.html">Titans 的研究脈絡總覽</a></p>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="next" data-toc="12" data-tt="限制與延伸">
+  <div class="ch-num">12 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>作者沒有獨立的限制章節。以下依論文內容整理，不加入論文以外的評論。v1 是初版：作者在註腳表示仍在完成更大模型的結果，程式碼「將會釋出」（Sec. 6）。</p>
+  </div>
+  <div class="twocol">
+    <div class="card"><h3>論文寫明的</h3><ul>
+      <li>四種規模（170M–760M）的語言模型與常識推理結果</li>
+      <li>S-NIAH 2K–16K、BABILong、時間序列、DNA</li>
+      <li>深度與吞吐量的權衡（Fig. 7–9）</li>
+      <li>消融：weight decay、動量、卷積、持久記憶</li>
+    </ul></div>
+    <div class="card"><h3>論文未寫明的</h3><ul>
+      <li>超過 2M 上下文的數值結果（只在 Abstract、Sec. 1、Sec. 6 提到）</li>
+      <li>Theorem 4.1 的證明</li>
+      <li>chunk 大小、MLP 寬度、$\eta_t,\theta_t,\alpha_t$ 的參數化、$C$、視窗、$N_p$、$N_l$、$\sigma$</li>
+      <li>更大模型的結果（v1 註腳預告下一版）</li>
+    </ul></div>
+  </div>
+  <div class="prose"><h3>研究筆記（依閱讀順序）</h3></div>
+  <ol class="rl">
+    <li><div><a href="titans-lineage-overview.html">Titans 的研究脈絡總覽：從 attention 與 linear recurrence 到測試時學習的長期記憶</a><span>總覽</span></div></li>
+    <li><div><a href="memory-view-of-sequence-models.html">序列模型的記憶觀點：寫入、讀取與五個設計問題</a><span>S1–S2</span></div></li>
+    <li><div><a href="linear-attention-fast-weights.html">Linear attention 與 fast weight programs：矩陣值記憶的起點</a><span>S1</span></div></li>
+    <li><div><a href="gated-linear-recurrence-forgetting.html">閘控線性遞迴：以資料相依的遺忘處理記憶溢出</a><span>S3</span></div></li>
+    <li><div><a href="delta-rule-deltanet-family.html">Delta rule 與 DeltaNet、Gated DeltaNet：把寫入視為線上回歸</a><span>S8</span></div></li>
+    <li><div><a href="recurrent-memory-segment-transformers.html">分段 Transformer 與外掛記憶：Transformer-XL、RMT、Memory Layers</a><span>S7</span></div></li>
+    <li><div><a href="titans-neural-memory-surprise-update.html">Titans 的神經長期記憶：surprise、動量、遺忘與平行訓練</a><span>S2–S5</span></div></li>
+    <li><div><a href="titans-architectures-mac-mag-mal.html">Titans 的三種架構：記憶作為上下文、閘控分支與一層</a><span>S7</span></div></li>
+    <li><div><a href="ttt-sequence-modeling-overview.html">Test-Time Training 作為序列建模架構：主系列演進總覽</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="ttt-linear-mlp.html">原版 TTT：TTT-Linear / TTT-MLP</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="lact-large-chunk-ttt.html">從 One-Minute Video 到 LaCT：大 chunk Test-Time Training</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="ttt-theory-and-applications.html">TTT 的理論還原與應用擴散</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="test-time-training-naming.html">「Test-Time Training」的命名混淆</a><span>站內既有筆記</span></div></li>
+  </ol>
+  <div class="links" style="margin-top:24px"><a class="btn" href="https://arxiv.org/abs/2501.00663">arXiv:2501.00663 ↗</a></div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Ali Behrouz, Peilin Zhong, Vahab Mirrokni. Titans: Learning to Memorize at Test Time. <a href="https://arxiv.org/abs/2501.00663">arXiv:2501.00663</a>（v1，2024-12-31）。</p>
+  <p>本頁的方程式與數字取自論文 v1；標示「本頁推導」「本頁核對」的內容為本頁自行推導或核對，並非論文結論；標示「推定」的數值為本頁選定。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>

@@ -1,0 +1,835 @@
+Titans 測試時記憶
+
+跳到內容
+
+ No. 243
+ Titans：在測試時學習記憶
+
+00 摘要01 寫入與讀取02 驚訝度03 動量與遺忘04 深層記憶05 chunk 平行化06 持久記憶07 三種架構08 與遞迴模型的關係09 實驗結果10 實作11 研究脈絡12 限制與延伸
+
+00摘要
+01寫入與讀取
+02驚訝度
+03動量與遺忘
+04深層記憶
+05chunk 平行化
+06持久記憶
+07三種架構
+08與遞迴模型的關係
+09實驗結果
+10實作
+11研究脈絡
+12限制與延伸
+
+ No. 243 · 互動教學 · arXiv 2501.00663 v1 · 2024
+
+ Titans：在測試時學習記憶
+
+ 這篇論文把長期記憶做成一個在測試時以梯度下降更新的 MLP，再與注意力、持久記憶組成三種架構。
+
+ 測試時＝模型訓練完成、部署後處理新序列的時候；此時記憶模組的權重仍在更新。
+
+ Ali Behrouz、Peilin Zhong、Vahab Mirrokni（Google Research，2024）〈Titans: Learning to Memorize at Test Time〉。本頁依 arXiv v1。
+
+ 持久記憶（S6）
+ 注意力視窗（S7）
+ 長期記憶（S2–S5）
+
+ 01 · 記憶是網路長期記憶是一個小型神經網路。每讀到一個新 token，它就做一步梯度下降，讓這個 token 的索引向量（key）能取回對應的內容向量（value）；部署後處理新序列時也照做。
+
+ 02 · 驚訝度梯度越大，表示新 token 與已記住的內容越不同。作者稱之為驚訝度，並加上動量（延續過去的驚訝度）與遺忘閘（衰減舊內容）。
+
+ 03 · 三種架構Titans 把這個記憶與注意力、持久記憶組合成三種架構。760M 參數時，三者在 Wikipedia 文字上的 perplexity（困惑度，越低越好）為 18.61–19.93，Transformer++ 為 25.21。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · 寫入與讀取
+
+ 序列模型都有寫入與讀取兩個步驟
+
+ 注意力（attention）的輸入是 N $N$ 個 token 向量，輸出是同樣 N $N$ 個向量。第 i $i$ 個輸出是前面各 token 內容的加權平均，權重由 token 之間的相似度決定；softmax 把一列分數轉成總和為 1 的正權重。
+
+ 每個 token 經三個投影矩陣得到三個向量：query（我要找什麼）、key（我可以被什麼找到）、value（被找到時交出的內容）。第 i $i$ 個 token 的 query 與第 j $j$ 個 token 的 key 做內積，決定第 i $i$ 個輸出給第 j $j$ 個 token 多少權重。論文寫成（Sec. 2.1）：
+
+ Q=xWQ, K=xWK, V=xWV,yi=∑j=1iexp⁡(Qi⊤Kj/din) Vj∑ℓ=1iexp⁡(Qi⊤Kℓ/din) $Q=xW_Q,\ K=xW_K,\ V=xW_V,\qquad y_i=\sum_{j=1}^{i}\frac{\exp(Q_i^\top K_j/\sqrt{d_{in}})\,V_j}{\sum_{\ell=1}^{i}\exp(Q_i^\top K_\ell/\sqrt{d_{in}})}$ ​, K=xWK​, V=xWV​,yi​=j=1∑i​∑ℓ=1i​exp(Qi⊤​Kℓ​/din​​)exp(Qi⊤​Kj​/din​​)Vj​​
+Eq. 1–2
+
+ 第 i $i$ 個輸出要與前面全部 i $i$ 個 token 比較，整段序列的成本與長度 N $N$ 的平方成正比，因此實務上只能處理固定長度的視窗。線性注意力（linear attention）把 softmax 換成可分解的核函數；核取單位矩陣時（RetNet），可以寫成遞迴（Eq. 4–5）：
+
+ Mt=Mt−1+Kt⊤Vt,yt=QtMt $\mathcal M_t=\mathcal M_{t-1}+K_t^\top V_t,\qquad y_t=Q_t\mathcal M_t$ ​=Mt−1​+Kt⊤​Vt​,yt​=Qt​Mt​
+Eq. 4–5
+
+ 線性注意力的一般形式（Eq. 3）
+
+ 把 softmax 換成核函數 ϕ $\phi$ ，並要求 ϕ(x,y)=ϕ(x)ϕ(y) $\phi(x,y)=\phi(x)\phi(y)$ ：
+
+ yi=∑j=1iϕ(Qi)⊤ϕ(Kj)∑ℓ=1iϕ(Qi)⊤ϕ(Kℓ)Vj=ϕ(Qi)⊤∑j=1iϕ(Kj)Vjϕ(Qi)⊤∑ℓ=1iϕ(Kℓ) $y_i=\sum_{j=1}^{i}\frac{\phi(Q_i)^\top\phi(K_j)}{\sum_{\ell=1}^{i}\phi(Q_i)^\top\phi(K_\ell)}V_j=\frac{\phi(Q_i)^\top\sum_{j=1}^{i}\phi(K_j)V_j}{\phi(Q_i)^\top\sum_{\ell=1}^{i}\phi(K_\ell)}$ ​=j=1∑i​∑ℓ=1i​ϕ(Qi​)⊤ϕ(Kℓ​)ϕ(Qi​)⊤ϕ(Kj​)​Vj​=ϕ(Qi​)⊤∑ℓ=1i​ϕ(Kℓ​)ϕ(Qi​)⊤∑j=1i​ϕ(Kj​)Vj​​
+Eq. 3
+
+ 兩個累加和在每一步都可以沿用上一步的結果，所以吞吐量較高；核取單位矩陣即得 Eq. 4–5。
+
+ 線性注意力的記憶 Mt $\mathcal M_t$ ​ 是一個固定大小的矩陣：每讀一個 token，把 Kt⊤Vt $K_t^\top V_t$ ⊤​Vt​ 加進去，這是寫入；輸出時用 Qt $Q_t$ ​ 乘上它，這是讀取。整段歷史被壓縮進固定大小的矩陣，每一步的成本與序列長度無關。作者把一般的遞迴模型寫成兩個函數（Eq. 6–7）：
+
+ Mt=f(Mt−1,xt)  (寫入),yt=g(Mt,xt)  (讀取) $\mathcal M_t=f(\mathcal M_{t-1},x_t)\ \ (\text{寫入}),\qquad y_t=g(\mathcal M_t,x_t)\ \ (\text{讀取})$ ​=f(Mt−1​,xt​)  (寫入),yt​=g(Mt​,xt​)  (讀取)
+Eq. 6–7
+
+ 原文 Eq. 7 下方一句寫成「f is the read and g is the write」，與方程式旁的標籤相反。本頁依方程式標籤：f $f$ 是寫入，g $g$ 是讀取。
+
+ 從這個角度看，Transformer 的記憶是持續變長的 key／value 快取：它把每個 token 的 key 與 value 直接附加到記憶、不壓縮，所以讀取精確，但成本隨長度成長。作者的觀察是，Eq. 4 的寫入只做加法，長上下文會使固定大小的記憶溢出（memory overflow）。既有的改進分成兩個方向：加入遺忘閘（GLA、LRU、Griffin、xLSTM、Mamba2），或改進寫入方式（delta rule：寫入前先移除該 key 的舊值，例如 DeltaNet、Gated DeltaNet）。
+
+ 以寫入／讀取比較四類模型（Sec. 1「Memory Perspective」、Sec. 2.1）
+ 模型記憶寫入方式壓縮
+
+ RNN向量f(Mt−1,xt) $f(\mathcal M_{t-1},x_t)$ ​,xt​)壓縮成固定大小
+
+ 線性 Transformer矩陣 Mt $\mathcal M_t$ ​加上 Kt⊤Vt $K_t^\top V_t$ ⊤​Vt​壓縮成固定大小
+
+ Transformer持續變長的 key／value附加不壓縮
+
+ LMM（本文）深層 MLP 的參數一步梯度下降壓縮進網路權重
+
+ 符號表
+
+ 符號意義
+
+ xt $x_t$ ​第 t $t$ 個 token（列向量）；t $t$ 是 token 索引
+
+ WQ,WK,WV $W_Q,W_K,W_V$ ​,WK​,WV​投影矩陣；qt=xtWQ $q_t=x_tW_Q$ ​=xt​WQ​、kt=xtWK $k_t=x_tW_K$ ​=xt​WK​、vt=xtWV $v_t=x_tW_V$ ​=xt​WV​（Eq. 11、15）
+
+ Mt $\mathcal M_t$ ​處理完第 t $t$ 個 token 後的長期記憶（一個網路的參數狀態）。論文也寫作 M $M$ ；本頁一律寫 M $\mathcal M$ ，注意力遮罩寫「mask」
+
+ M(⋅) $\mathcal M(\cdot)$ 、M∗(⋅) $\mathcal M^*(\cdot)$ (⋅)前向傳遞時會／不會調整權重；讀取用 M∗ $\mathcal M^*$ 
+
+ ℓ(Mt−1;xt) $\ell(\mathcal M_{t-1};x_t)$ ​;xt​)聯想記憶損失 ∥Mt−1(kt)−vt∥22 $\|\mathcal M_{t-1}(k_t)-v_t\|_2^2$ ​(kt​)−vt​∥22​（Eq. 12）
+
+ St $S_t$ ​、ηt $\eta_t$ ​、θt $\theta_t$ ​驚訝度（動量項）、驚訝度衰減、當下驚訝度的權重（學習率）
+
+ αt∈[0,1] $\alpha_t\in[0,1]$ ​∈[0,1]遺忘閘（weight decay）
+
+ LM $L_{\mathcal M}$ ​記憶 MLP 的層數
+
+ b $b$ 、t′ $t'$ 、βi $\beta_i$ ​chunk 大小；chunk 起點索引，本頁寫 t′=t−1−mod(t−1,b) $t'=t-1-\mathrm{mod}(t-1,b)$ =t−1−mod(t−1,b)（S5）；βi=∏j=1i(1−αj) $\beta_i=\prod_{j=1}^{i}(1-\alpha_j)$ ​=∏j=1i​(1−αj​)
+
+ ∥A∥F $\|A\|_F$ ​Frobenius 範數：矩陣所有元素平方和的平方根
+
+ pplperplexity（困惑度）：模型對下一個 token 的平均不確定程度，越低越好
+
+ p1,…,pNp $p_1,\dots,p_{N_p}$ ​,…,pNp​​持久記憶（Np $N_p$ ​ 個可學習向量，Eq. 19）
+
+ S(i) $S^{(i)}$ 、C $C$ 、ht $h_t$ ​、Nl $N_l$ ​第 i $i$ 個片段、片段長度、從記憶讀出的歷史資訊（Eq. 21）、Fig. 3a 說明中的長期記憶 token 數
+
+ SW-Attn、SW-Attn∗ $^*$ 滑動視窗注意力、帶前綴（prefix）的滑動視窗注意力
+
+ ⊗ $\otimes$ 任意非線性閘控（Sec. 4.2）
+
+ 延伸閱讀：序列模型的記憶觀點：寫入、讀取與五個設計問題、Linear attention 與 fast weight programs
+
+ 02 · 驚訝度
+
+ 記憶以梯度學習 key 到 value 的對應
+
+ 作者認為，直接訓練一個網路記住訓練資料會限制泛化、帶來隱私問題，而且測試資料可能在訓練分布之外。因此需要一個在測試時學習如何記住與遺忘的線上模型。作者把訓練長期記憶視為線上學習：把 x1,…,xt−1 $x_1,\dots,x_{t-1}$ ​,…,xt−1​ 壓縮進 Mt $\mathcal M_t$ ​ 的參數。最簡單的寫入是一步梯度下降（Sec. 3.1）：
+
+ Mt=Mt−1−θt∇ℓ(Mt−1;xt)⏟Surprise $\mathcal M_t=\mathcal M_{t-1}-\theta_t\underbrace{\nabla\ell(\mathcal M_{t-1};x_t)}_{\text{Surprise}}$ ​=Mt−1​−θt​Surprise∇ℓ(Mt−1​;xt​)​​
+Eq. 8
+
+ 論文把這個梯度稱為驚訝度（surprise）。要注意它是對什麼求梯度：原文文字寫「its gradient with respect to the input」，但 Eq. 8 用這個梯度更新 M $\mathcal M$ 的參數，所以它必須是損失對記憶參數的梯度。兩者不同，更新式只能用前者。梯度越大，表示 xt $x_t$ ​ 與過去的資料（記憶已存的內容）差異越大。作者以神經心理學文獻為動機：違反預期的事件比較容易被記住。
+
+ 損失 ℓ $\ell$ 是聯想記憶（associative memory）損失。每個 token 投影出 key 與 value，記憶要學會從 key 取回 value（Eq. 11–12）：
+
+ kt=xtWK,vt=xtWV,ℓ(Mt−1;xt)=∥Mt−1(kt)−vt∥22 $k_t=x_tW_K,\quad v_t=x_tW_V,\qquad \ell(\mathcal M_{t-1};x_t)=\|\mathcal M_{t-1}(k_t)-v_t\|_2^2$ ​=xt​WK​,vt​=xt​WV​,ℓ(Mt−1​;xt​)=∥Mt−1​(kt​)−vt​∥22​
+Eq. 11–12
+
+ 因此 Eq. 8 的驚訝度就是聯想記憶損失 ℓ(Mt−1;xt) $\ell(\mathcal M_{t-1};x_t)$ ​;xt​) 對記憶參數的梯度。這裡有兩層迴圈。內層迴圈最佳化記憶 M $\mathcal M$ 的權重，以 ∥Mt−1(kt)−vt∥22 $\|\mathcal M_{t-1}(k_t)-v_t\|_2^2$ ​(kt​)−vt​∥22​ 在測試時逐 token 更新；外層迴圈最佳化整個架構的其他參數，包括 WK,WV $W_K,W_V$ ​,WV​。在內層損失中，WK,WV $W_K,W_V$ ​,WV​ 是固定的超參數；作者以 meta-learning 類比這個結構。
+
+ 內層與外層迴圈（Sec. 3.1，Eq. 11–12）
+ 內層迴圈外層迴圈
+
+ 更新的參數記憶 M $\mathcal M$ 的權重架構的其他參數（含 WK,WV,WQ $W_K,W_V,W_Q$ ​,WV​,WQ​、注意力、持久記憶）
+
+ 何時更新訓練與測試時，每個 token只在訓練時
+
+ 損失∥Mt−1(kt)−vt∥22 $\|\mathcal M_{t-1}(k_t)-v_t\|_2^2$ ​(kt​)−vt​∥22​語言模型等任務損失
+
+ 五個設計問題
+
+ 記憶以梯度寫入之後，作者在 Sec. 1 提出五個問題，本頁依序回答：
+
+ Q1 記憶要用什麼結構？（S4）
+
+ Q2 適當的更新機制是什麼？（本節與 S3）
+
+ Q3 適當的讀取方式是什麼？（S4 的 Eq. 15）
+
+ Q4 如何設計一個包含多個互相連結記憶模組的高效架構？（S7）
+
+ Q5 是否需要深層記憶模組才能有效儲存久遠的過去？（S4）
+
+ 延伸閱讀：Titans 的神經長期記憶：surprise、動量、遺忘與平行訓練、原版 TTT：TTT-Linear / TTT-MLP
+
+ 03 · 動量與遺忘
+
+ 動量延續驚訝度，遺忘閘清除舊內容
+
+ 3a　動量
+
+ 作者指出 Eq. 8 的一個問題：一次很大的驚訝之後，梯度可能變得很小，使更新停在平坦區域，錯過後續的資訊。因此加入過去的驚訝度（Sec. 3.1）：
+
+ Mt=Mt−1+St,St=ηtSt−1⏟past−θt∇ℓ(Mt−1;xt)⏟momentary $\begin{aligned}\mathcal M_t&=\mathcal M_{t-1}+S_t,\\ S_t&=\eta_t\underbrace{S_{t-1}}_{\text{past}}-\theta_t\underbrace{\nabla\ell(\mathcal M_{t-1};x_t)}_{\text{momentary}}\end{aligned}$ ​St​​=Mt−1​+St​,=ηt​pastSt−1​​​−θt​momentary∇ℓ(Mt−1​;xt​)​​​
+Eq. 9–10
+
+ 這個形式與帶動量的梯度下降相同，作者稱 St $S_t$ ​ 為跨序列長度的驚訝度記憶：St=ηtSt−1−θt∇ℓ $S_t=\eta_tS_{t-1}-\theta_t\nabla\ell$ ​=ηt​St−1​−θt​∇ℓ 讓驚訝度延續到後續的 token。ηt $\eta_t$ ​ 與 θt $\theta_t$ ​ 都依資料而定：ηt→0 $\eta_t\to0$ ​→0 時忽略上一次驚訝（例如語境改變），ηt→1 $\eta_t\to1$ ​→1 時完全納入上一次驚訝（token 與最近的過去高度相關）；θt $\theta_t$ ​ 是當下驚訝度的權重，也就是學習率。論文沒有寫出三個係數如何由 xt $x_t$ ​ 計算，只說它們依 token 而定、在外層迴圈學習；本頁元件用常數。常數 η $\eta$ 下，持續同方向的梯度會累積成 θ/(1−η) $\theta/(1-\eta)$ 倍的步長，這一點在 C1 中很重要。
+
+ 3b　遺忘
+
+ 記憶的容量有限，長序列中需要清除不再需要的內容。作者加入遺忘閘 αt∈[0,1] $\alpha_t\in[0,1]$ ​∈[0,1]（Sec. 3.1）：
+
+ Mt=(1−αt)Mt−1+St,St=ηtSt−1−θt∇ℓ(Mt−1;xt) $\mathcal M_t=(1-\alpha_t)\mathcal M_{t-1}+S_t,\qquad S_t=\eta_tS_{t-1}-\theta_t\nabla\ell(\mathcal M_{t-1};x_t)$ ​=(1−αt​)Mt−1​+St​,St​=ηt​St−1​−θt​∇ℓ(Mt−1​;xt​)
+Eq. 13–14
+
+ αt→0 $\alpha_t\to0$ ​→0 時更新不影響過去的內容；αt→1 $\alpha_t\to1$ ​→1 時清空整個記憶。作者指出遺忘閘等同 weight decay，並與現代 RNN 的閘控機制密切相關（Mamba2、LRU）。
+
+ 本頁推導取線性記憶 Mt=Wt $\mathcal M_t=W_t$ ​=Wt​、損失取 12∥⋅∥2 $\tfrac12\|\cdot\|^2$ 1​∥⋅∥2（與 App. C 相同），把 Eq. 13–14 展開到每一個 token：et=Mt−1kt−vt $e_t=\mathcal M_{t-1}k_t-v_t$ ​=Mt−1​kt​−vt​，gt=etkt⊤ $g_t=e_tk_t^\top$ ​=et​kt⊤​，St=ηSt−1−θgt $S_t=\eta S_{t-1}-\theta g_t$ ​=ηSt−1​−θgt​，Mt=(1−α)Mt−1+St $\mathcal M_t=(1-\alpha)\mathcal M_{t-1}+S_t$ ​=(1−α)Mt−1​+St​。∥kt∥=1 $\|k_t\|=1$ ​∥=1 時驚訝度大小 ∥gt∥F=∥et∥ $\|g_t\|_F=\|e_t\|$ ​∥F​=∥et​∥（∥⋅∥F $\|\cdot\|_F$ ​ 為 Frobenius 範數）。下面的 C1 就是這個演算法。
+
+ C1驚訝度、動量與遺忘：一個線性記憶的測試時學習
+
+seed 11
+
+ 序列先是情境 A，t = 33 切到情境 B，t = 65 回到 A。拖動三個係數，看驚訝度、動量 ‖S‖ 與兩個情境的回想誤差如何變化。
+
+ 驚訝度 ‖gₜ‖（長條）與動量 ‖Sₜ‖_F（圓點折線）
+
+ 回想誤差（對數縱軸）
+
+ ‖gₜ‖ 驚訝度‖Sₜ‖ 動量／情境 A 誤差情境 B 誤差
+
+ θ 學習率0.30
+
+ η 動量0.60
+
+ α 遺忘0.020
+
+ η = 0、α = 0
+ η = 0、α = 0.02
+ η = 0.6、α = 0.02（預設）
+ θ = 0.75、η = 0（等效步長對照）
+
+ S8 會說明：前兩個組合中，前者即 DeltaNet 的更新規則（Eq. 34），後者論文稱與 Gated DeltaNet 等價（本頁只確認形式相近）。以上 θ 都是 0.3，最後一個除外。
+
+ 重新抽樣顯示資料表
+
+ 內文數字依 seed 11；目前 seed 為 11，數值會不同。回到 seed 11
+
+ E_B(64) = 0.0084　動量／步長
+E_A(64) = 0.4571　遺忘
+‖S₄₀‖_F = 0.1518　動量延續
+
+ 全部讀數
+‖g₁‖ = 1.0973
+平均驚訝度 t = 33–40：0.6388
+平均驚訝度 t = 65–72：0.6315
+E_A(32) = 0.0142
+E_A(96) = 0.0303
+
+ 每 8 步一列；seed 11，θ 0.30、η 0.60、α 0.020：E_B(64) 0.0084，E_A(64) 0.4571，‖S₄₀‖ 0.1518t‖gₜ‖‖Sₜ‖E_AE_B
+80.26180.26990.24010.4761
+160.18600.05850.19060.4456
+240.09120.03130.01410.5996
+320.40120.11650.01420.5577
+400.17780.15180.34380.0542
+480.08970.05100.41110.0210
+560.08410.04880.42740.0084
+640.09080.05670.45710.0084
+720.63770.28680.05340.3868
+800.23750.11240.01850.3830
+880.05040.03000.02830.3006
+960.03730.09300.03030.3594
+
+ 設定（推定）：d = 8；兩個情境各有 4 個單位長度 key 與一個對應矩陣，value = A_c·k；序列長 96，每個 token 從該情境的 4 個 key 中均勻抽一個。E_c(t) 是處理完第 t 個 token 後，情境 c 四個 key 的平均 ½‖𝓜k − A_c k‖²。本元件的損失取 ½‖·‖²，θ = 0.3 相當於照 Eq. 12（無 ½）寫法的 θ = 0.15。讀數由本頁依 Eq. 13–14 即時計算；設定值為本頁推定，論文未給。
+
+ C1 的預設情境（seed 11，θ = 0.3、η = 0.6、α = 0.02）可以讀出幾件事。每次切換情境（t = 33、65），驚訝度升高，之後下降。動量使驚訝度下降後 ∥St∥ $\|S_t\|$ ​∥ 仍延續：∥S40∥ $\|S_{40}\|$ ​∥ 在 η = 0.6 時為 0.152，η = 0 時為 0.092。情境 B 結束時的回想誤差 EB(64) $E_B(64)$ ​(64) 由 0.025（η = 0）降到 0.008（η = 0.6），但常數 η 讓有效步長變成 θ/(1−η) = 0.75，而「θ = 0.75、η = 0」也降到 0.011。seed 11–30 的中位數為 0.0087（η = 0.6）對 0.0083（θ = 0.75、η = 0），η = 0.6 只在 14／20 個 seed 低於對照。所以在這個玩具中，誤差下降大多來自步長放大，不能當作動量本身的好處；作者主張的「驚訝度延續」，本元件只能以 ∥St∥ $\|S_t\|$ ​∥ 的延續呈現。η 太大（0.9）時更新來回震盪，誤差變大。本頁推導
+
+ 遺忘的效果：θ = 0.3、η = 0.6 固定時，α 越大，回到情境 A 之前的 A 回想誤差 EA(64) $E_A(64)$ ​(64) 越大（α = 0：0.387；α = 0.02：0.457；α = 0.1：0.582）。遺忘的代價是保留較少。這個玩具只呈現遺忘的代價；作者論證的好處是長序列中的容量管理，證據是 Table 5 中移除 weight decay 的 ppl 29.04 最差（S9）。
+
+ 延伸閱讀：閘控線性遞迴：以資料相依的遺忘處理記憶溢出
+
+ 04 · 深層記憶
+
+ 深層記憶能存下非線性的對應
+
+ Q1 問記憶的結構。作者的論點（Sec. 3.1）：以矩陣 M=W∈Rdin×din $\mathcal M=W\in\mathbb R^{d_{in}\times d_{in}}$ ​×din​ 為記憶，等價於最佳化 ∥Wt−1kt−vt∥22 $\|W_{t-1}k_t-v_t\|_2^2$ ​kt​−vt​∥22​，這是線上線性迴歸；它的最佳解假設歷史資料中 key 與 value 的依賴關係是線性的。至少兩層的 MLP 比線性模型更有表達力（Hornik et al. 1989），所以作者把記憶設計成 LM≥1 $L_{\mathcal M}\ge1$ ​≥1 層的 MLP，LM=1 $L_{\mathcal M}=1$ ​=1 即矩陣記憶。
+
+ Q3 問讀取方式。讀取是不更新權重的前向傳遞（Eq. 15）：
+
+ qt=xtWQ,yt=M∗(qt) $q_t=x_tW_Q,\qquad y_t=\mathcal M^*(q_t)$ ​=xt​WQ​,yt​=M∗(qt​)
+Eq. 15
+
+ 論文沒有寫 MLP 的寬度、是否含偏置與啟動函數；C2 的設定是本頁推定推定。C2 用純量 key 與 value v=sin⁡(2k) $v=\sin(2k)$ ，在同一串 token 上比較線性記憶與 MLP 記憶在測試時能學到什麼。
+
+ C2記憶深度：線性記憶與 MLP 記憶
+
+顯示資料表
+
+ 選擇層數後按「執行」：每個 token 做一步 Eq. 13–14 的更新。左圖是記憶目前的讀出，右圖是格點 MSE。
+
+ 層數 L𝓜1234
+
+ 執行重設比較四種深度
+
+ 目標 v = sin 2k記憶讀出 𝓜*(k)最近寫入的 30 個 key
+
+ θ0.010
+
+ η0.90
+
+ α0.0000
+
+ token 數 0　格點 MSE 1.00953
+參數數 48　相對計算量（每 token 乘加約 3 × 參數數）144
+
+ 四種深度的格點 MSEL𝓜參數數t = 10030010003000
+
+ 每 250 個 token 一列；L = 2，θ 0.010、η 0.90、α 0.0000，token 0，MSE 1.00953token 數格點 MSE
+250—
+500—
+750—
+1000—
+1250—
+1500—
+1750—
+2000—
+2250—
+2500—
+2750—
+3000—
+目前 01.00953
+
+ 設定（推定）：k ~ U[−2, 2]（資料 seed 9），v = sin 2k；L = 1 時 𝓜(k) = wk（無偏置，對應矩陣記憶，w 隨機初始）；L ≥ 2 時為寬度 16 的 MLP，隱藏層 SiLU、含偏置（初始化 seed 5）。損失 ½(𝓜(k) − v)²，共 3000 個 token。MSE 在 [−2, 2] 的 201 個等距格點上計算；虛線「最佳線性」是同一格點上無偏置線性最小平方解 w = 0.1660 的 MSE。讀數由本頁依 Eq. 13–15 即時計算；設定值為本頁推定，論文未給。
+
+ 預設設定（θ = 0.01、η = 0.9）下，LM=1 $L_{\mathcal M}=1$ ​=1 的格點 MSE 停在 0.40–0.48，不會低於最佳線性解 0.402；LM≥2 $L_{\mathcal M}\ge2$ ​≥2 在 3000 個 token 內遠低於線性解：L=2 $L=2$ 約 2×10−3 $2\times10^{-3}$ （0.00235），L=3 $L=3$ 、4 低於 1.5×10−4 $1.5\times10^{-4}$ （0.00010、0.00014）。代價是參數與計算量：四種深度的參數數為 1、48、320、592，每個 token 的乘加數約為參數數的 3 倍。θ = 0、α > 0 時記憶衰減到 0，MSE 趨近 0.439。推定
+
+ 論文的對應實驗在 Sec. 5.5（Fig. 7–8）：以 Pile 子集、Mamba 為基準，比較 LM=1,2,3,4 $L_{\mathcal M}=1,2,3,4$ ​=1,2,3,4。記憶越深，各序列長度的 perplexity 都越好；參數較少時，深層記憶對序列長度更穩健。吞吐量方面，所有模型的 tokens/s 不隨上下文長度改變，但記憶越深訓練越慢，訓練吞吐量隨深度線性下降，作者稱之為效果與效率的權衡。本頁不重繪 Fig. 7–8；C2 也不測量時間，只顯示乘加數。
+
+ 05 · chunk 平行化
+
+ 把序列切成 chunk 就能用矩陣乘法訓練
+
+ 逐 token 更新必須依序做 N $N$ 步，無法充分利用 GPU／TPU 的矩陣運算。作者沿用 TTT 的做法（Sec. 3.2）：把序列切成大小 b≥1 $b\ge1$ 的 chunk，chunk 內所有梯度都在 chunk 起點的記憶 Mt′ $\mathcal M_{t'}$ ​ 上計算，等同 mini-batch 梯度下降。先看不含動量的情形：
+
+ Mt=(1−αt)Mt−1−θt∇ℓ(Mt−1;xt)=βtM0−∑i=1tθiβtβi∇ℓ(Mt′;xi) $\begin{aligned}\mathcal M_t&=(1-\alpha_t)\mathcal M_{t-1}-\theta_t\nabla\ell(\mathcal M_{t-1};x_t)\\&=\beta_t\mathcal M_0-\sum_{i=1}^{t}\theta_i\frac{\beta_t}{\beta_i}\nabla\ell(\mathcal M_{t'};x_i)\end{aligned}$ ​​=(1−αt​)Mt−1​−θt​∇ℓ(Mt−1​;xt​)=βt​M0​−i=1∑t​θi​βi​βt​​∇ℓ(Mt′​;xi​)​
+Eq. 16
+
+ 其中 βi=∏j=1i(1−αj) $\beta_i=\prod_{j=1}^{i}(1-\alpha_j)$ ​=∏j=1i​(1−αj​)。論文把 t′ $t'$ 印成 t−mod(t,b) $t-\mathrm{mod}(t,b)$ ，但下一句說第一個 chunk 的 t=b $t=b$ 、所以 t′=0 $t'=0$ =0；照公式 t=b $t=b$ 時 t′=b $t'=b$ =b，而且 b=1 $b=1$ 時梯度會在更新後的 Mt $\mathcal M_t$ ​ 上計算。本頁依論文文字，把 t′ $t'$ 讀成 chunk 的起點 t′=t−1−mod(t−1,b) $t'=t-1-\mathrm{mod}(t-1,b)$ =t−1−mod(t−1,b)本頁推導。在這個讀法下，b=1 $b=1$ 時 Mt′=Mt−1 $\mathcal M_{t'}=\mathcal M_{t-1}$ ​=Mt−1​，與逐 token 更新完全相同。另外，第二個等號只在單一 chunk 內成立：跨 chunk 時，第 i $i$ 項的梯度點是 i $i$ 所在 chunk 的起點，不是同一個 Mt′ $\mathcal M_{t'}$ ​，這也是論文只寫第一個 chunk 的原因。
+
+ 對線性記憶 Mt=Wt $\mathcal M_t=W_t$ ​=Wt​，第一個 chunk 內的梯度加權和可以寫成一次矩陣乘法（Eq. 17）。論文的寫法把 key 與 value 都寫成 x $x$ ，並省略 ∥⋅∥2 $\|\cdot\|^2$ 求導的係數 2。一般形式如下（損失取 12∥⋅∥2 $\tfrac12\|\cdot\|^2$ 1​∥⋅∥2，K=[k1⋯kb] $K=[k_1\cdots k_b]$ ​⋯kb​]、V=[v1⋯vb] $V=[v_1\cdots v_b]$ ​⋯vb​] 為行向量排成的矩陣，ci=θiβb/βi $c_i=\theta_i\beta_b/\beta_i$ ​=θi​βb​/βi​）本頁推導：
+
+ ∑i=1bci∇ℓ(W0;xi)=(W0K−V) diag(c) K⊤ $\sum_{i=1}^{b}c_i\nabla\ell(W_0;x_i)=(W_0K-V)\,\mathrm{diag}(c)\,K^\top$ ∑b​ci​∇ℓ(W0​;xi​)=(W0​K−V)diag(c)K⊤
+Eq. 17（一般形式）
+
+ 每個 chunk 只需存自己的係數。動量也能平行（Eq. 18）：
+
+ St=ηtSt−1−θtut,ut=∇ℓ(Mt′;xt) $S_t=\eta_tS_{t-1}-\theta_t u_t,\qquad u_t=\nabla\ell(\mathcal M_{t'};x_t)$ ​=ηt​St−1​−θt​ut​,ut​=∇ℓ(Mt′​;xt​)
+Eq. 18
+
+ 所有 ut $u_t$ ​ 都在 Mt′ $\mathcal M_{t'}$ ​ 上計算，可以同時算出；Eq. 18 因此是以 ut $u_t$ ​ 為輸入、ηt $\eta_t$ ​ 為轉移值的線性遞迴，可以用平行 associative scan 計算。associative scan 的意思是本頁推導：St=ηtSt−1+xt $S_t=\eta_tS_{t-1}+x_t$ ​=ηt​St−1​+xt​ 這種線性遞迴的每一步都可寫成一對 (ηt,xt) $(\eta_t,x_t)$ ​,xt​)；兩個相鄰步驟可以先合併成一步 (η2η1, η2x1+x2) $(\eta_2\eta_1,\ \eta_2x_1+x_2)$ ​η1​, η2​x1​+x2​)，而且合併的順序不影響結果。因此可以像比賽淘汰表一樣兩兩合併，N $N$ 步只需約 log⁡2N $\log_2N$ ​N 輪平行運算。
+
+ 把動量與遺忘一起寫成矩陣乘法（常數 α,η,θ $\alpha,\eta,\theta$ ，chunk 內有 n $n$ 個 token，索引 l,m=1,…,n $l,m=1,\dots,n$ ，約定 00=1 $0^0=1$ =1）本頁推導：
+
+ Mend=(1−α)nMt′+cS St′−θ E diag(w) K⊤,Send=ηnSt′+E diag(q) K⊤ $\begin{aligned}\mathcal M_{\text{end}}&=(1-\alpha)^n\mathcal M_{t'}+c_S\,S_{t'}-\theta\,E\,\mathrm{diag}(w)\,K^\top,\\ S_{\text{end}}&=\eta^nS_{t'}+E\,\mathrm{diag}(q)\,K^\top\end{aligned}$ ​Send​​=(1−α)nMt′​+cS​St′​−θEdiag(w)K⊤,=ηnSt′​+Ediag(q)K⊤​
+本頁推導
+
+ 其中 E=Mt′K−V $E=\mathcal M_{t'}K-V$ ​K−V，wl=∑m=ln(1−α)n−mηm−l $w_l=\sum_{m=l}^{n}(1-\alpha)^{n-m}\eta^{m-l}$ ​=∑m=ln​(1−α)n−mηm−l，cS=∑m=1n(1−α)n−mηm $c_S=\sum_{m=1}^{n}(1-\alpha)^{n-m}\eta^{m}$ ​=∑m=1n​(1−α)n−mηm，ql=−θηn−l $q_l=-\theta\eta^{n-l}$ ​=−θηn−l。η=0 $\eta=0$ 時 wl=(1−α)n−l=βn/βl $w_l=(1-\alpha)^{n-l}=\beta_n/\beta_l$ ​=(1−α)n−l=βn​/βl​，ql $q_l$ ​ 只剩 l=n $l=n$ 一項，回到 Eq. 16–17。
+
+ 數值上要注意本頁推導：Eq. 16 的 βt/βi $\beta_t/\beta_i$ ​/βi​ 若照字面先算 β $\beta$ 再相除，αj=1 $\alpha_j=1$ ​=1 時 βi=0 $\beta_i=0$ ​=0 會得到 0/0，α $\alpha$ 接近 1 時連乘會下溢；應直接以 ∏j=i+1t(1−αj) $\prod_{j=i+1}^{t}(1-\alpha_j)$ t​(1−αj​) 計算比值。實驗中 α,θ,η $\alpha,\theta,\eta$ 依 token 而定；論文 v1 沒有寫實驗用的 chunk 大小 b $b$ 。
+
+ 進階：chunk 內參數為常數時
+
+ 若 α,θ,η $\alpha,\theta,\eta$ 在一個 chunk 內為常數，Eq. 17 的 Θ $\Theta$ 只需一個純量，Eq. 18 變成線性非時變系統（LTI），可以用全域卷積計算（Sec. 3.2 末段）。作者把依 chunk 而定的參數留作未來工作。
+
+ chunk 演算法
+說明
+
+ for each chunk [t'+1 .. t'+b]:逐 chunk 處理；chunk 之間仍是依序的。
+
+ E = M_{t'} K - V所有誤差一次算出（矩陣乘法）。
+
+ U_l = E[:,l] K[:,l]^T各 token 的梯度，都在 M_{t'} 上計算。
+
+ S_t = η S_{t-1} - θ U_t線性遞迴，可以用 associative scan 平行計算。
+
+ M_t = (1-α) M_{t-1} + S_t衰減權重直接連乘，不用 β_t/β_i 相除。
+
+ C3chunk 平行化：凍結的梯度點與矩陣乘法形式
+
+顯示資料表
+
+ 沿用 C1 的資料流（θ = 0.3、α = 0.02）。選 chunk 大小 b：上方方格以粗線分出 chunk，三角形標出每個 chunk 的梯度點 𝓜t′。
+
+ chunk 大小 b12481632
+
+ η00.6
+
+ 逐 token（b = 1）chunk = 4
+
+ 順序步數 ⌈96/b⌉ = 24
+兩形式最大差 < 1e-12，兩者相同
+E_A(96) = 0.1420
+‖𝓜⁽ᵇ⁾₉₆ − 𝓜⁽¹⁾₉₆‖_F = 0.7140
+資料流與 C1 相同（seed 11）。
+
+ 每 8 步一列，目前情境的回想誤差；b = 4，η = 0.6：E_A(96) 0.1420，偏離 0.7140t逐 tokenchunk = 4
+80.24010.3031
+160.19060.1852
+240.01410.0237
+320.01420.0192
+400.05420.1934
+480.02100.0904
+560.00840.0194
+640.00840.0125
+720.05340.5098
+800.01850.2903
+880.02830.0732
+960.03030.1420
+
+ b 大時，同一 chunk 內同一個 key 會被重複套用同一個（過時的）誤差，效果接近把 θ 放大，因此在這組固定參數下 b ≥ 16 誤差快速增大。論文中 θt 依 token 而定，也沒有給出實驗用的 b。本頁推導
+
+ 主圖畫目前情境的回想誤差（t ≤ 32 與 t > 64 為 E_A，其餘為 E_B），對數縱軸；超出上限的值畫在上緣並以三角形標記。「兩形式最大差」比較逐 token 迴圈（梯度凍結在 chunk 起點）與上方的矩陣乘法公式在所有 chunk 終點的結果。讀數由本頁依 Eq. 16–18 即時計算；設定值為本頁推定，論文未給。
+
+ C3 中兩種形式在所有 chunk 終點完全相同（最大差小於 3×10−14 $3\times10^{-14}$ ）：平行化不改變數學，只改變計算方式。b=1 $b=1$ 與逐 token 更新相同；b $b$ 越大，順序步數越少，但偏離越大（η = 0.6 時，∥M96(b)−M96(1)∥F $\|\mathcal M^{(b)}_{96}-\mathcal M^{(1)}_{96}\|_F$ (b)​−M96(1)​∥F​ 為 0.130、0.714、2.05、202，對應 b = 2、4、8、16）。η = 0 時較不敏感：b = 8 的 EA(96) $E_A(96)$ ​(96) 為 0.050，η = 0.6 時為 0.600。
+
+ 延伸閱讀：原版 TTT：TTT-Linear / TTT-MLP、從 One-Minute Video 到 LaCT：大 chunk Test-Time Training
+
+ 06 · 持久記憶
+
+ 持久記憶是放在序列開頭的可學習參數
+
+ 長期記憶是情境記憶：它的內容完全由輸入決定。作者認為還需要一組可學習、但不依賴輸入的參數，用來儲存任務本身的知識。做法是把 Np $N_p$ ​ 個可學習向量接在序列前面（Sec. 3.3）：
+
+ xnew=[p1 p2 ⋯ pNp] ∥ x $x_{new}=[p_1\ p_2\ \cdots\ p_{N_p}]\ \|\ x$ ​=[p1​ p2​ ⋯ pNp​​] ∥ x
+Eq. 19
+
+ 作者給三個動機：
+
+ 記憶觀點：掌握一個任務需要記住「如何做」這個任務；持久記憶用來儲存任務知識，這部分不依賴當下的輸入。
+
+ 前饋網路觀點：Sukhbaatar et al.（2019）指出，把 FFN 的 ReLU 換成 Softmax，會得到類似注意力、但權重不依賴資料的形式（Eq. 20）。持久記憶放在序列開頭，會產生不依賴資料的注意力權重。
+
+ 技術觀點：因果遮罩的注意力偏向序列最前面的 token；在開頭放可學習參數可以重新分配注意力權重，緩解因果注意力偏向開頭 token 的現象（Han et al. 2024；Xiao et al. 2024）。
+
+ FFN(x)=WV Softmax(WKx) $FFN(x)=W_V\,\mathrm{Softmax}(W_Kx)$ ​Softmax(WK​x)
+Eq. 20
+
+ 測試時持久記憶的參數固定、不更新，只有長期記憶在測試時持續學習（Sec. 4.1）。在下一節的三種架構中，持久記憶都接在序列開頭，但進入注意力的方式不同。
+
+ 07 · 三種架構
+
+ Titans 以三種方式結合記憶與注意力
+
+ 作者把注意力解讀為短期記憶：依賴關係精確，但視窗有限；神經記憶則是長期記憶。Sec. 4 回答 Q4，給出三種組合方式。
+
+ MAC：記憶作為上下文
+
+ MAC（Memory as a Context）把序列切成長度 C $C$ 的片段 S(i) $S^{(i)}$ 。處理一個片段時，先用片段的 query 從記憶讀出歷史資訊 ht=Mt−1∗(qt) $h_t=\mathcal M^*_{t-1}(q_t)$ ​=Mt−1∗​(qt​)，把持久記憶與 ht $h_t$ ​ 接在片段前，做片段內注意力，再以注意力輸出 yt $y_t$ ​ 更新記憶：
+
+ ht=Mt−1∗(qt),qt=S(t)WQS~(t)=[p1⋯pNp] ∥ ht ∥ S(t),yt=Attn(S~(t))Mt=Mt−1(yt),ot=yt⊗Mt∗(yt) $\begin{aligned}h_t&=\mathcal M^*_{t-1}(q_t),\quad q_t=S^{(t)}W_Q\\ \tilde S^{(t)}&=[p_1\cdots p_{N_p}]\ \|\ h_t\ \|\ S^{(t)},\quad y_t=\mathrm{Attn}(\tilde S^{(t)})\\ \mathcal M_t&=\mathcal M_{t-1}(y_t),\quad o_t=y_t\otimes\mathcal M^*_t(y_t)\end{aligned}$ ​S~(t)Mt​​=Mt−1∗​(qt​),qt​=S(t)WQ​=[p1​⋯pNp​​] ∥ ht​ ∥ S(t),yt​=Attn(S~(t))=Mt−1​(yt​),ot​=yt​⊗Mt∗​(yt​)​
+Eq. 21–25
+
+ 片段內是完整因果注意力（Fig. 3a）；Eq. 24 表示以 yt $y_t$ ​ 經前向傳遞更新記憶。作者列出三個優點：注意力同時看到歷史與當前，可以決定是否需要長期記憶的資訊；注意力幫助記憶只存有用的資訊；測試時持久記憶固定、注意力權重做 in-context learning、長期記憶持續學習。
+
+ MAG：記憶作為閘控分支
+
+ MAG（Memory as Gating）不切片段。一支以輸入更新記憶，另一支用帶前綴的滑動視窗注意力 SW-Attn∗ $^*$ ，兩支以非線性閘控 ⊗ $\otimes$ 結合（Sec. 4.2）：
+
+ x~=[p1⋯pNp] ∥ x,y=SW-Attn∗(x~),o=y⊗M(x~) $\tilde x=[p_1\cdots p_{N_p}]\ \|\ x,\qquad y=\text{SW-Attn}^*(\tilde x),\qquad o=y\otimes\mathcal M(\tilde x)$ =[p1​⋯pNp​​] ∥ x,y=SW-Attn∗(x~),o=y⊗M(x~)
+Eq. 26–28
+
+ M(x~) $\mathcal M(\tilde x)$ ) 是對序列遞迴後記憶的輸出。實驗中以可學習的向量權重分別正規化 y $y$ 與 M(x~) $\mathcal M(\tilde x)$ )，再接非線性 σ(⋅) $\sigma(\cdot)$ ；論文沒有寫 σ $\sigma$ 的形式。作者稱滑動視窗注意力為精確的短期記憶，神經記憶為逐漸淡去的記憶（fading memory）。
+
+ MAL：記憶作為一層
+
+ MAL（Memory as a Layer）在記憶層之後接滑動視窗注意力（Sec. 4.3）：
+
+ x~=[p1⋯pNp] ∥ x,y=M(x~),o=SW-Attn(y) $\tilde x=[p_1\cdots p_{N_p}]\ \|\ x,\qquad y=\mathcal M(\tilde x),\qquad o=\text{SW-Attn}(y)$ =[p1​⋯pNp​​] ∥ x,y=M(x~),o=SW-Attn(y)
+Eq. 29–31
+
+ Eq. 31 是不帶前綴的 SW-Attn，Eq. 27 是帶前綴的 SW-Attn∗ $^*$ ；依方程式，MAL 的持久記憶只能經由記憶層進入注意力。文獻中常見的混合模型都是這種逐層堆疊；作者指出其缺點是模型能力受限於每一層，無法利用注意力與記憶的互補。把 LMM 單獨當作序列模型（沒有注意力）是 MAL 的特例，論文記為 Titans (LMM)。
+
+ MAC · Eq. 21–25記憶作為上下文
+讀記憶 → 片段注意力 → 以 yt $y_t$ ​ 寫記憶。
+片段內完整因果注意力＋記憶 token＋持久記憶。
+
+ MAG · Eq. 26–28記憶作為閘控分支
+記憶分支與注意力分支並行，以閘控結合。
+帶前綴的滑動視窗注意力 SW-Attn∗ $^*$ 。
+
+ MAL · Eq. 29–31記憶作為一層
+記憶層的輸出再進入注意力。
+不帶前綴的滑動視窗注意力 SW-Attn。
+
+ C4三種架構的注意力範圍與記憶路徑
+
+ 每一列是一個 query 位置，每一欄是一個可被注意的 token。點選一列、或用上下方向鍵，看這個 query 直接注意哪些 token、哪些只能經由長期記憶到達。
+
+ MACMAGMAL
+
+ 持久記憶記憶 token h（本片段）序列
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+
+ 直接注意經由記憶不可見
+
+ query 位置 t10
+
+ 片段長度 C4
+
+ 視窗 w4
+
+ 持久記憶 Np2
+
+ 記憶 token Nl2
+
+ 視窗 w 只用於 MAG／MAL。
+
+ query t = 10
+直接 6　經由記憶 8　不可見 6
+配對數 104／完整因果＋前綴 168（0.62）
+
+ MAC：讀記憶 → 片段注意力 → 以 yₜ 寫記憶。
+
+ 序列長度 N = 16。MAC：持久記憶與 Nl 個記憶 token 直接可見，同片段且不晚於 t 的 token 直接可見，先前片段經由記憶（Eq. 24）。MAG：持久記憶與最近 w 個 token 直接可見（SW-Attn*），更早的經由記憶分支。MAL：最近 w 個 token 直接可見（注意的是記憶層輸出），持久記憶與更早的 token 經由記憶層（Eq. 31 不帶前綴）。Eq. 21 的 ht 長度等於片段長度，Fig. 3a 的說明寫 Nl 個記憶 token；本頁依 Fig. 3a 把 Nl 當作獨立參數，並讓片段內所有 query 都看得到 h（推定）。配對數由本頁依 Eq. 21–31 計算。
+
+ 預設設定（N = 16、Np = 2、C = 4、Nl = 2、w = 4）下，t = 10 的 query：MAC 直接注意 6 個、經由記憶 8 個、不可見 6 個；MAG 為 6／6／6；MAL 為 4／8／6。所有 query 加總的注意力配對數：MAC 104、MAG 90、MAL 58，完整因果注意力加前綴為 168；N 增大時 MAC 與 MAG 的配對數只隨 N 線性成長本頁推導。片段開頭的 token（例如 MAC 的 t = 9）直接注意的範圍最小，較早的資訊全靠記憶 token h $h$ 。
+
+ 哪一種在長上下文任務最好？論文認為是 MAC：Table 5 的 Long Context 一欄 MAC 97.95 最高，BABILong（Fig. 6）也只報告 MAC。但 Table 2 並非每格最好：16K 的 N 欄 MAG 98.6 高於 MAC 97.4本頁核對。
+
+ 架構細節（Sec. 4.4）
+
+ 所有區塊使用殘差連接。
+
+ 計算 query、key、value 時使用 SiLU，query 與 key 做 ℓ2 正規化。
+
+ query、key、value 投影後各接一層 1D depthwise-separable 卷積。
+
+ 最終輸出投影前，以正規化與線性層做閘控（Mehta et al. 2023）。
+
+ Theorem 4.1（論文宣稱，本頁不展開）
+
+ 論文宣稱 Transformer、對角線性遞迴模型與 DeltaNet 受限於 TC⁰，Titans 能解決 TC⁰ 以外的問題，因此在狀態追蹤任務上理論表達力更強。TC⁰ 是計算複雜度理論中的一個電路類別；論文把 Transformer 等模型能解的問題歸在此類，並宣稱 Titans 能解此類以外的問題。v1 正文沒有附證明。
+
+ 延伸閱讀：Titans 的三種架構：記憶作為上下文、閘控分支與一層、分段 Transformer 與外掛記憶：Transformer-XL、RMT、Memory Layers
+
+ 08 · 與遞迴模型的關係
+
+ LMM 推廣了 DeltaNet、Longhorn 與 TTT
+
+ App. C 取線性記憶 Mt=Wt $\mathcal M_t=W_t$ ​=Wt​、損失 12∥Mtkt−vt∥22 $\tfrac12\|\mathcal M_tk_t-v_t\|_2^2$ 1​∥Mt​kt​−vt​∥22​，把 LMM 寫成（Eq. 32–33，轉置依本頁「行向量 key、Mk $\mathcal M k$ 」慣例統一）：
+
+ Mt=diag(1−αt)Mt−1+St,St=diag(ηt)St−1−diag(θt)(Mt−1kt−vt)kt⊤ $\mathcal M_t=\mathrm{diag}(1-\alpha_t)\mathcal M_{t-1}+S_t,\qquad S_t=\mathrm{diag}(\eta_t)S_{t-1}-\mathrm{diag}(\theta_t)(\mathcal M_{t-1}k_t-v_t)k_t^\top$ ​=diag(1−αt​)Mt−1​+St​,St​=diag(ηt​)St−1​−diag(θt​)(Mt−1​kt​−vt​)kt⊤​
+Eq. 32–33
+
+ 原文 Eq. 32 右邊寫成 Mt $\mathcal M_t$ ​，應為 Mt−1 $\mathcal M_{t-1}$ ​。DeltaNet 可以視為最佳化 12∥Stkt−vt∥22 $\tfrac12\|S_tk_t-v_t\|_2^2$ 1​∥St​kt​−vt​∥22​ 的線上學習（Eq. 34）：
+
+ St+1=St−θt∇L=St(I−θtktkt⊤)+θtvtkt⊤ $S_{t+1}=S_t-\theta_t\nabla L=S_t\big(I-\theta_tk_tk_t^\top\big)+\theta_tv_tk_t^\top$ ​=St​−θt​∇L=St​(I−θt​kt​kt⊤​)+θt​vt​kt⊤​
+Eq. 34
+
+ Gated DeltaNet 是 Eq. 34 再加 weight decay。論文寫，令 ηt=0 $\eta_t=0$ ​=0 時兩者等價（App. C）。本頁能從論文自己的方程式驗證的是本頁推導：Eq. 13–14 取 η=0 $\eta=0$ 得 Mt=Mt−1((1−αt)I−θtktkt⊤)+θtvtkt⊤ $\mathcal M_t=\mathcal M_{t-1}\big((1-\alpha_t)I-\theta_tk_tk_t^\top\big)+\theta_tv_tk_t^\top$ ​=Mt−1​((1−αt​)I−θt​kt​kt⊤​)+θt​vt​kt⊤​；再取 αt=0 $\alpha_t=0$ ​=0 即 Eq. 34，也就是 η = 0、α = 0 時即 DeltaNet。本論文沒有寫出 Gated DeltaNet 的遞迴式，所以本頁只能說：上式與 Gated DeltaNet 的更新規則形式相近，細節（衰減是否也作用在修正項）需查原論文。
+
+ 作者列出 LMM 推廣 Gated DeltaNet 的三點：(1) 動量規則，同時考慮過去與當下的驚訝度；(2) 深層記憶，Gated DeltaNet 需要閉式遞迴，只能用矩陣記憶；(3) 非線性遞迴：chunk 之間非線性、chunk 內線性。作者說 RWKV-7 也用同樣的形式與損失。
+
+ Longhorn 以隱式線上學習推得（Eq. 35），但缺少遺忘閘：
+
+ St+1=St(I−δtktkt⊤)+δtvtkt⊤,δt=θt1+θtktkt⊤ $S_{t+1}=S_t\big(I-\delta_tk_tk_t^\top\big)+\delta_tv_tk_t^\top,\qquad \delta_t=\frac{\theta_t}{1+\theta_tk_tk_t^\top}$ ​=St​(I−δt​kt​kt⊤​)+δt​vt​kt⊤​,δt​=1+θt​kt​kt⊤​θt​​
+Eq. 35
+
+ TTT layer 與 LMM 有三個差異：TTT 沒有遺忘機制；TTT 只用當下驚訝度，沒有動量；TTT 允許深層記憶，但沒有以實驗評估深層記憶的利弊。作者宣稱 LMM 是第一個使用動量更新規則的線性遞迴模型。App. A.1 把線性遞迴模型分成三代：第一代是資料無關的衰減，第二代加入閘控，第三代以線上學習或 delta rule 更新。App. A 另稱 Titans (MAC) 是 RMT 的推廣，以神經記憶取代小型向量記憶。
+
+ App. C 的對照（只填論文寫明的內容）
+ 模型遺忘閘動量深層記憶遞迴型態
+
+ DeltaNet無（Eq. 34）無無，矩陣記憶線性
+
+ Gated DeltaNet有（weight decay）無無，需閉式遞迴線性
+
+ Longhorn無論文未比較論文未比較線性（Eq. 35）
+
+ TTT無無，只用當下驚訝度允許，未評估論文未比較
+
+ LMM有（αt $\alpha_t$ ​）有（ηt $\eta_t$ ​）有（LM≥1 $L_{\mathcal M}\ge1$ ​≥1）chunk 間非線性、chunk 內線性
+
+ 延伸閱讀：Delta rule 與 DeltaNet、Gated DeltaNet、Test-Time Training 作為序列建模架構、TTT 的理論還原與應用擴散
+
+ 09 · 實驗結果
+
+ 實驗中 Titans 在多數指標上優於同規模的 Transformer 與線性遞迴模型
+
+ Sec. 5.1 的語言模型有四種規模：170M、340M、400M、760M；前三者以 FineWeb-Edu 的 15B token 訓練，760M 用 30B token。訓練流程沿用 Gated DeltaNet（S10）。Table 1 報告 Wikipedia perplexity（Wiki ppl，越低越好）與 8 個常識推理任務的平均準確率（Avg acc，越高越好），摘錄如下：
+
+ Table 1 摘錄：Wiki ppl ↓ ／ Avg acc ↑
+ 模型340M / 15B760M / 30B
+
+ Transformer++31.52 / 42.9225.21 / 48.69
+
+ Gated DeltaNet27.01 / 45.4221.18 / 49.69
+
+ TTT27.44 / 44.5124.17 / 47.32
+
+ Samba（混合）—20.63 / 51.08
+
+ Gated DeltaNet-H2（混合）—19.88 / 51.49
+
+ Titans (LMM)26.18 / 46.1720.04 / 51.56
+
+ Titans (MAC)25.43 / 47.3619.93 / 52.51
+
+ Titans (MAG)25.07 / 47.5418.61 / 52.50
+
+ Titans (MAL)24.69 / 46.5519.07 / 50.97
+
+ 760M 時 Titans (MAG) 的 Wiki ppl 為 18.61，Transformer++ 為 25.21（Table 1）。作者的解讀（Sec. 5.2）作者宣稱：非混合模型中 LMM 最好；三種 Titans 都優於 Samba 與 Gated DeltaNet-H2；MAC 與 MAG 接近，MAC 在較長依賴上較好；MAG、MAC 都優於 MAL。表格中有與這些說法不一致的格子本頁核對：
+
+ Wiki ppl 上 MAL 優於 MAC 與 MAG：340M 為 24.69，對 25.43、25.07；400M 為 23.93，對 MAC 25.61。
+
+ 760M Wiki ppl：MAC 19.93 高於 Gated DeltaNet-H2 19.88（ppl 越低越好）。400M：Gated DeltaNet-H2 24.19 低於 MAC 25.61。
+
+ 760M Avg acc：MAL 50.97 低於 Samba 51.08 與 Gated DeltaNet-H2 51.49。
+
+ 760M MAL 的 SIQA 為 30.98，比相鄰各列（38.98–41.87）低約 10；Avg 50.97 與 8 欄平均一致，所以不是 Avg 算錯，疑似該格筆誤。本頁照錄。
+
+ 本頁的整理：Avg acc 上 MAC、MAG 在列有混合基準的 400M 與 760M 都高於 Samba 與 Gated DeltaNet-H2（340M 未列混合基準）；MAL 的 Avg 與各模型的 Wiki ppl 則不是每格都最好。
+
+ needle-in-a-haystack 測試（S-NIAH，RULER）在 2K–16K 長度下找出插入的字串。16K 欄如下（PK／N／W 為三種設定）：
+
+ Table 2，16K 欄：PK ／ N ／ W
+ 模型PKNW
+
+ TTT88.44.40.0
+
+ Mamba25.40.00.0
+
+ DeltaNet71.45.40.0
+
+ Titans (LMM)96.280.280.6
+
+ Titans (MAC)98.497.495.2
+
+ Titans (MAG)97.498.688.2
+
+ Titans (MAL)97.896.490.4
+
+ 三種 Titans 中沒有一種在 16K 欄每格都最好（N 欄 MAG 98.6 高於 MAC 97.4）。作者把 LMM 的優勢歸因於：相對 TTT 有動量與遺忘、相對 Mamba2 有深層非線性記憶與移除記憶的能力、相對 DeltaNet 有遺忘機制。BABILong（Fig. 6）有 few-shot 與 fine-tuning 兩種設定，作者報告 Titans (MAC) 優於所有基準（含 GPT-4），且參數比 Llama3.1-8B + RAG 少約 70 倍；正文沒有給出數值，本頁不估讀圖值。
+
+ 消融實驗（Table 5）以 400M 模型移除或替換元件：
+
+ Table 5：ppl ↓ ／ Reasoning acc ↑ ／ Long Context acc ↑
+ 模型pplReasoningLong Context
+
+ LMM27.0147.8392.68
+
+ +Attn (MAC)26.6748.6597.95
+
+ +Attn (MAG)25.7048.6096.70
+
+ +Attn (MAL)25.9147.8796.91
+
+ Linear Memory28.4946.9785.34
+
+ w/o Convolution28.7345.8290.28
+
+ w/o Momentum28.9845.4987.12
+
+ w/o Weight Decay29.0445.1185.60
+
+ w/o Persistent Memory27.6346.3592.49
+
+ 作者稱所有元件都有正面貢獻，貢獻由大到小為 weight decay、動量、卷積、持久記憶。這個排序在 ppl 與 Reasoning 上成立本頁核對：依 ppl，移除 weight decay 傷害最大（ppl 29.04，LMM 為 27.01），其次是移除動量 28.98、移除卷積 28.73；Reasoning 的順序相同（45.11 < 45.49 < 45.82 < 46.35）。Long Context 上最差的則是 Linear Memory 85.34，其次才是 w/o Weight Decay 85.60、w/o Momentum 87.12。
+
+ 其他任務各一句。時間序列（Table 3）以 Simba 框架、把 Mamba 模組換成神經記憶，例如 ETTm1 的 MSE／MAE 為 0.358／0.387（Simba 0.383／0.396）；作者寫「outperforming all baselines」，但 Traffic 的 MAE 0.289 高於 iTransformer 的 0.282（MSE 0.415 仍最低）本頁核對。DNA（Table 4，GenomicsBenchmarks top-1 準確率）：LMM 在 Enhancer Cohn 75.2、Enhancer Ens 89.6 最高，Human Reg. 89.3 低於 HyenaDNA 93.8，作者用詞為「competitive」。效率（Fig. 9）：記憶模組比 Mamba2 與 Gated DeltaNet 稍慢，作者歸因於深層記憶、更有表達力的轉移與 Mamba2 高度最佳化的核心；Titans (MAL) 比基準與記憶模組本身快，原因是以 FlashAttention 實作的滑動視窗注意力。作者並聲稱 Titans 可擴展到超過 2M 的上下文視窗（Abstract、Sec. 6），正文沒有對應的數值表格。
+
+ 表格內部一致性（本頁推導，不改原數字）
+
+ Table 5 的四個 LMM／Titans 列等於 Table 1 的 400M 列：ppl = (Wiki ppl + LMB ppl)/2（27.01、26.67、25.70、25.91 完全一致），Reasoning = Table 1 的 Avg；Long Context = Table 2 該模型 12 格的平均（92.68、97.95、96.70、96.91 完全一致）。正文稱 Long Context 為「long context NIAH (BABILong)」，但數值與 S-NIAH 一致。
+
+ Table 1 的 Avg 欄與 8 個準確率欄的平均不符的列：760M TTT（表列 47.32，平均 49.37）、400M Gated DeltaNet-H2（47.69 對 47.80）、400M Titans (LMM)（47.83 對 47.865）。其餘列一致。
+
+ 760M 的三個 Titans 列沒有標混合模型的星號（340M、400M 有）。Fig. 7b 標題寫 360M，與 Sec. 5.1 的 340M 不同。
+
+ 10 · 實作
+
+ 實作設定與常見錯誤
+
+ Sec. 5.1 的訓練設定
+ 項目設定
+
+ 規模與資料170M、340M、400M：FineWeb-Edu 15B token；760M：30B token
+
+ TokenizerLlama 2 tokenizer，詞彙 32K
+
+ 訓練長度4K token
+
+ 最佳化AdamW，學習率 4e-4，cosine annealing，weight decay 0.1
+
+ Batch0.5M token
+
+ 基準數字400M 基準取自 Gated DeltaNet 論文（App. B）
+
+ 架構細節見 S7 的 Sec. 4.4 清單。以下是閱讀與復現時容易出錯的地方：
+
+ 把驚訝度當成對輸入的梯度：更新式需要損失對記憶參數的梯度（S2）。
+
+ 把 Eq. 7 下方的 read／write 文字當真：f $f$ 是寫入、g $g$ 是讀取（S1）。
+
+ 忘記 chunk 內的梯度都在 Mt′ $\mathcal M_{t'}$ ​ 計算：b>1 $b>1$ 時結果與逐 token 更新不同，b=1 $b=1$ 才相同（S5、C3）。
+
+ 以 βt/βi $\beta_t/\beta_i$ ​/βi​ 相除計算衰減權重：α=1 $\alpha=1$ 時得到 0/0，應直接連乘（S5）。
+
+ Eq. 17 的 (W0xt−xt)xt⊤ $(W_0x_t-x_t)x_t^\top$ ​xt​−xt​)xt⊤​ 是 key = value = x $x$ 的簡寫；一般情形是 (W0kt−vt)kt⊤ $(W_0k_t-v_t)k_t^\top$ ​kt​−vt​)kt⊤​，係數 2 取決於損失是否乘 ½（S5）。
+
+ MAC 與 MAG／MAL 的注意力範圍不同：MAC 是片段內完整因果注意力＋記憶 token＋持久記憶；MAG 是帶前綴的 SWA；MAL 是不帶前綴的 SWA（S7、C4）。
+
+ Eq. 32 右邊的 Mt $\mathcal M_t$ ​ 應為 Mt−1 $\mathcal M_{t-1}$ ​（S8）。
+
+ 論文 v1 未說明：chunk 大小、記憶 MLP 寬度、ηt,θt,αt $\eta_t,\theta_t,\alpha_t$ ​,θt​,αt​ 的參數化、片段長度 C $C$ 、視窗大小、Np $N_p$ ​、Nl $N_l$ ​、閘控非線性 σ $\sigma$ 的形式。復現時這些都要自行決定。
+
+ 照字面使用 Eq. 16 的 t′=t−mod(t,b) $t'=t-\mathrm{mod}(t,b)$ =t−mod(t,b)：t=b $t=b$ 時得到 b $b$ 而非 0，b=1 $b=1$ 時梯度會在更新後的 Mt $\mathcal M_t$ ​ 上計算；應取 chunk 起點 t′=t−1−mod(t−1,b) $t'=t-1-\mathrm{mod}(t-1,b)$ =t−1−mod(t−1,b)（S5）。
+
+ 11 · 研究脈絡
+
+ 研究脈絡（由 notes/timeline.json 提供）
+
+ 依 Titans 的轉述，這條脈絡從外部記憶與分段記憶開始（NTM、Transformer-XL、RMT），經過線性注意力與快速權重（Schmidhuber 1992 的 fast weight 不在 arXiv，未列入時間線），再到閘控線性遞迴（Mamba、Griffin）與 delta rule（DeltaNet、Gated DeltaNet），然後是以梯度更新隱藏狀態的 TTT，本文再加入動量、遺忘與深層記憶。Longhorn、Mamba2、RetNet 在內文中出現，但不在時間線上。每張卡片連到對應的研究筆記。
+
+ 外部與分段記憶注意力線性注意力與快速權重閘控線性遞迴Delta rule梯度式更新本文
+
+ 2014外部與分段記憶Neural Turing Machines
+Graves et al.
+外部可讀寫記憶
+arXiv ↗筆記
+2017注意力Attention Is All You Need
+Vaswani et al.
+Transformer 與 attention
+arXiv ↗筆記
+2019外部與分段記憶Transformer-XL
+Dai et al.
+片段式 Transformer
+arXiv ↗筆記
+2020線性注意力與快速權重Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention
+Katharopoulos et al.
+linear attention 的遞迴形式
+arXiv ↗筆記
+2021線性注意力與快速權重Linear Transformers Are Secretly Fast Weight Programmers
+Schlag et al.
+linear attention 與 fast weight 的對應
+arXiv ↗筆記
+2022外部與分段記憶Recurrent Memory Transformer
+Bulatov et al.
+以記憶向量跨片段傳遞
+arXiv ↗筆記
+2023閘控線性遞迴Mamba: Linear-Time Sequence Modeling with Selective State Spaces
+Gu & Dao
+資料相依的選擇性狀態空間
+arXiv ↗筆記
+2024閘控線性遞迴Griffin: Mixing Gated Linear Recurrences with Local Attention
+De et al.
+閘控線性遞迴加局部 attention
+arXiv ↗筆記
+2024Delta ruleParallelizing Linear Transformers with the Delta Rule over Sequence Length
+Yang et al.
+可平行訓練的 DeltaNet
+arXiv ↗筆記
+2024梯度式更新Learning to (Learn at Test Time): RNNs with Expressive Hidden States
+Sun et al.
+以梯度更新隱藏狀態模型的 TTT 層
+arXiv ↗筆記
+2024Delta ruleGated Delta Networks: Improving Mamba2 with Delta Rule
+Yang, Kautz, Hatamizadeh
+DeltaNet 加遺忘閘
+arXiv ↗筆記
+2024外部與分段記憶Memory Layers at Scale
+Berges et al.
+可替換記憶架構的候選
+arXiv ↗筆記
+2024本文 · 動量＋遺忘＋深層記憶Titans: Learning to Memorize at Test Time
+Behrouz, Zhong, Mirrokni
+深層神經長期記憶，以 surprise 動量更新
+arXiv ↗筆記
+
+ 總覽筆記：Titans 的研究脈絡總覽
+
+ 12 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 作者沒有獨立的限制章節。以下依論文內容整理，不加入論文以外的評論。v1 是初版：作者在註腳表示仍在完成更大模型的結果，程式碼「將會釋出」（Sec. 6）。
+
+ 論文寫明的
+
+ 四種規模（170M–760M）的語言模型與常識推理結果
+
+ S-NIAH 2K–16K、BABILong、時間序列、DNA
+
+ 深度與吞吐量的權衡（Fig. 7–9）
+
+ 消融：weight decay、動量、卷積、持久記憶
+
+ 論文未寫明的
+
+ 超過 2M 上下文的數值結果（只在 Abstract、Sec. 1、Sec. 6 提到）
+
+ Theorem 4.1 的證明
+
+ chunk 大小、MLP 寬度、ηt,θt,αt $\eta_t,\theta_t,\alpha_t$ ​,θt​,αt​ 的參數化、C $C$ 、視窗、Np $N_p$ ​、Nl $N_l$ ​、σ $\sigma$ 
+
+ 更大模型的結果（v1 註腳預告下一版）
+
+ 研究筆記（依閱讀順序）
+
+ Titans 的研究脈絡總覽：從 attention 與 linear recurrence 到測試時學習的長期記憶總覽
+
+ 序列模型的記憶觀點：寫入、讀取與五個設計問題S1–S2
+
+ Linear attention 與 fast weight programs：矩陣值記憶的起點S1
+
+ 閘控線性遞迴：以資料相依的遺忘處理記憶溢出S3
+
+ Delta rule 與 DeltaNet、Gated DeltaNet：把寫入視為線上回歸S8
+
+ 分段 Transformer 與外掛記憶：Transformer-XL、RMT、Memory LayersS7
+
+ Titans 的神經長期記憶：surprise、動量、遺忘與平行訓練S2–S5
+
+ Titans 的三種架構：記憶作為上下文、閘控分支與一層S7
+
+ Test-Time Training 作為序列建模架構：主系列演進總覽站內既有筆記
+
+ 原版 TTT：TTT-Linear / TTT-MLP站內既有筆記
+
+ 從 One-Minute Video 到 LaCT：大 chunk Test-Time Training站內既有筆記
+
+ TTT 的理論還原與應用擴散站內既有筆記
+
+ 「Test-Time Training」的命名混淆站內既有筆記
+
+ arXiv:2501.00663 ↗
+
+ Ali Behrouz, Peilin Zhong, Vahab Mirrokni. Titans: Learning to Memorize at Test Time. arXiv:2501.00663（v1，2024-12-31）。
+
+ 本頁的方程式與數字取自論文 v1；標示「本頁推導」「本頁核對」的內容為本頁自行推導或核對，並非論文結論；標示「推定」的數值為本頁選定。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記

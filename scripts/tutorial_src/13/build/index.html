@@ -1,0 +1,1545 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>學習擴散語言模型的解遮罩策略</title>
+<meta name="description" content="圖解 Jazbec 等人的論文：把擴散語言模型「每一步解開哪些 token」寫成馬可夫決策過程，以 GRPO 與乘法獎勵訓練一個 300K 參數的策略，取代 Fast-dLLM 等信心度規則。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1280px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1280px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1280px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+
+/* ---- page-specific (No. 13). --c-par = 策略／學到的系列；--c-perp = 啟發式規則系列 ---- */
+:root{--hatch:#C9C2B3}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hatch:#4A4740}}
+:root[data-theme="dark"]{--hatch:#4A4740}
+.plate{max-width:min(1080px,100%)}
+.eq-m:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+details.more{max-width:700px;margin:20px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.more>summary{cursor:pointer;list-style:none;padding:12px 18px;min-height:44px;font:500 14px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.more[open]>summary::before{transform:rotate(45deg)}
+details.more>.in{padding:0 18px 16px}
+.plate details.more{max-width:none;margin:4px 0 0;background:var(--surface-2);border-color:transparent}
+
+/* token strip */
+.toks{display:grid;grid-template-columns:repeat(16,minmax(0,1fr));gap:4px;margin:6px 0 4px;padding:0;list-style:none}
+.tcol{display:flex;flex-direction:column;gap:4px;min-width:0}
+.tok{position:relative;min-height:48px;min-width:0;width:100%;display:flex;align-items:center;justify-content:center;border:0;border-radius:8px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--line);font:500 12px/1.2 var(--f-mono);color:var(--ink);padding:0 3px;margin:0}
+.tok .tt{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tok.m{background:repeating-linear-gradient(135deg,var(--hatch) 0 2px,transparent 2px 7px),var(--surface-2);color:var(--ink-3)}
+.tok.new{box-shadow:inset 0 0 0 2px var(--ink)}
+.tok.sel{box-shadow:inset 0 0 0 2.5px var(--accent)}
+.tok .badge{position:absolute;top:2px;right:3px;font:600 10px/1 var(--f-body);color:var(--accent)}
+button.tok{cursor:pointer}
+button.tok:hover{background-color:var(--surface-2)}
+.tok-ix{display:block;text-align:center;font:400 10px/1.4 var(--f-mono);color:var(--ink-3)}
+.bar{position:relative;height:48px;border-bottom:1px solid var(--ink-3)}
+.bar i{position:absolute;bottom:0;left:22%;right:22%;background:var(--c-perp)}
+.bar.two i{left:12%;right:54%}
+.bar b{position:absolute;bottom:0;left:54%;right:12%;border:1.5px solid var(--c-par);border-bottom:0;background:transparent}
+.bar .lam{position:absolute;left:-2px;right:-2px;border-top:1.5px dashed var(--accent)}
+.lg.cbar::before{width:10px;height:12px;border:0;background:var(--c-perp)}
+.lg.sbar::before{width:10px;height:12px;border:1.5px solid var(--c-par);background:transparent}
+.lg.lam::before{border-top:2px dashed var(--accent)}
+.lg.selb::before{width:16px;height:16px;border:0;border-radius:4px;box-shadow:inset 0 0 0 2.5px var(--accent)}
+.lg.maskb::before{width:16px;height:16px;border:0;border-radius:4px;background:repeating-linear-gradient(135deg,var(--hatch) 0 2px,transparent 2px 7px),var(--surface-2)}
+@media (max-width:479px){
+  .toks{grid-template-columns:repeat(8,minmax(0,1fr));gap:0;row-gap:6px}
+  .tok{border-radius:0}
+  .plate{padding:16px 10px}
+}
+
+/* hero frames */
+.frames{display:grid;grid-template-columns:1fr;gap:10px;margin:32px 0 0;max-width:860px}
+@media (min-width:768px){.frames{grid-template-columns:repeat(3,1fr);gap:16px}}
+.frame{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:10px}
+.frame .fl{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.mini{display:grid;grid-template-columns:repeat(16,1fr);gap:2px}
+.mini span{height:22px;border-radius:3px;background:var(--ink-2)}
+.mini span.m{background:repeating-linear-gradient(135deg,var(--hatch) 0 1.5px,transparent 1.5px 5px),var(--surface-2);box-shadow:inset 0 0 0 1px var(--line)}
+.mini span.new{background:var(--accent)}
+
+/* block figure (S2) */
+.blk{max-width:760px;margin:16px 0 24px;padding:18px 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+.blk-cap{font:500 13px/1.4 var(--f-body);color:var(--ink-2);margin:0 0 8px}
+.blk-row{display:grid;grid-template-columns:repeat(8,1fr);gap:3px;margin:0 0 6px}
+.blk-row span{display:flex;align-items:center;justify-content:center;min-height:40px;border-radius:6px;font:500 12px/1.2 var(--f-body);text-align:center;padding:2px}
+.blk-row .done{background:var(--surface-2);color:var(--ink-2)}
+.blk-row .cur{box-shadow:inset 0 0 0 2.5px var(--accent);color:var(--ink);font-weight:600}
+.blk-row .lock{background:repeating-linear-gradient(135deg,var(--hatch) 0 2px,transparent 2px 7px);color:var(--ink-3)}
+.blk-row.one{grid-template-columns:1fr}
+.blk-row.one span{box-shadow:inset 0 0 0 2.5px var(--accent)}
+.blk-ax{display:flex;justify-content:space-between;font:400 11px/1.4 var(--f-mono);color:var(--ink-3);margin:0 0 16px}
+
+/* flow figure (S3) */
+.flow{list-style:none;padding:0;margin:16px 0 24px;max-width:560px;counter-reset:fl}
+.flow li{position:relative;counter-increment:fl;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 16px 12px 52px;font-size:15px;line-height:1.55;margin:0 0 26px}
+.flow li::before{content:counter(fl);position:absolute;left:16px;top:12px;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-2)}
+.flow li:not(:last-child)::after{content:"";position:absolute;left:28px;bottom:-22px;width:0;height:18px;border-left:2px solid var(--ink-3)}
+.flow li .s{display:block;font-size:13px;color:var(--ink-3)}
+.flow li.env{border-style:dashed;border-color:var(--ink-3)}
+.flow li.pol{border:2px solid var(--c-par)}
+.flow li.pol::before{background:var(--c-par);color:var(--surface)}
+.flow .loop{font-size:13px;color:var(--ink-3)}
+
+/* sample rows (C3a/C3b) */
+.rows{display:grid;gap:6px;margin:0;padding:0}
+.rows fieldset{display:grid;grid-template-columns:2.2em auto minmax(0,1fr) 3.4em;align-items:center;gap:8px;border:0;margin:0;padding:0;min-width:0}
+.rows.r1 fieldset{grid-template-columns:2.2em auto}
+.rows legend{float:left;font:500 12px/1 var(--f-mono);color:var(--ink-3);padding:0;width:2.2em}
+.rows output{font:500 13px/1 var(--f-mono);text-align:right;color:var(--ink)}
+.rtog{min-height:40px;min-width:78px;padding:0 10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer}
+.rtog[aria-pressed=false]{background:repeating-linear-gradient(135deg,var(--hatch) 0 2px,transparent 2px 7px),var(--surface-2);color:var(--ink-2)}
+.rtog[aria-pressed=true]{border-color:var(--c-par)}
+.rows .nlab{grid-column:1/-1;font-size:12px;color:var(--accent);margin:-4px 0 0 2.6em}
+@media (max-width:599px){
+  .rows fieldset{grid-template-columns:2.2em minmax(0,1fr) 3.4em;row-gap:0}
+  .rows fieldset .rtog{grid-column:2/4;justify-self:start}
+  .rows fieldset input[type=range]{grid-column:1/3}
+}
+.radio{display:flex;flex-wrap:wrap;gap:4px 14px;border:0;padding:0;margin:0}
+.radio legend{font:500 13px/1.4 var(--f-body);color:var(--ink-2);padding:0;margin:0 0 4px}
+.radio label{display:inline-flex;align-items:center;gap:6px;min-height:40px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.radio input{width:18px;height:18px;accent-color:var(--accent)}
+select{min-height:40px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px var(--f-body);padding:0 8px}
+.tag.kd{border-color:color-mix(in oklab,var(--accent) 50%,var(--line));color:var(--ink-2)}
+svg .hatchl{stroke:var(--ink-3);stroke-width:1}
+svg .barp{fill:var(--c-par)}
+svg .zero{fill:var(--ink-3);opacity:.14}
+svg .ld{stroke-dasharray:10 4}
+svg .dd{stroke-dasharray:6 3 1.5 3}
+svg .thin{stroke-width:1.5}
+@media (max-width:479px){table.stack td.num{text-align:left}}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 13</span>
+  <span class="ttl">學習擴散語言模型的解遮罩策略</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 13</b> · 互動教學 · arXiv 2512.09106 · Apple、University of Amsterdam、MIT</div>
+  <h1>學習擴散語言模型的解遮罩策略</h1>
+  <p class="dek">這篇論文把「每一步解開哪些 token」寫成馬可夫決策過程，用強化學習訓練一個 300K 參數的策略取代手工的信心度規則。</p>
+  <p class="byline">Metod Jazbec、Theo X. Olausson、Louis Béthune、Pierre Ablin、Michael Kirchhof、João Monteiro、Victor Turrisi、Jason Ramapuram、Marco Cuturi（v4，2026-06-01）〈Learning Unmasking Policies for Diffusion Language Models〉</p>
+  <div class="frames" id="hero-frames" role="img" aria-label="三個影格：16 個位置一開始全部遮住；第 1 步解開位置 3、7、11、13；第 2 步再解開位置 2、8、10、15"></div>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 選擇</span><p>擴散語言模型從全部遮住的句子開始，每一步決定要解開哪些位置。這個選擇同時決定答案品質與需要幾步。</p></div>
+    <div class="fact"><span class="n">02 · 小網路</span><p>本文把這個選擇交給一個約 30 萬參數的小網路。它只看語言模型對每個位置的信心度，不改動語言模型本身。</p></div>
+    <div class="fact"><span class="n">03 · 結果</span><p>小網路用強化學習訓練，獎勵 = 答對 × 速度因子（用的步數越少，因子越大）。在不分區塊的設定下，它在約 12 個<a href="#mdm">步數（NFE，見 01）</a>時答對約一半的小學數學應用題 GSM8K，信心度規則不超過 30%（Sec. 4.2 的約略敘述；Table 4 為 13.0 NFE、48.3%）。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2512.09106">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-13">在關聯圖中查看</a>
+    <a class="btn" href="unmasking-policies-dllm-overview.html">研究筆記總覽</a>
+    <a class="btn" href="https://github.com/apple/ml-rl-dllm">程式碼 ↗</a>
+  </div>
+</section>
+
+<!-- S1 ============================================================ -->
+<section class="ch" id="mdm" data-toc="01" data-tt="遮罩擴散">
+  <div class="ch-num">01 · 遮罩擴散</div>
+  <h2>遮罩擴散模型逐步解開遮罩來生成文字</h2>
+  <div class="prose">
+    <p>自回歸（autoregressive, AR）語言模型由左到右一次產生一個 token。遮罩擴散模型（masked diffusion model, MDM）從一個全部是遮罩符號 [M] 的序列出發，每一步可以同時決定多個位置的 token。本論文把這類模型稱為擴散語言模型（dLLM）。</p>
+    <h3>訓練：前向過程與 ELBO</h3>
+    <p>訓練時取一段乾淨序列 $x_0$，再選一個遮罩率 $t\in[0,1]$。前向過程（Sec. 2.1）讓每個 token 獨立地以機率 $t$ 變成 [M]，以機率 $1-t$ 保持原樣，得到加噪序列 $x_t$。這裡的 $t$ 是<b>訓練時的遮罩率</b>，與下面生成時的步數 $t$ 是不同的量。模型 $p_\theta$ 看到 $x_t$，對每個被遮住的位置預測原本的 token：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="方程式，可橫向捲動">$$\mathcal L(\theta)=\mathbb E_{t\sim U[0,1],\,x_0,\,x_t}\Big[\frac1t\sum_{k=1}^{L}\mathbb 1[x_t^k=M]\,\log p_\theta(x_0^k\mid x_t)\Big]$$</div><span class="eq-n">Eq. 2.1</span></div>
+  <div class="prose">
+    <p>式中只有 $x_t^k=M$ 的位置計入對數似然，總和再乘上 $1/t$。$\mathcal L(\theta)$ 是 ELBO，即 $\mathcal L(\theta)\le\mathbb E\log p_\theta(x_0)$。</p>
+    <h3>生成：每一步選出要解開的位置</h3>
+    <p>生成時給定提示 $x$，答案從 $y_T=(M,\dots,M)$ 開始，步數索引 $t$ 由 $T$ 倒數到 1。第 $t$ 步的部分遮罩答案記為 $y_t$，其第 $k$ 個位置記為 $y_t^k$，仍被遮住的位置集合記為 $\mathcal M_t$。dLLM 對所有位置輸出 token 分布 $p_t^k=p_\theta(y_0^k=\cdot\mid x,y_t)$；取樣策略再選出這一步要解開（unmask）的位置集合 $U_t\subseteq\mathcal M_t$（Eq. 2.2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="方程式，可橫向捲動">$$y_{t-1}^k=\begin{cases}y\sim p_t^k, & k\in U_t\\[2pt] y_t^k, & k\notin U_t\end{cases}$$</div><span class="eq-n">Eq. 2.2</span></div>
+  <div class="prose">
+    <p>$U_t$ 內的位置抽出 token，其他位置不變。生成速度以 NFE（network function evaluations）計，NFE 等於取樣步數，每一步是一次 dLLM 前向計算。標準 MDM 每步在隨機位置解開固定數量的 token（Sec. 1）。溫度 $\tau=0$ 表示每個位置直接取機率最大的 token，不隨機抽樣；本論文的評測與訓練都取 $\tau=0$。後面 S5 的 $\tau_\pi$ 是策略的溫度，與 $\tau$ 是不同的量。</p>
+  </div>
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>前向加遮罩與逐步生成</h3></div>
+    <p class="plate-lead">「前向」模式：拖動遮罩率 t，看哪些位置被遮住。「生成」模式：選每步解開的數量 K，逐步解開到沒有 [M] 為止。</p>
+    <div class="ctl-row" style="margin-bottom:14px"><div class="seg" id="c1-mode" role="group" aria-label="模式"><button type="button" data-v="fwd" aria-pressed="true">前向（訓練）</button><button type="button" data-v="gen" aria-pressed="false">生成</button></div></div>
+    <ul class="toks" id="c1-toks" role="list" aria-label="16 個位置的 token 列"></ul>
+    <div class="pg side" style="margin-top:14px">
+      <div class="ctl" id="c1-fwd">
+        <div class="rng"><label class="lbl" for="c1-t"><span>遮罩率 t</span><output id="c1-to">0.50</output></label><input id="c1-t" type="range" min="0" max="1" step="0.01" value="0.5"></div>
+        <div class="ctl-row"><button class="small-btn" type="button" id="c1-re">重新抽樣</button></div>
+        <p class="cap">訓練時只在 [M] 位置計算 log p<sub>θ</sub>，再乘 1/t（Eq. 2.1）。</p>
+      </div>
+      <div class="ctl hide" id="c1-gen">
+        <div><span class="lbl" id="c1-kl">每步解開數 K</span><div class="ctl-row" id="c1-K" role="group" aria-labelledby="c1-kl"></div></div>
+        <div class="ctl-row"><button class="small-btn pri" type="button" id="c1-step">下一步</button><button class="small-btn" type="button" id="c1-play">自動播放</button><button class="small-btn" type="button" id="c1-reset">重設</button></div>
+        <p class="cap">位置以隨機順序解開，數量固定為 K（標準 MDM，Sec. 1）。玩具中解開的位置直接顯示正確 token，相當於 τ = 0 且模型完全正確。</p>
+      </div>
+      <p class="readout" id="c1-ro"></p>
+    </div>
+    <p class="plate-f">玩具設定：L = 16，答案取 App. D 的 GSM8K 例題風格。前向模式中每個位置固定一個均勻亂數 u<sub>k</sub>（mulberry32，seed 由 7 起），u<sub>k</sub> &lt; t 即遮住，所以拖動 t 時遮住的集合單調變化。生成模式以部分 Fisher–Yates 抽樣。讀數由本頁依 Sec. 2.1 與 Eq. 2.2 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c1-live"></p>
+  </div>
+  <div class="prose">
+    <p>t 越大，遮住的位置越多，期望數量是 $tL$；K 越大，NFE 越少，玩具中 NFE $=\lceil L/K\rceil$。C1 的生成順序與「這個 token 好不好猜」無關。Eq. 2.2 沒有規定 $U_t$ 怎麼選，這個選擇就是本論文要學習的對象。</p>
+  </div>
+  <details class="more">
+    <summary>符號表</summary>
+    <div class="in"><div class="tscroll" style="margin-top:4px"><table>
+      <caption>本頁使用的符號（位置索引一律用 k）</caption>
+      <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td>$L$、$V$、$[L]$</td><td>生成長度、詞彙表大小、集合 $\{1,\dots,L\}$</td></tr>
+      <tr><td>$M$</td><td>遮罩 token，頁面顯示為 [M]</td></tr>
+      <tr><td>$x$、$y$</td><td>提示、參考答案</td></tr>
+      <tr><td>$x_0$、$x_t$</td><td>訓練用乾淨序列、遮罩率 $t$ 下的加噪序列</td></tr>
+      <tr><td>$t\in[0,1]$</td><td>訓練時的遮罩率（Sec. 2.1）</td></tr>
+      <tr><td>$t\in\{T,\dots,1\}$</td><td>生成時的步數索引，倒數（Sec. 2.1、Sec. 3.1）</td></tr>
+      <tr><td>$y_t$、$y_t^k$</td><td>第 $t$ 步的部分遮罩答案、其第 $k$ 個位置</td></tr>
+      <tr><td>$p_t^k$</td><td>dLLM 在第 $t$ 步對位置 $k$ 的 token 分布</td></tr>
+      <tr><td>$c_t^k$、$c_t$</td><td>信心度 $\max_vp_t^k(v)$；$c_t=(c_t^1,\dots,c_t^L)$</td></tr>
+      <tr><td>$\mathcal M_t$、$U_t$</td><td>仍被遮住的位置集合、這一步要解開的位置集合</td></tr>
+      <tr><td>$K$、$\lambda$</td><td>top-K 規則每步解開的數量、Fast-dLLM 的信心度門檻</td></tr>
+      <tr><td>$BL$</td><td>semi-AR 的區塊長度；$BL=L$ 即完整擴散</td></tr>
+      <tr><td>$\tau$、$\tau_\pi$</td><td>dLLM 的取樣溫度（取 0）、策略溫度</td></tr>
+      <tr><td>$f_\phi$、$b_t$、$s_t^k$</td><td>策略網路、其輸出的 logit、Bernoulli 機率 $\sigma(b_t^k/\tau_\pi)$</td></tr>
+      <tr><td>$\pi_\phi$、$\pi_{\phi_{\rm old}}$</td><td>由 $f_\phi$ 定義的解遮罩策略、產生 rollout 的舊策略</td></tr>
+      <tr><td>$\sigma$</td><td>sigmoid 函數 $\sigma(x)=1/(1+e^{-x})$</td></tr>
+      <tr><td>$u_t$、$m_t$</td><td>動作 $u_t\in\{0,1\}^L$、遮罩向量 $m_t^k=\mathbb 1[k\in\mathcal M_t]$</td></tr>
+      <tr><td>$T$、$\hat T$</td><td>最大步數、所有位置都解開的第一個時刻；所用步數 $T-\hat T$ = NFE</td></tr>
+      <tr><td>$r$、$\alpha$、$R$</td><td>正確性分數、速度懲罰指數、總獎勵（Eq. 3.1）</td></tr>
+      <tr><td>$G$、$A_t^g$、$\rho_t^g$、$\epsilon$</td><td>GRPO 組大小、優勢、似然比、截斷幅度</td></tr>
+      <tr><td>$\bar R$</td><td>組內平均獎勵 $\frac1G\sum_iR^i$</td></tr>
+      <tr><td>$\beta$、$\beta_{\rm KL}$</td><td>測試時的機率縮放 $\min\{1,\beta s\}$；App. H Table 1 的 KL 係數（本文取 0）</td></tr>
+      <tr><td>$E$</td><td>expert steering 混入的專家數</td></tr>
+      </tbody></table></div></div>
+  </details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">訓練時每個 token 以什麼機率被遮住？生成時每一步做什麼？NFE 是什麼？</p>
+    <p class="a">每個 token 獨立以機率 $t$ 變成 [M]（Sec. 2.1）；每一步 dLLM 輸出所有位置的分布，取樣策略選出 $U_t\subseteq\mathcal M_t$，只抽樣這些位置、其他不變（Eq. 2.2）；NFE 是取樣步數，每步一次 dLLM 前向計算。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="mdm-discrete-diffusion-lineage.html">Masked diffusion 的離散擴散脈絡</a>、<a href="dllm-llada-dream-models.html">LLaDA 與 Dream：可比擬 AR 的 dLLM</a></p>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="heuristics" data-toc="02" data-tt="信心度規則">
+  <div class="ch-num">02 · 信心度規則</div>
+  <h2>信心度規則在完整擴散下失效</h2>
+  <div class="prose">
+    <p>第 $t$ 步位置 $k$ 的信心度（confidence）定義為 $c_t^k=\max_vp_t^k(v)$，即 dLLM 對該位置最可能 token 的機率。兩種常用規則都只看信心度（Sec. 2.2）：</p>
+    <ul>
+      <li><b>高信心 top-K</b>（Chang et al., 2022，MaskGIT）：每步解開信心度最高的固定 $K$ 個遮罩位置。</li>
+      <li><b>Fast-dLLM 門檻</b>（Wu et al., 2025）：解開所有信心度超過門檻 $\lambda$ 的遮罩位置，每步解開的數量可變。</li>
+    </ul>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="方程式，可橫向捲動">$$U_t^K=\arg\max_{I\subseteq\mathcal M_t,\ |I|=K}\ \sum_{k\in I}c_t^k,\qquad U_t^\lambda=\{k\in\mathcal M_t\mid c_t^k>\lambda\}$$</div><span class="eq-n">Sec. 2.2</span></div>
+  <div class="prose">
+    <h3>半自回歸與區塊長度</h3>
+    <p>半自回歸（semi-autoregressive, semi-AR）生成把長度 $L$ 的答案切成長度 $BL$ 的連續區塊，一次只對一個區塊解遮罩，區塊依序由左到右。$BL=L$ 時只有一個區塊，稱為完整擴散（full diffusion）。下圖以 $L=256$ 為例。</p>
+  </div>
+  <figure class="blk" aria-label="區塊長度示意">
+    <p class="blk-cap">semi-AR，BL = 32：256 個位置分成 8 個區塊</p>
+    <div class="blk-row"><span class="done">完成</span><span class="done">完成</span><span class="cur">目前</span><span class="lock">鎖定</span><span class="lock">鎖定</span><span class="lock">鎖定</span><span class="lock">鎖定</span><span class="lock">鎖定</span></div>
+    <div class="blk-ax"><span>1</span><span>65–96 為目前區塊</span><span>256</span></div>
+    <p class="blk-cap">完整擴散，BL = 256：只有一個區塊，任何遮罩位置都可以解開</p>
+    <div class="blk-row one"><span>1 – 256 全部可解開</span></div>
+  </figure>
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>解遮罩規則比較：隨機 K、top-K、門檻</h3></div>
+    <p class="plate-lead">同一個信心度向量下比較三種規則選出的位置。點 token 格可把該位置設成「已解開」，規則只作用在仍遮住的位置。切到情境 B，看門檻規則從哪裡開始。</p>
+    <div class="ctl-row" style="margin-bottom:10px"><div class="seg" id="c2-pre" role="group" aria-label="情境"><button type="button" data-v="A" aria-pressed="true">A · 一般區塊</button><button type="button" data-v="B" aria-pressed="false">B · 尾端填充 token</button></div>
+      <div class="seg" id="c2-rule" role="group" aria-label="規則"><button type="button" data-v="random" aria-pressed="false">隨機 K</button><button type="button" data-v="topk" aria-pressed="false">top-K</button><button type="button" data-v="thr" aria-pressed="true">門檻 λ</button></div></div>
+    <div class="legend" style="margin:0 0 6px"><span class="lg cbar">信心度 c（長條高度）</span><span class="lg lam" id="c2-lamlg">門檻 λ</span><span class="lg selb">本步解開 ✓</span><span class="lg maskb">遮住</span></div>
+    <div class="toks" id="c2-toks" role="group" aria-label="token 列，按下可切換已解開／遮住"></div>
+    <div class="pg side" style="margin-top:14px">
+      <div class="ctl">
+        <div class="rng" id="c2-Kbox"><label class="lbl" for="c2-K"><span>每步解開數 K</span><output id="c2-Ko">4</output></label><input id="c2-K" type="range" min="1" max="16" step="1" value="4"></div>
+        <div class="rng" id="c2-lbox"><label class="lbl" for="c2-l"><span>門檻 λ</span><output id="c2-lo">0.90</output></label><input id="c2-l" type="range" min="0.05" max="1" step="0.01" value="0.9"></div>
+        <div class="ctl-row"><label class="chk"><input type="checkbox" id="c2-fb" checked>空集合時 fallback</label><button class="small-btn" type="button" id="c2-re">重新抽樣</button><button class="small-btn" type="button" id="c2-clr">全部遮住</button></div>
+      </div>
+      <p class="readout" id="c2-ro"></p>
+    </div>
+    <p class="plate-f">玩具設定：兩組 token 與信心度都是本頁設定的數值，情境 B 模仿 App. C.3 描述的現象。門檻規則用嚴格大於；空集合時解開信心度最大的一個位置（推定：論文只說策略的 fallback「similar to Fast-dLLM」）。「右鄰比例」是本步被選位置中右邊鄰居也被選的比例；App. C.1 在 BL32-slow 設定下對整段生成統計，Fast-dLLM 約 65%、策略約 20%。讀數由本頁依 Sec. 2.2 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <div class="prose">
+    <h3>完整擴散下的失效</h3>
+    <p>Fig. 1 比較三種規則在 LLaDA、GSM8K、$L=256$ 的表現（數字取自 App. J Table 2、Table 4）。semi-AR（BL = 32）時，Fast-dLLM 最高 79.7%（82.2 NFE）。完整擴散（BL = 256）時，Fast-dLLM 最高只有 38.7%（32.1 NFE），256 NFE 時 33.6%；隨機解遮罩在 256 NFE 有 51.6%。也就是說，完整擴散下信心度規則低於隨機，而且多給 NFE 不再改善。高信心 top-K 在 32 NFE 達 43.6% 後下降，256 NFE 時為 33.6%。</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table class="stack">
+    <caption>LLaDA、GSM8K、L = 256 的正確率（App. J Table 2、Table 4）</caption>
+    <thead><tr><th>設定</th><th>規則</th><th class="num">NFE</th><th class="num">正確率（%）</th></tr></thead><tbody>
+    <tr><td>semi-AR，BL = 32</td><td data-h="規則">Fast-dLLM 最高點</td><td class="num" data-h="NFE">82.2</td><td class="num" data-h="正確率（%）">79.7</td></tr>
+    <tr><td>完整擴散，BL = 256</td><td data-h="規則">Fast-dLLM 最高點</td><td class="num" data-h="NFE">32.1</td><td class="num" data-h="正確率（%）">38.7</td></tr>
+    <tr><td>完整擴散，BL = 256</td><td data-h="規則">Fast-dLLM</td><td class="num" data-h="NFE">256</td><td class="num" data-h="正確率（%）">33.6</td></tr>
+    <tr><td>完整擴散，BL = 256</td><td data-h="規則">高信心 top-K</td><td class="num" data-h="NFE">32</td><td class="num" data-h="正確率（%）">43.6</td></tr>
+    <tr><td>完整擴散，BL = 256</td><td data-h="規則">高信心 top-K</td><td class="num" data-h="NFE">256</td><td class="num" data-h="正確率（%）">33.6</td></tr>
+    <tr class="hl"><td>完整擴散，BL = 256</td><td data-h="規則">隨機</td><td class="num" data-h="NFE">256</td><td class="num" data-h="正確率（%）">51.6</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>App. C.3 描述的現象：完整擴散下，Fast-dLLM 的生成順序常呈現右到左（Fig. 7 說明文字寫「somewhat reverse」，另見 Fig. 26）。作者推測（原文「likely stems from」）原因是 LLaDA 的 SFT 沒有把填充 token（padding）排除在損失之外，模型對填充 token 過擬合、信心度偏高，信心度規則因此常先解開序列尾端的填充 token。C2 情境 B 中，門檻 0.9 選出位置 10–16，7 個中 6 個是 &lt;EOS&gt; 或 &lt;EoT&gt;。手工規則沒有機制辨認並略過填充 token 偏高的信心度，作者因此改為學習規則。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">top-K 與 Fast-dLLM 門檻規則如何選位置？</p>
+    <p class="a">信心度 $c_t^k=\max_vp_t^k(v)$；top-K 每步解開信心度最高的固定 $K$ 個；Fast-dLLM 解開所有 $c_t^k&gt;\lambda$ 的遮罩位置，數量可變（Sec. 2.2）。</p>
+    <p class="q">BL = L = 256 時 Fast-dLLM 在 GSM8K 的表現如何？作者如何解釋？</p>
+    <p class="a">低於隨機且多給 NFE 不再改善：Fast-dLLM 最高 38.7%（32.1 NFE），隨機在 256 NFE 為 51.6%（Table 4）；生成順序常呈現右到左；作者推測原因是 LLaDA 的 SFT 沒排除填充 token，填充信心度偏高，信心度規則常先解開尾端（App. C.3）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="confidence-thresholding-heuristics.html">Confidence 門檻式 unmasking heuristic</a>、<a href="semi-ar-block-generation.html">Semi-AR 區塊生成</a></p>
+</section>
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="mdp" data-toc="03" data-tt="MDP">
+  <div class="ch-num">03 · MDP</div>
+  <h2>取樣可以寫成馬可夫決策過程</h2>
+  <div class="prose">
+    <p>作者把取樣寫成馬可夫決策過程（Markov decision process, MDP）（Sec. 3.1）。「策略」（policy）指依目前狀態給出動作機率的函數。時間沿用生成的倒數記號 $t=T,T-1,\dots,1$。MDP 的四個組成如下：</p>
+    <ul>
+      <li><b>狀態</b>：$(x,y_t)$，即提示與目前的部分遮罩答案；初始狀態 $y_T$ 全部遮住。</li>
+      <li><b>動作</b>：$u_t\in\{0,1\}^L$，$u_t^k=1$ 表示這一步解開位置 $k$。動作由策略抽出，$u_t\sim\pi_\phi(\cdot\mid y_t)$。</li>
+      <li><b>轉移</b>：$y_{t-1}\sim P(y_{t-1}\mid y_t,u_t;\tau)$，就是 Eq. 2.2，其中 $U_t^\pi=\{k\in\mathcal M_t\mid u_t^k=1\}$。</li>
+      <li><b>獎勵</b>：$R(y,y_t)$ 只在所有位置都解開的第一個時刻 $\hat T=\max\{t\in[T]\mid y_t^k\ne M\ \forall k\}$ 給出，$y$ 是參考答案。獎勵要同時鼓勵正確（$y_{\hat T}$ 接近 $y$）與效率（所用步數 $T-\hat T$ 少）。</li>
+    </ul>
+    <p>目標是最大化期望總獎勵（Sec. 3.1 無編號式）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="方程式，可橫向捲動">$$\max_\phi\ \mathbb E\Big[\sum_{t=1}^{T}R(y,y_t)\Big]$$</div><span class="eq-n">Sec. 3.1</span></div>
+  <div class="prose">
+    <p>在這個 MDP 中，凍結的 dLLM 是<b>環境</b>，不是策略，參數完全不變（Fig. 2：dLLM 約 7–8B 參數，策略約 300K 參數）。所用步數 $T-\hat T$ 就是 NFE。下圖是一步的資料流。</p>
+  </div>
+  <ol class="flow" aria-label="Fig. 2 的資料流，一步六格">
+    <li>目前的答案 $y_t$<span class="s">部分位置是 [M]</span></li>
+    <li class="env">凍結的 dLLM $p_\theta$（環境）<span class="s">約 7–8B 參數，不更新；輸出每個位置的 token 分布 $p_t^k$</span></li>
+    <li>信心度 $c_t$、遮罩 $m_t$、步數 $t$<span class="s">$c_t^k$ 是 $p_t^k$ 的最大機率</span></li>
+    <li class="pol">策略 $f_\phi$（訓練對象）<span class="s">約 300K 參數；輸出 logit $b_t$</span></li>
+    <li>機率 $s_t$ → 動作 $u_t$<span class="s">$s_t^k=\sigma(b_t^k/\tau_\pi)$，每個遮罩位置獨立抽樣</span></li>
+    <li>解開 $U_t^\pi$，得到 $y_{t-1}$<span class="s loop">回到第 1 格，直到沒有 [M]；獎勵在 $\hat T$ 給出</span></li>
+  </ol>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">狀態、動作、轉移、獎勵各是什麼？誰是環境？</p>
+    <p class="a">狀態 $(x,y_t)$；動作 $u_t\in\{0,1\}^L$；轉移就是 Eq. 2.2，$U_t^\pi=\{k\in\mathcal M_t\mid u_t^k=1\}$；獎勵只在全部解開的時刻 $\hat T$ 給；凍結的 dLLM 是環境（Sec. 3.1）。</p>
+  </div></details>
+</section>
+
+<!-- S4 ============================================================ -->
+<section class="ch" id="policy" data-toc="04" data-tt="策略網路">
+  <div class="ch-num">04 · 策略網路</div>
+  <h2>策略只看信心度、遮罩與步數</h2>
+  <div class="prose">
+    <p>策略網路 $f_\phi$ 的輸入只有三項：信心度向量 $c_t$、遮罩向量 $m_t$ 與步數 $t$。它不看 token 本身（Sec. 3.2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="方程式，可橫向捲動">$$b_t=f_\phi(c_t,m_t,t)\in\mathbb R^L$$</div><span class="eq-n">Sec. 3.2</span></div>
+  <div class="prose">
+    <p>作者給出三個理由：信心度在每一步本來就算好，不增加計算；啟發式規則也只用信心度；改用 dLLM 的隱藏狀態需要大得多的策略，而且沒有穩定改善。Sec. 4.4 的消融中，隱藏狀態策略（約 300M 參數）表現較差，訓練也較不穩定。</p>
+    <p>架構是單層 transformer，以 adaptive layer norm（AdaLN）接收步數條件（Sec. 4.1、App. H Table 1、App. I）：hidden 128、feedforward 512、2 個 head。總參數約 300K，不到 dLLM 的 0.01%（Sec. 3.2）。以 LLaDA-8B 為例，300K / 8B = 0.00375%<span class="tag kd">本頁推導 · LLaDA 的示例</span>。</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table class="stack">
+    <caption>策略網路的組成（App. H Table 1；資料流依 App. I 的圖排列推定）</caption>
+    <thead><tr><th>部分</th><th>設定</th><th>用途</th></tr></thead><tbody>
+    <tr><td>輸入</td><td data-h="設定">$c$ 經線性投影、$m$ 經嵌入，兩者相加</td><td data-h="用途">每個位置一個向量；主實驗只用最大信心度</td></tr>
+    <tr><td>步數條件</td><td data-h="設定">$t$ 經正弦嵌入與 MLP，時間嵌入維度 128</td><td data-h="用途">AdaLN：用步數嵌入調整 layer norm 的縮放與平移</td></tr>
+    <tr><td>注意力</td><td data-h="設定">1 層、2 個 head、RoPE</td><td data-h="用途">RoPE 在注意力中編碼位置</td></tr>
+    <tr><td>前饋層</td><td data-h="設定">hidden 128、feedforward 512，各接殘差</td><td data-h="用途">逐位置轉換</td></tr>
+    <tr><td>輸出</td><td data-h="設定">LN 與線性投影，形狀 $(L,)$</td><td data-h="用途">每個位置一個 logit $b_t^k$</td></tr>
+    <tr><td>參數量</td><td data-h="設定">約 300K</td><td data-h="用途">不到 dLLM 的 0.01%</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>因為輸入只有信心度、不含 token 嵌入，同一個策略可以直接搬到另一個 dLLM 上使用（S11）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$f_\phi$ 的輸入是什麼？為什麼不用隱藏狀態？多大？</p>
+    <p class="a">信心度 $c_t$、遮罩向量 $m_t$、步數 $t$；隱藏狀態策略（約 300M）較差且不穩定；單層 transformer（AdaLN、hidden 128、2 heads），約 300K 參數，不到 dLLM 的 0.01%（Sec. 3.2、4.4、App. H）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="unmasking-mdp-policy-design.html">Unmasking 作為 MDP 與輕量 policy 設計</a></p>
+</section>
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="bernoulli" data-toc="05" data-tt="Bernoulli 策略">
+  <div class="ch-num">05 · Bernoulli 策略</div>
+  <h2>每個位置獨立以 Bernoulli 機率決定是否解開</h2>
+  <div class="prose">
+    <p>策略輸出的 logit $b_t^k$ 經 sigmoid 函數 $\sigma(x)=1/(1+e^{-x})$ 轉成機率；sigmoid 把任意實數映到 0 到 1 之間。每個仍被遮住的位置獨立地以這個機率決定是否解開，$u_t^k\sim\mathrm{Ber}(s_t^k)$（Sec. 3.2）。Sec. 3.2 先以 $s_t^k=\sigma(b_t^k)$ 定義似然；生成時再加上策略溫度 $\tau_\pi$：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="方程式，可橫向捲動">$$u_t^k\sim\mathrm{Ber}(s_t^k),\qquad s_t^k=\sigma\!\left(b_t^k/\tau_\pi\right)$$</div><span class="eq-n">Sec. 3.2</span></div>
+  <div class="prose">
+    <p>$\tau_\pi$ 越小，機率越接近 0 或 1。實驗用 $\tau_\pi=0.5$（BL = 32）與 $\tau_\pi=1$（BL = 256）。一個動作的機率可以寫成閉式：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="方程式，可橫向捲動">$$\pi_\phi(u_t)=\prod_{k\in\mathcal M_t}\big(s_t^k\big)^{u_t^k}\big(1-s_t^k\big)^{1-u_t^k}$$</div><span class="eq-n">Sec. 3.2</span></div>
+  <div class="prose">
+    <p>乘積只算仍遮住的位置：已解開的位置不計入似然（Sec. 3.3），Alg. 1 第 16 行把它們的 $u$ 設為 0。這個似然可以精確計算，不需要近似；對 dLLM 本身做 RL 後訓練時則需要近似似然（Zhao et al., 2025a）。</p>
+    <p>Bernoulli 抽樣可能讓所有位置都是 0。<b>測試時</b>遇到 $u_t=0$，就解開 $s_t^k$ 最大的位置（Alg. 1 第 17–18 行；作者寫「similar to Fast-dLLM」）。這個 fallback 只在測試時使用：訓練時強制解遮罩容易造成 reward hacking。<b>訓練時</b>不用 fallback，若 $T$ 步內沒有解完就終止，帶著剩下的遮罩評分；這類樣本的正確性分數很低或為零，策略很快學會不留遮罩。</p>
+    <p>Sec. 4.1 另外定義測試時的機率縮放：把 $s$ 換成 $\min\{1,\beta s\}$。$\beta&gt;1$ 每步解開更多，$\beta&lt;1$ 更少。結果在 S9 討論。</p>
+  </div>
+  <div class="plate" id="c2b">
+    <div class="plate-h"><span class="id">C2B</span><h3>Bernoulli 策略：τ<sub>π</sub>、β 與 fallback</h3></div>
+    <p class="plate-lead">每格上方的實心長條是信心度 c，空心長條是解遮罩機率 s。調整 τ<sub>π</sub> 與 β，看期望解開數、全部為 0 的機率 P<sub>0</sub> 與這次抽樣的對數似然。</p>
+    <div class="ctl-row" style="margin-bottom:10px"><div class="seg" id="c2b-pre" role="group" aria-label="情境"><button type="button" data-v="A" aria-pressed="true">A · 一般區塊</button><button type="button" data-v="B" aria-pressed="false">B · 尾端填充 token</button></div></div>
+    <div class="legend" style="margin:0 0 6px"><span class="lg cbar">信心度 c</span><span class="lg sbar">機率 s</span><span class="lg selb">抽到解開 ✓，fallback ↑</span></div>
+    <div class="toks" id="c2b-toks" role="group" aria-label="token 列，按下可切換已解開／遮住"></div>
+    <div class="pg side" style="margin-top:14px">
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c2b-tau"><span>策略溫度 τ<sub>π</sub></span><output id="c2b-tauo">1.00</output></label><input id="c2b-tau" type="range" min="0.25" max="2" step="0.05" value="1"></div>
+        <div class="ctl-row" id="c2b-tauc"><button class="chip" type="button" data-v="0.5">0.5</button><button class="chip" type="button" data-v="1">1</button><button class="chip" type="button" data-v="1.5">1.5</button></div>
+        <div><span class="lbl" id="c2b-bl">機率縮放 β</span><div class="seg" id="c2b-beta" role="group" aria-labelledby="c2b-bl"></div></div>
+        <div class="ctl-row"><label class="chk"><input type="checkbox" id="c2b-fb" checked>測試時 fallback</label><button class="small-btn" type="button" id="c2b-re">重新抽樣</button></div>
+      </div>
+      <p class="readout" id="c2b-ro"></p>
+    </div>
+    <p class="plate-f">玩具設定：示意 logit b<sub>k</sub> = 8(c<sub>k</sub> − 0.7)，不是論文訓練出的網路；真實策略是 transformer，輸入整個 c<sub>t</sub>、m<sub>t</sub>、t。s<sub>k</sub> = min{1, β·σ(b<sub>k</sub>/τ<sub>π</sub>)}。E|U| = Σs<sub>k</sub> + P<sub>0</sub>·[fallback 開]，P<sub>0</sub> = Π(1 − s<sub>k</sub>)。log π(u) 一律以抽樣出的 u（fallback 前）計算：fallback 只在測試使用，不計入似然。讀數由本頁依 Sec. 3.2 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c2b-live"></p>
+  </div>
+  <div class="prose">
+    <p>降低 $\tau_\pi$ 使 $s$ 更接近 0 或 1；$\beta&lt;1$ 減少每步解開數、提高 $P_0$；$\beta&gt;1$ 使部分 $s$ 截到 1。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">動作怎麼抽？$\pi_\phi(u_t)$ 怎麼算？全部是 0 時怎麼辦？</p>
+    <p class="a">$u_t^k\sim\mathrm{Ber}(\sigma(b_t^k/\tau_\pi))$；$\pi_\phi(u_t)=\prod_k s^{u}(1-s)^{1-u}$，只算仍遮住的位置；測試時解開 $s$ 最大的位置，訓練時不用 fallback（會 reward hacking），未解完就終止（Sec. 3.2）。</p>
+  </div></details>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="grpo" data-toc="06" data-tt="GRPO">
+  <div class="ch-num">06 · GRPO</div>
+  <h2>GRPO 以組內相對獎勵更新策略</h2>
+  <div class="prose">
+    <p>策略以 GRPO（Shao et al., 2024）訓練。GRPO 是 PPO（Schulman et al., 2017）的變體，以同一組樣本的平均獎勵代替價值網路。策略梯度法有三個要點：優勢（advantage）為正的動作，更新後機率提高；為負則降低。$\rho$ 是新舊策略對同一個動作給出的機率比。截斷限制單次更新可以把 $\rho$ 推離 1 多遠。</p>
+    <p>對每個提示 $x$，用舊策略 $\pi_{\phi_{\rm old}}$ 抽 $G$ 條軌跡（$G=8$，Table 1）。dLLM 溫度固定為 $\tau=0$（貪婪解碼），所以同組樣本的差異只來自解遮罩動作。第 $g$ 條軌跡的優勢是它的獎勵減去組內平均，不除以標準差（依 Zhao et al., 2025a 的建議）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="方程式，可橫向捲動">$$A_t^g=R\big(y,y^g_{\hat T_g}\big)-\frac1G\sum_{i=1}^{G}R\big(y,y^i_{\hat T_i}\big)$$</div><span class="eq-n">Sec. 3.3</span></div>
+  <div class="prose">
+    <p>獎勵只在最後一步給出，最後一步的獎勵傳給該軌跡的所有步驟，所以同一條軌跡的每一步使用相同的優勢。目標函數如下（Sec. 3.3 無編號式）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="方程式，可橫向捲動">$$J(\phi)=\mathbb E\Big[\frac1G\sum_{g=1}^{G}\frac{1}{T-\hat T_g}\sum_{t=\hat T_g}^{T}\min\big(\rho_t^gA_t^g,\ \mathrm{clip}(\rho_t^g,1-\epsilon,1+\epsilon)A_t^g\big)\Big],\quad \rho_t^g=\frac{\pi_\phi(u_t^g)}{\pi_{\phi_{\rm old}}(u_t^g)}$$</div><span class="eq-n">Sec. 3.3</span></div>
+  <div class="prose">
+    <p class="note">照原文；求和 $t=\hat T_g,\dots,T$ 的項數為 $T-\hat T_g+1$，正規化因子是 $T-\hat T_g$。依 Alg. 1，有動作的步數是 $T-\hat T_g$<span class="tag kd">本頁推導</span>。</p>
+    <p>$\rho_t^g$ 是新舊策略對同一個動作的機率比，$\mathrm{clip}$ 把它截斷到 $[1-\epsilon,1+\epsilon]$，$\epsilon=0.5$（expert steering 時為 0.2）。比值與截斷用來穩定 off-policy 更新。策略從頭訓練，所以移除 KL 正則項（Table 1：$\beta_{\rm KL}=0$）。Bernoulli 策略的比值可以在對數空間逐位置相加<span class="tag kd">本頁推導</span>：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="方程式，可橫向捲動">$$\log\rho_t^g=\sum_{k\in\mathcal M_t}\Big[u^k\log\frac{s^k}{s^k_{\rm old}}+(1-u^k)\log\frac{1-s^k}{1-s^k_{\rm old}}\Big]$$</div><span class="eq-n">本頁推導</span></div>
+  <div class="prose">
+    <p>截斷的作用是標準 PPO 截斷的性質<span class="tag kd">本頁推導</span>：只有當截斷項是 min 的取值時（$A&gt;0$ 且 $\rho&gt;1+\epsilon$，或 $A&lt;0$ 且 $\rho&lt;1-\epsilon$），目標對 $\rho$ 是常數，梯度為 0；其他區域目標等於 $\rho A$，包括 $A&gt;0,\rho&lt;1-\epsilon$ 與 $A&lt;0,\rho&gt;1+\epsilon$ 兩區。下圖的獎勵暫時只看對錯，$R=r$，相當於下一節 Eq. 3.1 取 α = 0。</p>
+  </div>
+  <div class="plate" id="c3a">
+    <div class="plate-h"><span class="id">C3a</span><h3>組內優勢與截斷</h3></div>
+    <p class="plate-lead">左：切換 8 個樣本的對錯，看優勢 A = R − R̄ 的正負。右：選一個優勢值，拖動 ρ，看截斷後的目標在哪一側不再隨 ρ 改變。</p>
+    <div class="ctl-row" style="margin-bottom:12px"><span class="lbl">預設組</span><button class="small-btn" type="button" data-p="mix">混合</button><button class="small-btn" type="button" data-p="wrong">全部答錯</button><button class="small-btn" type="button" data-p="right">全部答對</button></div>
+    <div class="pg two">
+      <div>
+        <div class="rows r1" id="c3a-rows" style="grid-template-columns:repeat(auto-fill,minmax(130px,1fr))"></div>
+        <div class="fig" id="c3a-bars" style="margin-top:12px"><svg role="img" aria-label="8 個樣本的優勢"></svg></div>
+        <p class="readout" id="c3a-ro" style="margin-top:10px"></p>
+      </div>
+      <div>
+        <fieldset class="radio" id="c3a-src"><legend>截斷圖的優勢 A</legend>
+          <label><input type="radio" name="c3a-src" value="p" checked>A = +0.25</label>
+          <label><input type="radio" name="c3a-src" value="n">A = −0.25</label>
+          <label><input type="radio" name="c3a-src" value="row">選用某列</label>
+          <select id="c3a-row" aria-label="選用第幾列的優勢" disabled></select>
+        </fieldset>
+        <div class="rng" style="margin-top:8px"><label class="lbl" for="c3a-rho"><span>機率比 ρ</span><output id="c3a-rhoo">1.00</output></label><input id="c3a-rho" type="range" min="0" max="3" step="0.01" value="1"></div>
+        <div class="ctl-row" id="c3a-eps"><span class="lbl">截斷幅度 ε</span><button class="chip" type="button" data-v="0.5" aria-pressed="true">0.5</button><button class="chip" type="button" data-v="0.2" aria-pressed="false">0.2（ES）</button></div>
+        <div class="fig" id="c3a-clip" style="margin-top:8px"><svg role="img" aria-label="截斷後的目標 f(ρ)"></svg></div>
+        <div class="legend"><span class="lg tot">f(ρ) = min(ρA, clip(ρ)A)</span><span class="lg ref">未截斷 ρA</span></div>
+      </div>
+    </div>
+    <p class="plate-f">R = r（暫不含速度），A<sub>g</sub> = r<sub>g</sub> − (1/8)Σr。f(ρ) = min(ρA, clip(ρ, 1−ε, 1+ε)A)。灰色區段的梯度為 0（本頁推導，標準 PPO 截斷）。讀數由本頁依 Sec. 3.3 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c3a-live"></p>
+  </div>
+  <div class="prose">
+    <p>混合組的優勢是 ±0.5。全部答錯或全部答對時，優勢全為 0，這一組不更新策略。A = +0.25、ε = 0.5 時，ρ &gt; 1.5 之後 f 不再增加；ρ &lt; 0.5 時 f = ρA。GRPO 只看組內相對獎勵，所以獎勵如何組合正確與速度，直接決定哪些樣本被強化，這是下一節的主題。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">優勢怎麼算？$\rho$、$\epsilon$ 是什麼？為什麼 dLLM 用 $\tau=0$？</p>
+    <p class="a">$A^g=R^g-\frac1G\sum_iR^i$，不除標準差，傳給軌跡所有步驟；$\rho=\pi_\phi(u)/\pi_{\phi_{\rm old}}(u)$，截斷到 $[1-\epsilon,1+\epsilon]$，$\epsilon=0.5$（ES 0.2）；不加 KL；$\tau=0$ 讓組內差異只來自解遮罩動作；$G=8$（Sec. 3.3、Table 1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="rl-post-training-dllm-grpo.html">dLLM 的強化學習後訓練與 GRPO</a></p>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="reward" data-toc="07" data-tt="乘法獎勵">
+  <div class="ch-num">07 · 乘法獎勵</div>
+  <h2>乘法獎勵只在答對時鼓勵加速</h2>
+  <div class="prose">
+    <p>作者的獎勵把正確性分數 $r$ 與速度因子相乘（Eq. 3.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="方程式，可橫向捲動">$$R(y,y_t)=\begin{cases}r(y,y_t)\cdot\Big(1-\dfrac{T-t}{T}\Big)^{\alpha}, & t=\hat T\\[6pt] 0, & \text{otherwise}\end{cases}$$</div><span class="eq-n">Eq. 3.1</span></div>
+  <div class="prose">
+    <p>「0, otherwise」指 $t\ne\hat T$ 的非終止步：獎勵只在最後一步給一次，不是指未完成的樣本。$r$ 是任務的正確性分數；Eq. 3.1 的說明以二元獎勵為例，實作用 d1（Zhao et al., 2025a）的獎勵（Table 1），論文沒有寫出它的組成。$\alpha\ge0$ 控制正確率與速度的權衡：α 越大越重視速度，訓練出的策略越快，但正確率較低（Fig. 3、Sec. 4.1）。</p>
+    <p>在 $t=\hat T$ 時 $1-\frac{T-\hat T}{T}=\hat T/T$，即剩下的步數預算比例，所以 $R=r\,(\hat T/T)^\alpha$<span class="tag kd">本頁推導</span>。Sec. 3.1 定義 $\hat T\in[T]$，即 $\hat T\ge1$，字面上速度因子至少是 $(1/T)^\alpha$。<span class="tag kd">推定</span>若以 $\hat T=0$ 表示用滿 $T$ 步，速度因子為 0（$\alpha&gt;0$）；$\alpha=0$ 時取 $0^0=1$，獎勵只看正確性。</p>
+    <h3>加法獎勵為什麼失敗</h3>
+    <p>另一種寫法是加法獎勵 $r-\alpha\frac{T-\hat T}{T}$（Graves, 2016 的形式）。Sec. 3.3 指出它會 reward hacking：訓練初期一組樣本常常全部答錯，這時加法獎勵下較快的錯誤樣本得到較高的獎勵，因而得到正優勢，策略被推向更快而不是更正確。Fig. 9b 中，加法獎勵訓練出一次解開全部位置的策略，步數收斂到最小值。</p>
+    <p><span class="tag kd">本頁推導 · 前提：r 為二元</span>若 $r\in\{0,1\}$（論文例示；d1 獎勵的細節論文未列），乘法獎勵下錯誤樣本 $R=0\le\bar R$，其中 $\bar R=\frac1G\sum_iR^i$ 是組內平均獎勵，所以錯誤樣本的優勢 $-\bar R\le0$，等號只在整組獎勵都是 0 時成立；正優勢只給答對的樣本。這與 Sec. 4.4 的描述「assigning a positive advantage only if the generation is correct」一致。若 d1 獎勵對錯誤答案也給正分（例如格式分），這個結論不成立。答對但很慢的樣本仍可能得到負優勢，例如下圖預設 P2 的第 4 列。</p>
+  </div>
+  <div class="plate" id="c3b">
+    <div class="plate-h"><span class="id">C3b</span><h3>乘法與加法獎勵下的優勢</h3></div>
+    <p class="plate-lead">每個樣本有對錯與所用步數 n = T − T̂。比較同一組樣本在兩種獎勵下的優勢；P1 是訓練初期常見的「全部答錯」。</p>
+    <div class="ctl-row" style="margin-bottom:12px"><span class="lbl">預設組</span><button class="small-btn" type="button" data-p="P1">P1 · 全部答錯</button><button class="small-btn" type="button" data-p="P2">P2 · 混合</button><button class="small-btn" type="button" data-p="P3">P3 · 全部答對</button></div>
+    <div class="ctl-row" id="c3b-al" style="margin-bottom:14px"><span class="lbl">速度指數 α</span></div>
+    <div class="pg two">
+      <div class="rows" id="c3b-rows"></div>
+      <div>
+        <div class="fig" id="c3b-bars"><svg role="img" aria-label="兩種獎勵下的優勢"></svg></div>
+        <p class="readout" id="c3b-ro" style="margin-top:10px"></p>
+        <div class="fig" id="c3b-sf" style="margin-top:14px"><svg role="img" aria-label="速度因子 (1 − n/T)^α 對 n 的曲線"></svg></div>
+      </div>
+    </div>
+    <p class="plate-f">T = 256（與 App. C 的 L = T = 256 一致；訓練時的 T 論文未寫）。R<sup>×</sup> = r·(1 − n/T)<sup>α</sup>，R<sup>+</sup> = r − α·n/T，A = R − R̄。α = 0 時 0<sup>0</sup> 定義為 1。本元件的 r 只有 0 與 1（論文例示的二元獎勵）；論文實作用 d1 的獎勵，其組成論文未列。讀數由本頁依 Eq. 3.1 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c3b-live"></p>
+  </div>
+  <div class="prose">
+    <p>P1 下乘法獎勵的優勢全為 0；加法獎勵（α = 1）下最快的 4 個錯誤樣本優勢為正。P2 加法（α = 3）下，答錯的第 3、8 列優勢為正。$r$ 為二元時，乘法下答錯樣本的優勢一律 ≤ 0。P3 全部答對時，兩種獎勵都依速度排序。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 3.1 是什麼？α 增大會怎樣？</p>
+    <p class="a">$R=r\cdot(1-\frac{T-\hat T}{T})^\alpha$（只在 $\hat T$），等於 $r(\hat T/T)^\alpha$〔本頁推導〕；α 越大越重視速度，訓練出的策略越快但較不準（Fig. 3、Sec. 4.1）。</p>
+    <p class="q">整組都答錯時，兩種獎勵給出的優勢有何不同？</p>
+    <p class="a">加法 $r-\alpha\frac{T-\hat T}{T}$ 下較快的錯誤樣本得到正優勢，訓練收斂到一步解開全部（Fig. 9b）；若 $r$ 為二元，乘法下錯誤樣本 $R=0$，優勢 $-\bar R\le0$，正優勢只給答對的樣本（Sec. 3.3、4.4；〔本頁推導〕在此前提下成立）。</p>
+  </div></details>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="toy" data-toc="08" data-tt="玩具模型">
+  <div class="ch-num">08 · 玩具模型</div>
+  <h2>在玩具模型中 α 決定最佳解遮罩速度</h2>
+  <div class="prose">
+    <p><span class="tag kd">玩具設定</span><span class="tag kd">本頁推導</span>論文沒有這一節。這裡用一個可以精確計算期望值的玩具 MDP，觀察 Eq. 3.1 的 α 如何改變最佳策略。設定如下：</p>
+    <ul>
+      <li>$L$ 個位置，$T=L$。策略只有一個參數 $s$：每一步每個仍被遮住的位置獨立以機率 $s$ 解開，忽略信心度。</li>
+      <li>正確率模型：答案正確的機率 $=p_0\prod_{\text{步}}\gamma^{\max(j-1,0)}$，$j$ 是該步同時解開的數量；每多一個同時解開的 token，正確機率乘上 $\gamma$。這個模型只用來表達「平行解開越多越容易錯」，不是論文的模型。</li>
+      <li>訓練模式（同論文，無 fallback）：$j=0$ 的步驟浪費掉。$T$ 步內沒有解完的樣本記為 $r=0$、步數 $N=T$，乘法獎勵得 0，加法獎勵得 $-\alpha$。測試模式（有 fallback）：$j=0$ 時改為解開 1 個。</li>
+      <li>期望值以（步數，剩餘遮罩數）的動態規劃精確計算；$s$ 取 0.005 到 1 的 200 個網格點。</li>
+    </ul>
+    <p>預設（$L=T=16$、$\gamma=0.9$、$p_0=0.8$）下，乘法獎勵的最佳 $s^*$ 隨 α 增加：α = 0、0.3、1、3、10 分別為 0.290、0.375、0.720、1.000、1.000。α 大到一定程度後，最佳值停在上限 $s=1$（一步解開全部）。加法獎勵在 α ≥ 0.3 時 $s^*=1$，方向與 Fig. 9b 相同。α = 0 的最佳值不在 $s\to0$：步數上限 $T=L$ 下，浪費的步會造成未完成。</p>
+  </div>
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>玩具 MDP：α 與獎勵形式決定最佳解遮罩速度</h3></div>
+    <p class="plate-lead">左：訓練模式（無 fallback）下期望獎勵對 s 的曲線，橘點是最佳 s*。右：測試模式（有 fallback）下，所有 s 構成的 NFE–正確率曲線，與五個 α 的訓練最佳點。</p>
+    <div class="ctl-row" id="c4-al" style="margin-bottom:8px"><span class="lbl">速度指數 α</span></div>
+    <div class="rng" style="max-width:420px"><label class="lbl" for="c4-s"><span>目前策略 s</span><output id="c4-so">0.500</output></label><input id="c4-s" type="range" min="0.005" max="1" step="0.005" value="0.5"></div>
+    <details class="more"><summary>進階設定</summary><div class="in">
+      <div class="ctl" style="padding-top:4px">
+        <div><span class="lbl" id="c4-Ll">位置數 L（T = L）</span><div class="seg" id="c4-L" role="group" aria-labelledby="c4-Ll"><button type="button" data-v="8" aria-pressed="false">8</button><button type="button" data-v="16" aria-pressed="true">16</button><button type="button" data-v="32" aria-pressed="false">32</button></div></div>
+        <div class="rng"><label class="lbl" for="c4-g"><span>每多一個平行 token 的正確率乘數 γ</span><output id="c4-go">0.90</output></label><input id="c4-g" type="range" min="0.8" max="1" step="0.01" value="0.9"></div>
+        <div class="rng"><label class="lbl" for="c4-p"><span>基礎正確率 p<sub>0</sub></span><output id="c4-po">0.80</output></label><input id="c4-p" type="range" min="0.3" max="1" step="0.05" value="0.8"></div>
+        <div><span class="lbl" id="c4-fl">獎勵形式</span><div class="seg" id="c4-form" role="group" aria-labelledby="c4-fl"><button type="button" data-v="mult" aria-pressed="true">乘法 r·(1 − N/T)<sup>α</sup></button><button type="button" data-v="add" aria-pressed="false">加法 r − α·N/T</button></div></div>
+      </div>
+    </div></details>
+    <div class="pg two" style="margin-top:16px">
+      <div class="fig" id="c4-left"><svg role="img" aria-label="訓練模式期望獎勵對 s"></svg></div>
+      <div class="fig" id="c4-right"><svg role="img" aria-label="測試模式 NFE 與正確率"></svg></div>
+    </div>
+    <div class="legend"><span class="lg acc">目前 α</span><span class="lg">其他 α（線型各異）</span><span>● 乘法獎勵的訓練最佳點</span><span>□ 加法獎勵的訓練最佳點</span><span>＋ 目前 s</span></div>
+    <p class="readout" id="c4-ro" style="margin-top:12px"></p>
+    <div class="plate-f">
+      <p style="margin:0 0 4px">此模型忽略信心度、用單一參數 s，正確率模型 γ 是玩具設定。</p>
+      <p style="margin:0 0 4px">α 大到一定程度後，最佳值停在上限 s = 1（一步解開全部），所以 α = 3 與 α = 10 的 s* 相同；這與論文 App. B.5 的「α 不平滑」是不同的現象。</p>
+      <p style="margin:0 0 4px">論文對加法獎勵失敗的解釋是優勢符號（C3b）；這裡顯示的是期望獎勵最佳值，兩者方向一致但不是同一件事。</p>
+      <p style="margin:0">玩具只算期望獎勵的最佳值，不說明 GRPO 訓練是否穩定；乘法獎勵在大 α 時的 s* = 1 也是玩具的期望最佳值，論文只主張乘法獎勵避開了整組答錯時的正優勢機制。讀數由本頁依 Eq. 3.1 與動態規劃即時計算。</p>
+    </div>
+    <p class="sr" aria-live="polite" id="c4-live"></p>
+  </div>
+  <div class="prose">
+    <p>這個玩具與論文的對應與不對應：玩具只算期望獎勵的最佳值，不說明 GRPO 訓練是否穩定；論文對加法獎勵失敗的解釋是 S7 的優勢符號機制，玩具顯示的是期望獎勵最佳值，兩者方向一致但不是同一件事；論文對乘法獎勵的主張只是它避開「整組答錯時較快錯誤樣本得到正優勢」的機制，不是「乘法獎勵永遠不會收斂到一步解開全部」。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">玩具模型中，乘法獎勵的 α 由 0 增到 10 時，最佳 $s^*$ 怎麼變？為什麼 α = 3 與 α = 10 相同？</p>
+    <p class="a">$s^*$ 由 0.290 增到 0.375、0.720，α ≥ 3 時為 1.000；α 大到一定程度後最佳值停在上限 $s=1$，所以兩者相同（玩具設定，本頁推導）。</p>
+  </div></details>
+</section>
+
+<!-- S9 ============================================================ -->
+<section class="ch" id="semiar" data-toc="09" data-tt="半自回歸結果">
+  <div class="ch-num">09 · 半自回歸結果</div>
+  <h2>半自回歸下學到的策略與 Fast-dLLM 相當</h2>
+  <div class="prose">
+    <p>設定（Sec. 4.1）：環境是 LLaDA-8B-Instruct（Dream-7B-Instruct 的結果見 App. B.4）。五個策略 $\alpha\in\{10,3,1,0.3,0\}$ 以 BL = 32 在 GSM8K 與 MATH 訓練集的混合資料上訓練一個 epoch（約 15,000 筆）。每個 α 有兩個訓練 seed，依最終訓練損失選一個；測試結果平均三個 seed。基準：隨機與 top-K 用 $K\in\{8,16,32,64,128,256\}$，Fast-dLLM 用 $\lambda\in\{0.1,0.2,\dots,1.0\}$；全部 $\tau=0$。</p>
+    <p>結果：策略優於隨機與 top-K，在中高 NFE 與 Fast-dLLM 相當，沒有超越；作者推測 Fast-dLLM 在 semi-AR 下接近最佳。α = 10 訓練較不穩定，但成功時在約 10 NFE 優於 Fast-dLLM：Table 2 中策略 10.3 NFE 35.2%，Fast-dLLM 10.6 NFE 17.5%。作者歸因於策略在最後一個區塊產生數字答案時放慢（Fig. 5b）；App. C.2 在 N = 100 個樣本上的對應數字為約 38% 對約 18%。</p>
+  </div>
+  <div class="tscroll" style="max-width:760px"><table class="stack">
+    <caption>BL = 32 的摘錄（App. J Table 2：GSM8K；Table 3：MATH；策略為三個 seed 的平均）</caption>
+    <thead><tr><th>方法</th><th class="num">GSM8K NFE</th><th class="num">GSM8K %</th><th class="num">MATH NFE</th><th class="num">MATH %</th></tr></thead><tbody>
+    <tr><td>Fast-dLLM</td><td class="num" data-h="GSM8K NFE">10.6</td><td class="num" data-h="GSM8K %">17.5</td><td class="num" data-h="MATH NFE">11.4</td><td class="num" data-h="MATH %">7.4</td></tr>
+    <tr><td>Fast-dLLM</td><td class="num" data-h="GSM8K NFE">32.6</td><td class="num" data-h="GSM8K %">54.0</td><td class="num" data-h="MATH NFE">43.9</td><td class="num" data-h="MATH %">20.0</td></tr>
+    <tr><td>Fast-dLLM</td><td class="num" data-h="GSM8K NFE">43.2</td><td class="num" data-h="GSM8K %">72.6</td><td class="num" data-h="MATH NFE">57.6</td><td class="num" data-h="MATH %">28.4</td></tr>
+    <tr><td>Fast-dLLM</td><td class="num" data-h="GSM8K NFE">51.9</td><td class="num" data-h="GSM8K %">76.6</td><td class="num" data-h="MATH NFE">68.1</td><td class="num" data-h="MATH %">32.4</td></tr>
+    <tr><td>Fast-dLLM</td><td class="num" data-h="GSM8K NFE">82.2</td><td class="num" data-h="GSM8K %">79.7</td><td class="num" data-h="MATH NFE">100.7</td><td class="num" data-h="MATH %">34.4</td></tr>
+    <tr class="hl"><td>策略</td><td class="num" data-h="GSM8K NFE">10.3</td><td class="num" data-h="GSM8K %">35.2</td><td class="num" data-h="MATH NFE">10.8</td><td class="num" data-h="MATH %">15.3</td></tr>
+    <tr class="hl"><td>策略</td><td class="num" data-h="GSM8K NFE">46.2</td><td class="num" data-h="GSM8K %">75.5</td><td class="num" data-h="MATH NFE">59.1</td><td class="num" data-h="MATH %">31.5</td></tr>
+    <tr class="hl"><td>策略</td><td class="num" data-h="GSM8K NFE">50.7</td><td class="num" data-h="GSM8K %">76.6</td><td class="num" data-h="MATH NFE">64.6</td><td class="num" data-h="MATH %">31.9</td></tr>
+    <tr class="hl"><td>策略</td><td class="num" data-h="GSM8K NFE">82.7</td><td class="num" data-h="GSM8K %">80.0</td><td class="num" data-h="MATH NFE">100.2</td><td class="num" data-h="MATH %">34.1</td></tr>
+    <tr class="hl"><td>策略</td><td class="num" data-h="GSM8K NFE">135.8</td><td class="num" data-h="GSM8K %">80.5</td><td class="num" data-h="MATH NFE">153.4</td><td class="num" data-h="MATH %">35.1</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <h3>改變 α 不能平滑地調整速度</h3>
+    <p>改變訓練時的 α 不能平滑地走遍 Pareto 前緣：α = 3 的行為與 α = 1 幾乎相同；在更密的網格 $\{10,9,\dots,1,0.3,0\}$ 中，α ≥ 4 收斂到接近 α = 3 或 α = 10 的策略，沒有中間值（App. B.5、Fig. 14）。</p>
+    <p>測試時控制（Fig. 6）：仿照 Chen et al. (2025a)，把解遮罩機率改為 $u_t^k\sim\mathrm{Ber}(\min\{1,\beta s_t^k\})$。以 α = 1 的策略改變 β，NFE 與正確率沿 Pareto 前緣連續變化；MATH-500 約 25 NFE 時，策略 20%、Fast-dLLM 10%。$\tau_\pi$ 也能小幅調整（Fig. 16：$\tau_\pi\in\{1.5,1.0,0.5\}$；semi-AR 以 0.5 最佳，完整擴散以 1 最佳）。</p>
+    <h3>解遮罩行為與 Fast-dLLM 不同</h3>
+    <p>App. C.1 在 BL32-slow 設定下比較兩者（BL = 32，Fast-dLLM λ = 0.9 對策略 α = 0.3，兩者總 NFE 與正確率幾乎相同；N = 100 個 GSM8K 測試樣本，$L=T=256$）。在這個設定下，策略同時解開相鄰 token 的比例約 20%，Fast-dLLM 約 65%（Fig. 24）；Fast-dLLM 第一個區塊約 17 NFE，逐漸降到最後一個區塊約 4 NFE，策略每個區塊約 10 NFE（Fig. 5a）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">BL = 32 時策略與 Fast-dLLM 相比如何？怎樣在測試時調整速度？</p>
+    <p class="a">中高 NFE 相當；α = 10 在約 10 NFE 優於 Fast-dLLM（35.2% 對 17.5%，Table 2）；改 α 不平滑（α ≥ 4 跳到 α = 3 或 α = 10 的行為）；測試時用 $\mathrm{Ber}(\min\{1,\beta s\})$ 可讓 NFE 與正確率沿前緣連續變化，MATH-500 約 25 NFE 時 20% 對 10%（Sec. 4.1、Fig. 6）。</p>
+  </div></details>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="fulldiff" data-toc="10" data-tt="完整擴散">
+  <div class="ch-num">10 · 完整擴散</div>
+  <h2>完整擴散下策略勝過規則，expert steering 補上探索</h2>
+  <div class="prose">
+    <p>Sec. 4.2 以 BL = L = 256 訓練與測試，其餘設定不變。所有方法都比 semi-AR 差，但策略下降最少：GSM8K 約 12 NFE 時約 50%，啟發式規則（不論是否 semi-AR）≤ 30%（Sec. 4.2 的敘述）；Table 4 中策略為 13.0 NFE 48.3%。</p>
+    <p>理論上，BL = L 的策略可以自己學出 semi-AR 的順序；實際上在中高 NFE 仍不如 BL = 32 的策略。作者認為策略離最佳還很遠，原因可能是探索不足。App. F 的論證是：若 AR 順序明顯最好，從隨機初始化的策略抽到純 AR 軌跡的機率約 $1/L!\approx0$。$\log_{10}(256!)\approx506.93$，即約 $10^{-507}$；$L=8$ 時為 $1/40320$<span class="tag kd">本頁推導 · 粗略量級</span>。這個數只把一種 AR 排列與 $L!$ 種排列相比，忽略每步可解開多個 token 的動作空間。</p>
+    <h3>Expert steering</h3>
+    <p>Expert steering（ES）在訓練時把策略換成混合分布（App. F）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="region" aria-label="方程式，可橫向捲動">$$\pi_\phi^{\rm ES}=\frac{G}{G+E}\,\pi_\phi+\frac{E}{G+E}\sum_{e=1}^{E}\delta_e$$</div><span class="eq-n">App. F</span></div>
+  <div class="prose">
+    <p>每組抽 $G+E$ 個樣本，其中 $E$ 個來自專家 $\delta_e$。計算似然比時要用 $\pi_\phi^{\rm ES}$：專家樣本在 $\pi_\phi$ 下的似然約為 0，若用 $\pi_\phi$ 會造成不穩定。實作用一個專家：Fast-dLLM（λ = 0.9、BL = 32），每組固定混入一條（$E=1$）。策略比專家差時，專家樣本傾向得到正優勢，策略的更新方向偏向專家樣本；策略比專家好時，專家樣本得到負優勢，策略的正確率仍可高於專家。</p>
+    <p>結果：高 NFE 時接近 semi-AR 的最佳正確率（Sec. 4.2 的參考值為 GSM8K 約 80%、MATH 約 35%）；Table 4 中 GSM8K 達 77.2%（70.5 NFE），Table 5 中 MATH 達 31.4%（86.7 NFE）。ES 的結果點不連續：Table 4 的 ES 列在 20.6 與 70.5 NFE 之間沒有點，Table 5 在 23.1 與 86.7 NFE 之間沒有點，所以不能讀成一條平滑的前緣。代價是訓練明顯不穩定，多個 α 收斂到幾乎相同的策略。</p>
+  </div>
+  <div class="tscroll" style="max-width:760px"><table class="stack">
+    <caption>BL = 256 的摘錄（App. J Table 4：GSM8K；Table 5：MATH）。ES 列全部列出</caption>
+    <thead><tr><th>方法</th><th class="num">GSM8K NFE</th><th class="num">GSM8K %</th><th class="num">MATH NFE</th><th class="num">MATH %</th></tr></thead><tbody>
+    <tr><td>隨機（256 NFE）</td><td class="num" data-h="GSM8K NFE">256</td><td class="num" data-h="GSM8K %">51.6</td><td class="num" data-h="MATH NFE">256</td><td class="num" data-h="MATH %">18.5</td></tr>
+    <tr><td>Fast-dLLM 最高點</td><td class="num" data-h="GSM8K NFE">32.1</td><td class="num" data-h="GSM8K %">38.7</td><td class="num" data-h="MATH NFE">49.9</td><td class="num" data-h="MATH %">20.8</td></tr>
+    <tr><td>策略</td><td class="num" data-h="GSM8K NFE">13.0</td><td class="num" data-h="GSM8K %">48.3</td><td class="num" data-h="MATH NFE">14.5</td><td class="num" data-h="MATH %">18.8</td></tr>
+    <tr><td>策略</td><td class="num" data-h="GSM8K NFE">18.5</td><td class="num" data-h="GSM8K %">51.9</td><td class="num" data-h="MATH NFE">22.3</td><td class="num" data-h="MATH %">19.8</td></tr>
+    <tr><td>策略</td><td class="num" data-h="GSM8K NFE">27.1</td><td class="num" data-h="GSM8K %">54.8</td><td class="num" data-h="MATH NFE">33.7</td><td class="num" data-h="MATH %">19.9</td></tr>
+    <tr><td>策略</td><td class="num" data-h="GSM8K NFE">50.5</td><td class="num" data-h="GSM8K %">56.1</td><td class="num" data-h="MATH NFE">61.6</td><td class="num" data-h="MATH %">21.0</td></tr>
+    <tr><td>策略</td><td class="num" data-h="GSM8K NFE">93.3</td><td class="num" data-h="GSM8K %">61.8</td><td class="num" data-h="MATH NFE">121.5</td><td class="num" data-h="MATH %">22.9</td></tr>
+    <tr class="hl"><td>策略（ES）</td><td class="num" data-h="GSM8K NFE">15.7</td><td class="num" data-h="GSM8K %">50.6</td><td class="num" data-h="MATH NFE">17.5</td><td class="num" data-h="MATH %">17.7</td></tr>
+    <tr class="hl"><td>策略（ES）</td><td class="num" data-h="GSM8K NFE">20.6</td><td class="num" data-h="GSM8K %">51.9</td><td class="num" data-h="MATH NFE">23.1</td><td class="num" data-h="MATH %">19.8</td></tr>
+    <tr class="hl"><td>策略（ES）</td><td class="num" data-h="GSM8K NFE">70.5</td><td class="num" data-h="GSM8K %">77.2</td><td class="num" data-h="MATH NFE">86.7</td><td class="num" data-h="MATH %">31.4</td></tr>
+    <tr class="hl"><td>策略（ES）</td><td class="num" data-h="GSM8K NFE">72.4</td><td class="num" data-h="GSM8K %">76.7</td><td class="num" data-h="MATH NFE">90.1</td><td class="num" data-h="MATH %">30.1</td></tr>
+    <tr class="hl"><td>策略（ES）</td><td class="num" data-h="GSM8K NFE">87.9</td><td class="num" data-h="GSM8K %">75.1</td><td class="num" data-h="MATH NFE">98.0</td><td class="num" data-h="MATH %">31.0</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>生成順序（Fig. 7、App. C.3）：Fast-dLLM 常呈現右到左；不用 ES 的策略接近隨機順序，作者解讀為策略不依賴填充 token 偏高的信心度；用 ES 的策略改為由左到右生成。以 Spearman 相關比較生成順序，Fast-dLLM 對策略為 0.26 ± 0.21，對 ES 策略為 −0.24 ± 0.51。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">BL = L 時策略表現如何？為什麼需要 expert steering？怎麼做？</p>
+    <p class="a">約 12 NFE 約 50%，啟發式 ≤ 30%；但仍不如 semi-AR 策略，作者歸因探索不足：隨機抽到純 AR 軌跡的機率約 $1/L!$（粗略量級）；ES 在每組混入一條 Fast-dLLM（λ = 0.9、BL = 32）軌跡（$E=1$），似然比用混合分布；GSM8K 達 77.2%（70.5 NFE），但 ES 結果在 20.6 與 70.5 NFE 之間沒有點；策略改為由左到右生成（Sec. 4.2、App. F、Table 4）。</p>
+  </div></details>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="transfer" data-toc="11" data-tt="遷移與消融">
+  <div class="ch-num">11 · 遷移與消融</div>
+  <h2>策略可跨模型與長度遷移，跨領域較弱</h2>
+  <div class="prose">
+    <p><b>模型遷移 LLaDA → Dream</b>（Fig. 8a）：多數策略接近 Fast-dLLM，與直接在 Dream 上訓練的策略相近；例外是 α = 10，它退回 Fast-dLLM 的水準，作者認為陡峭的獎勵使它過擬合 LLaDA 的信心度模式。策略只看信心度、不看 token 嵌入，所以能跨模型使用。</p>
+    <p><b>領域遷移 數學 → 程式</b>（HumanEval、MBPP；Fig. 8b–c）：沒有完全遷移，HumanEval 尤其明顯；改用 KodCode-RL-10K 訓練的策略縮小了 HumanEval 的差距，並改善 MBPP 在低 NFE 的表現。</p>
+    <p><b>長度遷移 L = 256 → 512</b>（Fig. 8d、Fig. 18）：基準方法進一步變差，策略的表現與 L = 256 時相近。transformer 可以接受不同長度的輸入，MLP 不行。</p>
+    <p><b>非貪婪解碼</b>（$\tau=0.8$；Fast-dLLM λ = 0.6 對策略 α = 1、$\tau_\pi=0.5$，BL = 32）：策略的 pass@k 較高，差距隨 k 擴大（Sec. 4.3：跨資料集平均 k = 1 時 +0.98%、k = 32 時 +2.56%）；多數決與 ORM 選答也較好（Fig. 19）。非貪婪時，信心度定義為抽到的 token 的機率（Sec. 4.3 註 2）。</p>
+    <h3>設計消融</h3>
+    <p>Sec. 4.4、Fig. 9、Fig. 20 的消融：乘法獎勵優於加法獎勵（S7）；Bernoulli 與 DPLS 表現相近，DPLS 對 α 的可控性略好；只用每個位置的最大信心度略優於 top-50 信心度；隱藏狀態策略（約 300M 參數）較差且訓練較不穩定。測試時把 $t$ 或 $m_t$ 歸零都會降低正確率，移除 $m_t$ 比移除 $t$ 的正確率下降更多（GSM8K 只歸零 $t$ 為例外），NFE 變化最多 1.2（基準為 GSM8K 75.1% / 45.8 NFE、MATH-500 34.0% / 58.4 NFE）。</p>
+    <h3>相關工作</h3>
+    <p>Sec. 5 的比較：Hong et al.（2025b）同樣以 GRPO 學習解遮罩策略，但每步解開固定數量，本文以 Bernoulli 讓數量可變；DiFFPO（Zhao et al., 2025b）同時學習自適應門檻並更新基礎模型；Bansal &amp; Sanghavi 與 Bao et al. 以蒸餾而非 RL 訓練小型模組，作者預期它們承襲啟發式規則在非 semi-AR 設定的困難；Azangulov et al. 建模 token 之間的相依性；Kim et al.（2025a）與 Ben-Hamu et al. 的規則出現在 Fig. 11 的額外基準比較。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">哪些遷移成功、哪些不成功？輸入消融的結論？</p>
+    <p class="a">LLaDA → Dream 多數接近 Fast-dLLM（α = 10 例外）；L 256 → 512 表現相近；數學 → 程式沒有完全遷移（HumanEval 明顯），用 KodCode 訓練可縮小差距；只用最大信心度優於 top-50 與隱藏狀態；移除 $m_t$ 比移除 $t$ 的正確率下降更多（Sec. 4.4；GSM8K 只歸零 $t$ 為例外，Fig. 20）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="learned-unmasking-concurrent-work.html">學習式 unmasking 與 dLLM 加速的相關工作</a></p>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="impl" data-toc="12" data-tt="實作">
+  <div class="ch-num">12 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="tscroll" style="max-width:860px"><table class="stack">
+    <caption>App. H Table 1 與正文的設定</caption>
+    <thead><tr><th>類別</th><th>項目</th><th>值</th></tr></thead><tbody>
+    <tr><td>訓練</td><td data-h="項目">learning rate / scheduler / warmup</td><td data-h="值">3e-5 / cosine / 100 steps</td></tr>
+    <tr><td>訓練</td><td data-h="項目">effective batch size / weight decay / max grad norm</td><td data-h="值">16 / 0.1 / 0.2</td></tr>
+    <tr><td>訓練</td><td data-h="項目">clipping factor ε</td><td data-h="值">0.5（expert steering 0.2）</td></tr>
+    <tr><td>訓練</td><td data-h="項目">資料 / epoch</td><td data-h="值">GSM8K + MATH 訓練集混合 / 1</td></tr>
+    <tr><td>GRPO</td><td data-h="項目">group size G / β<sub>KL</sub> / 正確性獎勵</td><td data-h="值">8 / 0.0 / d1（Zhao et al., 2025a）的獎勵</td></tr>
+    <tr><td>策略網路</td><td data-h="項目">blocks / hidden / FF / heads / 時間嵌入 / 參數量</td><td data-h="值">1 / 128 / 512 / 2 / 128 / 300K</td></tr>
+    <tr><td>正文</td><td data-h="項目">環境模型 / L / 訓練 BL</td><td data-h="值">LLaDA-8B-Instruct / 256 / 32（Sec. 4.1）或 256（Sec. 4.2）</td></tr>
+    <tr><td>正文</td><td data-h="項目">測試 τ<sub>π</sub> / dLLM τ</td><td data-h="值">0.5（BL = 32）、1（BL = 256） / 0</td></tr>
+    <tr><td>App. B.3</td><td data-h="項目">硬體</td><td data-h="值">A100；牆鐘時間與 NFE 曲線幾乎相同（Fig. 12）</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <h3>Alg. 1 逐行對照</h3>
+    <p>完整擴散（BL = L）下的策略取樣（App. A，Algorithm 1）。左欄照原文轉錄，右欄說明。</p>
+  </div>
+  <div class="algo">
+    <div class="row hd"><div>Algorithm 1 Policy Sampling</div><div class="ex-h">說明</div></div>
+    <div class="row"><code>3: y_T ← (M, …, M)
+4: M_T ← {1, …, L}</code><div class="ex">從全部遮住的序列開始；仍遮住的位置集合是全部位置。</div></div>
+    <div class="row"><code>5: for t = T, T − 1, …, 1 do
+6:   if M_t = ∅ then
+7:     break</code><div class="ex">步數倒數；全部解開就停止。</div></div>
+    <div class="row"><code>9:  p_t^k ← p_θ(· | x, y_t), ∀k ∈ [L]
+10: c_t^k ← max_v p_t^k(v), ∀k ∈ [L]
+12: m_t^k ← 1[k ∈ M_t], ∀k ∈ [L]</code><div class="ex">一次 dLLM 前向計算（1 NFE），得到所有位置的分布、信心度與遮罩向量。</div></div>
+    <div class="row"><code>13: b_t ← f_ϕ(c_t, m_t, t)
+14: s_t^k ← σ(b_t^k / τ_π), ∀k ∈ M_t
+15: u_t^k ∼ Ber(s_t^k), ∀k ∈ M_t</code><div class="ex">策略輸出 logit，經溫度與 sigmoid 得到機率，每個遮罩位置獨立抽樣。</div></div>
+    <div class="row"><code>16: u_t^k ← 0, ∀k ∉ M_t</code><div class="ex">已解開的位置設為 0，不計入似然。</div></div>
+    <div class="row"><code>17: if Σ_{k=1}^{L} u_t^k = 0 then
+18:   u_t^{k*} ← 1, k* = argmax_{k∈M_t} s_t^k</code><div class="ex">全部為 0 時解開機率最大的位置。這個 fallback 只在測試使用，訓練時不用。</div></div>
+    <div class="row"><code>20: U_t^π ← {k ∈ M_t | u_t^k = 1}
+21: y_{t−1}^k ∼ p_t^k, ∀k ∈ U_t^π
+22: y_{t−1}^k ← y_t^k, ∀k ∉ U_t^π
+23: M_{t−1} ← M_t \ U_t^π</code><div class="ex">就是 Eq. 2.2：只抽樣被選的位置，其他不變。</div></div>
+    <div class="row"><code>25: T̂ ← t
+26: return y_T̂, T − T̂</code><div class="ex">回傳答案與所用步數 T − T̂，即 NFE。</div></div>
+  </div>
+  <div class="prose">
+    <h3>常見錯誤</h3>
+    <ol>
+      <li><b>混淆兩個 $t$。</b>Sec. 2.1 訓練時 $t\in[0,1]$ 是遮罩率；生成與 MDP 中 $t=T,\dots,1$ 是倒數的步數。App. C、D 的圖又把時間軸改成正向。</li>
+      <li><b>NFE 與 $\hat T$。</b>NFE = 步數 $T-\hat T$。推定：若以 $\hat T=0$ 表示用滿 $T$ 步，乘法獎勵的速度因子為 0；Sec. 3.1 字面上 $\hat T\ge1$，因子至少 $(1/T)^\alpha$。訓練時的 $T$ 論文未寫；App. C 的分析用 $L=T=256$。</li>
+      <li><b>訓練時用了 fallback。</b>fallback 只用在測試；訓練時不強制解遮罩，未解完就終止並評分。玩具模型中未完成樣本 $r=0$、步數 $N=T$：乘法得 0，加法得 $-\alpha$（不是 0）。Eq. 3.1 的「0, otherwise」指非終止步，不是未完成樣本。</li>
+      <li><b>rollout 時 dLLM 用了隨機取樣。</b>GRPO rollout 時 dLLM 用 $\tau=0$；隨機性只來自策略的 Bernoulli 抽樣。</li>
+      <li><b>似然與優勢的細節。</b>已解開的位置不計入似然；優勢不除以標準差；不加 KL。</li>
+      <li><b>用加法獎勵。</b>加法獎勵的訓練收斂到一步解開全部（Fig. 9b）；用乘法獎勵。</li>
+      <li><b>期待改 α 就能平滑調速。</b>改 α 不保證平滑的速度—正確率權衡；測試時用 $\beta$ 或 $\tau_\pi$ 調整。</li>
+      <li><b>ES 的似然比用錯分布。</b>Expert steering 的似然比必須用混合分布 $\pi_\phi^{\rm ES}$。</li>
+      <li><b>輸入加入更多資訊。</b>只用每個位置的最大信心度作輸入；top-50 信心度或隱藏狀態沒有幫助。</li>
+    </ol>
+    <p class="note">附註：App. E 的 DPLS 是另一種動作分布。它以 Plackett–Luce 模型加上固定效用 $b_{\rm STOP}=0$ 的 STOP token，依 $\mathrm{softmax}(b_t/\tau_\pi)$ 逐一抽取不放回，抽到 STOP 即停，所以每步至少解開一個位置。消融顯示它與 Bernoulli 表現相近（Fig. 9c），作者因 Bernoulli 較簡單而採用 Bernoulli。</p>
+  </div>
+</section>
+
+<!-- S13 =========================================================== -->
+<section class="ch" id="history" data-toc="13" data-tt="研究脈絡">
+  <div class="ch-num">13 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>離散擴散從 D3PM 開始；MaskGIT 在影像生成中提出依信心度解遮罩；MDLM 與 SEDD 把遮罩擴散用在語言模型上；LLaDA 與 Dream 把規模擴大到可與 AR 模型比較；區塊擴散提出 semi-AR 生成；Fast-dLLM 以信心度門檻加速推論。另一條線是強化學習：PPO 與其變體 GRPO，以及把 RL 用在 dLLM 後訓練的 d1。同期的學習式解遮罩（Hong et al.）與本文都把解遮罩順序交給學到的策略。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S14 =========================================================== -->
+<section class="ch" id="next" data-toc="14" data-tt="限制與延伸">
+  <div class="ch-num">14 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>Sec. 6 列出的限制：每個 α 要訓練一個策略，成本高，而且不一定給出夠細的速度控制；測試時介入（$\beta$、$\tau_\pi$）有希望但尚無定論。未來方向包括擴大多領域訓練資料、學習重新遮罩（remask）已解開的 token，以及推廣到多模態遮罩擴散模型。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="unmasking-policies-dllm-overview.html">擴散語言模型的 unmasking 策略：從 heuristic 到強化學習總覽</a><span>總覽</span></div></li>
+    <li><div><a href="mdm-discrete-diffusion-lineage.html">Masked diffusion 的離散擴散脈絡</a><span>D3PM、MDLM、SEDD</span></div></li>
+    <li><div><a href="dllm-llada-dream-models.html">LLaDA 與 Dream：可比擬 AR 的 dLLM</a><span>環境模型</span></div></li>
+    <li><div><a href="semi-ar-block-generation.html">Semi-AR 區塊生成</a><span>區塊長度 BL</span></div></li>
+    <li><div><a href="confidence-thresholding-heuristics.html">Confidence 門檻式 unmasking heuristic</a><span>top-K 與 Fast-dLLM</span></div></li>
+    <li><div><a href="rl-post-training-dllm-grpo.html">dLLM 的強化學習後訓練與 GRPO</a><span>PPO、GRPO、d1</span></div></li>
+    <li><div><a href="learned-unmasking-concurrent-work.html">學習式 unmasking 與 dLLM 加速的相關工作</a><span>同期工作</span></div></li>
+    <li><div><a href="unmasking-mdp-policy-design.html">Unmasking 作為 MDP 與輕量 policy 設計</a><span>本論文的方法</span></div></li>
+  </ol>
+  <div class="links" style="margin-top:24px">
+    <a class="btn" href="https://arxiv.org/abs/2512.09106">arXiv 2512.09106 ↗</a>
+    <a class="btn" href="https://github.com/apple/ml-rl-dllm">程式碼 apple/ml-rl-dllm ↗</a>
+  </div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Metod Jazbec, Theo X. Olausson, Louis Béthune, Pierre Ablin, Michael Kirchhof, João Monteiro, Victor Turrisi, Jason Ramapuram, Marco Cuturi. Learning Unmasking Policies for Diffusion Language Models. <a href="https://arxiv.org/abs/2512.09106">arXiv:2512.09106</a>（v4，2026-06-01）.</p>
+  <p>本頁的方程式與數字取自論文 v4；標示「本頁推導」的內容為本頁自行推導，「玩具設定」為本頁設定的示意數值，「推定」為依論文文字推測、論文未明寫的事實。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2021, "title": "Structured Denoising Diffusion Models in Discrete State-Spaces", "authors_short": "Austin et al.", "arxiv": "2107.03006", "role": "離散擴散（D3PM）", "source": "paper.txt §1"}, {"year": 2022, "title": "MaskGIT: Masked Generative Image Transformer", "authors_short": "Chang et al.", "arxiv": "2202.04200", "role": "confidence 式 unmasking 先例", "source": "paper.txt §1"}, {"year": 2023, "title": "Discrete Diffusion Modeling by Estimating the Ratios of the Data Distribution", "authors_short": "Lou et al.", "arxiv": "2310.16834", "role": "離散擴散語言模型", "source": "paper.txt §1"}, {"year": 2024, "title": "DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models", "authors_short": "Shao et al.", "arxiv": "2402.03300", "role": "GRPO 的來源", "source": "paper.txt §3.3"}, {"year": 2024, "title": "Simple and Effective Masked Diffusion Language Models", "authors_short": "Sahoo et al.", "arxiv": "2406.07524", "role": "MDM 訓練方法", "source": "paper.txt §2.1"}, {"year": 2025, "title": "Large Language Diffusion Models", "authors_short": "Nie et al.", "arxiv": "2502.09992", "role": "LLaDA，環境模型", "source": "paper.txt §1"}, {"year": 2025, "title": "Block Diffusion: Interpolating Between Autoregressive and Diffusion Language Models", "authors_short": "Arriola et al.", "arxiv": "2503.09573", "role": "semi-AR 區塊生成", "source": "paper.txt §1"}, {"year": 2025, "title": "d1: Scaling Reasoning in Diffusion Large Language Models via Reinforcement Learning", "authors_short": "Zhao et al.", "arxiv": "2504.12216", "role": "dLLM 的 RL 後訓練", "source": "paper.txt §5"}, {"year": 2025, "title": "Fast-dLLM: Training-free Acceleration of Diffusion LLM by Enabling KV Cache and Parallel Decoding", "authors_short": "Wu et al.", "arxiv": "2505.22618", "role": "confidence 門檻 heuristic 基準", "source": "paper.txt §1, §5"}, {"year": 2025, "title": "Dream 7B: Diffusion Large Language Models", "authors_short": "Ye et al.", "arxiv": "2508.15487", "role": "Dream，環境模型", "source": "paper.txt §1"}, {"year": 2025, "title": "Improving Discrete Diffusion Unmasking Policies Beyond Explicit Reference Policies", "authors_short": "Hong et al.", "arxiv": "2510.05725", "role": "同期的 GRPO unmasking policy", "source": "paper.txt §5"}, {"year": 2025, "title": "Learning Unmasking Policies for Diffusion Language Models", "authors_short": "Jazbec et al.", "arxiv": "2512.09106", "role": "本論文", "source": "—"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function frame(svg,o){
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m=o.m,x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=m.t;
+  const X=lin(o.x[0],o.x[1],x0,x1),Y=lin(o.y[0],o.y[1],y0,y1);
+  const g=el('g',null,svg);
+  (o.yt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.yf?o.yf(v):String(v)),yy=Y(val);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},g);tx(g,x0-8,yy+4,lab,{class:'tk','text-anchor':'end'})});
+  (o.xt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.xf?o.xf(v):String(v)),xx=X(val);el('line',{x1:xx,x2:xx,y1:y0,y2:y0+4,class:'axl'},g);tx(g,xx,y0+18,lab,{class:'tk','text-anchor':'middle'})});
+  if(!o.noAxis)el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  if(o.xl)tx(g,(x0+x1)/2,o.H-4,o.xl,{class:'al','text-anchor':'middle'});
+  if(o.yl)tx(g,4,12,o.yl,{class:'al'});
+  return {X,Y,g,x0,x1,y0,y1};
+}
+function hatchDef(svg,id){const d=el('defs',null,svg),p=el('pattern',{id,width:6,height:6,patternUnits:'userSpaceOnUse',patternTransform:'rotate(45)'},d);el('line',{x1:0,y1:0,x2:0,y2:6,class:'hatchl'},p);return`url(#${id})`}
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},400)}
+function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const sigmoid=x=>x>=0?1/(1+Math.exp(-x)):Math.exp(x)/(1+Math.exp(x));
+const sgn=v=>(v>=0?'+':'−')+Math.abs(v).toFixed(3);
+const pos=a=>'{'+a.map(k=>k+1).join(', ')+'}';
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ---------- shared toy data ---------- */
+const L16=16;
+const TOK=["James","buys","10","suits",",","each","costing","$","750",".","Total",":","$","7500","<EOS>","<EoT>"];
+const PRESET={
+  A:{tok:TOK,c:[0.62,0.55,0.48,0.41,0.93,0.36,0.30,0.88,0.27,0.95,0.33,0.71,0.85,0.22,0.58,0.64]},
+  B:{tok:["Total",":","$","750","×","10","=","$","7500",".","<EOS>","<EoT>","<EoT>","<EoT>","<EoT>","<EoT>"],c:[0.58,0.51,0.44,0.39,0.90,0.34,0.29,0.84,0.25,0.92,0.97,0.995,0.995,0.995,0.995,0.995]}};
+const asc=(a,b)=>a-b;
+// partial Fisher–Yates on the ascending masked list (C1 generation, C2 random-K)
+function fyPick(M,K,r){const a=M.slice().sort(asc),n=Math.min(K,a.length);
+  for(let i=0;i<n;i++){const j=i+Math.floor(r()*(a.length-i));const t=a[i];a[i]=a[j];a[j]=t}
+  return{U:a.slice(0,n).sort(asc),rest:a.slice(n)}}
+const argmaxIn=(v,M)=>M.reduce((b,k)=>v[k]>v[b]?k:b,M[0]);   // M ascending → ties keep smaller index
+function adjRatio(U){if(!U.length)return null;const S=new Set(U);return U.filter(k=>S.has(k+1)).length/U.length}
+
+/* ---------- token strip rendering ---------- */
+function tokCell(tag,o){const e=document.createElement(tag);e.className='tok'+(o.masked?' m':'')+(o.sel?' sel':'')+(o.isNew?' new':'');
+  if(tag==='button'){e.type='button';e.setAttribute('aria-pressed',String(!o.masked))}
+  e.innerHTML=`<span class="tt">${o.masked?'M':esc(o.tok)}</span>${o.badge?`<span class="badge" aria-hidden="true">${o.badge}</span>`:''}`;
+  if(!o.masked)e.title=o.tok;
+  e.setAttribute('aria-label',`位置 ${o.k+1}，${o.masked?'遮住':o.tok}${o.extra||''}`);
+  return e}
+
+/* ---------- hero frames ---------- */
+(function(){const box=$('#hero-frames');const st=[[],[2,6,10,12],[1,7,9,14]];let un=new Set();
+  ['第 0 步','第 1 步','第 2 步'].forEach((lab,i)=>{st[i].forEach(k=>un.add(k));const f=document.createElement('div');f.className='frame';
+    f.innerHTML=`<span class="fl">${lab}</span><div class="mini" aria-hidden="true">${Array.from({length:16},(_,k)=>`<span class="${!un.has(k)?'m':st[i].includes(k)?'new':''}"></span>`).join('')}</div>`;box.appendChild(f)})})();
+
+/* ---------- C1 ---------- */
+const c1={mode:'fwd',seed:7,K:4,M:null,step:0,last:[],rng:null,timer:0};
+function c1u(seed){const r=mulberry32(seed);return Array.from({length:L16},()=>r())}
+function c1masked(seed,t){const u=c1u(seed);const out=[];for(let k=0;k<L16;k++)if(u[k]<t)out.push(k);return out}
+function genTrace(seed,K){const r=mulberry32(seed+1);let M=[...Array(L16).keys()];const steps=[];while(M.length){const p=fyPick(M,K,r);steps.push(p.U);M=p.rest}return steps}
+function c1resetGen(){c1stop(false);c1.M=[...Array(L16).keys()];c1.step=0;c1.last=[];c1.rng=mulberry32(c1.seed+1)}
+function c1next(){if(!c1.M.length)return false;const p=fyPick(c1.M,c1.K,c1.rng);c1.M=p.rest;c1.last=p.U;c1.step++;return true}
+function c1stop(say){if(c1.timer){clearInterval(c1.timer);c1.timer=0;$('#c1-play').textContent='自動播放';if(say)announce('c1',`已暫停，第 ${c1.step} 步，剩 ${c1.M.length} 個遮住`)}}
+function renderC1(){
+  $$('#c1-mode button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===c1.mode)));
+  $('#c1-fwd').classList.toggle('hide',c1.mode!=='fwd');$('#c1-gen').classList.toggle('hide',c1.mode!=='gen');
+  const ul=$('#c1-toks');ul.textContent='';
+  if(c1.mode==='fwd'){const t=+$('#c1-t').value;$('#c1-to').textContent=t.toFixed(2);$('#c1-t').setAttribute('aria-valuetext','t = '+t.toFixed(2));
+    const Ms=new Set(c1masked(c1.seed,t));
+    for(let k=0;k<L16;k++){const li=tokCell('li',{k,tok:TOK[k],masked:Ms.has(k)});li.setAttribute('role','listitem');ul.appendChild(li)}
+    $('#c1-ro').innerHTML=`遮住數 <b>${Ms.size}</b> / 16<br>期望 tL = <b>${(t*16).toFixed(2)}</b><br>ELBO 權重 1/t = <b>${t<0.01?'—':(1/t).toFixed(2)}</b>${t<0.01?'<br>t = 0 時沒有遮住的位置，該項為 0':''}<br>seed = <b>${c1.seed}</b>`;
+  }else{
+    $$('#c1-K .chip').forEach(c=>c.setAttribute('aria-pressed',String(+c.dataset.v===c1.K)));
+    const Ms=new Set(c1.M),nw=new Set(c1.last);
+    for(let k=0;k<L16;k++){const li=tokCell('li',{k,tok:TOK[k],masked:Ms.has(k),isNew:nw.has(k),badge:nw.has(k)?'新':'',extra:nw.has(k)?'，本步解開':''});li.setAttribute('role','listitem');ul.appendChild(li)}
+    const done=!c1.M.length;
+    $('#c1-ro').innerHTML=`NFE（步數）<b>${c1.step}</b><br>本步解開 <b>${c1.last.length?pos(c1.last):'—'}</b><br>剩餘遮住 <b>${c1.M.length}</b>${done?`<br><span class="acc">完成：NFE = ⌈16/${c1.K}⌉ = ${Math.ceil(16/c1.K)}</span>`:''}`;
+    $('#c1-step').disabled=done;
+  }
+}
+function initC1(){
+  $('#c1-K').innerHTML=[1,2,3,4,8,16].map(k=>`<button class="chip" type="button" data-v="${k}">${k}</button>`).join('');
+  $$('#c1-mode button').forEach(b=>b.addEventListener('click',()=>{c1stop(false);c1.mode=b.dataset.v;renderC1()}));
+  $('#c1-t').addEventListener('input',renderC1);$('#c1-t').addEventListener('change',()=>{const t=+$('#c1-t').value;announce('c1',`t = ${t.toFixed(2)}，遮住 ${c1masked(c1.seed,t).length} 個`)});
+  $('#c1-re').addEventListener('click',()=>{c1.seed++;c1resetGen();renderC1()});
+  $$('#c1-K .chip').forEach(c=>c.addEventListener('click',()=>{c1.K=+c.dataset.v;c1resetGen();renderC1()}));
+  $('#c1-step').addEventListener('click',()=>{c1stop(false);c1next();renderC1();announce('c1',c1.M.length?`第 ${c1.step} 步，解開 ${pos(c1.last)}，剩 ${c1.M.length} 個遮住`:`完成，共 ${c1.step} 次 NFE`)});
+  $('#c1-reset').addEventListener('click',()=>{c1resetGen();renderC1()});
+  $('#c1-play').addEventListener('click',()=>{
+    if(c1.timer){c1stop(true);return}
+    if(!c1.M.length)c1resetGen();
+    if(RM){while(c1next());renderC1();announce('c1',`完成，共 ${c1.step} 次 NFE`);return}
+    $('#c1-play').textContent='暫停';
+    c1.timer=setInterval(()=>{c1next();renderC1();if(!c1.M.length){c1stop(false);announce('c1',`完成，共 ${c1.step} 次 NFE`)}},750)});
+  c1resetGen();renderC1()}
+
+/* ---------- C2: heuristic rules ---------- */
+const rules={
+  random:(c,M,o)=>({U:fyPick(M,o.K,mulberry32(o.seed)).U,fb:false}),
+  topk:(c,M,o)=>({U:M.slice().sort((a,b)=>c[b]-c[a]||a-b).slice(0,Math.min(o.K,M.length)).sort(asc),fb:false}),
+  thr:(c,M,o)=>{const U=M.filter(k=>c[k]>o.lam);if(U.length||!M.length||!o.fb)return{U,fb:false};return{U:[argmaxIn(c,M.slice().sort(asc))],fb:true}}};
+const c2={pre:'A',un:new Set(),rule:'thr',K:4,lam:0.9,fb:true,seed:7};
+function barHTML(cv,o){return`<div class="bar${o.two?' two':''}" aria-hidden="true"><i style="height:${(cv*100).toFixed(1)}%"></i>${o.s!=null?`<b style="height:${(o.s*100).toFixed(1)}%"></b>`:''}${o.lam!=null?`<span class="lam" style="bottom:${(Math.min(1,o.lam)*100).toFixed(1)}%"></span>`:''}</div>`}
+function c2masked(st){return [...Array(L16).keys()].filter(k=>!st.un.has(k))}
+function renderC2(){
+  const P=PRESET[c2.pre],M=c2masked(c2),o={K:c2.K,lam:c2.lam,fb:c2.fb,seed:c2.seed};
+  $$('#c2-pre button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===c2.pre)));
+  $$('#c2-rule button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===c2.rule)));
+  $('#c2-Kbox').classList.toggle('hide',c2.rule==='thr');$('#c2-lbox').classList.toggle('hide',c2.rule!=='thr');$('#c2-lamlg').classList.toggle('hide',c2.rule!=='thr');
+  $('#c2-fb').closest('label').classList.toggle('hide',c2.rule!=='thr');$('#c2-re').classList.toggle('hide',c2.rule!=='random');
+  $('#c2-Ko').textContent=c2.K;$('#c2-lo').textContent=c2.lam.toFixed(2);
+  $('#c2-K').setAttribute('aria-valuetext','K = '+c2.K);$('#c2-l').setAttribute('aria-valuetext','λ = '+c2.lam.toFixed(2));
+  const r=M.length?rules[c2.rule](P.c,M,o):{U:[],fb:false},S=new Set(r.U);
+  const box=$('#c2-toks');box.textContent='';
+  for(let k=0;k<L16;k++){const col=document.createElement('div');col.className='tcol';
+    col.innerHTML=`<span class="tok-ix">${k+1}</span>`+barHTML(P.c[k],{lam:c2.rule==='thr'?c2.lam:null});
+    const b=tokCell('button',{k,tok:P.tok[k],masked:!c2.un.has(k),sel:S.has(k),badge:S.has(k)?(r.fb?'↑':'✓'):'',extra:`，信心度 ${P.c[k]}${S.has(k)?'，本步解開':''}`});
+    b.addEventListener('click',()=>{c2.un.has(k)?c2.un.delete(k):c2.un.add(k);renderC2();box.children[k].querySelector('button').focus()});
+    col.appendChild(b);box.appendChild(col)}
+  const ar=adjRatio(r.U);
+  let ro;
+  if(!M.length)ro='<b>全部已解開</b>，規則不再作用。按「全部遮住」重設。';
+  else ro=`|𝓜| = <b>${M.length}</b>　|U| = <b>${r.U.length}</b><br>U = <b class="acc">${r.U.length?pos(r.U):'∅'}</b>${r.fb?'（fallback：沒有位置超過 λ，解開信心度最大的一個）':''}${c2.rule==='thr'&&!r.U.length?'<br>本步沒有解開任何位置':''}<br>右鄰也被選的比例 <b>${ar==null?'—':(ar*100).toFixed(0)+'%'}</b>${c2.rule==='random'?`<br>每個位置被選機率 ${Math.min(c2.K,M.length)}/${M.length} = <b>${(Math.min(c2.K,M.length)/M.length).toFixed(3)}</b>`:''}`;
+  $('#c2-ro').innerHTML=ro;
+  announce('c2',M.length?`解開 ${r.U.length} 個位置：${r.U.length?pos(r.U):'無'}`:'全部已解開');
+}
+function initC2(){
+  $$('#c2-pre button').forEach(b=>b.addEventListener('click',()=>{c2.pre=b.dataset.v;renderC2()}));
+  $$('#c2-rule button').forEach(b=>b.addEventListener('click',()=>{c2.rule=b.dataset.v;renderC2()}));
+  $('#c2-K').addEventListener('input',e=>{c2.K=+e.target.value;renderC2()});
+  $('#c2-l').addEventListener('input',e=>{c2.lam=+e.target.value;renderC2()});
+  $('#c2-fb').addEventListener('change',e=>{c2.fb=e.target.checked;renderC2()});
+  $('#c2-re').addEventListener('click',()=>{c2.seed++;renderC2()});
+  $('#c2-clr').addEventListener('click',()=>{c2.un.clear();renderC2()});
+  renderC2()}
+
+/* ---------- C2B: Bernoulli policy ---------- */
+function bernStats(c,M,tau,beta){const s=new Array(L16).fill(null);let EU=0,P0=1,one=false;
+  for(const k of M){const v=Math.min(1,beta*sigmoid(8*(c[k]-0.7)/tau));s[k]=v;EU+=v;if(v>=1)one=true;else P0*=1-v}
+  if(one)P0=0;return{s,EU,P0}}
+function logLik(s,u,M){let t=0;for(const k of M){if(u[k])t+=Math.log(s[k]);else if(s[k]<1)t+=Math.log1p(-s[k])}return t}
+const BETAS=[0.25,0.5,0.75,1,1.5,2,3,4];
+const c2b={pre:'A',un:new Set(),tau:1,beta:1,fb:true,seed:7};
+function renderC2B(){
+  const P=PRESET[c2b.pre],M=c2masked(c2b);
+  $$('#c2b-pre button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===c2b.pre)));
+  $$('#c2b-beta button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.v===c2b.beta)));
+  $$('#c2b-tauc .chip').forEach(b=>b.setAttribute('aria-pressed',String(Math.abs(+b.dataset.v-c2b.tau)<1e-9)));
+  $('#c2b-tauo').textContent=c2b.tau.toFixed(2);$('#c2b-tau').setAttribute('aria-valuetext','τπ = '+c2b.tau.toFixed(2));
+  const st=bernStats(P.c,M,c2b.tau,c2b.beta),r=mulberry32(c2b.seed),u=new Array(L16).fill(0);
+  for(const k of M)u[k]=r()<st.s[k]?1:0;
+  let U=M.filter(k=>u[k]),fb=false;
+  if(!U.length&&M.length&&c2b.fb){U=[argmaxIn(st.s,M)];fb=true}
+  const S=new Set(U),box=$('#c2b-toks');box.textContent='';
+  for(let k=0;k<L16;k++){const col=document.createElement('div');col.className='tcol';
+    col.innerHTML=`<span class="tok-ix">${k+1}</span>`+barHTML(P.c[k],{two:true,s:st.s[k]});
+    const b=tokCell('button',{k,tok:P.tok[k],masked:!c2b.un.has(k),sel:S.has(k),badge:S.has(k)?(fb?'↑':'✓'):'',extra:`，信心度 ${P.c[k]}${st.s[k]!=null?'，機率 '+st.s[k].toFixed(3):''}${S.has(k)?(fb?'，fallback 解開':'，抽到解開'):''}`});
+    b.addEventListener('click',()=>{c2b.un.has(k)?c2b.un.delete(k):c2b.un.add(k);renderC2B();box.children[k].querySelector('button').focus()});
+    col.appendChild(b);box.appendChild(col)}
+  if(!M.length){$('#c2b-ro').innerHTML='<b>全部已解開</b>，策略不再作用。';return}
+  const EU=st.EU+(c2b.fb?st.P0:0),ar=adjRatio(U),ll=logLik(st.s,u,M);
+  $('#c2b-ro').innerHTML=`E|U| = <b>${EU.toFixed(3)}</b>（Σs = ${st.EU.toFixed(3)}）<br>P<sub>0</sub> = Π(1 − s) = <b>${st.P0===0?'0':st.P0.toExponential(3)}</b><br>本次 |U| = <b class="acc">${U.length}</b>${fb?'（全為 0，fallback 解開位置 '+(U[0]+1)+'）':''}${!U.length?'<br>本步沒有解開任何位置':''}<br>log π(u) = <b>${ll.toFixed(4)}</b><br><span style="font-size:12px">以抽樣出的 u（fallback 前）計算；fallback 只在測試使用，不計入似然</span><br>右鄰比例 <b>${ar==null?'—':(ar*100).toFixed(0)+'%'}</b>`;
+  announce('c2b',`期望解開 ${EU.toFixed(2)} 個，本次 ${U.length} 個`);
+}
+function initC2B(){
+  $('#c2b-beta').innerHTML=BETAS.map(b=>`<button type="button" data-v="${b}">${b}</button>`).join('');
+  $$('#c2b-pre button').forEach(b=>b.addEventListener('click',()=>{c2b.pre=b.dataset.v;renderC2B()}));
+  $$('#c2b-beta button').forEach(b=>b.addEventListener('click',()=>{c2b.beta=+b.dataset.v;renderC2B()}));
+  $('#c2b-tau').addEventListener('input',e=>{c2b.tau=+e.target.value;renderC2B()});
+  $$('#c2b-tauc .chip').forEach(b=>b.addEventListener('click',()=>{c2b.tau=+b.dataset.v;$('#c2b-tau').value=c2b.tau;renderC2B()}));
+  $('#c2b-fb').addEventListener('change',e=>{c2b.fb=e.target.checked;renderC2B()});
+  $('#c2b-re').addEventListener('click',()=>{c2b.seed++;renderC2B()});
+  renderC2B()}
+
+/* ---------- C3: advantages and clipping ---------- */
+function advantages(r,n,alpha,kind,T=256){const R=r.map((ri,i)=>kind==='mult'?ri*(alpha===0?1:Math.pow(1-n[i]/T,alpha)):ri-alpha*n[i]/T);const m=R.reduce((a,b)=>a+b,0)/R.length;return{R,A:R.map(x=>x-m),mean:m}}
+const surrogate=(rho,A,eps)=>Math.min(rho*A,Math.max(1-eps,Math.min(1+eps,rho))*A);
+function barChart(box,groups,o){
+  const svg=$('svg',box),W=widthOf(box,260,o.maxW||520),H=o.H||190,n=groups.length;
+  const ym=o.ym;svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const hp=hatchDef(svg,box.id+'-h');
+  const gw=(W-44-8*(n-1)-8)/n,top=o.title?22:8,bot=H-24,Y=lin(-ym,ym,bot,top);
+  groups.forEach((G,gi)=>{const gx=44+gi*(gw+8);const g=el('g',null,svg);
+    if(G.title)tx(g,gx+gw/2,14,G.title,{class:'lab','text-anchor':'middle'});
+    if(gi===0)[ -ym,-ym/2,0,ym/2,ym].forEach(v=>{tx(g,36,Y(v)+4,(v>0?'+':v<0?'−':'')+Math.abs(v).toFixed(2),{class:'tk','text-anchor':'end'})});
+    [-ym/2,ym/2].forEach(v=>el('line',{x1:gx,x2:gx+gw,y1:Y(v),y2:Y(v),class:'grid'},g));
+    const bw=gw/G.A.length;
+    G.A.forEach((a,i)=>{const x=gx+i*bw+bw*.15,w=bw*.7,y=Math.min(Y(a),Y(0)),h=Math.max(1,Math.abs(Y(a)-Y(0)));
+      el('rect',{x,y,width:w,height:h,class:'barp',style:G.r[i]?'':'fill-opacity:.25'},g);
+      if(!G.r[i])el('rect',{x,y,width:w,height:h,fill:hp,style:'stroke:var(--c-par);stroke-width:1'},g);
+      tx(g,x+w/2,H-8,(i+1)+(G.r[i]?'✓':'✗'),{class:'tk','text-anchor':'middle'})});
+    el('line',{x1:gx,x2:gx+gw,y1:Y(0),y2:Y(0),class:'axl'},g)});
+}
+const c3a={r:[1,1,0,1,0,0,1,0],src:'p',row:0,rho:1,eps:0.5};
+function c3aA(){const ad=advantages(c3a.r,c3a.r.map(()=>0),0,'mult');return ad}
+function renderC3a(){
+  const ad=c3aA();
+  $$('#c3a-rows .rtog').forEach((b,i)=>{b.setAttribute('aria-pressed',String(!!c3a.r[i]));b.textContent=c3a.r[i]?'答對 ✓':'答錯 ✗'});
+  barChart($('#c3a-bars'),[{A:ad.A,r:c3a.r}],{ym:1,H:180});
+  $('#c3a-bars svg').setAttribute('aria-label','8 個樣本的優勢：'+ad.A.map(a=>sgn(a)).join('、'));
+  const npos=ad.A.filter(a=>a>1e-12).length;
+  $('#c3a-ro').innerHTML=`R̄ = <b>${ad.mean.toFixed(3)}</b>　優勢 &gt; 0 的樣本數 <b class="acc">${npos}</b>${ad.A.every(a=>Math.abs(a)<1e-12)?'<br>優勢全為 0：這一組不更新策略':''}`;
+  // clip chart
+  const sel=$('#c3a-row');sel.disabled=c3a.src!=='row';
+  const A=c3a.src==='p'?0.25:c3a.src==='n'?-0.25:ad.A[c3a.row];
+  $('#c3a-rhoo').textContent=c3a.rho.toFixed(2);$('#c3a-rho').setAttribute('aria-valuetext','ρ = '+c3a.rho.toFixed(2));
+  $$('#c3a-eps .chip').forEach(c=>c.setAttribute('aria-pressed',String(+c.dataset.v===c3a.eps)));
+  const box=$('#c3a-clip'),W=widthOf(box,260,480),e=c3a.eps;
+  const yr=Math.max(0.3,Math.abs(A)*3.2);
+  const F=frame($('svg',box),{W,H:210,m:{l:46,r:12,t:22,b:36},x:[0,3],y:[-yr,yr],xt:[0,0.5,1,1.5,2,2.5,3],xf:v=>String(v),yt:[-yr,-yr/2,0,yr/2,yr],yf:v=>(v>0?'+':v<0?'−':'')+Math.abs(v).toFixed(2),xl:'機率比 ρ',yl:'f(ρ)'});
+  if(Math.abs(A)<1e-12){el('line',{x1:F.x0,x2:F.x1,y1:F.Y(0),y2:F.Y(0),class:'tot'},F.g);tx(F.g,(F.x0+F.x1)/2,F.Y(0)-10,'A = 0：此樣本不貢獻梯度',{class:'lab','text-anchor':'middle'})}
+  else{
+    const zr=A>0?[1+e,3]:[0,1-e],lr=A>0?[0,1-e]:[1+e,3];
+    el('rect',{x:F.X(zr[0]),y:F.y1,width:F.X(zr[1])-F.X(zr[0]),height:F.y0-F.y1,class:'zero'},F.g);
+    tx(F.g,(F.X(zr[0])+F.X(zr[1]))/2,F.y1+14,'梯度為 0',{class:'lab','text-anchor':'middle'});
+    tx(F.g,(F.X(lr[0])+F.X(lr[1]))/2,F.y1+14,'= ρA',{class:'al','text-anchor':'middle'});
+    el('path',{d:lp([[F.X(0),F.Y(0)],[F.X(3),F.Y(3*A)]]),class:'ref'},F.g);
+    const pts=[];for(let i=0;i<=300;i++){const r=i/100;pts.push([F.X(r),F.Y(surrogate(r,A,e))])}el('path',{d:lp(pts),class:'tot'},F.g);
+    [1-e,1+e].forEach(v=>el('line',{x1:F.X(v),x2:F.X(v),y1:F.y1,y2:F.y0,class:'cur'},F.g));
+  }
+  const fv=surrogate(c3a.rho,A,e);el('circle',{cx:F.X(c3a.rho),cy:F.Y(fv),r:6,class:'kdot'},F.g);
+  const inZero=Math.abs(A)>1e-12&&(A>0?c3a.rho>1+e:c3a.rho<1-e);
+  tx(F.g,Math.min(F.x1-4,Math.max(F.x0+4,F.X(c3a.rho)+(c3a.rho>2?-10:10))),F.Y(fv)+(A>=0?18:-10),`f = ${fv>=0?'+':'−'}${Math.abs(fv).toFixed(3)}`,{class:'labm','text-anchor':c3a.rho>2?'end':'start'});
+  $('#c3a-clip svg').setAttribute('aria-label',`A = ${sgn(A)}，ε = ${e}，ρ = ${c3a.rho.toFixed(2)} 時 f = ${fv.toFixed(3)}${inZero?'，位於梯度為 0 的區段':''}`);
+  announce('c3a',`優勢為正 ${npos} 個；ρ = ${c3a.rho.toFixed(2)}，f = ${fv.toFixed(3)}${inZero?'，梯度為 0':''}`);
+}
+function initC3a(){
+  const rows=$('#c3a-rows');
+  for(let i=0;i<8;i++){const f=document.createElement('fieldset');f.innerHTML=`<legend>#${i+1}</legend><button class="rtog" type="button"></button>`;
+    f.querySelector('button').addEventListener('click',()=>{c3a.r[i]=1-c3a.r[i];renderC3a()});rows.appendChild(f)}
+  $('#c3a-row').innerHTML=Array.from({length:8},(_,i)=>`<option value="${i}">第 ${i+1} 列</option>`).join('');
+  $$('#c3a [data-p]').forEach(b=>b.addEventListener('click',()=>{c3a.r=b.dataset.p==='mix'?[1,1,0,1,0,0,1,0]:b.dataset.p==='wrong'?Array(8).fill(0):Array(8).fill(1);renderC3a()}));
+  $$('input[name=c3a-src]').forEach(x=>x.addEventListener('change',()=>{c3a.src=x.value;renderC3a()}));
+  $('#c3a-row').addEventListener('change',e=>{c3a.row=+e.target.value;renderC3a()});
+  $('#c3a-rho').addEventListener('input',e=>{c3a.rho=+e.target.value;renderC3a()});
+  $$('#c3a-eps .chip').forEach(c=>c.addEventListener('click',()=>{c3a.eps=+c.dataset.v;renderC3a()}));
+  renderC3a()}
+
+const ALPHAS=[0,0.3,1,3,10],ASTY=['','dash','dot','ld','dd'];
+const C3BP={P1:{r:Array(8).fill(0),n:[20,40,60,80,100,120,160,200]},P2:{r:[1,1,0,1,0,0,1,0],n:[40,120,20,200,60,250,80,30]},P3:{r:Array(8).fill(1),n:[20,40,60,80,100,120,160,200]}};
+const c3b={r:C3BP.P1.r.slice(),n:C3BP.P1.n.slice(),alpha:1};
+function renderC3b(){
+  $$('#c3b-al .chip').forEach(c=>c.setAttribute('aria-pressed',String(+c.dataset.v===c3b.alpha)));
+  $$('#c3b-rows fieldset').forEach((f,i)=>{const b=f.querySelector('.rtog');b.setAttribute('aria-pressed',String(!!c3b.r[i]));b.textContent=c3b.r[i]?'答對 ✓':'答錯 ✗';
+    const rg=f.querySelector('input');rg.value=c3b.n[i];rg.setAttribute('aria-valuetext',`第 ${i+1} 列步數 n = ${c3b.n[i]}`);f.querySelector('output').textContent=c3b.n[i];
+    f.querySelector('.nlab').classList.toggle('hide',c3b.n[i]!==256)});
+  const m=advantages(c3b.r,c3b.n,c3b.alpha,'mult'),a=advantages(c3b.r,c3b.n,c3b.alpha,'add');
+  const ym=Math.max(0.5,...m.A.map(Math.abs),...a.A.map(Math.abs))*1.1;
+  barChart($('#c3b-bars'),[{title:'乘法 R×',A:m.A,r:c3b.r},{title:'加法 R+',A:a.A,r:c3b.r}],{ym,H:200,title:true,maxW:560});
+  $('#c3b-bars svg').setAttribute('aria-label','乘法優勢：'+m.A.map(sgn).join('、')+'；加法優勢：'+a.A.map(sgn).join('、'));
+  const wp=A=>A.filter((x,i)=>!c3b.r[i]&&x>1e-12).length,cm=wp(m.A),ca=wp(a.A);
+  $('#c3b-ro').innerHTML=`答錯但優勢 &gt; 0 的樣本數：乘法 <b>${cm}</b>　加法 <b class="acc" style="outline:1.5px solid var(--accent);outline-offset:2px;border-radius:3px;padding:0 3px">${ca}</b><br>R̄<sup>×</sup> = <b>${m.mean.toFixed(3)}</b>　R̄<sup>+</sup> = <b>${a.mean.toFixed(3)}</b>`;
+  // speed-factor curves
+  const box=$('#c3b-sf'),W=widthOf(box,260,560);
+  const F=frame($('svg',box),{W,H:190,m:{l:40,r:14,t:22,b:36},x:[0,256],y:[0,1.05],xt:[0,64,128,192,256],yt:[0,0.5,1],yf:v=>String(v),xl:'所用步數 n = T − T̂',yl:'速度因子 (1 − n/T)^α'});
+  ALPHAS.forEach((al,i)=>{const pts=[];for(let n=0;n<=256;n+=2)pts.push([F.X(n),F.Y(al===0?1:Math.pow(1-n/256,al))]);const cur=al===c3b.alpha;
+    el('path',{d:lp(pts),class:(cur?'acc':'ink thin')+' '+ASTY[i]},F.g);
+    const lx=al===0?200:96,ly=al===0?1:Math.pow(1-96/256,al);tx(F.g,F.X(lx)+4,F.Y(ly)-(al===10?4:6),'α = '+al,{class:cur?'labm':'tk',style:cur?'fill:var(--accent)':''})});
+  announce('c3b',`α = ${c3b.alpha}：答錯但優勢為正，乘法 ${cm} 個、加法 ${ca} 個`);
+}
+function initC3b(){
+  $('#c3b-al').insertAdjacentHTML('beforeend',ALPHAS.map(a=>`<button class="chip" type="button" data-v="${a}">${a}</button>`).join(''));
+  $$('#c3b-al .chip').forEach(c=>c.addEventListener('click',()=>{c3b.alpha=+c.dataset.v;renderC3b()}));
+  const rows=$('#c3b-rows');
+  for(let i=0;i<8;i++){const f=document.createElement('fieldset');
+    f.innerHTML=`<legend>#${i+1}</legend><button class="rtog" type="button"></button><input type="range" min="1" max="256" step="1" aria-label="第 ${i+1} 列步數 n"><output></output><span class="nlab hide">推定：T̂ = 0，用滿 T 步</span>`;
+    f.querySelector('button').addEventListener('click',()=>{c3b.r[i]=1-c3b.r[i];renderC3b()});
+    f.querySelector('input').addEventListener('input',e=>{c3b.n[i]=+e.target.value;renderC3b()});rows.appendChild(f)}
+  $$('#c3b [data-p]').forEach(b=>b.addEventListener('click',()=>{const p=C3BP[b.dataset.p];c3b.r=p.r.slice();c3b.n=p.n.slice();renderC3b()}));
+  renderC3b()}
+
+/* ---------- C4: toy MDP (exact DP) ---------- */
+const BIN=(()=>{const B=[];for(let m=0;m<=32;m++){B[m]=[1];for(let j=1;j<=m;j++)B[m][j]=B[m][j-1]*(m-j+1)/j}for(let m=0;m<=32;m++)for(let j=0;j<=m;j++)B[m][j]=Math.round(B[m][j]);return B})();
+function dpToy(L,s,gamma,mode){const T=L;let mass=new Float64Array(L+1),corr=new Float64Array(L+1);mass[L]=1;corr[L]=1;
+  const Pfin=new Float64Array(T+1),Cfin=new Float64Array(T+1);
+  for(let n=0;n<T;n++){const nm=new Float64Array(L+1),nc=new Float64Array(L+1);
+    for(let m=1;m<=L;m++){if(mass[m]===0)continue;
+      for(let j=0;j<=m;j++){const p=BIN[m][j]*Math.pow(s,j)*Math.pow(1-s,m-j);if(p===0)continue;let jj=j;
+        if(j===0){if(mode==='train'){nm[m]+=mass[m]*p;nc[m]+=corr[m]*p;continue}jj=1}
+        const g=Math.pow(gamma,jj-1),r=m-jj;
+        if(r===0){Pfin[n+1]+=mass[m]*p;Cfin[n+1]+=corr[m]*p*g}else{nm[r]+=mass[m]*p;nc[r]+=corr[m]*p*g}}}
+    mass=nm;corr=nc}
+  let Pun=0;for(let m=0;m<=L;m++)Pun+=mass[m];return{Pfin,Cfin,Pun}}
+function toyStats(d,L,p0,alpha){const T=L;let Rm=0,Ra=0,acc=0,nfe=0;
+  for(let N=1;N<=T;N++){const f=alpha===0?1:Math.pow(1-N/T,alpha);Rm+=d.Cfin[N]*f;Ra+=p0*d.Cfin[N]-alpha*(N/T)*d.Pfin[N];acc+=d.Cfin[N];nfe+=N*d.Pfin[N]}
+  return{Rm:p0*Rm,Ra:Ra-alpha*d.Pun,acc:p0*acc,nfe:nfe+T*d.Pun,unf:d.Pun}}
+const SG=Array.from({length:200},(_,i)=>+(0.005*(i+1)).toFixed(3));
+const c4cache=new Map();
+function grid(L,gamma,mode){const key=`${L}|${gamma}|${mode}`;if(!c4cache.has(key))c4cache.set(key,SG.map(s=>dpToy(L,s,gamma,mode)));return c4cache.get(key)}
+function bestS(L,gamma,p0,alpha,form){const G=grid(L,gamma,'train'),key=form==='mult'?'Rm':'Ra';const v=G.map(d=>toyStats(d,L,p0,alpha)[key]);
+  const mx=Math.max(...v);const i=v.findIndex(x=>Math.abs(x-mx)<1e-12);return{s:SG[i],i,val:v[i]}}
+const c4={alpha:1,s:0.5,L:16,gamma:0.9,p0:0.8,form:'mult'};
+function renderC4(){
+  const {L,gamma,p0,form}=c4,key=form==='mult'?'Rm':'Ra';
+  $$('#c4-al .chip').forEach(c=>c.setAttribute('aria-pressed',String(+c.dataset.v===c4.alpha)));
+  $$('#c4-L button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.v===L)));
+  $$('#c4-form button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===form)));
+  $('#c4-so').textContent=c4.s.toFixed(3);$('#c4-go').textContent=gamma.toFixed(2);$('#c4-po').textContent=p0.toFixed(2);
+  $('#c4-s').setAttribute('aria-valuetext','s = '+c4.s.toFixed(3));
+  const Gtr=grid(L,gamma,'train'),Gte=grid(L,gamma,'test');
+  const curves=ALPHAS.map(al=>Gtr.map(d=>toyStats(d,L,p0,al)[key]));
+  let lo=Infinity,hi=-Infinity;curves.forEach(c=>c.forEach(v=>{lo=Math.min(lo,v);hi=Math.max(hi,v)}));
+  if(hi-lo<1e-12){lo-=0.05;hi+=0.05}else{const pad=(hi-lo)*0.05;lo-=pad;hi+=pad}
+  const box=$('#c4-left'),W=widthOf(box,260,520);
+  const yt=[lo+(hi-lo)*0.05,(lo+hi)/2,hi-(hi-lo)*0.05];
+  const F=frame($('svg',box),{W,H:270,m:{l:50,r:58,t:24,b:38},x:[0,1],y:[lo,hi],xt:[0,0.25,0.5,0.75,1],xf:v=>String(v),yt,yf:v=>v.toFixed(2),xl:'策略參數 s（每步每個遮罩位置的解開機率）',yl:'訓練模式期望獎勵 E[R'+(form==='mult'?'×':'+')+']'});
+  if(lo<0&&hi>0)el('line',{x1:F.x0,x2:F.x1,y1:F.Y(0),y2:F.Y(0),class:'axl'},F.g);
+  const bests=ALPHAS.map(al=>({m:bestS(L,gamma,p0,al,'mult'),a:bestS(L,gamma,p0,al,'add')}));
+  ALPHAS.forEach((al,i)=>{const cur=al===c4.alpha;const pts=curves[i].map((v,j)=>[F.X(SG[j]),F.Y(v)]);
+    el('path',{d:lp(pts),class:(cur?'acc':'ink thin')+' '+ASTY[i],style:cur?'':'opacity:.7'},F.g);
+  });
+  // direct labels at the right end of each curve, pushed apart vertically
+  const labs=ALPHAS.map((al,i)=>({al,y:F.Y(curves[i][curves[i].length-1])})).sort((a,b)=>a.y-b.y);
+  for(let i=1;i<labs.length;i++)labs[i].y=Math.max(labs[i].y,labs[i-1].y+13);
+  labs.forEach(o=>{const cur=o.al===c4.alpha;tx(F.g,F.x1+6,o.y+4,'α = '+o.al,{class:cur?'labm':'tk',style:cur?'fill:var(--accent)':''})});
+  const ci=ALPHAS.indexOf(c4.alpha),cb=form==='mult'?bests[ci].m:bests[ci].a;
+  el('line',{x1:F.X(cb.s),x2:F.X(cb.s),y1:F.Y(cb.val),y2:F.y0,class:'ref',style:'stroke:var(--accent)'},F.g);
+  el('circle',{cx:F.X(cb.s),cy:F.Y(cb.val),r:6,class:'kdot'},F.g);
+  tx(F.g,F.X(cb.s)+(cb.s>0.85?-8:0),F.Y(cb.val)-12,'s*',{class:'labm','text-anchor':cb.s>0.85?'end':'middle',style:'fill:var(--accent)'});
+  el('line',{x1:F.X(c4.s),x2:F.X(c4.s),y1:F.y1,y2:F.y0,class:'cur'},F.g);
+  // right: test frontier
+  const tests=Gte.map(d=>toyStats(d,L,p0,0));
+  const b2=$('#c4-right'),W2=widthOf(b2,260,520);
+  const amax=Math.max(...tests.map(t=>t.acc));
+  const G=frame($('svg',b2),{W:W2,H:270,m:{l:46,r:14,t:24,b:38},x:[0,L],y:[0,Math.min(1,amax*1.12)],xt:[0,L/4,L/2,3*L/4,L],yt:[0,0.25,0.5,0.75,1].filter(v=>v<=Math.min(1,amax*1.12)),yf:v=>String(v),xl:'測試模式 NFE（有 fallback）',yl:'測試正確率'});
+  el('path',{d:lp(tests.map(t=>[G.X(t.nfe),G.Y(t.acc)])),class:'par'},G.g);
+  bests.forEach((b,i)=>{const tm=tests[b.m.i],ta=tests[b.a.i];
+    el('rect',{x:G.X(ta.nfe)-6,y:G.Y(ta.acc)-6,width:12,height:12,class:'hollow',style:ALPHAS[i]===c4.alpha?'stroke:var(--accent)':''},G.g);
+    el('circle',{cx:G.X(tm.nfe),cy:G.Y(tm.acc),r:ALPHAS[i]===c4.alpha?6:4.5,class:ALPHAS[i]===c4.alpha?'kdot':'ink-f'},G.g)});
+  const ct=tests[Math.round(c4.s/0.005)-1],cx=G.X(ct.nfe),cy=G.Y(ct.acc);
+  el('path',{d:`M${cx-7} ${cy}L${cx+7} ${cy}M${cx} ${cy-7}L${cx} ${cy+7}`,class:'ink',style:'stroke-width:2'},G.g);
+  // readout
+  const tr=toyStats(Gtr[Math.round(c4.s/0.005)-1],L,p0,c4.alpha);
+  $('#c4-ro').innerHTML=`目前 s = <b>${c4.s.toFixed(3)}</b>：訓練 E[R${form==='mult'?'×':'+'}] = <b>${tr[key].toFixed(4)}</b>　未完成機率 <b>${tr.unf.toFixed(4)}</b>（未完成：乘法得 0，加法得 −α）<br>測試 NFE = <b>${ct.nfe.toFixed(2)}</b>　測試正確率 = <b>${ct.acc.toFixed(3)}</b><br>最佳 s*（α = ${c4.alpha}，${form==='mult'?'乘法':'加法'}，L = ${L}）= <b class="acc">${cb.s.toFixed(3)}</b>　五個 α 的乘法 s*：${bests.map(b=>b.m.s.toFixed(3)).join(' / ')}`;
+  $('#c4-left svg').setAttribute('aria-label',`訓練模式期望獎勵；α = ${c4.alpha} 時最佳 s* = ${cb.s.toFixed(3)}`);
+  $('#c4-right svg').setAttribute('aria-label',`測試模式前緣；目前 s 的 NFE ${ct.nfe.toFixed(2)}，正確率 ${ct.acc.toFixed(3)}`);
+  announce('c4',`α = ${c4.alpha}，s* = ${cb.s.toFixed(3)}；目前 s = ${c4.s.toFixed(3)}`);
+}
+function initC4(){
+  $('#c4-al').insertAdjacentHTML('beforeend',ALPHAS.map(a=>`<button class="chip" type="button" data-v="${a}">${a}</button>`).join(''));
+  $$('#c4-al .chip').forEach(c=>c.addEventListener('click',()=>{c4.alpha=+c.dataset.v;renderC4()}));
+  $('#c4-s').addEventListener('input',e=>{c4.s=+e.target.value;renderC4()});
+  $$('#c4-L button').forEach(b=>b.addEventListener('click',()=>{c4.L=+b.dataset.v;renderC4()}));
+  $$('#c4-form button').forEach(b=>b.addEventListener('click',()=>{c4.form=b.dataset.v;renderC4()}));
+  $('#c4-g').addEventListener('input',e=>{c4.gamma=+(+e.target.value).toFixed(2);renderC4()});
+  $('#c4-p').addEventListener('input',e=>{c4.p0=+(+e.target.value).toFixed(2);renderC4()});
+  renderC4()}
+
+/* ---------- timeline ---------- */
+const TL_GROUP={'2107.03006':['dd','mdm-discrete-diffusion-lineage'],'2310.16834':['dd','mdm-discrete-diffusion-lineage'],'2406.07524':['dd','mdm-discrete-diffusion-lineage'],
+ '2202.04200':['conf','confidence-thresholding-heuristics'],'2505.22618':['conf','confidence-thresholding-heuristics'],
+ '2502.09992':['dllm','dllm-llada-dream-models'],'2508.15487':['dllm','dllm-llada-dream-models'],
+ '2503.09573':['sar','semi-ar-block-generation'],
+ '2402.03300':['rl','rl-post-training-dllm-grpo'],'2504.12216':['rl','rl-post-training-dllm-grpo'],
+ '2510.05725':['conc','learned-unmasking-concurrent-work'],
+ '2512.09106':['me','unmasking-mdp-policy-design']};
+const TL_NAME={dd:'離散擴散',conf:'信心度規則',dllm:'dLLM',sar:'semi-AR',rl:'RL',conc:'同期學習式',me:'本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  if(!data.some(e=>e.arxiv==='2512.09106'))data.push({year:2025,title:'Learning Unmasking Policies for Diffusion Language Models',authors_short:'Jazbec et al.',arxiv:'2512.09106',role:'本論文'});
+  data=data.map((e,i)=>({e,i})).sort((a,b)=>(+a.e.year||0)-(+b.e.year||0)||a.i-b.i).map(o=>o.e);
+  const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const slug=g[1];const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${slug?`<a href="${slug}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+
+/* ---------- toc, theme, appbar ---------- */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));
+  addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+/* ---------- self test (design.md §5) ---------- */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t)=>Math.abs(a-b)<=t+1e-12,same=(a,b)=>JSON.stringify(a)===JSON.stringify(b),one=a=>a.map(k=>k+1);
+  // C1
+  ok(same(one(c1masked(7,0.25)),[1,2,8,12,15]),'C1 t=0.25');
+  ok(same(one(c1masked(7,0.5)),[1,2,6,7,8,11,12,15,16]),'C1 t=0.5');
+  ok(c1masked(7,0.75).length===14,'C1 t=0.75 count');
+  ok(same(one(c1masked(8,0.5)),[1,3,6,8,10,12,14,15]),'C1 seed8 t=0.5');
+  ok(same(genTrace(7,4).map(one),[[3,7,11,13],[2,8,10,15],[4,6,9,12],[1,5,14,16]]),'C1 gen K=4');
+  ok(same(genTrace(7,3).map(one),[[3,7,11],[9,12,13],[5,10,15],[1,4,8],[2,6,14],[16]]),'C1 gen K=3');
+  // C2
+  const all=[...Array(16).keys()],A=PRESET.A.c,B=PRESET.B.c,R=(rule,c,M,o)=>one(rules[rule](c,M,Object.assign({K:4,lam:0.9,fb:true,seed:7},o)).U);
+  ok(same(R('topk',A,all),[5,8,10,13]),'C2 A top4');ok(same(R('thr',A,all),[5,10]),'C2 A thr.9');
+  ok(same(R('thr',A,all,{lam:0.7}),[5,8,10,12,13]),'C2 A thr.7');ok(same(R('thr',A,all,{lam:1}),[10]),'C2 A thr1 fallback');
+  ok(R('thr',A,all,{lam:1,fb:false}).length===0,'C2 A thr1 no-fallback empty');
+  ok(same(R('thr',B,all),[10,11,12,13,14,15,16]),'C2 B thr.9');ok(same(R('topk',B,all),[12,13,14,15]),'C2 B top4');ok(same(R('thr',B,all,{lam:0.99}),[12,13,14,15,16]),'C2 B thr.99');
+  const Mp=all.filter(k=>![4,7,9].includes(k));
+  ok(Mp.length===13&&same(R('topk',A,Mp),[1,12,13,16])&&same(R('thr',A,Mp),[13]),'C2 A partial');
+  // C2B
+  const eu=(c,M,t,b)=>{const s=bernStats(c,M,t,b);return{...s,E:s.EU+s.P0}};
+  let s=eu(A,all,1,1);ok(near(s.E,5.515,0.001)&&near(s.P0,4.936e-5,4.936e-7)&&near(s.s[0],0.3452,0.001)&&near(s.s[9],0.8808,0.001),'C2B A t1 b1');
+  s=eu(A,all,0.5,1);ok(near(s.E,5.115,0.001)&&near(s.P0,3.877e-7,3.877e-9)&&near(s.s[9],0.9820,0.001),'C2B A t.5');
+  s=eu(A,all,1.5,1);ok(near(s.E,5.905,0.001)&&near(s.P0,1.121e-4,1.121e-6),'C2B A t1.5');
+  s=eu(A,all,1,0.5);ok(near(s.E,2.793,0.001)&&near(s.EU,2.758,0.001)&&near(s.P0,0.03519,0.0003519),'C2B A b.5');
+  s=eu(A,all,1,2);ok(near(s.E,8.349,0.001)&&s.P0===0,'C2B A b2');
+  s=eu(A,all,0.5,0.25);ok(near(s.E,1.518,0.001)&&near(s.EU,1.279,0.001)&&near(s.P0,0.2393,0.002393),'C2B A t.5 b.25');
+  const ll=(c)=>{const st=bernStats(c,all,1,1);return logLik(st.s,c.map(v=>v>0.7?1:0),all)};
+  ok(near(ll(A),-3.3564,0.001),'C2B A loglik');ok(near(ll(B),-2.0239,0.001),'C2B B loglik');
+  s=eu(A,Mp,1,1);ok(near(s.EU,2.963,0.001)&&near(s.P0,0.0158,0.000158),'C2B A partial');
+  s=eu(B,all,1,1);ok(near(s.E,8.665,0.001)&&near(s.P0,1.296e-9,1.296e-11),'C2B B t1 b1');
+  // C3a
+  const mix=advantages([1,1,0,1,0,0,1,0],Array(8).fill(0),0,'mult');
+  ok(mix.A.every((a,i)=>near(a,[.5,.5,-.5,.5,-.5,-.5,.5,-.5][i],1e-9))&&mix.A.filter(a=>a>0).length===4,'C3a mixed');
+  ok(advantages(Array(8).fill(0),Array(8).fill(0),0,'mult').A.every(a=>near(a,0,1e-9))&&advantages(Array(8).fill(1),Array(8).fill(0),0,'mult').A.every(a=>near(a,0,1e-9)),'C3a all-same');
+  const sv={'0.5|0.25':[.075,.2,.25,.325,.375],'0.5|-0.25':[-.125,-.2,-.25,-.325,-.45],'0.2|0.25':[.075,.2,.25,.3,.3],'0.2|-0.25':[-.2,-.2,-.25,-.325,-.45]};
+  for(const k in sv){const[e,a]=k.split('|').map(Number);ok([0.3,0.8,1,1.3,1.8].every((r,i)=>near(surrogate(r,a,e),sv[k][i],1e-9)),'C3a clip '+k)}
+  // C3b
+  const P1=C3BP.P1,P2=C3BP.P2,v3=(a,b)=>a.every((x,i)=>near(x,b[i],0.001));
+  ok(v3(advantages(P1.r,P1.n,1,'mult').A,Array(8).fill(0))&&v3(advantages(P1.r,P1.n,1,'add').A,[.303,.225,.146,.068,-.010,-.088,-.244,-.400]),'C3b P1 a1');
+  ok(v3(advantages(P2.r,P2.n,1,'mult').A,[.559,.246,-.285,-.066,-.285,-.285,.402,-.285])&&v3(advantages(P2.r,P2.n,1,'add').A,[.734,.422,-.188,.109,-.344,-1.086,.578,-.227]),'C3b P2 a1');
+  ok(v3(advantages(P2.r,P2.n,3,'add').A,[1.203,.266,.438,-.672,-.031,-2.258,.734,.320]),'C3b P2 a3 add');
+  const wp=(r,A)=>A.filter((x,i)=>!r[i]&&x>1e-12).length;
+  ok(wp(P1.r,advantages(P1.r,P1.n,1,'add').A)===4&&wp(P1.r,advantages(P1.r,P1.n,1,'mult').A)===0&&wp(P2.r,advantages(P2.r,P2.n,3,'add').A)===2&&wp(P2.r,advantages(P2.r,P2.n,3,'mult').A)===0,'C3b wrong-positive counts');
+  // C4
+  const sm=ALPHAS.map(a=>bestS(16,0.9,0.8,a,'mult').s),sa=ALPHAS.map(a=>bestS(16,0.9,0.8,a,'add').s);
+  ok(v3(sm,[.29,.375,.72,1,1]),'C4 mult s* '+sm.join(','));ok(v3(sa,[.29,1,1,1,1]),'C4 add s* '+sa.join(','));
+  const d3=dpToy(16,0.3,0.9,'train'),t3=toyStats(d3,16,0.8,1);
+  ok(near(t3.Rm,0.1122,0.001)&&near(t3.Ra,-0.3300,0.001)&&near(t3.acc,0.2828,0.001)&&near(t3.nfe,9.8038,0.001)&&near(t3.unf,0.0519,0.001),'C4 s=0.3 train');
+  const t1=toyStats(dpToy(16,1,0.9,'train'),16,0.8,1);ok(near(t1.Rm,0.1544,0.001)&&near(t1.Ra,0.1022,0.001)&&near(t1.acc,0.1647,0.001)&&near(t1.nfe,1,1e-9),'C4 s=1');
+  ok([[8,.9,[.495,.69,1,1,1]],[32,.9,[.155,.19,.29,.93,1]],[16,.95,[.325,.51,1,1,1]],[16,.8,[.25,.295,.41,.95,1]]].every(([L,g,exp])=>ALPHAS.every((a,i)=>near(bestS(L,g,0.8,a,'mult').s,exp[i],0.005))),'C4 other grids');
+  const tf=[0.05,0.1,0.2,0.3,0.5,0.7,1].map(s=>toyStats(dpToy(16,s,0.9,'test'),16,0.8,0));
+  ok(v3(tf.map(t=>t.nfe),[14.727,12.527,9.069,6.928,4.479,3.038,1])&&v3(tf.map(t=>t.acc),[.7042,.5617,.39,.3104,.2389,.2048,.1647]),'C4 test frontier');
+  [['train',0.3],['test',0.3],['train',0.05]].forEach(([m,s])=>{const d=dpToy(16,s,0.9,m);ok(near(d.Pfin.reduce((a,b)=>a+b,0)+d.Pun,1,1e-12),'C4 mass '+m+' '+s)});
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ---------- boot ---------- */
+initTheme();initToc();initC1();initC2();initC2B();initC3a();initC3b();initC4();renderTimeline();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{renderC3a();renderC3b();renderC4()})});
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false})}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath()});
+if(/[?&]test\b/.test(location.search))selfTest();
+})();
+</script>
+</body>
+</html>

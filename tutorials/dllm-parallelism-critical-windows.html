@@ -1,0 +1,1334 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dLLM 平行度與 critical window</title>
+<meta name="description" content="圖解 Chen 與 Wang 的論文：uniform 與 Gaussian diffusion 的步數可隨 DTC 縮放；在隨機碼本分佈上，masked 的 critical window 寬 1/d、uniform 與 Gaussian 寬 1/√d，造成 query 數的分離。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+
+/* ---- page-specific additions (No. 5) ---- */
+:root{--c-unif:var(--c-par);--c-mask:var(--c-perp);--ink-1:var(--ink)}
+.tag.self{border-style:dashed}
+details.box{max-width:700px;margin:8px 0 24px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.box>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.box>summary::-webkit-details-marker{display:none}
+details.box>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.box[open]>summary::before{transform:rotate(45deg)}
+details.box>div{padding:0 20px 18px;font-size:15px}
+details.box>div p{margin:0 0 .8em}
+.plate details.box{max-width:none;margin:16px 0 0}
+
+/* hero noise axes */
+.naxis{max-width:760px;margin:8px 0 0;display:flex;flex-direction:column;gap:2px}
+.na-row{display:grid;grid-template-columns:84px minmax(0,1fr) 92px;align-items:center;gap:12px;min-height:40px}
+.na-lab{font:500 14px/1.2 var(--f-body);color:var(--ink)}
+.na-track{position:relative;height:2px;background:var(--ink-3)}
+.na-win{position:absolute;top:-11px;height:24px;background:var(--accent-soft);border:1.5px solid var(--accent);border-radius:4px}
+.na-w{font:500 13px/1.2 var(--f-mono);color:var(--accent)}
+.na-scale{display:flex;justify-content:space-between;font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+
+/* C1 cells */
+.c1row{display:grid;grid-template-columns:92px minmax(0,1fr);gap:10px;align-items:center;margin:0 0 10px}
+.c1lab{font:500 13px/1.3 var(--f-body);color:var(--ink-2)}
+.c1lab b{display:block;font:500 12px/1.3 var(--f-mono);color:var(--ink-3);font-weight:400}
+.cells{display:grid;grid-template-columns:repeat(32,minmax(0,1fr));gap:3px}
+.cell{height:30px;border-radius:5px;display:grid;place-items:center;font:500 14px/1 var(--f-mono);color:var(--ink);background:var(--surface);border:1px solid var(--line)}
+.cell.pos{background:color-mix(in oklab,var(--c-unif) 30%,var(--surface));border-color:transparent}
+.cell.star{background:var(--surface-2);color:var(--ink-2);border-color:transparent;font-size:19px}
+.cell.chg{box-shadow:inset 0 0 0 2.5px var(--ink)}
+.cell.rs{border:1.5px dashed var(--ink-3)}
+.cell.g{position:relative;height:58px;display:block;background:var(--surface);border:1px solid var(--line)}
+.cell.g .mid{position:absolute;left:2px;right:2px;top:22px;border-top:1px solid var(--line)}
+.cell.g .bar{position:absolute;left:22%;right:22%;background:var(--ink-2);border-radius:2px}
+.cell.g .cl{position:absolute;left:0;right:0;font:500 9px/1 var(--f-mono);color:var(--ink);text-align:center}
+.cell.g .gv{position:absolute;left:-2px;right:-2px;bottom:3px;font:400 10px/1 var(--f-mono);color:var(--ink-2);text-align:center;letter-spacing:-.04em}
+@media (max-width:599px){
+  .cells{grid-template-columns:repeat(16,minmax(0,1fr))}
+  .c1row{grid-template-columns:1fr;gap:4px}
+  .cell{height:24px;font-size:12px}
+  .cell.g .gv{font-size:8.5px}
+}
+
+/* C2 / C3 */
+.c2grid{display:grid;grid-template-columns:minmax(0,1fr);gap:20px}
+@media (min-width:600px){.c2grid{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr)}}
+table.ro{font-size:14px}
+table.ro td{padding:6px 14px}
+table.ro td.num{font-size:13px}
+.busy{color:var(--ink-3);font-style:italic}
+
+/* C4 */
+.c4low{display:grid;grid-template-columns:minmax(0,1fr);gap:24px;margin-top:20px}
+@media (min-width:768px){.c4low{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+
+/* C5 bands */
+.band{margin:14px 0 6px}
+.band-h{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px;font:500 14px/1.4 var(--f-body)}
+.band-h .st{font:400 13px/1.4 var(--f-body);color:var(--ink-2)}
+.band-h .st.hit{color:var(--accent);font-weight:500}
+.band svg{display:block;width:100%;height:auto;min-height:44px}
+.band .q{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:end;margin-top:4px}
+svg .seg-q{fill:var(--surface-2)}
+svg .seg-hit{fill:var(--accent)}
+svg .seg-bd{fill:none;stroke:var(--ink-3);stroke-width:1}
+svg .sep{stroke:var(--line);stroke-width:1}
+.flag{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:6px;background:var(--accent-soft);color:var(--accent);font:500 12px/1.5 var(--f-body)}
+
+svg .unif{stroke:var(--c-unif);stroke-width:2.5;fill:none}
+svg .unif-f{fill:var(--c-unif)}
+svg .mask{stroke:var(--c-mask);stroke-width:2.5;fill:none;stroke-dasharray:7 5}
+svg .mask-f{fill:var(--c-mask)}
+svg .gaus{stroke:var(--ink-1);stroke-width:2.2;fill:none;stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .winband{fill:var(--accent-soft)}
+svg .acc-l{stroke:var(--accent);stroke-width:1.5;fill:none}
+svg .bnd{fill:none;stroke:var(--ink-2);stroke-width:1}
+svg .tcf{fill:var(--c-unif)}
+.lg.unif::before{border-top:2.5px solid var(--c-unif)}
+.lg.mask::before{border-top:2.5px dashed var(--c-mask)}
+.lg.gaus::before{border-top:2.5px dotted var(--ink-1)}
+.lg.box::before{width:14px;height:10px;border:1.5px solid var(--ink-2);border-radius:2px}
+.lg.fill::before{width:14px;height:10px;border:0;background:var(--c-unif);border-radius:2px}
+.lg.wb::before{width:14px;height:10px;border:1px solid var(--accent);background:var(--accent-soft);border-radius:2px}
+svg .mask-a{stroke:var(--c-mask);stroke-width:1.5;fill:none}
+svg .mask-a-f{fill:var(--c-mask)}
+svg .unif-a{stroke:var(--c-unif);stroke-width:1.5;fill:none}
+svg .unif-a-f{fill:var(--c-unif)}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 5</span>
+  <span class="ttl">dLLM 的平行度：DTC、critical window 與三種腐蝕過程的分離</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 5</b> · 互動教學 · arXiv 2609.20539 · 2026</div>
+  <h1>dLLM 的平行度：<span class="lat">DTC</span>、<span class="lat">critical window</span> 與三種腐蝕過程的分離</h1>
+  <p class="dek">這篇論文用 forward pass 次數比較 masked、uniform、Gaussian 三種 diffusion language model，證明 uniform 與 Gaussian 的步數可隨 DTC 縮放，並在一個分佈族上證明三者的平行度有差距。</p>
+  <p class="byline">Sitan Chen、Liye Wang（2026）〈Parallelism, critical windows, and separations among diffusion language models〉</p>
+  <div class="naxis" role="img" aria-label="三條 noise 軸：masked 的 critical window 很窄，寬度與 1/d 成正比；uniform 與 Gaussian 的窗較寬，寬度與 1/√d 成正比">
+    <div class="na-row"><span class="na-lab">masked</span><div class="na-track"><span class="na-win" style="left:58%;width:2.5%"></span></div><span class="na-w">寬 ∝ 1/d</span></div>
+    <div class="na-row"><span class="na-lab">uniform</span><div class="na-track"><span class="na-win" style="left:48%;width:16%"></span></div><span class="na-w">寬 ∝ 1/√d</span></div>
+    <div class="na-row"><span class="na-lab">Gaussian</span><div class="na-track"><span class="na-win" style="left:51%;width:16%"></span></div><span class="na-w">寬 ∝ 1/√d</span></div>
+    <div class="na-row"><span></span><div class="na-scale"><span>← noise 低</span><span>noise 高 →</span></div><span></span></div>
+  </div>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 一次 forward pass</span><p>模型一次 forward pass 對所有位置同時給出「這個位置原本是什麼」的機率。平行取樣把這些機率當成互相獨立來抽，每一步的誤差等於被忽略的位置間相關性。</p></div>
+    <div class="fact"><span class="n">02 · 步數與複雜度</span><p>uniform 與 Gaussian diffusion 的步數可以只隨分佈的內在複雜度（dual total correlation）成長，與 masked diffusion 先前的結果相同。</p></div>
+    <div class="fact"><span class="n">03 · 分離</span><p>在一個隨機碼本分佈上，模型夠準時 uniform 與 Gaussian 約 √d 次 forward pass 就夠（相差 log 因子）；masked diffusion 則存在誤差很小的模型，使任何取樣方法至少需要約 d 次（相差 log 因子）。論文把差距歸因於「資訊突然出現的 noise 範圍」在 masked 中窄得多。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2609.20539">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-5">在關聯圖中查看</a>
+    <a class="btn" href="dllm-parallelism-lineage-hub.html">研究筆記總覽</a>
+  </div>
+</section>
+
+<!-- S1a =========================================================== -->
+<section class="ch" id="paradigms" data-toc="01" data-tt="三種腐蝕過程">
+  <div class="ch-num">01 · 三種腐蝕過程</div>
+  <h2>三種腐蝕過程把序列變成噪聲</h2>
+  <div class="prose">
+    <p>一筆資料是長度 $d$ 的序列 $X_0=(X_{0,1},\dots,X_{0,d})$，每個位置取自字母表 $\Sigma=[S]=\{1,\dots,S\}$，$S$ 是字母表大小，序列空間是 $\mathcal X=\Sigma^d$。資料分佈記為 $q$，$X_0\sim q$。diffusion language model（dLLM）先定義一個前向腐蝕過程：noise level $t\ge0$ 越大，序列被破壞得越多；$t$ 時刻的帶噪樣本記為 $X_t$，它的分佈記為 $q_t$。生成時方向相反，從 $t$ 很大的噪聲出發，逐步把 $t$ 降回 0。本文比較的三種過程都對每個位置獨立作用（Sec. 2.1–2.3）：</p>
+    <ul>
+      <li><b>uniform</b>：每個 token 以機率 $1-e^{-t}$ 重抽，從 $\Sigma$ 均勻抽一個符號（可能抽回原符號）。單座標 kernel 為 $K^U_t(\cdot\mid z)=\alpha_t\mathbb 1[z=\cdot]+\beta_t$，其中 $\alpha_t=e^{-t}$ 是保留機率，$\beta_t=(1-e^{-t})/S$ 是每個符號分到的均勻質量。</li>
+      <li><b>masked</b>：每個 token 以機率 $1-e^{-t}$ 變成遮罩符號 $\star$，kernel 為 $K^M_t(\cdot\mid z)=\alpha_t\mathbb 1[z=\cdot]+(1-\alpha_t)\mathbb 1[\star=\cdot]$。</li>
+      <li><b>Gaussian</b>：先把每個 token 寫成長度 $S$ 的 one-hot 向量，再跑 Ornstein–Uhlenbeck 過程：one-hot 後 $X_t=e^{-t}X_0+\sigma_tG$，$\sigma_t=\sqrt{1-e^{-2t}}$，$G$ 是標準高斯向量。</li>
+    </ul>
+    <p>uniform 與 masked 在 $t$ 時刻動到一個位置的機率相同，都是 $1-e^{-t}$。差別在於：masked 動到的位置一律變成 $\star$，取樣器看得出哪些位置被遮住；uniform 動到的位置重抽後只有 $(S-1)/S$ 的機率真的改變，取樣器看不出哪些位置被動過，整體改變比例是 $(S-1)\beta_t$，二元字母表（$S=2$）時就是 $\beta_t$。論文也指出，autoregressive 模型可以視為腐蝕過程為「由右至左逐一 erasure」的特例（Sec. 1）。</p>
+  </div>
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>同一個 t 下的三種腐蝕過程</h3></div>
+    <p class="plate-lead">拖動 t：uniform 列與 masked 列動到的是同一批位置；uniform 列裡只有一部分位置真的改變，粗框標出改變的格，虛框標出被重抽但抽回原值的格。</p>
+    <div class="ctl" style="max-width:520px;margin-bottom:16px">
+      <div class="rng"><label class="lbl" for="c1-t">noise level t<output id="c1-to">0.50</output></label><input id="c1-t" type="range" min="0" max="3" step="0.01" value="0.5" aria-valuetext="t = 0.50"></div>
+      <div class="ctl-row"><button class="small-btn" type="button" id="c1-re">重新抽樣</button></div>
+    </div>
+    <div id="c1-rows"></div>
+    <p class="readout" id="c1-ro"></p>
+    <details class="box"><summary>以文字顯示 32 個位置</summary><div><div class="tscroll"><table id="c1-tab"><thead><tr><th class="num">位置</th><th>X₀</th><th>uniform</th><th>masked</th><th class="num">Gaussian</th></tr></thead><tbody></tbody></table></div></div></details>
+    <p class="plate-f">設定：d = 32、S = 2（字母表 {−1, +1}），X₀ 的每個位置獨立均勻。三種過程共用同一組隨機數（mulberry32，初始 seed 11）：同一個 u_i 決定 uniform 與 masked 是否動到位置 i。Gaussian 列的長條高度與數值成正比，範圍 [−3, 3]，超出時截斷並加 ▲▼。為了與 C4 一致，這裡把 one-hot 簡化成 ±1 純量。讀數由本頁即時計算。</p>
+    <p class="sr" aria-live="polite" id="c1-live"></p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">uniform、masked、Gaussian 的 forward 過程各是什麼？</p>
+    <p class="a">uniform：每個 token 以機率 $1-e^{-t}$ 重抽，$K^U_t=\alpha_t\mathbb 1[z=\cdot]+\beta_t$、$\beta_t=(1-e^{-t})/S$；masked：以機率 $1-e^{-t}$ 變成 $\star$；Gaussian：one-hot 後 $X_t=e^{-t}X_0+\sigma_tG$、$\sigma_t=\sqrt{1-e^{-2t}}$（Sec. 2.1–2.3）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="dllm-three-corruption-paradigms.html">三種 corruption 與 dLLM 的發展：masked、uniform、Gaussian</a></p>
+</section>
+
+<!-- S1b =========================================================== -->
+<section class="ch" id="oracle" data-toc="02" data-tt="score oracle">
+  <div class="ch-num">02 · score oracle</div>
+  <h2>一次 forward pass 回傳所有位置的 posterior marginal</h2>
+  <div class="prose">
+    <p>取樣器每一步都要知道：給定目前的帶噪序列，每個位置原本是什麼。座標 $i$ 的 posterior marginal 是條件分佈 $\mathrm{law}((X_0)_i\mid X_t=z)$，也就是只看第 $i$ 個位置、對其他位置取邊際後的後驗分佈。論文把一次 forward pass 形式化為一次 <b>score oracle query</b>：對任意 $(t,z)$，一次回傳所有座標的 posterior marginal $\mathrm{law}((X_0)_i\mid X_t=z)$；masked 只回傳未揭露座標 $i\notin I$ 的 marginal，$I$ 是目前已揭露（沒有被遮住）的座標集合（Sec. 1 Framework）。一個取樣演算法用了多少次 query，稱為它的 query complexity，對應實際的 forward pass 次數。</p>
+    <p>三種過程的 score $s_t$ 都可以換算成 posterior marginal。uniform 的 score 是 likelihood ratio $s_t(y)[i,a]=q_t(y^{i\leftarrow a})/q_t(y)$（把 $y$ 的第 $i$ 個位置換成 $a$ 後的機率比），由 Lemma 2.1 的兩個仿射映射換算；Gaussian 的 score 是 $\nabla\log q_t$，由 Tweedie 公式 $\mathbb E[X_0\mid X_t=x]=e^tx+e^t\sigma_t^2s_t(x)$ 換算（Lemma 2.4）；masked 的 score 是 $s_t(y)[i,a]=\frac{\alpha_t}{1-\alpha_t}q_{i\mid I}(a\mid y_I)$，$i\notin I$（Lemma 2.6）。</p>
+    <p>masked 的情形有一個細節。係數 $\frac{\alpha_t}{1-\alpha_t}$ 依賴 $t$，但 posterior marginal $q_{i\mid I}(a\mid y_I)$ 只依賴已揭露的部分 $y_I$，不依賴 $t$。對估計的 score，論文假設估計的 marginal $\hat q_{i\mid I}$ 也不依賴 $t$（Sec. 2.3），因此 masked 的 oracle 只依賴 partial assignment $(I,x_I)$。masked 自然的 noise level 是已揭露座標數 $m=|I|$：它可以從 $X_t$ 直接數出來，也是取樣器實際控制的量。另外，masked 的 oracle 誤差只在 consistent（與至少一個資料點相容）的 partial assignment 上計算；在 inconsistent 的 assignment 上，oracle 可以任意回答（Lemma 2.8）。第 09 章的下界會用到這一點。</p>
+    <p>上界與下界的意思不同：上界分析一個特定的演算法，說它用多少次 query 就能達到目標精度；下界排除所有只透過這個 oracle 取得資訊的演算法（Sec. 1）。作為基準，不利用資料結構時，uniform diffusion 以 uniformization 可在 $O(d)$ 次 query 內做到零離散化誤差（Chen 與 Ying 2024，見研究筆記）。平行生成的目標是 $o(d)$：query 數的成長比序列長度慢。</p>
+  </div>
+  <details class="box"><summary>符號表</summary><div><div class="tscroll" style="margin-top:4px"><table>
+    <thead><tr><th>符號</th><th>意義</th><th>出處</th></tr></thead><tbody>
+    <tr><td>$d$、$S$、$\Sigma$、$\mathcal X=\Sigma^d$</td><td>序列長度、字母表大小、字母表、序列空間</td><td>Sec. 2.1</td></tr>
+    <tr><td>$q$、$X_0$、$X_t$、$q_t$</td><td>資料分佈、乾淨樣本、noise level $t$ 的帶噪樣本、其分佈</td><td>Sec. 2.1</td></tr>
+    <tr><td>$\alpha_t=e^{-t}$、$\beta_t=(1-\alpha_t)/S$</td><td>保留機率、每個符號的均勻質量</td><td>Sec. 2.1</td></tr>
+    <tr><td>$\sigma_t=\sqrt{1-e^{-2t}}$</td><td>Gaussian 過程的噪聲標準差</td><td>Sec. 2.2</td></tr>
+    <tr><td>$s_t$</td><td>score：uniform／masked 為機率比，Gaussian 為 $\nabla\log q_t$</td><td>Sec. 2.1–2.3</td></tr>
+    <tr><td>$I$、$m=|I|$</td><td>masked 的已揭露座標集合、已揭露座標數</td><td>Sec. 2.3</td></tr>
+    <tr><td>$\varepsilon$、$\hat q$</td><td>目標精度、取樣器的輸出分佈；Thm 3.1/4.1 中 $\varepsilon$ 是 KL 上限，Thm 6.1/7.1 中是 TV 上限</td><td>Thm 3.1、6.1</td></tr>
+    <tr><td>$\delta$</td><td>失敗機率：保證對至少 $1-\delta$ 比例的碼本成立；與末端時間 $\delta_U$ 不同</td><td>Thm 6.1</td></tr>
+    <tr><td>$\varepsilon_{\rm unif},\varepsilon_{\rm gauss},\varepsilon_{\rm mask}$</td><td>三種 score 誤差</td><td>Def 2.2、2.5、2.7</td></tr>
+    <tr><td>$\mathrm{TC}$、$\mathrm{DTC}$</td><td>total correlation、dual total correlation</td><td>Def 2.9</td></tr>
+    <tr><td>$t$、$s=t-h$、$h$</td><td>單步的起點（噪聲較多）、終點（噪聲較少）、步長</td><td>Lemma 3.2</td></tr>
+    <tr><td>$c_s(h)$</td><td>uniform 的 reverse DPI 係數 $\frac{e^{2h}-1}{1-e^{-s}}$</td><td>Lemma 3.2</td></tr>
+    <tr><td>$a_U$、$u=e^t-1$、$\delta_U$、$T_U$</td><td>步長參數、uniform 排程變數、末端時間、起始時間</td><td>Thm 3.1 證明</td></tr>
+    <tr><td>$C$、$M=\lceil e^{\kappa d}\rceil$、$q^C$、$\kappa$</td><td>碼本、碼本大小、碼本上的均勻分佈、碼率</td><td>Def 5.1</td></tr>
+    <tr><td>$I_{\rm unif}$、$I_{\rm gauss}$、$t^\star$</td><td>一個 bit 經腐蝕後保留的資訊量、臨界時間</td><td>Sec. 5、Eq. 22</td></tr>
+    <tr><td>$\Lambda$、$w$、$A$</td><td>對數因子、critical window 寬度、未給數值的常數</td><td>Eq. 24、26</td></tr>
+    <tr><td>$k$、$\ell$、$\eta$、$\rho$、$Q$</td><td>$|C|=2^k$、worst-case oracle 的窗半寬、每 level 的 oracle 誤差、失敗參數、query 數</td><td>Sec. 8</td></tr>
+    </tbody></table></div>
+    <p style="margin-top:12px">論文中有三個不同的 $u$：Thm 3.1 證明的 $u=e^t-1$、Sec. 4 的 $u=e^{2t}-1$、Sec. 7 的訊號強度 $\lambda_t=e^{-t}/\sigma_t$。本頁正文只使用第一個。常數 $C$ 也有兩種意思：碼本 $C$，以及 Eq. 24、Eq. 96 中只依賴 $[\kappa_-,\kappa_+]$ 的常數 $C$；本頁在後者出現時都會註明。</p></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">本文把一次 forward pass 形式化成什麼？masked 的 oracle 輸入與 $t$ 有關嗎？</p>
+    <p class="a">一次 score oracle query：對任意 $(t,z)$ 一次回傳所有座標（masked 僅未揭露座標 $i\notin I$）的 posterior marginal $\mathrm{law}((X_0)_i\mid X_t=z)$。masked 的 score 是 $\frac{\alpha_t}{1-\alpha_t}q_{i\mid I}(a\mid y_I)$，係數依賴 $t$，posterior marginal 不依賴 $t$；論文假設估計的 marginal 也不依賴 $t$，因此 oracle 只依賴 $(I,x_I)$（Lemma 2.6、Sec. 2.3）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="dllm-discrete-sampling-theory.html">離散 diffusion 取樣的理論基礎：CTMC 框架與 uniformization</a></p>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="product" data-toc="03" data-tt="條件相關">
+  <div class="ch-num">03 · 條件相關</div>
+  <h2>平行更新丟掉的是條件相關</h2>
+  <div class="prose">
+    <p>先複習三個量（log 一律為自然對數，單位 nats）。entropy $H(X)=-\sum_xp(x)\log p(x)$ 是隨機變數的不確定度。KL divergence $\mathrm{KL}(p\|p')=\sum_xp(x)\log\frac{p(x)}{p'(x)}$ 衡量用 $p'$ 近似 $p$ 的代價，非負，且只在 $p=p'$ 時為 0。條件熵 $H(X\mid Y)=H(X,Y)-H(Y)$ 是知道 $Y$ 之後剩下的不確定度。</p>
+    <p>論文用兩個量衡量「位置之間相關多少」（Def 2.9）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathrm{TC}(X)=\sum_{i=1}^dH(X_i)-H(X),\qquad \mathrm{DTC}(X)=H(X)-\sum_{i=1}^dH(X_i\mid X_{-i})$$</div><span class="eq-n">Def 2.9</span></div>
+  <div class="prose">
+    <p>total correlation（TC）等於 $\mathrm{KL}\big(\mathrm{law}(X)\,\|\,\prod_i\mathrm{law}(X_i)\big)$，即把聯合分佈換成各位置邊際的乘積會損失多少。dual total correlation（DTC）中的 $H(X_i\mid X_{-i})$ 是看到其他所有位置後第 $i$ 個位置剩下的不確定度，$X_{-i}$ 表示除了第 $i$ 個以外的所有座標。兩者都在各位置獨立時為 0。以 $d=3$ 個 bit 為例<span class="tag">本頁推導</span>（由 Def 2.9 直接代入）：</p>
+    <ul>
+      <li><b>複製</b>（三個 bit 完全相同，全 0 或全 1 各半）：$H(X)=\log2$，每個 $H(X_i)=\log2$，所以 $\mathrm{TC}=3\log2-\log2=2\log2$；每個 $H(X_i\mid X_{-i})=0$，所以 $\mathrm{DTC}=\log2$。</li>
+      <li><b>偶同位</b>（parity，均勻分佈在含偶數個 1 的 4 個字串上）：$H(X)=2\log2$，$H(X_i)=\log2$，所以 $\mathrm{TC}=3\log2-2\log2=\log2$；另外兩個 bit 決定第三個，$H(X_i\mid X_{-i})=0$，所以 $\mathrm{DTC}=2\log2-3\cdot0=2\log2$。</li>
+    </ul>
+    <p>推廣到一般 $d$ 個 bit：複製分佈的 $\mathrm{TC}=(d-1)\log2$、$\mathrm{DTC}=\log2$；偶同位分佈的 $\mathrm{TC}=\log2$、$\mathrm{DTC}=(d-1)\log2$。同一個分佈的兩個量可以差很多，Result 1 用的是 DTC。條件版本 $\mathrm{TC}(X\mid Y)$、$\mathrm{DTC}(X\mid Y)$ 把每個 entropy 換成給定 $Y$ 的條件熵。</p>
+    <p>取樣器在時間格點 $t_0\lt t_1\lt\dots\lt t_M$ 上由高往低走。每一步從噪聲較多的 $t$ 退到噪聲較少的 $s=t-h$，$h\gt0$ 是步長。平行更新使用 <b>product reverse kernel</b>：給定 $X_t=y$，各座標獨立地從 posterior marginal $P[(X_s)_i=\cdot\mid X_t=y]$ 抽樣（Eq. 12）。真正的 reverse kernel 是聯合分佈 $\mathrm{law}(X_s\mid X_t=y)$，用 posterior marginal 的乘積取代 joint 時，一步的 KL 誤差依 TC 的定義恰好等於條件 total correlation $\mathrm{TC}(X_s\mid X_t)$。這就是平行更新的代價：被丟掉的是給定 $X_t$ 之後，各位置之間仍然存在的相關。</p>
+    <p>整條路徑的誤差由 KL 的 chain rule 與 data processing inequality 拆開（Lemma 3.8 的證明）。實際的分解是：路徑 KL = 初始化 $\mathrm{KL}(q_{t_M}\|\mathrm{Unif})$ + 各步 TC $\sum_j\mathrm{TC}(X_{t_j}\mid X_{t_{j+1}})$ + 各步 score 誤差（每步 $\le c\,\varepsilon_{\rm unif}$，精確寫法是 $c_{t_j}(t_{j+1}-t_j)\,\varepsilon_{\rm unif}(t_{j+1})$，Lemma 3.7）+ 末端 $H(q_{t_0})-H(q)$（Lemma 3.9）。初始化項來自從均勻分佈起跑，末端項來自停在 $t_0\gt0$ 而不是 0，$\varepsilon_{\rm unif}$ 是 score 的估計誤差。Lemma 3.8 的敘述是這個分解的上界：各步 TC 換成 $c_{t_j}(t_{j+1}-t_j)\cdot$DTC 落差，即 $c_{t_j}(t_{j+1}-t_j)\big(\mathrm{DTC}(q_{t_j})-\mathrm{DTC}(q_{t_{j+1}})\big)$，換的方法是下一章的 reverse DPI。</p>
+    <p>這個替換要用到 DTC 的一個恆等式（Lemma 2.10）。若 $B$ 由 $A$ 經獨立的逐座標 channel 得到，則</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathrm{DTC}(A)-\mathrm{DTC}(B)=\mathrm{DTC}(A\mid B)+\sum_iI(B_i;A_{-i}\mid B_{-i})$$</div><span class="eq-n">Lemma 2.10</span></div>
+  <div class="prose">
+    <p>$I(\cdot\,;\cdot\mid\cdot)$ 是條件 mutual information，非負，所以 $\sum_iI(B_i;A_{-i}\mid B_{-i})\le\mathrm{DTC}(A)-\mathrm{DTC}(B)$（Eq. 2）。前向過程正是逐座標 channel，取 $A=X_s$、$B=X_t$ 得到一個推論：$\mathrm{DTC}(q_t)$ 對 $t$ 單調不增。</p>
+  </div>
+  <details class="box"><summary>證明要點：Lemma 2.10</summary><div>
+    <p>三個等式（Eq. 3 之後）：(1) channel 是 product，所以 $H(A)-H(B)-H(A\mid B)=-H(B\mid A)=-\sum_iH(B_i\mid A_i)$；(2) $B_i$ 只依賴 $A_i$，所以 $H(A_i\mid A_{-i},B)=H(A_i\mid A_{-i},B_i)$；(3) 同理 $H(B_i\mid A_{-i})=H(B_i\mid A_{-i},B_{-i})$。把 $\mathrm{DTC}(A)-\mathrm{DTC}(B)-\mathrm{DTC}(A\mid B)$ 依定義展開，用這三式逐項整理，剩下的就是 $\sum_iI(B_i;A_{-i}\mid B_{-i})$。</p>
+  </div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$d$ 個完全相同的 bit 與 $d$ 個 bit 的偶同位分佈，TC、DTC 各是多少？</p>
+    <p class="a">複製：TC $=(d-1)\log2$、DTC $=\log2$；同位：TC $=\log2$、DTC $=(d-1)\log2$（本頁推導，由 Def 2.9）。</p>
+    <p class="q">用 posterior marginal 的乘積取代 joint 時，一步的 KL 誤差等於什麼？總誤差由哪些項組成？</p>
+    <p class="a">等於條件 total correlation $\mathrm{TC}(X_s\mid X_t)$。路徑 KL = 初始化 $\mathrm{KL}(q_{t_M}\|\mathrm{Unif})$ + 各步 TC + 各步 score 誤差（每步 $\le c\,\varepsilon_{\rm unif}$，Lemma 3.7）+ 末端 $H(q_{t_0})-H(q)$（Lemma 3.9）。Lemma 3.8 是它的上界：各步 TC 換成 $c_{t_j}(t_{j+1}-t_j)\cdot$DTC 落差。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="dllm-masked-schedule-dtc-theory.html">masked diffusion 的 inference schedule 與 dual total correlation 縮放</a></p>
+</section>
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="rdpi" data-toc="04" data-tt="reverse DPI">
+  <div class="ch-num">04 · reverse DPI</div>
+  <h2>reverse DPI 把單步誤差換成 DTC 的下降量</h2>
+  <div class="prose">
+    <p>data processing inequality（DPI）說：兩個分佈經過同一個 channel $K$ 之後，KL 不會變大，$\mathrm{KL}(pK\|p'K)\le\mathrm{KL}(p\|p')$。reverse DPI 是反方向的不等式：如果 channel 只加少量噪聲，KL 也不會縮小太多，$\mathrm{KL}(pK\|p'K)\ge c\cdot\mathrm{KL}(p\|p')$，$c\gt0$。論文用兩個事實得到 uniform 的版本（Sec. 3.1）：</p>
+    <ol>
+      <li><b>Prop 3.3</b>：加噪後每個符號至少有質量 $\beta_s$，即 $P[(X_s)_i=a\mid(X_t)_{-i}=y_{-i}]\ge\beta_s$。</li>
+      <li><b>Lemma 3.4</b>（單 token reverse DPI）：若 $p,p'$ 每個符號質量 $\ge c/S$，則 $\mathrm{KL}(pK^U_t\|p'K^U_t)\ge\mathrm{KL}(p\|p')\cdot\frac{e^{-2t}c}{1-e^{-t}+e^{-t}c}$。</li>
+    </ol>
+  </div>
+  <details class="box"><summary>證明要點：Lemma 3.4</summary><div>
+    <p>KL 可以寫成 $\mathrm{KL}(p\|p')=\sum_a(p_a-p'_a)^2\int_0^1\frac{1-\theta}{p'_a+\theta(p_a-p'_a)}d\theta$（Eq. 4）。經過 $K^U_t$ 後，差 $p_a-p'_a$ 乘上 $e^{-t}$，所以分子乘上 $e^{-2t}$；分母中的機率在每個符號質量 $\ge c/S$ 的條件下，最多放大 $e^{-t}+(1-e^{-t})/c$ 倍。兩者相除得到 Lemma 3.4 的係數。</p>
+  </div></details>
+  <div class="prose">
+    <p>Cor 3.5 把兩者接起來。以 $(X_t)_{-i}$ 為條件，有 Markov 鏈 $(X_s)_{i+1:d}-(X_s)_i-(X_t)_i$；取 $c=1-e^{-s}$、noise 量為 $h$，經 chain rule（Eq. 9）整理得到</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$I\big((X_s)_{i+1:d};(X_s)_i\mid X_t\big)\le\frac{e^{2h}-1}{1-e^{-s}}\;I\big((X_s)_{i+1:d};(X_t)_i\mid(X_t)_{-i}\big)$$</div><span class="eq-n">Eq. 10</span></div>
+  <figure class="fig" style="max-width:460px;margin:8px 0 8px"><svg id="s3-fig" viewBox="0 0 380 300" role="img" aria-label="Cor 3.5 示意：上圖為左式，給定整列 X_t，比較 X_s 的第 i 格與第 i+1 到 d 格；下圖為右式，給定 X_t 除第 i 格外的位置，比較 X_s 的第 i+1 到 d 格與 X_t 的第 i 格"></svg></figure>
+  <div class="legend" style="margin:0 0 24px"><span class="lg wb">兩個引數</span><span class="lg box">邊際化（不出現）</span><span class="lg fill" style="--c-unif:var(--ink-3)">條件（已知）</span></div>
+  <div class="prose">
+    <p>把 $\mathrm{TC}(X_s\mid X_t)=\sum_{i=1}^{d-1}I((X_s)_i;(X_s)_{i+1:d}\mid X_t)$ 逐項套用 Cor 3.5，再把 $(X_s)_{i+1:d}$ 放大成 $(X_s)_{-i}$，最後用 Lemma 2.10 的 Eq. 2（$A=X_s$、$B=X_t$），得到 Lemma 3.2：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathrm{TC}(X_s\mid X_t)\le c_s(h)\big(\mathrm{DTC}(q_s)-\mathrm{DTC}(q_t)\big),\qquad c_s(h)=\frac{e^{2h}-1}{1-e^{-s}}$$</div><span class="eq-n">Lemma 3.2</span></div>
+  <div class="prose">
+    <p>所以 Lemma 3.2 靠兩個事實證明：Prop 3.3（加噪後每個符號質量 $\ge\beta_s$）與 Lemma 3.4（單 token reverse DPI），再用 Lemma 2.10 的 Eq. 2 把 mutual information 的和換成 DTC 落差。係數的行為：$h\ll s$ 時 $c_s(h)\approx2h/(1-e^{-s})$，步長越小係數越小；$s$ 很小時分母 $1-e^{-s}$ 趨近 0，所以在低 noise 端必須用很小的步長。</p>
+  </div>
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>單步：條件 TC 與 reverse DPI 上界</h3></div>
+    <p class="plate-lead">選一個分佈，調整終點 s 與步長 h：左圖的雙箭頭是 DTC 落差，右圖比較精確的 TC(Xₛ | Xₜ) 與 Lemma 3.2 的上界。</p>
+    <div class="ctl" style="margin-bottom:16px">
+      <div class="ctl-row" role="group" aria-label="分佈" id="c2-chips"></div>
+      <div class="c2grid" style="gap:12px 24px">
+        <div class="rng"><label class="lbl" for="c2-s">終點 s（噪聲較少的一端）<output id="c2-so">0.50</output></label><input id="c2-s" type="range" min="0" max="1" step="1"></div>
+        <div class="rng"><label class="lbl" for="c2-h">步長 h（起點 t = s + h）<output id="c2-ho">0.20</output></label><input id="c2-h" type="range" min="0" max="1" step="1"></div>
+      </div>
+    </div>
+    <div class="c2grid">
+      <div class="fig" id="c2-fig"><svg role="img" aria-label="DTC 對 t 的曲線"></svg></div>
+      <div class="fig" id="c2-bars"><svg role="img" aria-label="TC 與上界的長條"></svg></div>
+    </div>
+    <div class="tscroll" style="margin-top:16px"><table class="ro" id="c2-tab"><tbody></tbody></table></div>
+    <p class="plate-f">設定：d = 6 個 bit，uniform 腐蝕（S = 2），在 64 個狀態上精確列舉，無抽樣誤差。碼本是自選的 8 個字串 {5, 10, 19, 28, 38, 45, 51, 60}（以 6 位二進位表示）<span class="tag self">自選常數</span>，用來示意第 06 章的結構；獨立分佈為每個 bit 以機率 0.8 為 1。這是驗證不等式的小例子，不是論文的實驗。數值小於 10⁻⁹·6 log 2 時視為 0。讀數由本頁即時計算。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <div class="prose" style="margin-top:28px">
+    <p>在 C2 的 $d=6$ 例子中上界都成立，但寬鬆：精確 TC 只有上界的約 1.8% 到 19%（例如碼本、$s=0.5$、$h=0.2$ 時 TC = 0.024176，上界 0.147974）。獨立分佈的兩邊都是 0：各位置獨立時平行更新沒有誤差。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Lemma 3.2 是什麼？靠哪兩個事實證明？</p>
+    <p class="a">$\mathrm{TC}(X_s\mid X_t)\le\frac{e^{2h}-1}{1-e^{-s}}(\mathrm{DTC}(q_s)-\mathrm{DTC}(q_t))$；Prop 3.3（加噪後每個符號質量 $\ge\beta_s$）與 Lemma 3.4（單 token reverse DPI），再用 Lemma 2.10 的 Eq. 2。</p>
+  </div></details>
+</section>
+
+<!-- S4 ============================================================ -->
+<section class="ch" id="telescope" data-toc="05" data-tt="telescoping">
+  <div class="ch-num">05 · telescoping</div>
+  <h2>幾何步長讓各步的 DTC 落差成為逐項抵消的和（telescoping sum）</h2>
+  <div class="prose">
+    <p>Result 1 的目標：給定目標精度 $\varepsilon\gt0$，要求 $\mathrm{KL}(q\|\hat q)\le\varepsilon$，$\hat q$ 是取樣器的輸出分佈。若每一步的係數 $c_{t_j}(t_{j+1}-t_j)$ 都不超過同一個常數，Lemma 3.8 的離散化項就是這個常數乘上 $\sum_j\big(\mathrm{DTC}(q_{t_j})-\mathrm{DTC}(q_{t_{j+1}})\big)$。這個和的相鄰項互相抵消（telescoping sum），只剩 $\mathrm{DTC}(q_{t_0})-\mathrm{DTC}(q_{t_M})\le\mathrm{DTC}(q)$，因為 $\mathrm{DTC}(q_t)$ 對 $t$ 不增。</p>
+    <p>Thm 3.1 的排程使用 uniform 排程變數 $u=e^t-1$：$u_0=e^{\delta_U}-1$、$u_{j+1}=\min((1+a_U)u_j,U)$、$t_j=\log(1+u_j)$，也就是 $u=e^t-1$ 每步乘 $1+a_U$。$a_U$ 是步長參數；$\delta_U$ 是末端時間（取樣停在 $t_0=\delta_U$），與第 07 章的失敗機率 $\delta$ 是不同的量；$U=e^{T_U}-1$ 對應起始時間 $T_U$。這個排程使每步係數 $c\le3a_U$。排程的形狀是：$t$ 小時 $t_{j+1}\approx(1+a_U)t_j$（幾何），$t$ 大時 $t_{j+1}-t_j\approx\log(1+a_U)$（等距）（Fig. 6）。</p>
+  </div>
+  <details class="box"><summary>推導：為什麼每步係數 ≤ 3a_U</summary><div>
+    <p>由排程得 $e^{t_{j+1}-t_j}=\frac{1+u_{j+1}}{1+u_j}\le1+a_U\frac{u_j}{1+u_j}=1+a_U(1-e^{-t_j})=:1+x_j$。代入 $c_s(h)$（$s=t_j$、$h=t_{j+1}-t_j$）：$c_{t_j}(t_{j+1}-t_j)\le\frac{(1+x_j)^2-1}{1-e^{-t_j}}=\frac{x_j(2+x_j)}{1-e^{-t_j}}=(2+x_j)a_U\le3a_U$。最後一步只需要 $x_j\le1$，所以 C3 允許 $a_U$ 到 1（論文取 $a_U\le1/12$）。</p>
+  </div></details>
+  <div class="prose">
+    <p>誤差帳（Thm 3.1 證明）：</p>
+    <ul>
+      <li>離散化：各步 DTC 落差 telescoping 相加 $\le\mathrm{DTC}(q)$，所以總離散化誤差 $\le3a_U\,\mathrm{DTC}(q)\le\varepsilon/4$。</li>
+      <li>初始化：$\mathrm{KL}(q_{T_U}\|\mathrm{Unif})\le e^{-T_U}d\log S\le\varepsilon/4$（Lemma 3.10）。</li>
+      <li>末端：$H(q_{\delta_U})-H(q)\le d\delta_U\log(eS/\delta_U)\le\varepsilon/8$（Lemma 3.11）。</li>
+      <li>score：$3a_UN_U\varepsilon_{\rm unif}$，$N_U$ 是步數。</li>
+    </ul>
+    <p>參數取 $a_U=\varepsilon/(12\max\{\overline{\mathrm{DTC}},\varepsilon\})$、$L_U=\log(16edS/\varepsilon)$、$\delta_U=\varepsilon/(16dL_U)$、$T_U=\log(4d\log S/\varepsilon)$；步數 $N_U\le1+\log(U/u_0)/\log(1+a_U)$，其中 $\log(U/u_0)\lesssim L_U$、$1/\log(1+a_U)\le2/a_U$。結論是 Thm 3.1：$\mathrm{KL}(q\|\hat q)\le\varepsilon+O(\varepsilon_{\rm unif}\log(dS/\varepsilon))$，query 數為 $O\big((1+\overline{\mathrm{DTC}}/\varepsilon)\log(edS/\varepsilon)\big)$。設定 $a_U$ 需已知一個上界 $\overline{\mathrm{DTC}}\ge\mathrm{DTC}(q)$（informal 的 Thm 1.1 沒有寫出這個條件）。這追平了先前只對 masked diffusion 成立的 DTC 縮放 [CCL26, LZ25]。</p>
+    <p>從目標誤差 $\varepsilon$ 推出 query 數，分兩步。第一步，選步長：離散化項必須落在預算 $\varepsilon/4$ 以內。因為 $\mathrm{DTC}(q)\le\overline{\mathrm{DTC}}\le\max\{\overline{\mathrm{DTC}},\varepsilon\}$，取 $a_U=\varepsilon/(12\max\{\overline{\mathrm{DTC}},\varepsilon\})$ 就得到 $3a_U\mathrm{DTC}(q)\le3\varepsilon/12=\varepsilon/4$；分母的 $\max$ 使 $\overline{\mathrm{DTC}}$ 很小時 $a_U$ 也不超過 $1/12$。初始化 $\varepsilon/4$、末端 $\varepsilon/8$ 加上離散化 $\varepsilon/4$，合計小於 $\varepsilon$。第二步，數步數：每一步 query 一次 oracle，所以 query 數就是步數 $N_U$。$N_U\le1+\frac{2}{a_U}\log(U/u_0)=1+\frac{24\max\{\overline{\mathrm{DTC}},\varepsilon\}}{\varepsilon}\cdot O(L_U)$。又因為 $\max\{\overline{\mathrm{DTC}},\varepsilon\}/\varepsilon\le1+\overline{\mathrm{DTC}}/\varepsilon$、$L_U=O(\log(edS/\varepsilon))$，得到 $N_U=O\big((1+\overline{\mathrm{DTC}}/\varepsilon)\log(edS/\varepsilon)\big)$。所以步數與 $\overline{\mathrm{DTC}}/\varepsilon$ 成正比，維度只透過 log 因子出現。</p>
+  </div>
+  <div class="callout">
+    <p class="ct">估計的 score 要先投影</p>
+    <p>使用估計的 score 時，論文先做 Bregman projection 到凸集 $S_{t,b}=\{v\gt0:v_b=1,\ v_a/\textstyle\sum v\ge\beta_t\}$（Prop 3.6、Eq. 11）。否則換算出的機率不一定合法，Lemma 3.4 的「每個符號質量 $\ge c/S$」也不成立。投影後每步的 score 誤差 $\le c_s(h)\varepsilon_{\rm unif}(t)$（Lemma 3.7）。作者在 AI usage 聲明中說早期版本漏了這一步。</p>
+  </div>
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>整個排程：telescoping 相加與實際誤差</h3></div>
+    <p class="plate-lead">調整步長參數 a_U：上圖是 DTC(q_t) 與排程格點，下圖是每一步的精確 TC（實心）與 c·DTC 落差（外框）。讀數比較三層上界與取樣器實際的 KL(q‖q̂)。</p>
+    <div class="ctl" style="margin-bottom:16px">
+      <div class="ctl-row" role="group" aria-label="分佈" id="c3-chips"></div>
+      <div class="rng" style="max-width:520px"><label class="lbl" for="c3-a">步長參數 a_U（對數刻度）<output id="c3-ao">0.10</output></label><input id="c3-a" type="range" min="0" max="1" step="1"></div>
+    </div>
+    <div class="fig" id="c3-top"><svg role="img" aria-label="DTC 對 t 與排程格點"></svg></div>
+    <div class="fig" id="c3-bot" style="margin-top:8px"><svg role="img" aria-label="每步 TC 與上界"></svg></div>
+    <div class="legend"><span class="lg fill">實心＝TC（實際）</span><span class="lg box">外框＝c·DTC 落差（上界）</span></div>
+    <p class="cap" id="c3-line">KL(q‖q̂) ≤ 路徑 KL = init + ΣTC + end ≤ init + Σc·ΔDTC + end</p>
+    <div class="tscroll" style="margin-top:12px"><table class="ro" id="c3-tab"><thead><tr><th>量</th><th class="num">數值</th><th>意義</th></tr></thead><tbody></tbody></table></div>
+    <p class="plate-f">設定：同 C2 的 d = 6 精確列舉。端點固定 δ_U = 0.001、T = 6<span class="tag self">自選常數</span>；論文的 δ_U、T_U 依 ε、d、S 而定，這裡固定是為了只看 a_U 的效果（δ_U 是末端時間，不是失敗機率 δ）。取樣器使用精確的 posterior marginal（沒有 score 誤差），從均勻分佈起跑，最後一步套一次 forward kernel，q̂ 由 64 個狀態的分佈精確傳遞得到。讀數由本頁即時計算。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+  <div class="prose" style="margin-top:28px">
+    <p>在 C3 中，$a_U$ 每減為 1/3，$\sum\mathrm{TC}$ 與上界約減為 1/3，步數 $N$ 約乘 3；末端項不隨 $a_U$ 改變；實際的 $\mathrm{KL}(q\|\hat q)$ 遠小於上界（碼本、$a_U=0.1$：KL 0.0059、$\sum$TC 0.0381、上界 0.348、$3a_U\mathrm{DTC}$ 0.520）。</p>
+    <p>Gaussian 用同一論證，reverse DPI 的常數與排程變數不同，結論同形式（Thm 4.1）：$\mathrm{KL}(q_{\rm pre}\|\hat q)\le\varepsilon+O(\varepsilon_{\rm gauss}^2\log(dS/\varepsilon))$，query 數與 Thm 3.1 同形式。</p>
+  </div>
+  <details class="box"><summary>Gaussian 版本的細節（Sec. 4）</summary><div>
+    <p>換變數 $u=e^{2t}-1$、$Z_u=X_0+B_u$（Eq. 14）。Gaussian 沒有 Prop 3.3 的類比（沒有「每個符號至少有質量」的性質），改用 Lemma 4.3：$\mathrm{KL}(f_{\alpha,v}\|f_{\beta,v})\ge\mathrm{KL}(f_{\alpha,u}\|f_{\beta,u})\cdot\frac uve^{3/v-3/u}$，$f_{\alpha,u}$ 是 one-hot 點加 $N(0,uI)$ 的混合；證明用 de Bruijn 型恆等式與 Grönwall 不等式（Lemma 4.6）。</p>
+    <p>係數 $c_u(v)=\frac vue^{3/u-3/v}-1$（Lemma 4.2）。時鐘 $F_G(u)=\log u-3/u$ 滿足 $F_G(v)-F_G(u)=\log(1+c_u(v))$，每步令 $F_G$ 增加 $\log(1+a_G)$，$a_G=\varepsilon/(4\max\{\overline{\mathrm{DTC}},\varepsilon\})$（Fig. 7）。$u$ 小時步長約 $a_Gu^2/3$，$u$ 大時才是幾何。</p>
+  </div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Thm 3.1 的排程怎麼選？為什麼總離散化誤差 $\le3a_U\mathrm{DTC}(q)$？query 數是多少？</p>
+    <p class="a">$u=e^t-1$ 每步乘 $1+a_U$，使每步係數 $c\le3a_U$；$\mathrm{DTC}(q_t)$ 對 $t$ 不增，各步 DTC 落差 telescoping 相加 $\le\mathrm{DTC}(q)$；取 $a_U=\varepsilon/(12\max\{\overline{\mathrm{DTC}},\varepsilon\})$，query 數 $O((1+\overline{\mathrm{DTC}}/\varepsilon)\log(edS/\varepsilon))$，需已知 $\overline{\mathrm{DTC}}$。</p>
+  </div></details>
+</section>
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="codebook" data-toc="06" data-tt="隨機碼本">
+  <div class="ch-num">06 · 隨機碼本</div>
+  <h2>困難分佈是隨機碼本上的均勻分佈</h2>
+  <div class="prose">
+    <p>Result 2 在一個特定的分佈族上比較三種過程（Sec. 5、Def 5.1）。字母表取 $\Sigma=\{\pm1\}$（$S=2$，$\beta_t=(1-e^{-t})/2$）。碼本 $C$ 是 $\{\pm1\}^d$ 上均勻隨機的 $M$ 元子集，$M=\lceil e^{\kappa d}\rceil$，$\kappa\in[\kappa_-,\kappa_+]\subset(0,\log2)$ 稱為碼率；資料分佈是碼本上的均勻分佈 $q^C=\mathrm{Unif}(C)$。取樣器知道區間 $[\kappa_-,\kappa_+]$，不知道 $\kappa$，也不知道 $C$。下界額外把 $\kappa$ 限制在格點 $\{(k/d)\log2\}$ 上，此時 $M=2^k$。</p>
+    <p>臨界時間由「每座標保留的資訊量等於碼率」決定。一個均勻的 bit $V$ 經 uniform 腐蝕後，與原 bit 的 mutual information 是 $I_{\rm unif}(t)=\log2-h_2(\beta_t)$，其中 $h_2(p)=-p\log p-(1-p)\log(1-p)$ 是 binary entropy；經 Gaussian 腐蝕後是 $I_{\rm gauss}(t)=I(V;e^{-t}V+\sigma_tG)$。兩者都是一個 bit 經腐蝕後保留的資訊。臨界時間定義為</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$d\,I_{\rm unif}(t^\star_{\rm unif})=\log M,\qquad d\,I_{\rm gauss}(t^\star_{\rm gauss})=\log M$$</div><span class="eq-n">Eq. 22</span></div>
+  <div class="prose">
+    <p>即 $d\,I(t^\star)=\log M$（Eq. 22）。masked 沒有連續的時間 $t$，腐蝕程度由已揭露的座標數 $m$ 表示：$m$ 個座標露出原值，其餘 $d-m$ 個被遮住。一個露出的座標保留整個 bit 的資訊 $\log2$，被遮住的座標保留 0，所以總資訊是 $m\log2$。令它等於 $\log M=k\log2$（格點上 $M=2^k$），得到 masked 的臨界點：<b>已揭露座標數 $m=k$</b>。$m\lt k$ 時，與已揭露值一致的碼字約有 $1+2^{k-m}$ 個，無法判斷是哪一個；$m\gt k$ 時通常只剩原碼字。從 random coding 的角度看：每座標資訊量 $I\lt\kappa$ 時，帶噪樣本附近仍有很多碼字，無法判斷是哪一個；$I\gt\kappa$ 時只剩原碼字。$\kappa=0.2$ 時<span class="tag">本頁推導</span>$\beta^\star=0.1948$、$t^\star_{\rm unif}=0.4937$、$t^\star_{\rm gauss}=0.5521$、masked $m^\star/d=\kappa/\log2=0.2885$（C4 的小圖可以改 $\kappa$）。上界演算法的所有 query 時間都落在 $I_0=[\tau_-/2,\tau_++1]$（Eq. 23）。</p>
+    <p>論文陳述這個分佈族的 $\mathrm{DTC}=\Theta(d)$（Sec. 1.2，沒有附證明），所以 Thm 3.1/4.1 在這裡只給 $\tilde O(d/\varepsilon)$；Result 2 的演算法利用分佈的結構，超過 DTC 界。直覺<span class="tag">本頁推導</span>：$H=\log M\approx\kappa d$；$H(X_i\mid X_{-i})\ne0$ 需要某個碼字翻一位後仍在 $C$ 中，機率約 $M/2^d$，是指數小的量，所以 $\mathrm{DTC}\approx\kappa d$。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">隨機碼本分佈怎麼定義？取樣器知道什麼？臨界時間由什麼式子定義？</p>
+    <p class="a">$q^C=\mathrm{Unif}(C)$，$C$ 是 $\{\pm1\}^d$ 上均勻隨機的 $M=\lceil e^{\kappa d}\rceil$ 元子集；取樣器知道 $[\kappa_-,\kappa_+]$，不知道 $\kappa$ 與 $C$；$d\,I(t^\star)=\log M$（Eq. 22），masked 為 $m=k$。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="dllm-score-oracle-lower-bounds.html">score oracle 模型與 query 下界：Xun &amp; Price 與 random empirical measure</a></p>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="window" data-toc="07" data-tt="critical window">
+  <div class="ch-num">07 · critical window</div>
+  <h2>critical window 在 masked 寬 1/d，在 uniform 與 Gaussian 寬 1/√d</h2>
+  <div class="prose">
+    <p>先定義 Result 2 的精度符號。目標是對至少 $1-\delta$ 比例的碼本 $C$ 有 $\mathrm{TV}(\hat q^C,q^C)\le\varepsilon$；這裡 $\varepsilon$ 是 total variation（TV）距離 $\frac12\sum_x|p(x)-p'(x)|$ 的目標精度，$\delta\in(0,1/4)$ 是失敗機率，即保證不成立的碼本所佔比例（Thm 6.1）。對數因子 $\Lambda=\log(Cd/(\varepsilon\delta))$（Eq. 24），這裡的 $C$ 是只依賴 $[\kappa_-,\kappa_+]$ 的常數，不是碼本。$A\gt0$ 是 Prop 6.4 證明中選定、只依賴 $[\kappa_-,\kappa_+]$ 的常數，論文沒有給數值。</p>
+    <p>critical window 是 noise 範圍中資訊突然出現的區間：在窗的高 noise 一側，帶噪樣本幾乎不含碼字的資訊；在低 noise 一側，已經可以解出原碼字。三個命題給出窗寬：</p>
+    <ul>
+      <li><b>Uniform（Prop 6.4）</b>：$w=A\sqrt{\Lambda/d}$（Eq. 26）。$t\ge t^\star_{\rm unif}+w$ 時 $\mathbb E_C\,\mathrm{TV}(q^C_t,\mathrm{Unif})\le e^{-K\Lambda}$；$t\le t^\star_{\rm unif}-w$ 時 Bayes 最佳解碼錯誤率 $\mathbb E_C\,\mathrm{err}^U_C(t)\le e^{-K\Lambda}$。條件是 $d\ge d_{K,A}$、$\log d\le\Lambda\le c_{K,A}d$，期望是對 $C$ 取的。</li>
+      <li><b>Gaussian（Prop 7.4）</b>：結構相同，窗寬同樣是 $w=A\sqrt{\Lambda/d}$；information density 是 $d$ 個獨立項之和，以 $d\,I_{\rm gauss}(t)$ 為中心，偏離 $v$ 的機率 $\le2e^{-cv^2/d}$（Eq. 59）。</li>
+      <li><b>Masked（Prop 8.6）</b>：$|C|=2^k$；$m\le k-\ell$ 時 $\mathbb E_C\,\mathrm{TV}(\mathrm{law}(X_{0,I}),\mathrm{Unif})\le2^{-\ell/2}$，$m\ge k+\ell$ 時 $\mathbb E_C\,\mathrm{err}^M_C(m)\le2^{-\ell}$。窗在 $m$ 上寬 $2\ell$；$\eta=d^{-\Theta(1)}$ 時 $\ell=O(\log d)$，佔全範圍的 $O(\log d/d)$（$\ell$ 與 $\eta$ 在第 09 章定義）。</li>
+    </ul>
+    <p>總結：masked 的 critical window 佔 noise 範圍的 $O(\log d/d)$（Prop 8.6，$\eta=d^{-\Theta(1)}$ 時 $\ell=O(\log d)$）；uniform／Gaussian 的窗寬 $w=A\sqrt{\Lambda/d}$，在 $\varepsilon$ 為常數、$\delta=d^{-\Theta(1)}$ 時為 $O(\sqrt{\log d/d})$（Prop 6.4、7.4，需 $\log d\le\Lambda\le cd$）。</p>
+    <h3>Fig. 4 的模擬</h3>
+    <p>recovery probability 定義為 $\mathbb E\,P[X_0=y^\star\mid X_t]$：在植入碼字 $y^\star$ 的條件下，posterior 放在正確碼字上的質量。它不是取樣器的成功率，也不是第 08 章的找窗統計量。App. C 以 Poissonization 模擬：除了 $y^\star$，其餘碼字視為強度 $M2^{-d}$ 的 Poisson 點過程。橫軸是每座標資訊量 $I$：masked 為 $(m/d)\log2$，uniform 為 $I_{\rm unif}(t)$，Gaussian 為 $I_{\rm gauss}(t)$。窗寬定義為 recovery 由 0.2 升到 0.8 的距離。Fig. 4 的模擬顯示：recovery 由 0.2 到 0.8 的寬度，masked $\propto1/d$、uniform／Gaussian $\propto1/\sqrt d$（Fig. 4(d)）。</p>
+    <p>masked 有閉式<span class="tag">本頁推導</span>。已揭露 $m$ 個座標時，與這 $m$ 個值相容的其他碼字數 $N-1\sim\mathrm{Poi}(\lambda)$，$\lambda=M2^{-m}=e^{d(\kappa-I)}$，recovery $=\mathbb E[1/N]=(1-e^{-\lambda})/\lambda$。0.8 對應 $\lambda=0.4642$，0.2 對應 $\lambda=4.9651$，所以窗寬 $=\ln(4.9651/0.4642)/d=2.3698/d$ nats；以 $m$ 計約 3.42 個座標，與 $d$ 無關。</p>
+    <p>uniform 的窗寬為什麼是 $1/\sqrt d$？論文給的是窗寬上界 $w\propto\sqrt{\Lambda/d}$（Prop 6.4）：證明中的 Hoeffding 項 $e^{-d\Delta^2/2}$ 需要 $d\Delta^2\gtrsim\Lambda$，$\Delta=|\beta_t-\beta_{t^\star}|\asymp w$；另一個計數項只需要 $d\Delta\gtrsim\Lambda$。Fig. 4(d) 與本頁求積顯示實際寬度約 $\propto1/\sqrt d$（本頁擬合斜率 $-0.478$）。以下是啟發式解釋<span class="tag">本頁推導</span>，論文沒有證明。App. C 的式子是 $P[X_0=y^\star\mid X_t]=1/(1+Z)$，$Z$ 是競爭碼字的總權重。uniform 的帶噪樣本與原碼字的 Hamming 距離 $d_H\sim\mathrm{Bin}(d,\beta_t)$，有 $\sqrt d$ 的漲落。由二項式定理，$d_H=d\beta_t$ 時 $\log\mathbb E[Z\mid d_H]=d(\kappa-I_{\rm unif}(t))$；$d_H$ 的漲落使競爭碼字總權重的條件均值 $\mathbb E[Z\mid d_H]$ 在對數尺度上漲落 $\Theta(\sqrt d)$（$d=256$、$t=0.6$ 時標準差約 8.25）。若把轉變近似成「$\mathbb E[Z\mid d_H]\approx1$ 的位置」，轉變在 $I$ 上的寬度就 $\propto1/\sqrt d$。masked 的已揭露數 $m$ 是固定的觀測值，沒有這個漲落，轉變只來自 $\mathrm{Poi}(2^{k-m})$ 的計數本身，以 $m$ 計寬 $O(1)$ 個座標。這個漲落與 Prop 6.4 證明中的 Hoeffding 項同源。</p>
+  </div>
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>critical window：recovery probability 與窗寬縮放</h3></div>
+    <p class="plate-lead">調整碼率 κ 與長度 d：主圖是 recovery probability 對每座標資訊量 I，雙箭頭是 0.2→0.8 的窗寬；左下是七個 d 的窗寬（log–log），右下是兩條資訊量曲線與臨界時間。</p>
+    <div class="c2grid" style="gap:12px 24px;margin-bottom:12px">
+      <div class="rng"><label class="lbl" for="c4-k">碼率 κ（nats）<output id="c4-ko">0.20</output></label><input id="c4-k" type="range" min="0.05" max="0.6" step="0.01" value="0.2"></div>
+      <div class="rng"><label class="lbl" for="c4-d">序列長度 d<output id="c4-do">256</output></label><input id="c4-d" type="range" min="0" max="6" step="1" value="2"></div>
+    </div>
+    <div class="fig" id="c4-main"><svg role="img" aria-label="recovery probability 對 I"></svg></div>
+    <div class="legend"><span class="lg mask">masked（閉式；■ 為整數 m）</span><span class="lg unif">uniform（確定性求積）</span><span class="lg ref">I = κ</span></div>
+    <p class="readout" id="c4-ro" style="margin-top:12px"></p>
+    <div class="c4low">
+      <div><div class="fig" id="c4-w"><svg role="img" aria-label="窗寬對 d 的 log–log 圖"></svg></div>
+        <div class="legend"><span class="lg mask">masked ■</span><span class="lg unif">uniform ●</span><span class="lg ref">參考斜率</span></div></div>
+      <div><div class="fig" id="c4-i"><svg role="img" aria-label="I_unif 與 I_gauss 對 t"></svg></div>
+        <div class="legend"><span class="lg unif">I_unif(t)</span><span class="lg gaus">I_gauss(t)</span><span class="lg ref">I = κ</span></div></div>
+    </div>
+    <p class="readout" id="c4-ro2" style="margin-top:12px"></p>
+    <details class="box"><summary>以表格顯示七個 d 的窗寬</summary><div><div class="tscroll"><table id="c4-tab"><thead><tr><th class="num">d</th><th class="num">uniform 窗寬</th><th class="num">masked 窗寬</th><th class="num">uniform × √d</th></tr></thead><tbody></tbody></table></div></div></details>
+    <p class="plate-f">masked 曲線為 App. C 模型的閉式；uniform 曲線為同一模型的確定性求積<span class="tag">本頁推導</span>（把 1/(1+Z) 寫成積分並用 Poisson 過程的 Laplace 泛函），與 App. C 的 Monte Carlo 在 d = 64、256 時相差 ≤ 0.003，在 Monte Carlo 的標準誤內。log M 取 κd，忽略上取整；在這個連續理想化下 masked 在 I = κ 的 recovery 恆為 1 − e⁻¹ = 0.632，整數 m 的 ■ 點不一定落在 I = κ。Gaussian 的 recovery 曲線（Fig. 4c）在論文中用 saddlepoint 近似與分箱計算，細節未給，本頁不重算。κ 的範圍 [0.05, 0.6] 落在 (0, log 2) 內<span class="tag self">自選常數</span>。</p>
+    <p class="sr" aria-live="polite" id="c4-live"></p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">masked 與 uniform／Gaussian 的 critical window 各佔 noise 範圍多少？Fig. 4 的模擬顯示什麼？</p>
+    <p class="a">masked $O(\log d/d)$（Prop 8.6，$\eta=d^{-\Theta(1)}$ 時 $\ell=O(\log d)$）；uniform／Gaussian $w=A\sqrt{\Lambda/d}$，$\varepsilon$ 常數、$\delta=d^{-\Theta(1)}$ 時為 $O(\sqrt{\log d/d})$（需 $\log d\le\Lambda\le cd$）；Fig. 4：0.2→0.8 的寬度 masked $\propto1/d$、uniform／Gaussian $\propto1/\sqrt d$。</p>
+    <p class="q">為什麼 uniform 的窗寬是 $1/\sqrt d$ 而 masked 是 $1/d$？</p>
+    <p class="a">論文給窗寬上界 $w\propto\sqrt{\Lambda/d}$（Hoeffding 項需要 $d\Delta^2\gtrsim\Lambda$）；Fig. 4(d) 與求積顯示實際約 $\propto1/\sqrt d$。啟發式：Hamming 距離 $\sim\mathrm{Bin}(d,\beta_t)$ 有 $\sqrt d$ 漲落，使 $\mathbb E[Z\mid d_H]$ 在對數尺度上漲落 $\Theta(\sqrt d)$；masked 的 $m$ 是固定觀測值，轉變只來自 $\mathrm{Poi}(2^{k-m})$，以 $m$ 計寬 $O(1)$。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="dllm-critical-windows-speciation.html">critical window 與 speciation transition：生成結果在窄範圍的 noise level 定形</a></p>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="upper" data-toc="08" data-tt="上界演算法">
+  <div class="ch-num">08 · 上界演算法</div>
+  <h2>上界演算法先找窗、再在窗內取樣、最後一步解碼</h2>
+  <div class="prose">
+    <p>取樣器不知道 $\kappa$，所以不知道窗在哪裡。Thm 6.1 的演算法分成三個階段（Sec. 6.2–6.3）：找窗、窗內取樣、一步解碼。</p>
+    <p>找窗用的統計量是 $T_t(x)=\langle x,m_t(x)\rangle-de^{-t}$，其中 $m_t(x)=\mathbb E[X_0\mid X_t=x]$ 是 posterior mean，一次 query 就能算出；查詢點 $x$ 從 $\mathrm{Unif}(\mathcal X)$ 抽，不依賴 $C$。Prop 6.5 說明 $T_t$ 在窗的兩側分得開：窗上方（$t\ge t^\star+2w$）$T_t\lt-a_0dw$ 的機率 $\le e^{-K\Lambda}$；窗下方（$t\le t^\star-2w$）$T_t\gt-b_0dw$ 的機率 $\le e^{-K\Lambda}$，且 $b_0\gt4a_0$。實際只能拿到估計的 score，論文先把 score clip 到 $[\beta_t/(1-\beta_t),(1-\beta_t)/\beta_t]$（Eq. 32–33；這裡用 clipping，不是 Sec. 3 的 Bregman projection），得到可計算的 $\hat T_t$（Eq. 34），一次 query 一個值。Prop 6.9 的門檻因此變成 Alg. 1 的門檻常數 $a=2a_0\lt b=b_0-a_0$，與第 05 章的步長參數 $a_U$ 無關。</p>
+  </div>
+  <div class="algo" role="table" aria-label="Alg. 1 找窗，逐行對照">
+    <div class="row hd" role="row"><div role="columnheader">Alg. 1 · 找窗</div><div class="ex-h" role="columnheader">說明</div></div>
+    <div class="row" role="row"><code role="cell">輸入：[κ₋, κ₊]、ε、失敗機率 δ</code><div class="ex" role="cell">由 [κ₋, κ₊] 得到臨界時間的可能範圍 [τ₋, τ₊]；w = A√(Λ/d)。</div></div>
+    <div class="row" role="row"><code role="cell">for t in 格點(格距 w/20, 覆蓋 [τ₋−3w, τ₊+3w], 由高往低):</code><div class="ex" role="cell">從噪聲多的一端往噪聲少的一端掃；格點數 O(1/w)。</div></div>
+    <div class="row" role="row"><code role="cell">  抽 R = 2⌈CΛ⌉+1 個 x ~ Unif(𝒳)，各查一次得 T̂_t(x)</code><div class="ex" role="cell">每個格點 R = O(Λ) 次 query；查詢點不依賴碼本。</div></div>
+    <div class="row" role="row"><code role="cell">  if median(T̂_t) &lt; −(a+b)/2 · d·w: return t̂ = t</code><div class="ex" role="cell">中位數第一次跨過兩個門檻的中點就停（Prop 6.10）。</div></div>
+    <div class="row" role="row"><code role="cell">return τ₋</code><div class="ex" role="cell">都沒有觸發時回傳最低端。合計 O(Λ/w) 次 query。</div></div>
+  </div>
+  <div class="algo" role="table" aria-label="Alg. 2 窗內取樣與一步解碼，逐行對照">
+    <div class="row hd" role="row"><div role="columnheader">Alg. 2 · 窗內取樣與一步解碼</div><div class="ex-h" role="columnheader">說明</div></div>
+    <div class="row" role="row"><code role="cell">t₊ = t̂ + 4w，t₋ = t̂ − 4w</code><div class="ex" role="cell">取樣區間把窗完整包住（t̂ 在 [t⋆−3w, t⋆+2w] 內）。</div></div>
+    <div class="row" role="row"><code role="cell">N = ⌈C·d·w / ε²⌉，h = 8w / N</code><div class="ex" role="cell">區間長 8w，等分成 N 步。</div></div>
+    <div class="row" role="row"><code role="cell">y ~ Unif(𝒳)</code><div class="ex" role="cell">在窗的高 noise 一側，q_t 已接近均勻分佈，可以直接從均勻起跑。</div></div>
+    <div class="row" role="row"><code role="cell">repeat N 次：每個座標以機率 p_h(s̃) 翻轉，t ← t − h</code><div class="ex" role="cell">p_h(r) = (β_h/α_h)((1−β_h)r − β_h)，s̃ 為 clip 後的 score（Eq. 47–48）。</div></div>
+    <div class="row" role="row"><code role="cell">return ẑ = sgn(m̂_t₋(y))</code><div class="ex" role="cell">最後一次 query：取估計 posterior mean 的符號（Eq. 51，Lemma 6.13）。</div></div>
+  </div>
+  <div class="prose">
+    <p>query 計數如下。找窗：由高往低掃格距 $w/20$ 的時間格點，每點用 $R=2\lceil C\Lambda\rceil+1$ 個均勻樣本算 $\hat T_t$ 的中位數，低於 $-\frac{a+b}2dw$ 即停，共 $O(\Lambda/w)$ 次 query；對至少 $1-\delta/4$ 比例的 $C$，$P[t^\star-3w\le\hat t\le t^\star+2w\mid C]\ge1-\varepsilon/8$（Prop 6.10）。窗內取樣：從 $\hat t+4w$ 以均勻分佈起始走到 $\hat t-4w$，$N=\lceil Cdw/\varepsilon^2\rceil$ 步；誤差由 Prop 6.12 重用 Lemma 3.2 的 telescoping，並用 $\mathrm{DTC}\le d\log2$。一步解碼：取估計 posterior mean 的符號，1 次 query。合計 $O(\Lambda/w)+N+1=O(\sqrt{d\Lambda}/\varepsilon^2)$，因為 $\Lambda/w=\sqrt{d\Lambda}/A$、$dw=A\sqrt{d\Lambda}$，兩個階段同階。</p>
+    <p>Thm 6.1 的條件是 $d\ge d_0$、$\varepsilon,\delta\in(0,1/4)$、$\Lambda\le c_0d$，以及 score 精度 $\sup_{t\in I_0}\varepsilon_{\rm unif}(t)\le e^{-B\Lambda}=(\varepsilon\delta/(Cd))^B$（Eq. 25），也就是需 $\sup_{I_0}\varepsilon_{\rm unif}\le e^{-B\Lambda}$；保證是對至少 $1-\delta$ 比例的 $C$ 有 $\mathrm{TV}(\hat q^C,q^C)\le\varepsilon$。$\varepsilon$ 為常數、$\delta=d^{-\Theta(1)}$ 時 query 數是 $O(\sqrt{d\log d})$。</p>
+    <p>Gaussian（Thm 7.1）的結構相同。查詢點改從 $\nu_t=\mathrm{law}(e^{-t}U+\sigma_tG)$ 抽，統計量是 $T_t(x)=\langle z,m_t(x)-m^0_t(x)\rangle$，$z=x/\sigma_t$、$m^0_t(x)_i=\tanh(e^{-t}x_i/\sigma_t^2)$（Eq. 65–66）；窗內取樣用 exponential integrator，$N=\lceil C(d\Delta^2+d\Delta)/\varepsilon^2\rceil$、$\Delta=8w$。證明中的計數是 $O((\sqrt{d\Lambda}+\Lambda)/\varepsilon^2+1)$；因為 $\Lambda\le c_0d$ 時 $\Lambda\le\sqrt{c_0d\Lambda}$，它與定理敘述的 $O(\sqrt{d\Lambda}/\varepsilon^2)$ 同階。</p>
+  </div>
+  <div class="callout">
+    <p class="ct">常數沒有數值</p>
+    <p>$A,B,C,a,b,K,c_0,d_0,\tau_\pm$ 都只說「只依賴 $[\kappa_-,\kappa_+]$」，論文沒有給數值，所以 Alg. 1–4 無法照字面執行。本頁不執行這些演算法，只用上面的逐行對照說明每一行的作用。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Thm 6.1 的演算法怎麼做？各用多少 query？需要什麼 score 精度？</p>
+    <p class="a">找窗：由高往低掃格距 $w/20$ 的格點，每點用 $R=2\lceil C\Lambda\rceil+1$ 個均勻樣本算 $\hat T_t$ 的中位數，低於 $-\frac{a+b}2dw$ 即停，$O(\Lambda/w)$ 次；窗內取樣：從 $\hat t+4w$ 均勻起始走到 $\hat t-4w$，$N=\lceil Cdw/\varepsilon^2\rceil$ 步；一步解碼：取估計 posterior mean 的符號，1 次；合計 $O(\sqrt{d\Lambda}/\varepsilon^2)$；需 $\sup_{I_0}\varepsilon_{\rm unif}\le e^{-B\Lambda}$。</p>
+  </div></details>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="lower" data-toc="09" data-tt="下界">
+  <div class="ch-num">09 · 下界</div>
+  <h2>worst-case oracle 使 masked 取樣器必須搜尋窗的位置</h2>
+  <div class="prose">
+    <p>masked 的下界要證明：存在一個誤差很小的 oracle，使任何演算法都需要很多次 query（Sec. 8）。先在碼本上放一個 prior：$k\sim\mathrm{Unif}(\mathcal K^M_d)$，$\mathcal K^M_d=\{k\in\mathbb Z:\kappa_-\le k\log2/d\le\kappa_+\}$，$|\mathcal K^M_d|\ge c_1d$；給定 $k$，$C$ 是均勻隨機的 $2^k$ 元子集。$\eta$ 是每個 level 允許的 oracle 誤差，$\rho$ 是失敗參數，窗半寬為 $\ell=\lceil\log_2(Cd/(\eta\rho^2))\rceil$（Eq. 96，這個 $C$ 是常數，不是碼本）。</p>
+    <p><b>第一步（Lemma 8.2）。</b>永遠回傳均勻 marginal 的 oracle $\mathcal O_0$ 滿足 $\mathbb E_C\,\varepsilon_{\rm mask}(\mathcal O_0;q^C,m)\le2^{m-k}$。直覺：揭露 $m$ 個座標後，與揭露值一致的碼字平均約有 $2^{k-m}$ 個，它們在未揭露座標上的值近似均勻，所以均勻回答的 KL 誤差約為 $1/2^{k-m}$。這是對 $C$ 取期望的敘述，對個別的 $C$ 不一定成立。因此定義：$C$ 是 good，若 $\varepsilon_{\rm mask}(\mathcal O_0;q^C,m)\le\eta$ 對每個 $0\le m\le k-\ell$ 都成立（Eq. 98）。對單一 level 用 Markov 不等式，$\mathbb P_C[\varepsilon_{\rm mask}(\mathcal O_0;q^C,m)\gt\eta]\le2^{m-k}/\eta$；再對 $m=0,\dots,k-\ell$ 做 union bound，等比級數給出</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbb P_C[\,C\text{ not good}\,]\le\frac1\eta\sum_{m=0}^{k-\ell}2^{m-k}\le\frac{2^{1-\ell}}{\eta}$$</div><span class="eq-n">Eq. 99</span></div>
+  <div class="prose">
+    <p>所以 $C$ 是 good 的機率 $\ge1-2^{1-\ell}/\eta$。$\ell$ 取得夠大（Eq. 96），這個機率就接近 1。</p>
+    <p><b>第二步（Def 8.3）。</b>對 good $C$ 定義 worst-case oracle $\mathcal O_{k,C}$：$m\le k-\ell$ 一律回傳均勻（不論 consistent 與否）；$m\gt k-\ell$ 時 consistent assignment 回傳真實 marginal、inconsistent 回傳均勻。它是合法的 oracle，因為誤差只在 consistent assignment 上計算（Lemma 2.8），而 $m\le k-\ell$ 的 level 上均勻回答的誤差已由 good $C$ 控制在 $\eta$ 以內；Prop 8.4 因此得到每個 level 的誤差 $\le\eta$（Eq. 97）。</p>
+    <p><b>第三步（Prop 8.5，coupling）。</b>演算法對 $\mathcal O_0$ 的查詢序列只由演算法內部的隨機性決定，與 $k,C$ 無關。把同一個演算法分別接上 $\mathcal O_0$ 與 $\mathcal O_{k,C}$，兩次執行收到的回答出現差異（機率記為 $p_{\rm diff}$）只可能因為三件事，分別對應 Eq. 100 的三項：</p>
+    <ol>
+      <li><b>$m$ 落在窗內。</b>某次 query 的已揭露座標數 $m$ 與 $k$ 相距不超過 $\ell$（$|m-k|\le\ell$）。在這個範圍，$\mathcal O_{k,C}$ 對 consistent assignment 回傳真實 marginal，與均勻不同。查詢序列與 $k$ 無關，而 $k$ 在 $|\mathcal K^M_d|$ 個值中均勻，所以每次 query 落入的機率 $\le(2\ell+1)/|\mathcal K^M_d|$，$Q$ 次合計 $\le(2\ell+1)Q/|\mathcal K^M_d|$（第一項）。</li>
+      <li><b>$C$ 不是 good。</b>此時 $\mathcal O_{k,C}$ 不用上面的規則，回答可能不同；機率 $\le2^{1-\ell}/\eta$（Eq. 99，第二項）。</li>
+      <li><b>$m\gt k+\ell$ 的 query 碰巧與 $C$ 一致。</b>$m$ 在窗的上方時，$\mathcal O_{k,C}$ 只對 consistent assignment 回傳真實值。演算法的 assignment 與 $C$ 無關，一個固定的 $m$ 座標 assignment 與某個碼字一致的機率 $\le2^k\cdot2^{-m}\le2^{-\ell}$，$Q$ 次合計 $\le Q2^{-\ell}$（第三項）。</li>
+    </ol>
+    <p>$m\lt k-\ell$ 而且 $C$ 是 good 時，$\mathcal O_{k,C}$ 本來就回傳均勻，與 $\mathcal O_0$ 相同，不會產生差異。三項相加：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbb E\,p_{\rm diff}\le\frac{(2\ell+1)Q}{|\mathcal K^M_d|}+\frac{2^{1-\ell}}{\eta}+Q\,2^{-\ell}$$</div><span class="eq-n">Eq. 100</span></div>
+  <div class="prose">
+    <p><b>結論（Thm 8.1）。</b>從 $p_{\rm diff}$ 到輸出分佈的 TV 有三步。(1) 接上 $\mathcal O_0$ 時，輸出分佈 $\nu$ 與 $k,C$ 無關；用同一份內部隨機性耦合兩次執行，coupling 不等式給出 $\mathrm{TV}(\hat q,\nu)\le p_{\rm diff}(k,C)$，$\hat q$ 是接上 $\mathcal O_{k,C}$ 時的輸出分佈。(2) $q^C$ 只放質量在 $C$ 上，所以 $\mathrm{TV}(\hat q,q^C)\ge1-\hat q(C)\ge1-\nu(C)-p_{\rm diff}$（Eq. 103）。一個與 $C$ 無關的點落在 $C$ 中的機率是 $2^{k-d}$，所以 $\mathbb E_C\,\nu(C)=2^{k-d}$，是指數小的量。(3) 選常數：$|\mathcal K^M_d|=\Theta(d)$，所以 query 預算 $Q\le c\rho^2d/\ell$ 的常數 $c$ 取得夠小時，第一項 $\le\rho^2/4$；Eq. 96 的常數 $C$ 取得夠大時，第二、三項合計 $\le\rho^2/4$；$d$ 夠大時 $\mathbb E_C\,\nu(C)\le\rho^2/4$。合起來 $\mathbb E_{k,C}[\nu(C)+p_{\rm diff}]\le\rho^2$，再用一次 Markov 不等式得 $\mathbb P_{k,C}[\nu(C)+p_{\rm diff}\le\rho]\ge1-\rho$。因此 <b>$Q\le c\rho^2d/\ell$ 時，以機率 $\ge1-\rho$（對 $k,C$）有 $\mathrm{TV}(\hat q,q^C)\ge1-\rho$</b>：取樣器的輸出幾乎完全不在碼本上。$\ell=O(\log d)$（$\eta=d^{-\Theta(1)}$、$\rho$ 為常數），所以任何演算法需要 $\Omega(d/\log d)$ 次 query。成本約等於候選位置數除以窗寬：masked 有 $\Theta(d)$ 個 level，窗寬 $2\ell+1$；沒有落在窗內的查詢，得到的回答與 $\mathcal O_0$ 相同，不帶任何資訊。</p>
+    <p>uniform 的下界（Thm A.1）同構：$t^\star_{\rm unif}(k)$ 的候選值取成彼此相距 $\ge10w$（Eq. 108），候選數 $|\mathcal K^U_d|\ge\frac{c_U}A\sqrt{d/\Lambda}$（Eq. 109）；oracle 只在 $|t-t^\star|\lt4w$ 回傳真實 score（Def A.4）；$Q\le c\rho^2\sqrt{d/\Lambda}$ 時失敗（Eq. 111），即 uniform 需要 $\tilde\Omega(\sqrt d)$ 次 query。Gaussian 的 $\tilde\Omega(\sqrt d)$ 下界引用 Xun 與 Price [XP26]，本文沒有重證；依研究筆記，[XP26] 的論證顯示在這個分佈上，連把 $\kappa$ 估計到足夠精度都需要這麼多 query。另一個 masked 下界是 [CCL26] 以 MDS code 構造的 $\Omega(d)$（Sec. 1.3），那是另一個分佈族，與本文的分離無關。</p>
+  </div>
+  <div class="plate" id="c5">
+    <div class="plate-h"><span class="id">C5</span><h3>不知道窗位置時的搜尋：下界的計數</h3></div>
+    <p class="plate-lead">兩條帶分別是 masked 與 uniform 的候選窗位置，各有一段是真正的窗。選一段查詢：沒命中時回答與 O₀ 相同；命中時才得到真實 marginal。masked 的段數隨 d 成長得比 uniform 快。</p>
+    <div class="c2grid" style="gap:12px 24px">
+      <div class="rng"><label class="lbl" for="c5-p">序列長度 d = 2^p<output id="c5-po">65,536</output></label><input id="c5-p" type="range" min="10" max="20" step="1" value="16"></div>
+      <div class="ctl"><span class="lbl" id="c5-eta-l">每 level 的 oracle 誤差 η</span><div class="seg" role="group" aria-labelledby="c5-eta-l" id="c5-eta"><button type="button" data-v="0.09" aria-pressed="false">0.09</button><button type="button" data-v="0.001" aria-pressed="true">10⁻³</button><button type="button" data-v="1e-6" aria-pressed="false">10⁻⁶</button></div></div>
+    </div>
+    <div class="band" id="c5-bM"></div>
+    <div class="band" id="c5-bU"></div>
+    <div class="ctl-row" style="margin-top:12px"><button class="small-btn pri" type="button" id="c5-scan">等距掃描</button><button class="small-btn" type="button" id="c5-re">重新抽窗位置</button></div>
+    <p class="readout" id="c5-ro" style="margin-top:12px"></p>
+    <p class="plate-f">常數全部自選<span class="tag self">自選常數</span>：Eq. 96 的常數 C 取 1（這個 C 不是碼本）；κ₋ = 0.1、κ₊ = 0.5；ρ = 0.2，使結論為 TV ≥ 0.8；uniform 的候選窗數取 n_U = ⌈√(d/Λ)⌉、Λ = log(d/(ηρ²))，與 Eq. 107、109 同階（其中常數取 1）。η 的三個選項分別代表：誤差大到 good C 的保證失效（0.09）、約 d⁻¹ 量級（10⁻³）、約 d⁻² 量級（10⁻⁶），對應 Thm 8.1 的 η = d^(−Θ(1))。masked 段數 n_M = ⌈|𝒦|/(2ℓ+1)⌉。窗的位置由 mulberry32（初始 seed 5）均勻抽出。</p>
+    <p class="sr" aria-live="polite" id="c5-live"></p>
+  </div>
+  <div class="callout">
+    <p class="ct">下界是漸近敘述</p>
+    <p>在上面的自選常數下，$d\le2^{13}$ 時第一項允許的 $Q_{\max}=\rho^2|\mathcal K^M_d|/(4(2\ell+1))$ 小於 1，保證沒有意義（$d=1024$ 時 $Q_{\max}=0.116$）；$d\le256$ 時 masked 的段數甚至不多於 uniform（$d=64$：1 對 3；$d=256$：4 對 5），因為 log 因子與自選常數在小 $d$ 占優。$d=2^{16}$ 時是 601 對 56，$d=2^{20}$ 時是 8523 對 210，比值隨 $d$ 成長。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">worst-case oracle 怎麼構造？為什麼它是合法的？為什麼需要 $\Omega(d/\log d)$ 次 query？</p>
+    <p class="a">對 good $C$：$m\le k-\ell$ 一律回傳均勻；$m\gt k-\ell$ 時 consistent 回傳真實 marginal、inconsistent 回傳均勻。合法：誤差只在 consistent assignment 上計算（Lemma 2.8），且 $\mathbb E_C\,\varepsilon_{\rm mask}(\mathcal O_0;q^C,m)\le2^{m-k}$（Lemma 8.2），Markov 得 good $C$ 機率 $\ge1-2^{1-\ell}/\eta$。對 $\mathcal O_0$ 的查詢序列與 $k,C$ 無關；差異只來自 $|m-k|\le\ell$ 的 query（$\le(2\ell+1)Q/|\mathcal K^M_d|$）、$C$ 不是 good、或 $m\gt k+\ell$ 的 query 與 $C$ 一致（$\le Q2^{-\ell}$）（Eq. 100）。$|\mathcal K^M_d|=\Theta(d)$、$\ell=O(\log d)$，所以 $Q\le c\rho^2d/\ell$ 時以機率 $\ge1-\rho$ 有 $\mathrm{TV}\ge1-\rho$。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="dllm-parallelism-separation-result.html">本論文結果：DTC 縮放與 masked / uniform / Gaussian 的平行度分離</a></p>
+</section>
+
+<!-- S9 ============================================================ -->
+<section class="ch" id="scope" data-toc="10" data-tt="適用範圍">
+  <div class="ch-num">10 · 適用範圍</div>
+  <h2>結論的適用範圍與常見誤讀</h2>
+  <div class="prose">
+    <p><b>可以推論的。</b>在隨機碼本分佈上，存在每 level 誤差 $\le\eta=d^{-\Theta(1)}$ 的 worst-case oracle，使 masked 對常數比例的 $(k,C)$ 需要 $\tilde\Omega(d)$ 次 query；uniform 在精度足夠（$\le e^{-B\Lambda}$）的 oracle 下 $\tilde O(\sqrt d)$ 次即可（Gaussian 同）。兩者相比，masked 至少多 $\tilde\Omega(\sqrt d)$ 倍，但兩邊的 oracle 類別與誤差要求不同；論文主張原因是窗寬。</p>
+    <p><b>不可以推論的。</b>masked 對 exact oracle 或訓練出的網路一定慢（下界只說存在一個 worst-case 近似 oracle）；分離來自 commitment，即「masked 不能修改已確定的 token」（論文主張分離來自窗寬，但沒有證明 commitment 在一般情形下無關）；uniform／Gaussian 普遍較好（Result 1 三者打平；Sec. 9 明說不應解讀為推崇某一範式）。</p>
+    <p>其他範圍限制（Sec. 9 與全文）：</p>
+    <ul>
+      <li>上界對任何誤差 $\le e^{-B\Lambda}$ 的 oracle 成立；下界是「存在一個 worst-case 近似 oracle」，沒有證明對 exact oracle 或訓練出的網路成立。</li>
+      <li>結論只對這一個隨機碼本分佈族。masked 的 any-order 生成等優點沒有被分析；Gaussian 只考慮最基本的 one-hot 嵌入。</li>
+      <li>兩個下界都依賴 prior（演算法不知道 $k$）；論文沒有討論 $\kappa$ 已知的情形。</li>
+      <li>定理是漸近的（$d\ge d_0$），常數沒有給；Fig. 4 的窗寬不含 log 因子，因為 0.2→0.8 的定義不要求高機率。</li>
+    </ul>
+  </div>
+  <div class="tscroll" style="max-width:860px"><table class="stack">
+    <caption>誤差度量對照</caption>
+    <thead><tr><th>定理</th><th>度量</th><th>步數對 ε</th><th>oracle 誤差要求</th><th>保證對象</th></tr></thead><tbody>
+    <tr><td>Thm 3.1 / 4.1</td><td data-h="度量">KL(q‖q̂) ≤ ε</td><td data-h="步數對 ε">∝ 1/ε</td><td data-h="oracle 誤差">結果多一項 O(ε_unif log)／O(ε²_gauss log)</td><td data-h="保證對象">任意 q，需已知 DTC 上界</td></tr>
+    <tr><td>Thm 6.1 / 7.1</td><td data-h="度量">TV(q̂^C, q^C) ≤ ε</td><td data-h="步數對 ε">∝ 1/ε²</td><td data-h="oracle 誤差">sup_{I₀} 誤差 ≤ e^(−BΛ)</td><td data-h="保證對象">至少 1 − δ 比例的碼本 C</td></tr>
+    <tr><td>Thm 8.1</td><td data-h="度量">TV(q̂, q^C) ≥ 1 − ρ</td><td data-h="步數對 ε">—</td><td data-h="oracle 誤差">存在每 level 誤差 ≤ η 的 oracle</td><td data-h="保證對象">機率 ≥ 1 − ρ（對 k, C）</td></tr>
+    <tr><td>Thm A.1</td><td data-h="度量">TV ≥ 1 − ρ</td><td data-h="步數對 ε">—</td><td data-h="oracle 誤差">只在 |t − t⋆| &lt; 4w 回傳真實 score</td><td data-h="保證對象">機率 ≥ 1 − ρ</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <h3>常見誤讀</h3>
+    <ol>
+      <li><b>把 Thm 8.1 讀成「masked diffusion 一定要 $\tilde\Omega(d)$ 步」。</b>它是 worst-case 近似 oracle 下的 query complexity。</li>
+      <li><b>把分離歸因於 commitment。</b>論文主張分離來自窗寬（abstract、Sec. 1.2、Sec. 9）；論文沒有證明 commitment 在一般情形下無關，本頁也不做這個更強的宣稱。</li>
+      <li><b>以為窗窄比較容易。</b>成本來自找窗：窄窗代表窗可能的位置更多。</li>
+      <li><b>把 Result 1 與 Result 2 的取樣器混為一談。</b>前者是「每步所有座標獨立重抽」的通用演算法；後者是找窗、窗內取樣、一步解碼三階段的專用演算法。</li>
+      <li><b>uniform 取樣器使用估計 score 時漏掉投影。</b>Sec. 3 用 Bregman projection（Sec. 3.2）；Sec. 6 用 clipping（Eq. 33）；Sec. 4 用 Euclidean projection 到 $\Delta(\Sigma)^d$（Eq. 17）；Sec. 7 clip 到 $[-1,1]$（Eq. 79）。</li>
+      <li><b>把 recovery probability 當成取樣器成功率，或當成找窗統計量 $T_t$。</b>它是 posterior 在正確碼字上的平均質量。</li>
+      <li><b>混用三個 $u$。</b>見第 02 章符號表下方的說明。</li>
+    </ol>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">這個分離能推論出哪些結論、不能推論出哪些結論？</p>
+    <p class="a">可以：在隨機碼本分佈上，存在每 level 誤差 $\le\eta=d^{-\Theta(1)}$ 的 worst-case oracle，使 masked 對常數比例的 $(k,C)$ 需要 $\tilde\Omega(d)$ 次 query；uniform 在精度足夠（$\le e^{-B\Lambda}$）的 oracle 下 $\tilde O(\sqrt d)$ 次即可（Gaussian 同）；masked 至少多 $\tilde\Omega(\sqrt d)$ 倍，但 oracle 類別與誤差要求不同；論文主張原因是窗寬。不可以：masked 對 exact oracle 或訓練出的網路一定慢、分離來自 commitment、uniform／Gaussian 普遍較好（Result 1 三者打平；Sec. 9）。</p>
+  </div></details>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="history" data-toc="11" data-tt="研究脈絡">
+  <div class="ch-num">11 · 研究脈絡</div>
+  <h2>研究脈絡（由 notes/timeline.json 提供）</h2>
+  <div class="prose">
+    <p>連續 Gaussian diffusion（DDPM）之後，離散 diffusion 分成三條路線：D3PM 與 SEDD 的 uniform／一般離散 kernel、MDLM 與 LLaDA 的 masked、CDCD 的 Gaussian 嵌入。取樣理論先以 CTMC 形式化，uniformization 給出 $O(d)$ 次 query 的基準；接著 Chen、Cong、Li 與 Lavenant、Zanella 證明 masked 的步數可隨 DTC 縮放。critical window 理論刻畫特徵在窄 noise 範圍定形的現象，Xun 與 Price 給出 Gaussian 的 query 下界。本文把這幾條線接起來。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="next" data-toc="12" data-tt="延伸閱讀">
+  <div class="ch-num">12 · 延伸閱讀</div>
+  <h2>延伸閱讀</h2>
+  <div class="prose"><h3 style="margin-top:0">研究筆記（依閱讀順序）</h3></div>
+  <ol class="rl">
+    <li><div><a href="dllm-parallelism-lineage-hub.html">dLLM 平行生成的理論脈絡總覽：從三種 corruption 到 critical window 分離結果</a><span>總覽</span></div></li>
+    <li><div><a href="dllm-three-corruption-paradigms.html">三種 corruption 與 dLLM 的發展：masked、uniform、Gaussian</a><span>第 01 章的背景</span></div></li>
+    <li><div><a href="dllm-discrete-sampling-theory.html">離散 diffusion 取樣的理論基礎：CTMC 框架與 uniformization</a><span>O(d) 基準</span></div></li>
+    <li><div><a href="dllm-masked-schedule-dtc-theory.html">masked diffusion 的 inference schedule 與 dual total correlation 縮放</a><span>Result 1 所追平的結果</span></div></li>
+    <li><div><a href="dllm-critical-windows-speciation.html">critical window 與 speciation transition：生成結果在窄範圍的 noise level 定形</a><span>第 07 章的背景</span></div></li>
+    <li><div><a href="dllm-score-oracle-lower-bounds.html">score oracle 模型與 query 下界：Xun &amp; Price 與 random empirical measure</a><span>第 09 章的背景</span></div></li>
+    <li><div><a href="dllm-parallelism-separation-result.html">本論文結果：DTC 縮放與 masked / uniform / Gaussian 的平行度分離</a><span>本論文</span></div></li>
+    <li><div><a href="eps-prediction-ddpm-score.html">ε-prediction 與 DDPM、score-based 模型</a><span>站內既有筆記：Gaussian 路線</span></div></li>
+    <li><div><a href="continuous-flow-lm-overview.html">2026 年連續 flow / flow matching 語言模型總覽</a><span>站內既有筆記：Gaussian 路線</span></div></li>
+  </ol>
+  <p class="read">原文：<a href="https://arxiv.org/abs/2609.20539">arXiv:2609.20539</a></p>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Sitan Chen, Liye Wang. Parallelism, critical windows, and separations among diffusion language models. 2026. <a href="https://arxiv.org/abs/2609.20539">arXiv:2609.20539</a>.</p>
+  <p>本頁的方程式與數字取自論文 v2；標示「本頁推導」的內容為本頁自行推導，並非論文結論；標示「自選常數」的數值是為了示範而選，論文沒有給。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2020, "title": "Denoising Diffusion Probabilistic Models", "authors_short": "Ho, Jain, Abbeel", "arxiv": "2006.11239", "role": "連續 Gaussian diffusion 的標準訓練法，本論文引用為 Gaussian 路線的起點。", "source": "2609.20539 related work"}, {"year": 2021, "title": "Structured Denoising Diffusion Models in Discrete State-Spaces", "authors_short": "Austin et al.", "arxiv": "2107.03006", "role": "離散狀態空間 diffusion，本論文引用為 dLLM 的起點之一。", "source": "2609.20539 introduction"}, {"year": 2022, "title": "A Continuous Time Framework for Discrete Denoising Models", "authors_short": "Campbell et al.", "arxiv": "2205.14987", "role": "以 CTMC 形式化連續時間離散去噪。", "source": "2609.20539 related work"}, {"year": 2022, "title": "Continuous diffusion for categorical data", "authors_short": "Dieleman et al.", "arxiv": "2211.15089", "role": "以連續 diffusion 處理類別資料，本論文歸為 Gaussian dLLM。", "source": "2609.20539 introduction"}, {"year": 2023, "title": "Discrete Diffusion Modeling by Estimating the Ratios of the Data Distribution", "authors_short": "Lou, Meng, Ermon", "arxiv": "2310.16834", "role": "uniform diffusion 的 score entropy 目標。", "source": "2609.20539 section 2.1"}, {"year": 2024, "title": "Simple and Effective Masked Diffusion Language Models", "authors_short": "Sahoo et al.", "arxiv": "2406.07524", "role": "masked diffusion 的簡化訓練目標。", "source": "2609.20539 section 2.3"}, {"year": 2024, "title": "Convergence Analysis of Discrete Diffusion Model: Exact Implementation through Uniformization", "authors_short": "Chen, Ying", "arxiv": "2402.08095", "role": "uniform diffusion 以 O(d) query 達到零離散化誤差。", "source": "2609.20539 related work"}, {"year": 2024, "title": "Critical windows: non-asymptotic theory for feature emergence in diffusion models", "authors_short": "Li, Chen", "arxiv": "2403.01633", "role": "critical window 的非漸近理論。", "source": "2609.20539 related work"}, {"year": 2025, "title": "Large Language Diffusion Models", "authors_short": "Nie et al.", "arxiv": "2502.09992", "role": "大規模 masked dLLM。", "source": "2609.20539 introduction"}, {"year": 2025, "title": "Optimal Inference Schedules for Masked Diffusion Models", "authors_short": "Chen, Cong, Li", "arxiv": "2511.04647", "role": "masked diffusion 取樣誤差的精確刻劃與 DTC 縮放。", "source": "2609.20539 related work"}, {"year": 2025, "title": "Error Bounds and Optimal Schedules for Masked Diffusions with Factorized Approximations", "authors_short": "Lavenant, Zanella", "arxiv": "2510.25544", "role": "同樣得到 masked diffusion 的 DTC 縮放界。", "source": "2609.20539 related work"}, {"year": 2026, "title": "Query Lower Bounds for Diffusion Sampling", "authors_short": "Xun, Price", "arxiv": "2604.10857", "role": "Gaussian diffusion 在 random empirical measure 上的 Ω̃(√d) 下界。", "source": "2609.20539 related work"}, {"year": 2026, "title": "Parallelism, critical windows, and separations among diffusion language models", "authors_short": "Chen, Wang", "arxiv": "2609.20539", "role": "uniform 與 Gaussian 達到 DTC 縮放，並與 masked diffusion 分離。", "source": "本論文"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const LN2=Math.LN2;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+const lgs=(d0,d1,r0,r1)=>{const a=Math.log(d0),b=Math.log(d1);return v=>r0+(Math.log(v)-a)/(b-a)*(r1-r0)};
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function frame(svg,o){
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m=o.m,x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=m.t;
+  const X=(o.xlog?lgs:lin)(o.x[0],o.x[1],x0,x1),Y=(o.ylog?lgs:lin)(o.y[0],o.y[1],y0,y1);
+  const g=el('g',null,svg);
+  (o.yt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.yf?o.yf(v):String(v)),yy=Y(val);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},g);tx(g,x0-8,yy+4,lab,{class:'tk','text-anchor':'end'})});
+  (o.xt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.xf?o.xf(v):String(v)),xx=X(val);el('line',{x1:xx,x2:xx,y1:y0,y2:y0+4,class:'axl'},g);tx(g,xx,y0+18,lab,{class:'tk','text-anchor':'middle'})});
+  el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  if(o.xl)tx(g,(x0+x1)/2,o.H-4,o.xl,{class:'al','text-anchor':'middle'});
+  if(o.yl)tx(g,4,12,o.yl,{class:'al'});
+  return {X,Y,g,x0,x1,y0,y1};
+}
+function arrow(g,x0,y0,x1,y1,cls,dash){const dx=x1-x0,dy=y1-y0,L=Math.hypot(dx,dy);if(L<2)return;const ux=dx/L,uy=dy/L,h=Math.min(9,L*.45);
+  el('line',{x1:x0,y1:y0,x2:x1-ux*h*.7,y2:y1-uy*h*.7,class:cls+(dash?' dash':'')},g);
+  el('path',{d:`M${x1} ${y1}L${x1-ux*h-uy*h*.45} ${y1-uy*h+ux*h*.45}L${x1-ux*h+uy*h*.45} ${y1-uy*h-ux*h*.45}Z`,class:cls+'-f'},g)}
+function darrow(g,x0,y0,x1,y1,cls){const mx=(x0+x1)/2,my=(y0+y1)/2;arrow(g,mx,my,x0,y0,cls);arrow(g,mx,my,x1,y1,cls)}
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function gauss(r){const u1=r(),u2=r();return Math.sqrt(-2*Math.log(1-u1))*Math.cos(2*Math.PI*u2)}
+function ticks(lo,hi,n){const raw=(hi-lo)/n,mag=10**Math.floor(Math.log10(raw)),st=[1,2,5,10].find(k=>k*mag>=raw-1e-15)*mag,out=[];for(let v=Math.ceil(lo/st-1e-9)*st;v<=hi+1e-12;v+=st)out.push(+v.toPrecision(10));return out}
+const fz=(v,n)=>(Math.abs(v)<.5*10**-n?0:v).toFixed(n);
+function fe(v,n=3){if(v===0)return'0';const a=Math.abs(v);return a<1e-3||a>=1e5?v.toExponential(n-1).replace('e','×10^').replace('^+','^').replace(/\^(-?\d+)/,(m,e)=>supd(e)):v.toPrecision(n)}
+function supd(e){const S={'-':'⁻','0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹'};return[...e].map(c=>S[c]).join('')}
+function niceList(lo,hi){const s=new Set();for(let e=-3;e<=1;e++)for(let m=10;m<100;m++){const v=+(m*10**(e-1)).toPrecision(2);if(v>=lo-1e-12&&v<=hi+1e-12)s.add(v)}return[...s].sort((a,b)=>a-b)}
+const fmtV=v=>v<.1?v.toFixed(3):v.toFixed(2);
+
+/* time-sliced jobs: a newer job with the same key cancels the older one */
+const JOB={};
+function runJob(key,gen,onDone,onProg){const id=(JOB[key]=(JOB[key]||0)+1);
+  const step=()=>{if(JOB[key]!==id)return;const t0=performance.now();let r;
+    do{r=gen.next();if(!r.done&&r.value!==undefined&&onProg)onProg(r.value)}while(!r.done&&performance.now()-t0<30);
+    if(JOB[key]!==id)return;if(r.done)onDone(r.value);else setTimeout(step,0)};
+  setTimeout(step,0)}
+function runSync(gen){let r;while(!(r=gen.next()).done);return r.value}
+
+/* ---------- enumeration on {0,1}^6 (C2, C3; same algorithm as verify/w23_exact.py) ---------- */
+const ED=6,EN=64,POP=new Uint8Array(EN),HAM=new Uint8Array(EN*EN);
+for(let x=0;x<EN;x++){let c=0,y=x;while(y){c+=y&1;y>>=1}POP[x]=c}
+for(let x=0;x<EN;x++)for(let y=0;y<EN;y++)HAM[x*EN+y]=POP[x^y];
+const PNAME={codebook:'碼本',copy:'複製',parity:'同位',indep:'獨立'};
+function preset(name){const q=new Float64Array(EN);
+  if(name==='copy'){q[0]=q[EN-1]=.5}
+  else if(name==='parity'){for(let x=0;x<EN;x++)if(POP[x]%2===0)q[x]=1}
+  else if(name==='codebook'){[5,10,19,28,38,45,51,60].forEach(c=>q[c]=1)}
+  else for(let x=0;x<EN;x++)q[x]=.8**POP[x]*.2**(ED-POP[x]);
+  let s=0;for(const v of q)s+=v;for(let x=0;x<EN;x++)q[x]/=s;return q}
+const PRE={};for(const k in PNAME)PRE[k]=preset(k);
+function kernelW(t){const a=Math.exp(-t),b=(1-a)/2,w=new Float64Array(ED+1);for(let k=0;k<=ED;k++)w[k]=(a+b)**(ED-k)*b**k;return w}
+function push(q,t){const w=kernelW(t),o=new Float64Array(EN);for(let x=0;x<EN;x++){const qx=q[x];if(!qx)continue;for(let y=0;y<EN;y++)o[y]+=qx*w[HAM[x*EN+y]]}return o}
+function H(p){let s=0;for(const v of p)if(v>0)s-=v*Math.log(v);return s}
+function dtc(p){const hx=H(p),m=new Float64Array(EN/2);let s=0;for(let i=0;i<ED;i++){const b=1<<i;let k=0;for(let x=0;x<EN;x++)if(!(x&b))m[k++]=p[x]+p[x|b];s+=hx-H(m)}return hx-s}
+function tcOf(p){let s=0;for(let i=0;i<ED;i++){let p1=0;for(let x=0;x<EN;x++)if(x>>i&1)p1+=p[x];s+=H([p1,1-p1])}return s-H(p)}
+function tcCond(q,s,h){const qs=push(q,s),wh=kernelW(h),J=new Float64Array(EN*EN),qt=new Float64Array(EN);
+  for(let x=0;x<EN;x++){const a=qs[x];for(let y=0;y<EN;y++){const v=a*wh[HAM[x*EN+y]];J[x*EN+y]=v;qt[y]+=v}}
+  const hq=H(qt),hc=H(J)-hq,j1=new Float64Array(EN),both=new Float64Array(2*EN),m=new Float64Array(EN*ED);let tot=0;
+  for(let i=0;i<ED;i++){j1.fill(0);for(let x=0;x<EN;x++)if(x>>i&1)for(let y=0;y<EN;y++)j1[y]+=J[x*EN+y];
+    for(let y=0;y<EN;y++){both[y]=qt[y]-j1[y];both[EN+y]=j1[y];m[y*ED+i]=qt[y]>1e-300?Math.min(1,Math.max(0,j1[y]/qt[y])):.5}
+    tot+=H(both)-hq}
+  return{tc:tot-hc,qs,qt,m}}
+const cS=(s,h)=>Math.expm1(2*h)/(-Math.expm1(-s));
+function schedule(a,delta=.001,T=6){const u0=Math.expm1(delta),U=Math.expm1(T),us=[u0];while(us[us.length-1]<U)us.push(Math.min((1+a)*us[us.length-1],U));return us.map(Math.log1p)}
+function* scheduleGen(q,a){const ts=schedule(a),n=ts.length-1;let sumTC=0,sumB=0,maxC=0,p=new Float64Array(EN).fill(1/EN);const steps=[];
+  for(let j=n-1;j>=0;j--){const s=ts[j],t=ts[j+1],h=t-s,r=tcCond(q,s,h),c=cS(s,h),dd=dtc(r.qs)-dtc(r.qt);
+    maxC=Math.max(maxC,c);sumTC+=r.tc;sumB+=c*dd;steps.push({s,t,tc:r.tc,b:c*dd});
+    const np=new Float64Array(EN);
+    for(let y=0;y<EN;y++){const py=p[y];if(!py)continue;const mo=y*ED;for(let x=0;x<EN;x++){let v=py;for(let i=0;i<ED;i++){const mm=r.m[mo+i];v*=(x>>i&1)?mm:1-mm}np[x]+=v}}
+    p=np;if((n-j)%25===0)yield}
+  const qhat=push(p,ts[0]),qT=push(q,ts[n]);let init=0,kl=0;
+  for(let x=0;x<EN;x++){if(qT[x]>0)init+=qT[x]*Math.log(qT[x]*EN);if(q[x]>0)kl+=q[x]*Math.log(q[x]/qhat[x])}
+  const end=H(push(q,ts[0]))-H(q);
+  return{ts,N:n,a,maxC,sumTC,sumB,threeA:3*a*dtc(q),init,initB:Math.exp(-ts[n])*ED*LN2,end,endB:ED*ts[0]*Math.log(2*Math.E/ts[0]),path:init+sumTC+end,kl,steps}}
+const dtcCache=new Map();
+function dtcCurve(name,t0,t1,n){const key=name+t0+t1+n;if(dtcCache.has(key))return dtcCache.get(key);const out=[];
+  for(let i=0;i<n;i++){const t=t0*(t1/t0)**(i/(n-1));out.push([t,dtc(push(PRE[name],t))])}dtcCache.set(key,out);return out}
+
+/* ---------- information curves, critical points, recovery (C1, C4; same as verify/w4_window.py) ---------- */
+const LF=new Float64Array(4098);for(let n=1;n<LF.length;n++)LF[n]=LF[n-1]+Math.log(n);
+const h2=p=>-p*Math.log(p)-(1-p)*Math.log1p(-p);
+const Iunif=t=>LN2-h2((1-Math.exp(-t))/2);
+const WG=new Float64Array(401),WW=new Float64Array(401);
+for(let k=0;k<401;k++){const w=-10+k*.05;WG[k]=w;WW[k]=(k===0||k===400?1:k%2?4:2)*(.05/3)*Math.exp(-w*w/2)/Math.sqrt(2*Math.PI)}
+const logcosh=x=>{x=Math.abs(x);return x+Math.log1p(Math.exp(-2*x))-LN2};
+function Igauss(t){const u=Math.exp(-t)/Math.sqrt(-Math.expm1(-2*t)),u2=u*u;let s=0;for(let k=0;k<401;k++)s+=WW[k]*logcosh(u2+u*WG[k]);return u2-s}
+function bisect(f,lo,hi,it=80){let flo=f(lo);for(let i=0;i<it;i++){const mid=(lo+hi)/2,fm=f(mid);if((fm>0)===(flo>0)){lo=mid;flo=fm}else hi=mid}return(lo+hi)/2}
+function* bisectGen(f,lo,hi,it){let flo=f(lo);yield;for(let i=0;i<it;i++){const mid=(lo+hi)/2,fm=f(mid);yield;if((fm>0)===(flo>0)){lo=mid;flo=fm}else hi=mid}return(lo+hi)/2}
+const tOfIunif=I=>{const b=bisect(b=>LN2-h2(b)-I,1e-15,.5-1e-15);return-Math.log1p(-2*b)};
+const tStarUnif=k=>tOfIunif(k),tStarGauss=k=>bisect(t=>Igauss(t)-k,1e-4,10);
+const maskedRec=lam=>lam<1e-12?1:-Math.expm1(-lam)/lam;
+const maskedRecI=(d,k,I)=>{const e=d*(k-I);return e>700?0:maskedRec(Math.exp(e))};
+const L80=bisect(x=>maskedRec(Math.exp(x))-.8,-10,10),L20=bisect(x=>maskedRec(Math.exp(x))-.2,-10,10),MASK_LNRATIO=L20-L80;
+const XHI=Math.log(40),XLO=Math.log(1e-8);
+const NV=161,VV=new Float64Array(NV),VW=new Float64Array(NV),VB=new Float64Array(NV);let VZ0=0;
+for(let i=0;i<NV;i++){const v=-36+.25*i;VV[i]=v;VW[i]=(i===0||i===NV-1?1:i%2?4:2)*.25/3;VB[i]=v-Math.exp(v);VZ0+=VW[i]*Math.exp(VB[i])}
+const lae=(a,b)=>{if(a===-Infinity)return b;if(b===-Infinity)return a;const m=Math.max(a,b);return m+Math.log1p(Math.exp(-Math.abs(a-b)))};
+function makeUnifRec(d,kappa){
+  const ll=new Float64Array(d+1);for(let j=0;j<=d;j++)ll[j]=kappa*d+LF[d]-LF[j]-LF[d-j]-d*LN2;
+  let S=null;const memo=new Map();
+  function setup(t){if(S&&S.t===t)return S;const beta=(1-Math.exp(-t))/2,L=Math.log(beta/(1-beta)),P0=new Float64Array(d+2),S1=new Float64Array(d+2);
+    let acc=-Infinity;for(let j=0;j<=d;j++){P0[j]=acc;acc=lae(acc,ll[j])}P0[d+1]=acc;
+    S1[d+1]=-Infinity;acc=-Infinity;for(let j=d;j>=0;j--){acc=lae(acc,ll[j]+j*L);S1[j]=acc}
+    return S={t,beta,L,P0,S1}}
+  function G(v,D){const L=S.L,c=v-D*L;const ja=Math.min(d+1,Math.max(0,Math.ceil((c-XHI)/(-L))));const jb=Math.min(d+1,Math.max(ja,Math.floor((c-XLO)/(-L))+1));
+    const parts=[S.P0[ja],c+S.S1[jb]];for(let j=ja;j<jb;j++){const x=c+j*L;parts.push(ll[j]+Math.log(-Math.expm1(-Math.exp(x))))}
+    let mx=-Infinity;for(const p of parts)if(p>mx)mx=p;if(mx>700)return Infinity;let s=0;for(const p of parts)if(p>-745)s+=Math.exp(p);return s}
+  function pD(D){let tot=0;for(let i=0;i<NV;i++){const g=G(VV[i],D);if(g<700)tot+=VW[i]*Math.exp(VB[i]-g)}return Math.min(1,tot/VZ0)}
+  function rec(t){setup(t);const beta=S.beta,sd=Math.sqrt(d*beta*(1-beta)),D0=Math.max(0,Math.floor(d*beta-7*sd-2)),D1=Math.min(d,Math.ceil(d*beta+7*sd+2)),n=D1-D0+1;
+    const pmf=new Float64Array(n);for(let k=0;k<n;k++){const D=D0+k;pmf[k]=Math.exp(LF[d]-LF[D]-LF[d-D]+D*Math.log(beta)+(d-D)*Math.log1p(-beta))}
+    const cache=new Map(),P=D=>{if(!cache.has(D))cache.set(D,pD(D));return cache.get(D)};
+    const below=th=>{let lo=0,hi=n;while(lo<hi){const mid=(lo+hi)>>1;if(P(D0+mid)<th)hi=mid;else lo=mid+1}return lo};
+    const b1=below(1-1e-10),b2=below(1e-10);let s=0;for(let k=0;k<b1;k++)s+=pmf[k];for(let k=b1;k<b2;k++)s+=pmf[k]*P(D0+k);return s}
+  function recI(I){if(!memo.has(I))memo.set(I,rec(tOfIunif(I)));return memo.get(I)}
+  function* widthGen(lo,hi){lo=lo??Math.max(1e-4,kappa-.2);hi=hi??Math.min(LN2-1e-4,kappa+.2);
+    const rl=recI(lo);yield;const rh=recI(hi);yield;if(rl>.2||rh<.8)return{i20:NaN,i80:NaN,w:NaN};
+    const i80=yield* bisectGen(I=>recI(I)-.8,lo,hi,26),i20=yield* bisectGen(I=>recI(I)-.2,lo,hi,26);return{i20,i80,w:i80-i20}}
+  return{rec,recI,widthGen}}
+
+/* ---------- lower-bound counting (C5; same as verify/w5_count.py) ---------- */
+function counts(d,eta,rho=.2){const K=Math.floor(.5*d/LN2)-Math.ceil(.1*d/LN2)+1,ell=Math.ceil(Math.log2(d/(eta*rho**2))),nM=Math.ceil(K/(2*ell+1)),Lam=Math.log(d/(eta*rho**2)),nU=Math.ceil(Math.sqrt(d/Lam));
+  return{K,ell,nM,Lam,nU,qmax:rho**2*K/(4*(2*ell+1))}}
+const eq100=(c,eta,Q)=>[(2*c.ell+1)*Q/c.K,2**(1-c.ell)/eta,Q*2**(-c.ell)];
+
+/* ---------- chips helper ---------- */
+function chips(box,cur,onPick){box.innerHTML='';for(const k in PNAME){const b=document.createElement('button');b.type='button';b.className='chip';b.textContent=PNAME[k];b.dataset.v=k;b.setAttribute('aria-pressed',String(k===cur));
+  b.addEventListener('click',()=>{$$('.chip',box).forEach(c=>c.setAttribute('aria-pressed',String(c===b)));onPick(k)});box.appendChild(b)}}
+function logSlider(inp,list,v0){inp.max=list.length-1;inp.value=list.indexOf(v0)}
+
+/* ---------- C1 ---------- */
+const c1={seed:11,cells:[]};
+const c1expect=t=>({touch:-Math.expm1(-t),change:-Math.expm1(-t)/2});
+function c1sample(){const r=mulberry32(c1.seed);c1.cells=[];for(let i=0;i<32;i++){const x=r()<.5?-1:1,u=r(),rr=r()<.5?-1:1,g=gauss(r);c1.cells.push({x,u,r:rr,g})}}
+function renderC1(){const t=+$('#c1-t').value,e=c1expect(t),a=Math.exp(-t),sg=t===0?0:Math.sqrt(-Math.expm1(-2*t));
+  $('#c1-to').textContent=t.toFixed(2);$('#c1-t').setAttribute('aria-valuetext','t = '+t.toFixed(2));
+  let nT=0,nC=0;const rows={x:[],u:[],m:[],g:[]},tab=[];
+  c1.cells.forEach((c,i)=>{const touched=c.u<e.touch,uv=touched?c.r:c.x,chg=touched&&c.r!==c.x,gv=a*c.x+sg*c.g;if(touched)nT++;if(chg)nC++;
+    const pm=v=>v>0?'+':'−';
+    rows.x.push(`<span class="cell${c.x>0?' pos':''}">${pm(c.x)}</span>`);
+    rows.u.push(`<span class="cell${uv>0?' pos':''}${chg?' chg':touched?' rs':''}">${pm(uv)}</span>`);
+    rows.m.push(touched?'<span class="cell star">⋆</span>':`<span class="cell${c.x>0?' pos':''}">${pm(c.x)}</span>`);
+    const cl=Math.max(-3,Math.min(3,gv)),hpx=Math.abs(cl)/3*20,top=cl>=0?22-hpx:22;
+    rows.g.push(`<span class="cell g"><span class="mid"></span><span class="bar" style="top:${top.toFixed(1)}px;height:${Math.max(1,hpx).toFixed(1)}px"></span>${gv>3?'<span class="cl" style="top:1px">▲</span>':gv<-3?'<span class="cl" style="top:36px">▼</span>':''}<span class="gv">${gv<0?'−':''}${Math.abs(gv).toFixed(1)}</span></span>`);
+    tab.push(`<tr><td class="num">${i+1}</td><td>${pm(c.x)}</td><td>${pm(uv)}${chg?'（改變）':touched?'（重抽，未變）':''}</td><td>${touched?'⋆':pm(c.x)}</td><td class="num">${gv<0?'−':''}${Math.abs(gv).toFixed(2)}</td></tr>`)});
+  const row=(lab,sub,cells,aria)=>`<div class="c1row" role="img" aria-label="${aria}"><span class="c1lab">${lab}<b>${sub}</b></span><div class="cells" aria-hidden="true">${cells.join('')}</div></div>`;
+  $('#c1-rows').innerHTML=row('X₀','乾淨序列',rows.x,`X₀ 列：32 格中 ${c1.cells.filter(c=>c.x>0).length} 格為 +`)+
+    row('uniform','重抽',rows.u,`uniform 列：32 格中 ${nT} 格被重抽，${nC} 格改變`)+
+    row('masked','遮罩 ⋆',rows.m,`masked 列：32 格中 ${nT} 格變成遮罩`)+
+    row('Gaussian','e⁻ᵗX₀ + σₜG',rows.g,`Gaussian 列：每格為 e^(−t)·X₀ + σ_t·G，t = ${t.toFixed(2)}`);
+  $('#c1-tab tbody').innerHTML=tab.join('');
+  $('#c1-ro').innerHTML=`觸及比例（uniform 與 masked 相同）：<b>${nT}/32 = ${(nT/32).toFixed(3)}</b>，期望 1 − e⁻ᵗ = <b class="acc">${e.touch.toFixed(4)}</b><br>uniform 實際改變比例：<b>${nC}/32 = ${(nC/32).toFixed(3)}</b>，期望 β_t = (1 − e⁻ᵗ)/2 = <b class="acc">${e.change.toFixed(4)}</b>`;
+  announce('c1',`t = ${t.toFixed(2)}：${nT} 格被觸及，uniform 有 ${nC} 格改變`)}
+function initC1(){c1sample();$('#c1-t').addEventListener('input',renderC1);$('#c1-re').addEventListener('click',()=>{c1.seed++;c1sample();renderC1()});renderC1()}
+
+/* ---------- C2 ---------- */
+const S_LIST=niceList(.01,3),H_LIST=niceList(.01,1.5),A_LIST=niceList(.02,1);
+const c2={p:'codebook'};
+const HMIN=1e-9*ED*LN2,zr=v=>Math.abs(v)<HMIN?0:v;
+const LOGT=[[.01,'0.01'],[.1,'0.1'],[1,'1'],[6,'6']];
+function c2calc(p,s,h){const q=PRE[p],r=tcCond(q,s,h),ds=zr(dtc(r.qs)),dt=zr(dtc(r.qt)),dd=zr(ds-dt),c=cS(s,h),tc=zr(r.tc),bd=c*dd;return{c,ds,dt,dd,tc,bd,ratio:bd>1e-9?tc/bd:NaN}}
+function renderC2(){const s=S_LIST[+$('#c2-s').value],h=H_LIST[+$('#c2-h').value],t=s+h,R=c2calc(c2.p,s,h);
+  $('#c2-so').textContent=fmtV(s);$('#c2-ho').textContent=fmtV(h);$('#c2-s').setAttribute('aria-valuetext','s = '+fmtV(s));$('#c2-h').setAttribute('aria-valuetext','h = '+fmtV(h));
+  const box=$('#c2-fig'),W=widthOf(box,280,560),D0=dtc(PRE[c2.p]),ymax=c2.p==='indep'?.1:D0*1.05;
+  const F=frame($('svg',box),{W,H:270,m:{l:46,r:18,t:28,b:40},x:[.01,6],xlog:true,y:[0,ymax],xt:LOGT,yt:ticks(0,ymax,4),yf:v=>String(v),xl:'noise level t（對數刻度）',yl:'DTC(q_t)（nats）'});
+  el('path',{d:lp(dtcCurve(c2.p,.01,6,80).map(([tt,v])=>[F.X(tt),F.Y(v)])),class:'unif'},F.g);
+  const xs=F.X(s),xt=F.X(Math.min(6,t)),ys=F.Y(R.ds),yt=F.Y(R.dt);
+  el('line',{x1:xs,x2:xs,y1:F.y0,y2:F.y1,class:'ref'},F.g);el('line',{x1:xt,x2:xt,y1:F.y0,y2:F.y1,class:'ref'},F.g);
+  tx(F.g,xs-4,F.y1+12,'s',{class:'labm','text-anchor':'end'});tx(F.g,xt+4,F.y1+12,'t = s + h',{class:'labm'});
+  const right=xt+90<F.x1,ax=right?xt+12:xs-12;
+  el('line',{x1:xs,x2:ax,y1:ys,y2:ys,class:'cur'},F.g);el('line',{x1:xt,x2:ax,y1:yt,y2:yt,class:'cur'},F.g);
+  if(Math.abs(ys-yt)>8)darrow(F.g,ax,ys,ax,yt,'acc');
+  tx(F.g,right?ax+6:ax-6,(ys+yt)/2+4,'DTC 落差',{class:'lab','text-anchor':right?'start':'end',style:'fill:var(--accent)'});
+  el('circle',{cx:xs,cy:ys,r:4.5,class:'acc-f'},F.g);el('circle',{cx:xt,cy:yt,r:4.5,class:'hollow'},F.g);
+  $('svg',box).setAttribute('aria-label',`DTC(q_t) 對 t 的曲線；s = ${fmtV(s)}，t = ${fmtV(t)}，DTC 落差 = ${R.dd.toFixed(6)}`);
+  // bars
+  const bb=$('#c2-bars'),Wb=widthOf(bb,260,460),sv=$('svg',bb);sv.textContent='';sv.setAttribute('viewBox',`0 0 ${Wb} 200`);sv.setAttribute('width',Wb);sv.setAttribute('height',200);
+  const mx=Math.max(R.bd,R.tc),bw=Wb-24,sc=v=>mx>1e-9?Math.max(1,v/mx*bw):0;
+  tx(sv,0,30,'TC(Xₛ | Xₜ)（精確）',{class:'lab'});el('rect',{x:0,y:40,width:sc(R.tc),height:28,rx:3,class:'tcf'},sv);
+  tx(sv,0,96,'上界 cₛ(h)·DTC 落差',{class:'lab'});el('rect',{x:.75,y:106,width:Math.max(0,sc(R.bd)-1.5),height:28,rx:3,class:'bnd',style:'stroke-width:1.5'},sv);
+  const vt=(v,y,w)=>{const inside=w>bw*.55;tx(sv,inside?w-8:w+8,y,v,{class:'labm','text-anchor':inside?'end':'start',style:inside?'fill:var(--surface)':''})};
+  if(mx>1e-9){vt(R.tc.toFixed(6),59,sc(R.tc));const wb=sc(R.bd),inb=wb>bw*.55;tx(sv,inb?wb-8:wb+8,125,R.bd.toFixed(6),{class:'labm','text-anchor':inb?'end':'start'})}
+  tx(sv,0,170,mx>1e-9?`TC／上界 = ${R.ratio.toFixed(4)}`:'—（兩者皆接近 0：獨立時平行更新沒有誤差）',{class:'lab'});
+  const rows=[['cₛ(h)',R.c.toFixed(4),'reverse DPI 係數 (e²ʰ − 1)/(1 − e⁻ˢ)'],['DTC(q_s)',R.ds.toFixed(6),'終點的 DTC'],['DTC(q_t)',R.dt.toFixed(6),'起點的 DTC'],['DTC 落差',R.dd.toFixed(6),'DTC(q_s) − DTC(q_t)，非負'],
+    ['TC(Xₛ | Xₜ)',R.tc.toFixed(6),'這一步平行更新的精確 KL 誤差'],['上界',R.bd.toFixed(6),'Lemma 3.2：cₛ(h) × DTC 落差'],['TC／上界',isNaN(R.ratio)?'—':R.ratio.toFixed(4),isNaN(R.ratio)?'兩者皆接近 0':'越小代表上界越寬鬆']];
+  $('#c2-tab').innerHTML='<thead><tr><th>量</th><th class="num">數值</th><th>意義</th></tr></thead><tbody>'+rows.map(r=>`<tr><td>${r[0]}</td><td class="num">${r[1]}</td><td>${r[2]}</td></tr>`).join('')+'</tbody>';
+  announce('c2',`${PNAME[c2.p]}，s = ${fmtV(s)}，h = ${fmtV(h)}：TC = ${R.tc.toFixed(6)}，上界 = ${R.bd.toFixed(6)}`)}
+function initC2(){chips($('#c2-chips'),c2.p,k=>{c2.p=k;renderC2()});logSlider($('#c2-s'),S_LIST,.5);logSlider($('#c2-h'),H_LIST,.2);
+  ['#c2-s','#c2-h'].forEach(id=>$(id).addEventListener('input',renderC2));renderC2()}
+
+/* ---------- C3 ---------- */
+const c3={p:'codebook',res:null};
+const LOGT3=[[.001,'0.001'],[.01,'0.01'],[.1,'0.1'],[1,'1'],[6,'6']];
+function startC3(){const a=A_LIST[+$('#c3-a').value];$('#c3-ao').textContent=fmtV(a);$('#c3-a').setAttribute('aria-valuetext','a_U = '+fmtV(a));
+  $('#c3-tab tbody').innerHTML='<tr><td colspan="3" class="busy">計算中…</td></tr>';
+  runJob('c3',scheduleGen(PRE[c3.p],a),r=>{c3.res=r;drawC3();announce('c3',`N = ${r.N} 步，實際 KL = ${r.kl.toFixed(4)}`)})}
+function drawC3(){const r=c3.res;if(!r)return;
+  const tb=$('#c3-top'),W=widthOf(tb,280,900),D0=dtc(PRE[c3.p]),ymax=c3.p==='indep'?.1:D0*1.05;
+  const F=frame($('svg',tb),{W,H:210,m:{l:46,r:18,t:24,b:52},x:[.001,6],xlog:true,y:[0,ymax],xt:LOGT3,yt:ticks(0,ymax,3),yf:v=>String(v),yl:'DTC(q_t)（nats）'});
+  el('path',{d:lp(dtcCurve(c3.p,.001,6,90).map(([t,v])=>[F.X(t),F.Y(v)])),class:'unif'},F.g);
+  const stride=Math.ceil((r.N+1)/200);for(let j=0;j<=r.N;j+=stride){const x=F.X(r.ts[j]);el('line',{x1:x,x2:x,y1:F.y0+22,y2:F.y0+30,class:'axl',style:'stroke:var(--accent)'},F.g)}
+  tx(F.g,F.x0,F.y0+46,`排程格點 t_j（共 ${r.N+1} 個${stride>1?`，每 ${stride} 個畫 1 個`:''}）`,{class:'al'});
+  const bt=$('#c3-bot'),G=frame($('svg',bt),{W,H:230,m:{l:46,r:18,t:24,b:40},x:[.001,6],xlog:true,y:[1e-8,1],ylog:true,xt:LOGT3,yt:[[1e-8,'10⁻⁸'],[1e-6,'10⁻⁶'],[1e-4,'10⁻⁴'],[1e-2,'10⁻²'],[1,'1']],xl:'noise level t（對數刻度）',yl:'每步的量（nats，對數）'});
+  const clip=v=>Math.max(1e-8,Math.min(1,v));let ob='';
+  r.steps.forEach(st=>{const x0=G.X(st.s),x1=G.X(st.t),w=Math.max(.6,x1-x0);
+    if(st.tc>1e-8)el('rect',{x:x0,y:G.Y(clip(st.tc)),width:w,height:G.y0-G.Y(clip(st.tc)),class:'tcf',opacity:.85},G.g);
+    if(st.b>1e-8)ob+=`M${x0.toFixed(1)} ${G.y0}V${G.Y(clip(st.b)).toFixed(1)}H${(x0+w).toFixed(1)}V${G.y0}`});
+  if(ob)el('path',{d:ob,class:'bnd'},G.g);
+  tx(G.g,G.x1-4,G.y1+12,'實心＝TC（實際）；外框＝c·DTC 落差（上界）',{class:'al','text-anchor':'end'});
+  const f6=v=>v.toFixed(6);
+  const rows=[['N（步數）',r.N,'排程格點數減 1'],['max c_j',`${r.maxC.toFixed(4)}（≤ 3a_U = ${(3*r.a).toFixed(3)}）`,'每步 reverse DPI 係數的最大值'],
+    ['ΣTC',f6(r.sumTC),'各步實際的離散化誤差和'],['Σ c·ΔDTC',f6(r.sumB),'Lemma 3.8 的上界（各步 TC 換成 c·DTC 落差）'],['3a_U·DTC(q)',f6(r.threeA),'telescoping 後的上界'],
+    ['init',`${fe(r.init)}（界 ${fe(r.initB)}）`,'初始化 KL(q_T‖Unif)，界 e⁻ᵀ·d log 2'],['end',`${f6(r.end)}（界 ${r.endB.toFixed(4)}）`,'末端 H(q_δU) − H(q)，界 d·δ_U·log(2e/δ_U)'],
+    ['路徑 KL',f6(r.path),'init + ΣTC + end'],['實際 KL(q‖q̂)',f6(r.kl),'取樣器輸出分佈與 q 的 KL']];
+  $('#c3-tab tbody').innerHTML=rows.map(x=>`<tr${x[0].startsWith('實際')?' class="hl"':''}><td>${x[0]}</td><td class="num">${x[1]}</td><td>${x[2]}</td></tr>`).join('');
+  $('#c3-line').textContent=`KL(q‖q̂) = ${r.kl.toFixed(4)} ≤ 路徑 KL = init + ΣTC + end = ${r.path.toFixed(4)} ≤ init + Σc·ΔDTC + end = ${(r.init+r.sumB+r.end).toFixed(4)}`}
+function initC3(){chips($('#c3-chips'),c3.p,k=>{c3.p=k;startC3()});logSlider($('#c3-a'),A_LIST,.1);
+  $('#c3-a').addEventListener('input',()=>{const a=A_LIST[+$('#c3-a').value];$('#c3-ao').textContent=fmtV(a)});$('#c3-a').addEventListener('change',startC3);startC3()}
+
+/* ---------- C4 ---------- */
+const C4_D=[64,128,256,512,1024,2048,4096];
+const c4={k:.2,di:2,curve:null};
+const widthCache=new Map(),recCache=new Map();
+const kKey=k=>k.toFixed(2);
+function getRec(d,k){const key=d+'|'+kKey(k);if(!recCache.has(key))recCache.set(key,makeUnifRec(d,k));return recCache.get(key)}
+const IG_CURVE=[];for(let i=0;i<=100;i++){const t=.01+i*(1.99/100);IG_CURVE.push([t,Iunif(t),Igauss(t)])}
+function c4grid(k){const lo=Math.max(.005,k-.1),hi=Math.min(LN2-1e-6,k+.1),g=[];for(let i=0;i<81;i++)g.push(lo+(hi-lo)*i/80);return g}
+function* curveGen(u,grid){const pts=[];for(const I of grid){pts.push([I,u.recI(I)]);yield}return pts}
+function* widthsGen(k,first){const order=[first,...C4_D.filter(d=>d!==first)];for(const d of order){const key=kKey(k)+'|'+d;if(!widthCache.has(key)){widthCache.set(key,yield* getRec(d,k).widthGen());yield d}}}
+function c4change(kChanged){c4.k=+$('#c4-k').value;c4.di=+$('#c4-d').value;const k=c4.k,d=C4_D[c4.di];
+  if(kChanged){recCache.clear()}
+  drawC4();
+  runJob('c4c',curveGen(getRec(d,k),c4grid(k)),pts=>{c4.curve={key:kKey(k)+'|'+d,pts};drawC4Main()});
+  runJob('c4w',widthsGen(k,d),()=>drawC4(),()=>drawC4())}
+function drawC4(){drawC4Main();drawC4Width();drawC4Info()}
+function drawC4Main(){const k=c4.k,d=C4_D[c4.di],grid=c4grid(k),lo=grid[0],hi=grid[80];
+  const box=$('#c4-main'),W=widthOf(box,280,900);
+  const F=frame($('svg',box),{W,H:300,m:{l:46,r:18,t:30,b:40},x:[lo,hi],y:[0,1],xt:ticks(lo,hi,W<500?4:8),xf:v=>v.toFixed(2),yt:[0,.2,.4,.6,.8,1],yf:v=>v.toFixed(1),xl:'每座標資訊量 I（nats）',yl:'recovery probability'});
+  [.2,.8].forEach(v=>el('line',{x1:F.x0,x2:F.x1,y1:F.Y(v),y2:F.Y(v),class:'ref',style:'stroke-dasharray:2 4'},F.g));
+  el('line',{x1:F.X(k),x2:F.X(k),y1:F.y0,y2:F.y1,class:'ref'},F.g);tx(F.g,F.X(k)+5,F.y1-8,'I = κ',{class:'labm'});
+  const mp=[];for(let i=0;i<=240;i++){const I=lo+(hi-lo)*i/240;mp.push([F.X(I),F.Y(maskedRecI(d,k,I))])}el('path',{d:lp(mp),class:'mask'},F.g);
+  if(d<=256){for(let m=Math.ceil(lo*d/LN2);m<=Math.floor(hi*d/LN2);m++){const I=m*LN2/d;el('rect',{x:F.X(I)-2.5,y:F.Y(maskedRecI(d,k,I))-2.5,width:5,height:5,class:'mask-f'},F.g)}}
+  const key=kKey(k)+'|'+d,cv=c4.curve&&c4.curve.key===key?c4.curve.pts:null;
+  if(cv)el('path',{d:lp(cv.map(([I,v])=>[F.X(I),F.Y(v)])),class:'unif'},F.g);else tx(F.g,F.x1-6,F.y0-10,'uniform 曲線計算中…',{class:'al','text-anchor':'end'});
+  const m20=k-L20/d,m80=k-L80/d,mw=MASK_LNRATIO/d,yM=F.Y(.93);
+  darrow(F.g,F.X(m20),yM,F.X(m80),yM,'mask-a');
+  const wu=widthCache.get(key);
+  if(W>=560)tx(F.g,F.X(m20)-8,yM+4,`masked 寬 ${mw.toPrecision(4)}`,{class:'labm','text-anchor':'end',style:'fill:var(--c-mask)'});
+  if(wu&&!isNaN(wu.w)){const yU=F.Y(.07);darrow(F.g,F.X(wu.i20),yU,F.X(wu.i80),yU,'unif-a');const lab=`uniform 寬 ${wu.w.toPrecision(4)}`,xl=F.X(wu.i80)+8;if(W>=560)tx(F.g,xl+lab.length*7.2>F.x1?F.X(wu.i20)-8:xl,yU+4,lab,{class:'labm','text-anchor':xl+lab.length*7.2>F.x1?'end':'start',style:'fill:var(--c-unif)'})}
+  const us=wu?(isNaN(wu.w)?'窗超出範圍':wu.w.toFixed(6)):'計算中…';
+  $('#c4-do').textContent=d;$('#c4-ko').textContent=k.toFixed(2);$('#c4-d').setAttribute('aria-valuetext','d = '+d);$('#c4-k').setAttribute('aria-valuetext','κ = '+k.toFixed(2));
+  $('#c4-ro').innerHTML=`d = <b>${d}</b>，κ = <b>${k.toFixed(2)}</b>　masked 窗寬 = 2.3698/d = <b>${mw.toFixed(6)}</b>（以 m 計 ${(MASK_LNRATIO/LN2).toFixed(3)} 個座標）<br>uniform 窗寬 = <b>${us}</b>${wu&&!isNaN(wu.w)?`　uniform／masked = <b class="acc">${(wu.w/mw).toFixed(2)}</b>`:''}`;
+  $('svg',box).setAttribute('aria-label',`recovery probability 對 I，d = ${d}，κ = ${k.toFixed(2)}；masked 窗寬 ${mw.toFixed(5)}，uniform 窗寬 ${us}`);
+  if(wu)announce('c4',`d = ${d}：masked 窗寬 ${mw.toFixed(5)}，uniform 窗寬 ${us}`)}
+function slope(pts){const n=pts.length;if(n<3)return NaN;let sx=0,sy=0,sxx=0,sxy=0;pts.forEach(([x,y])=>{x=Math.log(x);y=Math.log(y);sx+=x;sy+=y;sxx+=x*x;sxy+=x*y});return(n*sxy-sx*sy)/(n*sxx-sx*sx)}
+function drawC4Width(){const k=c4.k,box=$('#c4-w'),W=widthOf(box,260,460);
+  const F=frame($('svg',box),{W,H:250,m:{l:50,r:14,t:26,b:40},x:[52,5000],xlog:true,y:[1e-4,.3],ylog:true,xt:[[64,'64'],[256,'256'],[1024,'1024'],[4096,'4096']],yt:[[1e-4,'10⁻⁴'],[1e-3,'10⁻³'],[1e-2,'10⁻²'],[.1,'0.1']],xl:'d（對數）',yl:'窗寬（nats，對數）'});
+  const up=C4_D.map(d=>[d,widthCache.get(kKey(k)+'|'+d)]).filter(([,r])=>r&&!isNaN(r.w)).map(([d,r])=>[d,r.w]);
+  const ref=(d0,w0,p,lab)=>{const y=d=>w0*(d0/d)**p,a=52,b=5000;el('line',{x1:F.X(a),y1:F.Y(Math.min(.3,y(a))),x2:F.X(b),y2:F.Y(Math.max(1e-4,y(b))),class:'ref'},F.g);tx(F.g,F.X(3000),F.Y(y(3000))-8,lab,{class:'labm','text-anchor':'middle'})};
+  ref(64,MASK_LNRATIO/64,1,'∝ 1/d');if(up.length)ref(up[0][0],up[0][1],.5,'∝ 1/√d');
+  C4_D.forEach(d=>{const w=MASK_LNRATIO/d;el('rect',{x:F.X(d)-4,y:F.Y(w)-4,width:8,height:8,class:'mask-f'},F.g)});
+  up.forEach(([d,w])=>el('circle',{cx:F.X(d),cy:F.Y(w),r:4.5,class:'unif-f'},F.g));
+  const sl=slope(up);
+  $('#c4-tab tbody').innerHTML=C4_D.map(d=>{const r=widthCache.get(kKey(k)+'|'+d),u=r?(isNaN(r.w)?'窗超出範圍':r.w.toFixed(6)):'計算中…';return`<tr><td class="num">${d}</td><td class="num">${u}</td><td class="num">${(MASK_LNRATIO/d).toFixed(6)}</td><td class="num">${r&&!isNaN(r.w)?(r.w*Math.sqrt(d)).toFixed(3):'—'}</td></tr>`}).join('');
+  c4.slope=sl;drawC4Info()}
+function drawC4Info(){const k=c4.k,d=C4_D[c4.di],box=$('#c4-i'),W=widthOf(box,260,460);
+  const F=frame($('svg',box),{W,H:250,m:{l:46,r:14,t:26,b:40},x:[0,2],y:[0,.7],xt:[0,.5,1,1.5,2],yt:[0,.2,.4,.6],yf:v=>v.toFixed(1),xl:'noise level t',yl:'I（nats）'});
+  el('path',{d:lp(IG_CURVE.map(p=>[F.X(p[0]),F.Y(Math.min(.7,p[1]))])),class:'unif'},F.g);el('path',{d:lp(IG_CURVE.map(p=>[F.X(p[0]),F.Y(Math.min(.7,p[2]))])),class:'gaus'},F.g);
+  el('line',{x1:F.x0,x2:F.x1,y1:F.Y(k),y2:F.Y(k),class:'ref'},F.g);tx(F.g,F.x1-4,F.Y(k)-6,'I = κ',{class:'labm','text-anchor':'end'});
+  const tu=tStarUnif(k),tg=tStarGauss(k);
+  [[tu,'unif-f','t⋆ unif'],[tg,'ink-f','t⋆ gauss']].forEach(([t,c,l],i)=>{if(t>2)return;el('line',{x1:F.X(t),x2:F.X(t),y1:F.Y(k),y2:F.y0,class:'cur'},F.g);el('circle',{cx:F.X(t),cy:F.Y(k),r:4.5,class:c},F.g);tx(F.g,F.X(t)+(i?6:-6),F.Y(k)+(i?-22:18)+(i?0:0),l,{class:'labm','text-anchor':i?'start':'end'})});
+  const bs=(1-Math.exp(-tu))/2;
+  $('#c4-ro2').innerHTML=`β⋆ = <b>${bs.toFixed(4)}</b>　t⋆_unif = <b>${tu.toFixed(4)}</b>　t⋆_gauss = <b>${tg.toFixed(4)}</b>　masked m⋆ = κd/log 2 = <b>${(k*d/LN2).toFixed(1)}</b>（m⋆/d = ${(k/LN2).toFixed(4)}）<br>參考：t = 0.5 時 I_unif = <b>${Iunif(.5).toFixed(4)}</b>、I_gauss = <b>${Igauss(.5).toFixed(4)}</b>　uniform 窗寬的 log–log 擬合斜率 = <b class="acc">${isNaN(c4.slope)?'（有效點不足 3 個）':c4.slope.toFixed(3)}</b>（masked 為 −1）`}
+function initC4(){const k=$('#c4-k'),d=$('#c4-d');
+  k.addEventListener('input',()=>{$('#c4-ko').textContent=(+k.value).toFixed(2)});d.addEventListener('input',()=>{$('#c4-do').textContent=C4_D[+d.value]});
+  k.addEventListener('change',()=>c4change(true));d.addEventListener('change',()=>c4change(false));c4change(true)}
+
+/* ---------- C5 ---------- */
+const c5={p:16,eta:1e-3,seed:5,B:null,timer:0};
+function c5reset(){clearInterval(c5.timer);c5.timer=0;$('#c5-scan').textContent='等距掃描';
+  const d=2**c5.p,C=counts(d,c5.eta),r=mulberry32(c5.seed);c5.C=C;
+  c5.B={M:{n:C.nM,win:Math.floor(r()*C.nM),q:new Uint8Array(C.nM),used:0,hit:false,last:''},U:{n:C.nU,win:Math.floor(r()*C.nU),q:new Uint8Array(C.nU),used:0,hit:false,last:''}};
+  ['M','U'].forEach(k=>{const inp=$('#c5-q'+k);inp.max=c5.B[k].n;inp.value=1;c5qlabel(k)});drawC5()}
+function c5qlabel(k){const inp=$('#c5-q'+k),n=c5.B[k].n;$('#c5-q'+k+'o').textContent=inp.value;inp.setAttribute('aria-valuetext',`第 ${inp.value}/${n} 段`)}
+function c5query(k,i,quiet){const b=c5.B[k];if(b.hit&&quiet)return;if(!b.q[i]){b.q[i]=1;b.used++}const hit=i===b.win;if(hit)b.hit=true;
+  b.last=hit?`第 ${i+1} 段：回答 = 真實 marginal（命中窗）`:`第 ${i+1} 段：回答 = 均勻（與 O₀ 相同）`;
+  if(!quiet){drawC5();announce('c5',(k==='M'?'masked ':'uniform ')+b.last)}}
+function c5band(k){const b=c5.B[k],box=$('#c5-b'+k),sv=$('svg',box),W=widthOf(box,260,900),H=40;sv.textContent='';sv.setAttribute('viewBox',`0 0 ${W} ${H}`);sv.setAttribute('width',W);sv.setAttribute('height',H);
+  const sw=(W-2)/b.n,x=i=>1+i*sw;let run=-1;
+  for(let i=0;i<=b.n;i++){const on=i<b.n&&b.q[i];if(on&&run<0)run=i;if(!on&&run>=0){el('rect',{x:x(run),y:1,width:Math.max(1,(i-run)*sw),height:H-2,class:'seg-q'},sv);run=-1}}
+  if(b.n<=400)for(let i=1;i<b.n;i++)el('line',{x1:x(i),x2:x(i),y1:1,y2:H-1,class:'sep'},sv);
+  if(b.hit){const w=Math.max(4,sw);el('rect',{x:Math.min(W-1-w,x(b.win)+sw/2-w/2),y:1,width:w,height:H-2,class:'seg-hit'},sv)}
+  el('rect',{x:1,y:1,width:W-2,height:H-2,rx:4,class:'seg-bd'},sv);
+  $('.st',box).textContent=b.last||'尚未查詢';$('.st',box).classList.toggle('hit',b.hit);
+  sv.setAttribute('aria-label',`${k==='M'?'masked':'uniform'} 帶：${b.n} 段，已查詢 ${b.used} 段，${b.hit?'已命中窗':'尚未命中'}`)}
+function drawC5(){const d=2**c5.p,C=c5.C,B=c5.B;
+  $('#c5-po').textContent=d.toLocaleString('en-US');$('#c5-p').setAttribute('aria-valuetext',`d = 2^${c5.p} = ${d}`);
+  $('.band-h span',$('#c5-bM')).textContent=`masked：已揭露數 m 的候選窗位置，n_M = ${C.nM} 段`;
+  $('.band-h span',$('#c5-bU')).textContent=`uniform：時間 t 的候選窗位置，n_U = ${C.nU} 段`;
+  c5band('M');c5band('U');
+  const Q=B.M.used,e=eq100(C,c5.eta,Q),f=v=>v===0?'0':v<1e-3?fe(v,3):v.toPrecision(4);
+  $('#c5-ro').innerHTML=`masked：已用查詢 Q = <b>${Q}</b>，n_M = <b>${C.nM}</b>，|𝒦| = <b>${C.K}</b>，ℓ = <b>${C.ell}</b><br>Eq. 100 三項（Q = ${Q}）：(2ℓ+1)Q/|𝒦| = <b>${f(e[0])}</b>，2^(1−ℓ)/η = <b>${f(e[1])}</b>，Q·2^(−ℓ) = <b>${f(e[2])}</b><br>第一項 ≤ ρ²/4 所允許的 Q_max = ρ²|𝒦|/(4(2ℓ+1)) = <b class="acc">${C.qmax.toFixed(3)}</b>${C.qmax<1?'<span class="flag">保證無意義（自選常數下 Q_max &lt; 1）</span>':''}<br>uniform：已用查詢 <b>${B.U.used}</b>，n_U = <b>${C.nU}</b>，Λ = <b>${C.Lam.toFixed(3)}</b>　段數比 n_M／n_U = <b class="acc">${(C.nM/C.nU).toFixed(1)}</b>`}
+function c5scan(){if(c5.timer){clearInterval(c5.timer);c5.timer=0;$('#c5-scan').textContent='等距掃描';return}
+  const ptr={M:0,U:0};let ticks=0;
+  const tick=()=>{['M','U'].forEach(k=>{const b=c5.B[k];if(b.hit)return;const per=Math.ceil(b.n/32);for(let j=0;j<per&&ptr[k]<b.n&&!b.hit;j++){while(ptr[k]<b.n&&b.q[ptr[k]])ptr[k]++;if(ptr[k]<b.n)c5query(k,ptr[k]++,true)}});ticks++;drawC5();
+    const done=(c5.B.M.hit&&c5.B.U.hit)||ticks>=32;if(done){clearInterval(c5.timer);c5.timer=0;$('#c5-scan').textContent='等距掃描';announce('c5',`掃描結束：masked 用 ${c5.B.M.used} 次、uniform 用 ${c5.B.U.used} 次查詢`)}return done};
+  if(RM){while(!tick());return}
+  $('#c5-scan').textContent='停止掃描';c5.timer=setInterval(tick,250)}
+function initC5(){['M','U'].forEach(k=>{$('#c5-b'+k).innerHTML=`<div class="band-h"><span></span><span class="st">尚未查詢</span></div><svg role="img"></svg><div class="q"><div class="rng"><label class="lbl" for="c5-q${k}">查詢段號<output id="c5-q${k}o">1</output></label><input id="c5-q${k}" type="range" min="1" max="2" step="1" value="1"></div><button class="small-btn" type="button" id="c5-go${k}">查詢這一段</button></div>`;
+    $('#c5-q'+k).addEventListener('input',()=>c5qlabel(k));$('#c5-go'+k).addEventListener('click',()=>c5query(k,+$('#c5-q'+k).value-1))});
+  $('#c5-p').addEventListener('input',()=>{c5.p=+$('#c5-p').value;c5reset()});
+  $$('#c5-eta button').forEach(b=>b.addEventListener('click',()=>{$$('#c5-eta button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));c5.eta=+b.dataset.v;c5reset()}));
+  $('#c5-scan').addEventListener('click',c5scan);$('#c5-re').addEventListener('click',()=>{c5.seed++;c5reset()});c5reset()}
+
+/* ---------- S3 static figure (Fig. 5 style) ---------- */
+function drawS3(){const s=$('#s3-fig');s.textContent='';const cw=30,gap=4,x0=56,dN=8,i0=2;
+  const cx=j=>x0+j*(cw+gap);
+  const cond='fill:color-mix(in oklab,var(--ink-3) 45%,var(--surface));stroke:none';
+  const cell=(j,y,kind)=>el('rect',{x:cx(j),y,width:cw,height:cw,rx:4,style:kind==='c'?cond:kind==='a'?'fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.5':'fill:var(--surface);stroke:var(--ink-3);stroke-width:1'},s);
+  const panel=(oy,title,top,bot,arc)=>{tx(s,0,oy+14,title,{class:'lab'});const yA=oy+40,yB=oy+92;
+    tx(s,8,yA+20,'Xₛ',{class:'labm'});tx(s,8,yB+20,'Xₜ',{class:'labm'});
+    for(let j=0;j<dN;j++){cell(j,yA,top(j));cell(j,yB,bot(j))}
+    tx(s,cx(i0)+cw/2,yA-6,'i',{class:'labm','text-anchor':'middle'});
+    const g0=cx(i0+1),g1=cx(dN-1)+cw;el('path',{d:`M${g0} ${yA-4}V${yA-10}H${g1}V${yA-4}`,class:'acc-l'},s);tx(s,(g0+g1)/2,yA-14,'i+1 … d',{class:'labm','text-anchor':'middle'});
+    el('path',{d:arc(yA,yB),class:'acc-l',style:'stroke-dasharray:4 3'},s)};
+  panel(0,'(a) 左式：I((Xₛ)ᵢ₊₁:d ; (Xₛ)ᵢ | Xₜ)',j=>j<i0?'w':'a',()=> 'c',(yA)=>`M${cx(i0)+cw/2} ${yA+cw+2}C${cx(i0)+cw/2} ${yA+cw+16} ${cx(5)+cw/2} ${yA+cw+16} ${cx(5)+cw/2} ${yA+cw+2}`);
+  panel(150,'(b) 右式：I((Xₛ)ᵢ₊₁:d ; (Xₜ)ᵢ | (Xₜ)₋ᵢ)',j=>j<=i0?'w':'a',j=>j===i0?'a':'c',(yA,yB)=>`M${cx(i0+1)+4} ${yA+cw}L${cx(i0)+cw/2} ${yB}`);
+}
+
+/* ---------- timeline ---------- */
+const TL_GROUP={'2006.11239':['base','eps-prediction-ddpm-score'],'2107.03006':['corr','dllm-three-corruption-paradigms'],'2211.15089':['corr','dllm-three-corruption-paradigms'],'2310.16834':['corr','dllm-three-corruption-paradigms'],
+ '2406.07524':['corr','dllm-three-corruption-paradigms'],'2502.09992':['corr','dllm-three-corruption-paradigms'],'2205.14987':['samp','dllm-discrete-sampling-theory'],'2402.08095':['samp','dllm-discrete-sampling-theory'],
+ '2511.04647':['mdtc','dllm-masked-schedule-dtc-theory'],'2510.25544':['mdtc','dllm-masked-schedule-dtc-theory'],'2403.01633':['cw','dllm-critical-windows-speciation'],'2604.10857':['lb','dllm-score-oracle-lower-bounds'],'2609.20539':['me','dllm-parallelism-separation-result']};
+const TL_NAME={base:'基礎',corr:'三種腐蝕',samp:'取樣理論',mdtc:'masked DTC',cw:'critical window',lb:'query 下界',me:'本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  data=data.map((e,i)=>({e,i})).sort((a,b)=>(+a.e.year||0)-(+b.e.year||0)||a.i-b.i).map(o=>o.e);
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${g[1]?`<a href="${g[1]}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+
+/* ---------- toc, theme, appbar ---------- */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));
+  addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+/* ---------- self test ---------- */
+function lum(hex){const h=hex.trim().replace('#','');const c=[0,2,4].map(i=>parseInt(h.slice(i,i+2),16)/255).map(v=>v<=.03928?v/12.92:((v+.055)/1.055)**2.4);return .2126*c[0]+.7152*c[1]+.0722*c[2]}
+const contrast=(a,b)=>{const x=lum(a),y=lum(b);return(Math.max(x,y)+.05)/(Math.min(x,y)+.05)};
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t,m)=>ok(Math.abs(a-b)<=t+1e-12,`${m}: ${a} vs ${b}`);
+  near(dtc(PRE.copy),LN2,1e-9,'DTC copy');near(dtc(PRE.parity),5*LN2,1e-9,'DTC parity');near(dtc(PRE.codebook),1.7329,1e-4,'DTC codebook');
+  near(tcOf(PRE.copy),3.4657,1e-4,'TC copy');near(tcOf(PRE.codebook),2.0479,1e-4,'TC codebook');near(dtc(PRE.indep),0,1e-9,'DTC indep');
+  [['codebook',.5,.2,.024176,.147974],['codebook',.05,.5,.798092,44.163802],['codebook',1,.5,.007402,.046549],['copy',.5,.2,.033732,.178660],['parity',.1,.05,.018617,.409784],['parity',.5,.2,.000796,.007046]]
+    .forEach(([p,s,h,tc,b])=>{const R=c2calc(p,s,h);near(R.tc,tc,1e-6,`C2 ${p} ${s},${h} TC`);near(R.bd,b,1e-6,`C2 ${p} ${s},${h} bound`)});
+  {const R=c2calc('indep',.5,.2);ok(R.tc===0&&R.bd===0&&isNaN(R.ratio),'C2 indep zero')}
+  [['codebook',.1,136,.038090,.348041,.061368,.005906],['codebook',1,19,.277032,3.707104,.300310,.012022],['parity',.1,136,.025194,.674868,.045565,.007476],['indep',.1,136,0,0,.002499,.000007]]
+    .forEach(([p,a,N,st,sb,path,kl])=>{const r=runSync(scheduleGen(PRE[p],a));ok(r.N===N,`C3 ${p} a=${a} N=${r.N}`);near(r.sumTC,st,1e-6,`C3 ${p} a=${a} ΣTC`);near(r.sumB,sb,1e-6,`C3 ${p} a=${a} Σbound`);near(r.path,path,1e-6,`C3 ${p} a=${a} path`);near(r.kl,kl,1e-6,`C3 ${p} a=${a} KL`)});
+  near(c1expect(.5).touch,.3935,1e-4,'C1 touch');near(c1expect(.5).change,.1967,1e-4,'C1 change');
+  near(tStarUnif(.2),.4937,1e-4,'t*unif .2');near(tStarGauss(.2),.5521,1e-4,'t*gauss .2');near(tStarUnif(.5),.1013,1e-4,'t*unif .5');near(tStarGauss(.1),.8534,1e-4,'t*gauss .1');
+  [[.25,.34538,.43845],[.5,.19730,.22716],[1,.06928,.07268],[2,.00919,.00924]].forEach(([t,u,g])=>{near(Iunif(t),u,1e-5,'Iunif '+t);near(Igauss(t),g,1e-5,'Igauss '+t)});
+  near(MASK_LNRATIO,2.3698,1e-4,'masked ln ratio');near(Math.exp(L80),.4642,1e-4,'lam80');near(Math.exp(L20),4.9651,1e-4,'lam20');
+  {const u=makeUnifRec(256,.2);near(u.recI(.2),.5357,5e-4,'rec d=256 I=.2');near(u.recI(.15),.0591,5e-4,'rec d=256 I=.15');near(u.recI(.25),.9374,5e-4,'rec d=256 I=.25');
+   const nw=runSync(u.widthGen(.199,.201));ok(isNaN(nw.w),'width NaN when bracket fails')}
+  {const u=makeUnifRec(64,.2);near(u.recI(.22),.6797,5e-4,'rec d=64 I=.22');const w=runSync(u.widthGen()).w;ok(Math.abs(w/.105902-1)<.01,'width d=64 '+w)}
+  [[4096,1e-3,2364,27,43,15],[1048576,1e-3,605110,35,8523,210],[65536,1e-3,37820,31,601,56],[1024,1e-3,591,25,12,8],[65536,1e-6,null,41,456,49]].forEach(([d,eta,K,ell,nM,nU])=>{const c=counts(d,eta);ok((K===null||c.K===K)&&c.ell===ell&&c.nM===nM&&c.nU===nU,`C5 d=${d} eta=${eta}: ${c.K},${c.ell},${c.nM},${c.nU}`)});
+  near(counts(65536,1e-3).qmax,6.003,1e-3,'C5 Qmax 65536');{const e=eq100(counts(1024,1e-3),1e-3,12);near(e[0],1.036,1e-3,'Eq100 t1');near(e[1],5.96e-5,1e-7,'Eq100 t2');near(e[2],3.576e-7,1e-9,'Eq100 t3')}
+  const root=document.documentElement,prev=root.dataset.theme;
+  ['light','dark'].forEach(th=>{root.dataset.theme=th;const cs=getComputedStyle(root),bg=cs.getPropertyValue('--surface');['--c-unif','--c-mask','--ink-1','--accent'].forEach(v=>{const c=contrast(cs.getPropertyValue(v),bg);ok(c>=3,`contrast ${th} ${v} = ${c.toFixed(2)}`)})});
+  if(prev)root.dataset.theme=prev;else delete root.dataset.theme;
+  ok(root.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+root.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ---------- boot ---------- */
+initTheme();initToc();initC1();initC2();initC3();initC4();initC5();drawS3();renderTimeline();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{renderC2();drawC3();drawC4();drawC5()})});
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false})}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath();if(/[?&]test\b/.test(location.search))setTimeout(selfTest,0)});
+})();
+</script>
+</body>
+</html>

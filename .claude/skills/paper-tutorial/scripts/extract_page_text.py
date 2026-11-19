@@ -1,10 +1,20 @@
 """usage: extract_page_text.py <tutorial_src/ID dir>
 Renders build/index.html headless, strips scripts/SVG and the <details class="check"> answer boxes,
-and writes accept/page.txt (what a reader can learn from body text) and accept/questions.txt (from design.md)."""
-import sys, re, html, subprocess, pathlib
+and writes accept/page.txt (what a reader can learn from body text) and accept/questions.txt (from design.md).
+Renders a copy without Google Fonts; if headless Chrome cannot reach cdnjs, set KATEX_DIR to a local KaTeX 0.16.9
+directory (katex.min.js, katex.min.css, contrib/) and the copy loads KaTeX from there."""
+import sys, os, re, html, subprocess, pathlib
 d = pathlib.Path(sys.argv[1]).resolve(); (d / 'accept').mkdir(exist_ok=True)
-dom = subprocess.run(['google-chrome', '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=8000',
-                      '--dump-dom', f'file://{d}/build/index.html'], capture_output=True, text=True, timeout=120).stdout
+src = re.sub(r'<link[^>]*(fonts\.googleapis|fonts\.gstatic)[^>]*>', '', (d / 'build/index.html').read_text())
+if os.environ.get('KATEX_DIR'):
+    src = src.replace('https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9', 'file://' + os.path.abspath(os.environ['KATEX_DIR']))
+tmp = d / 'build/.extract.html'; tmp.write_text(src)
+try:
+    dom = subprocess.run(['google-chrome', '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=8000',
+                          '--dump-dom', f'file://{tmp}'], capture_output=True, text=True, timeout=120).stdout
+finally:
+    tmp.unlink()
+if not dom.strip(): sys.exit('empty DOM: headless Chrome hung or failed (try KATEX_DIR=<local katex>)')
 s = re.sub(r'<(script|style|svg)[\s\S]*?</\1>', '', dom)
 s = re.sub(r'<details class="check[\s\S]*?</details>', '', s)
 s = re.sub(r'<annotation encoding="application/x-tex">([\s\S]*?)</annotation>', lambda m: ' $' + m.group(1) + '$ ', s)

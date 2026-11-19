@@ -1,0 +1,1486 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用自我蒸餾做強化學習</title>
+<meta name="description" content="圖解 Hübotter 等人的 SDPO：把加入環境回饋後的同一模型當作自我教師，以逐 token 的 KL 蒸餾回不看回饋的模型；梯度等於以教師對數機率比為優勢的策略梯度。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout shell from prediction-targets-k-diff.html. Four figure-only series colours:
+   student (solid), teacher (hatched), positive / negative advantage. */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-stu:#3F6E8C;--c-tea:#6B7A3A;--c-pos:#2F6FA8;--c-neg:#B23A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-stu:#8DB4D3;--c-tea:#A9BC7C;--c-pos:#86B6E3;--c-neg:#E58A8A;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-stu:#8DB4D3;--c-tea:#A9BC7C;--c-pos:#86B6E3;--c-neg:#E58A8A;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-stu)}.card.perp .k::before{border-top:2px dashed var(--c-tea)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check,details.deriv{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary,details.deriv>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker,details.deriv>summary::-webkit-details-marker{display:none}
+details.check>summary::before,details.deriv>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before,details.deriv[open]>summary::before{transform:rotate(45deg)}
+details.check .qa,details.deriv .qa{padding:0 20px 18px;font-size:15px}
+details.check .q,details.deriv .q{font-weight:600;margin:12px 0 4px}
+details.check .a,details.deriv .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-stu)}
+.lg.perp::before{border-top:2px dashed var(--c-tea)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-stu);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-tea)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-stu);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-stu)}
+svg .perp{stroke:var(--c-tea);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-tea)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-tea);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+/* ---- page-specific: token grids, bars, template, derived tags ---- */
+.pill{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-2);background:var(--surface-2);border:1px dashed var(--ink-3);border-radius:999px;padding:4px 9px;white-space:nowrap}
+.dv{font:500 12px/1 var(--f-body);color:var(--ink-2);border-bottom:1px dashed var(--ink-3);white-space:nowrap}
+details.deriv>summary{color:var(--ink-2)}
+.tbl-wrap{overflow-x:auto;max-width:100%;margin:8px 0 24px;
+  -webkit-mask-image:linear-gradient(to right,transparent 0,#000 12px,#000 calc(100% - 12px),transparent 100%);mask-image:linear-gradient(to right,transparent 0,#000 12px,#000 calc(100% - 12px),transparent 100%);padding:0 12px}
+.prose .tbl-wrap,.tbl-wrap.narrow{max-width:700px}
+.tbl-wrap table{min-width:520px}
+.tbl-wrap.small table{min-width:0}
+td.pos{color:var(--c-pos)}td.neg{color:var(--c-neg)}
+.fn{font-size:14px;color:var(--ink-3);max-width:700px;margin:-8px 0 20px}
+
+/* token grid */
+.tgo{display:flex;overflow-x:auto;max-width:100%;padding:2px 0 6px;scrollbar-width:thin}
+.tg-lab{position:sticky;left:0;z-index:2;flex:none;display:flex;flex-direction:column;background:var(--surface);padding-right:8px}
+.hero .tg-lab{background:var(--bg)}
+.tg-lab span{display:flex;align-items:center;font:500 12px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.tg{display:flex;gap:4px;flex:none}
+.tg-c{display:flex;flex-direction:column;align-items:stretch;flex:none;border-radius:8px;padding:0 2px;outline-offset:1px}
+.tg-c[role=option]{cursor:pointer}
+.tg-c[aria-selected=true]{background:var(--accent-soft);box-shadow:inset 0 0 0 1.5px var(--accent)}
+.tg-t{height:34px;display:flex;align-items:center;justify-content:center;padding:0 6px;font:500 13px/1 var(--f-mono);white-space:pre;color:var(--ink);border-bottom:1px solid var(--line)}
+.tg-t .sp{color:var(--ink-3)}
+.tg-r{position:relative;height:var(--rh,64px);min-width:44px}
+.tg-r::before{content:"";position:absolute;left:2px;right:2px;top:var(--mid,26px);border-top:1px solid var(--ink-3);opacity:.6}
+.tg-r i{position:absolute;left:50%;width:14px;margin-left:-7px;border-radius:2px}
+.tg-r i.up{bottom:calc(var(--rh,64px) - var(--mid,26px))}
+.tg-r i.dn{top:var(--mid,26px)}
+.tg-r i.g{background:var(--ink-3)}
+.tg-r i.p{background:var(--c-pos)}
+.tg-r i.n{background:var(--c-neg)}
+.tg-r b{position:absolute;left:0;right:0;bottom:0;text-align:center;font:400 11px/1 var(--f-mono);color:var(--ink-2)}
+.tg-r.multi i{width:5px;margin-left:0}
+.tg-cap{font-size:13px;color:var(--ink-3);margin:6px 0 0}
+.hero-grid{margin:36px 0 8px;padding:18px 18px 14px;border:1px solid var(--line);border-radius:16px;max-width:960px}
+.hero-grid .hg-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:0 0 10px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.hero-grid .hg-h code{color:var(--ink)}
+
+/* C1 rollouts */
+.ro-list{display:flex;flex-direction:column;gap:2px}
+.ro{display:grid;grid-template-columns:44px minmax(0,1fr) 58px;align-items:center;gap:8px}
+.ro button{width:40px;height:30px;border-radius:999px;border:1.5px solid var(--ink-2);background:var(--surface);color:var(--ink);font:600 13px/1 var(--f-mono);cursor:pointer}
+.ro button[aria-pressed=true]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+.ro .band{position:relative;height:30px;display:grid;grid-template-columns:repeat(12,1fr);gap:2px}
+.ro .band::before{content:"";position:absolute;left:0;right:0;top:15px;border-top:1px solid var(--ink-3);opacity:.6}
+.ro .band span{position:relative}
+.ro .band i{position:absolute;left:15%;right:15%;border-radius:1px}
+.ro .band i.p{background:var(--c-pos);bottom:15px}.ro .band i.n{background:var(--c-neg);top:15px}
+.ro output{font:500 12px/1 var(--f-mono);color:var(--ink-2);text-align:right}
+.zero-note{font:500 13px/1.5 var(--f-body);color:var(--ink);background:var(--surface-2);border-radius:10px;padding:8px 12px;margin:8px 0 0}
+
+/* template block (Table 2) */
+.tpl{max-width:700px;margin:8px 0 24px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;padding:4px}
+.tpl .tr{display:grid;grid-template-columns:96px minmax(0,1fr);border-top:1px solid var(--line)}
+.tpl .tr:first-child{border-top:0}
+.tpl .who{padding:12px 14px;font:500 12px/1.6 var(--f-mono);color:var(--ink-3);background:var(--surface-2)}
+.tpl .body{padding:10px 16px;font:400 13px/1.7 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.tpl .ph{color:var(--accent);font-weight:500}
+.tpl .cond{display:block;font:400 12px/1.5 var(--f-body);color:var(--ink-3);margin:0 0 6px}
+.mono-box{font:400 13px/1.6 var(--f-mono);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:8px 0 18px;white-space:pre-wrap;word-break:break-word;max-width:700px}
+.quote2{display:grid;grid-template-columns:1fr;gap:12px;max-width:760px;margin:8px 0 24px}
+@media (min-width:640px){.quote2{grid-template-columns:1fr 1fr}}
+.quote2 figure{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px 18px}
+.quote2 blockquote{margin:0 0 10px;font:400 13px/1.7 var(--f-mono);color:var(--ink-2)}
+.quote2 figcaption{font:500 13px/1.4 var(--f-body);color:var(--ink)}
+
+/* S1 / S9 static figures */
+.fig2{display:grid;grid-template-columns:1fr;gap:16px;align-items:center}
+@media (min-width:768px){.fig2{grid-template-columns:200px minmax(0,1fr)}}
+.qbox{font-size:14px;line-height:1.6;background:var(--surface-2);border-radius:12px;padding:12px 14px}
+.qbox b{font-family:var(--f-mono);font-weight:500;color:var(--ink-3)}
+.fig-wide{display:block}.fig-narrow{display:none}
+@media (max-width:599px){.fig-wide{display:none}.fig-narrow{display:block}}
+.fig-narrow svg+svg{margin-top:12px}
+.f12-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:14px}
+.f12-list>li>span{font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.f12-list ol{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:6px 0;align-items:center}
+.f12-list ol li{font:500 13px/1.3 var(--f-mono);padding:5px 8px;border:1.5px solid var(--ink-3);border-radius:8px}
+.f12-list ol li.sd{border-color:var(--c-tea)}.f12-list ol li.th{border-color:var(--c-stu)}
+.f12-list ol li+li{position:relative;margin-left:16px}
+.f12-list ol li+li::before{content:"→";position:absolute;left:-15px;top:50%;transform:translateY(-50%);color:var(--ink-3)}
+.f12-list.fig-narrow{display:none}
+@media (max-width:599px){.f12-list.fig-narrow{display:flex}}
+
+/* svg additions */
+svg .f-stu{fill:var(--c-stu)}
+svg .f-tea{fill:url(#hatch);stroke:var(--c-tea);stroke-width:1.5}
+svg .f-teas{fill:var(--c-tea)}
+svg .f-teao{fill:var(--surface);stroke:var(--c-tea);stroke-width:2}
+svg .f-pos{fill:var(--c-pos)}svg .f-neg{fill:var(--c-neg)}svg .f-g{fill:var(--ink-3)}
+svg .hatch-l{stroke:var(--c-tea);stroke-width:1.6}
+svg .box{fill:var(--surface);stroke:var(--ink-2);stroke-width:1.5}
+svg .box-sd{fill:var(--surface);stroke:var(--c-tea);stroke-width:2.5}
+svg .box-th{fill:var(--surface);stroke:var(--c-stu);stroke-width:2.5}
+svg .box-m{fill:var(--surface-2);stroke:none}
+svg .thin{stroke:var(--ink-3);stroke-width:1.5;fill:none}
+svg .thin-f{fill:var(--ink-3)}
+svg .thick{stroke:var(--ink);stroke-width:3;fill:none}
+svg .thick-f{fill:var(--ink)}
+svg .mono{font:400 12px var(--f-mono);fill:var(--ink)}
+svg .vl{font:500 11px var(--f-mono);fill:var(--ink-2)}
+svg .zero{stroke:var(--ink-3);stroke-width:1}
+svg .acc-dot{fill:var(--accent)}
+svg .ttl{font:600 14px var(--f-body);fill:var(--ink)}
+.pg.c3{grid-template-columns:minmax(0,1fr)}
+@media (min-width:860px){.pg.c3{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr)}}
+.mini2{display:grid;grid-template-columns:1fr;gap:16px;margin-top:16px}
+@media (min-width:600px){.mini2{grid-template-columns:1fr 1fr}}
+.mini2 .mid{grid-column:1/-1;font-size:13px;color:var(--ink-2);margin:0}
+.formula{font-size:15px;margin:12px 0 0;color:var(--ink-2)}
+.pg.c1{grid-template-columns:minmax(0,1fr)}
+@media (min-width:860px){.pg.c1{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+
+.lg.sw::before{display:none}
+.plate+.prose,.plate+.fn{margin-top:28px}
+.tg-c{padding-bottom:3px}
+.mono-box.code{white-space:pre;overflow-x:auto;word-break:normal}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs><pattern id="hatch" patternUnits="userSpaceOnUse" width="5" height="5" patternTransform="rotate(45)"><rect width="5" height="5" fill="var(--surface)"/><line x1="0" y1="0" x2="0" y2="5" class="hatch-l"/></pattern></defs></svg>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 260</span>
+  <span class="ttl">用自我蒸餾做強化學習：以加入回饋後的同一模型分布作為逐 token 訓練目標</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 260</b> · 互動教學 · arXiv 2601.20802</div>
+  <h1>用自我蒸餾做強化學習：以加入回饋後的同一模型分布作為逐 token 訓練目標</h1>
+  <p class="dek">SDPO 把同一個模型在提示中加入回饋後的下一個 token 分布當作目標，蒸餾回不看回饋的模型，得到逐 token 的訓練訊號。</p>
+  <p class="byline">Jonas Hübotter、Frederike Lübeck、Lejs Behric、Anton Baumann 等（2026）〈Reinforcement Learning via Self-Distillation〉</p>
+  <div class="hero-grid">
+    <div class="hg-h"><span class="pill">〔示意〕本頁構造的數值，不是論文數據</span><span>以 Fig. 4 的題目為背景：回答 <code>return list(range(1, n + 1))</code>，回饋「Don't include n.」</span></div>
+    <div id="hero-grid"></div>
+    <p class="tg-cap">GRPO：同組 8 次嘗試中 3 次成功，這次失敗，所以每個 token 的優勢都是 0 − 3/8 = −0.375。SDPO：每個 token 各有一個值。</p>
+  </div>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 文字回饋</span><p>一般的強化學習訓練中，模型每次嘗試只得到一個分數；程式環境其實還會回傳錯誤訊息。本文把這些文字回饋直接變成訓練訊號。</p></div>
+    <div class="fact"><span class="n">02 · 自己當教師</span><p>教師就是模型自己：把錯誤訊息放進提示，重新計算原回答每個 token 的機率。在論文的例子中，機率明顯下降的 token 正好是錯誤所在；這是一個例子，不是保證。</p></div>
+    <div class="fact"><span class="n">03 · 一個結果</span><p>在 LiveCodeBench v6 上，Qwen3-8B 以 SDPO 訓練達到 48.8%，GRPO 為 41.2%。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2601.20802">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="https://github.com/lasgroup/SDPO">程式碼 GitHub ↗</a>
+    <a class="btn" href="../index.html#paper-260">在關聯圖中查看</a>
+    <a class="btn" href="sdpo-lineage-overview.html">研究脈絡總覽</a>
+  </div>
+</section>
+
+<!-- S1 ============================================================ -->
+<section class="ch" id="rlrf" data-toc="01" data-tt="RLVR 與 RLRF">
+  <div class="ch-num">01 · RLVR 與 RLRF</div>
+  <h2>純量獎勵只含一個數字，文字回饋還帶有環境狀態</h2>
+  <div class="prose">
+    <p>語言模型可以看成一個策略（policy）：給定問題 $x$，逐 token 產生回答 $y=(y_1,\dots,y_{|y|})$，</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\pi_\theta(y\mid x)=\prod_{t=1}^{|y|}\pi_\theta(y_t\mid x,y_{\lt t})$$</div></div>
+  <div class="prose">
+    <p>$\theta$ 是模型參數，$y_{\lt t}$ 是第 $t$ 個 token 之前的前綴。對一題取樣一次完整回答稱為一個 rollout。強化學習依環境對 rollout 的評價調整 $\theta$，讓評價高的回答更常出現。</p>
+    <p>目前多數做法屬於 <b>RLVR</b>（reinforcement learning with verifiable rewards，以可驗證獎勵做強化學習）：取樣 $y\sim\pi_\theta(\cdot\mid x)$ 後，環境只回傳一個純量獎勵 $r\in\mathbb R$，常為二元，例如程式題的單元測試全部通過得 1、否則得 0。許多環境其實能回傳更多資訊：執行錯誤、未通過的測試、LLM 評審的文字意見。論文把這個設定稱為 <b>RLRF</b>（reinforcement learning with rich feedback，以豐富回饋做強化學習）：環境回傳 token 化的回饋 $f$，可同時包含獎勵與環境狀態的觀察（Sec. 1）。</p>
+    <p>作者的主張是：RLVR 的主要限制不在 RL 本身，而在資訊量。純量獎勵只含一個數字，告訴模型「錯了」，卻沒有把環境狀態（例如錯誤訊息）傳回模型，模型無從得知錯在哪裡（Sec. 1；Fig. 2 的說明文字稱之為 information bottleneck）。從經典 RL 的角度看，這些環境是部分可觀測的（POMDP），RLVR 丟掉了觀察通道（App. C）。</p>
+  </div>
+  <div class="plate" id="f2">
+    <div class="plate-h"><span class="id">Fig. 2 重繪</span><h3>同一個錯誤答案，兩種環境回傳的東西</h3></div>
+    <div class="fig2">
+      <div class="qbox"><p style="margin:0 0 6px"><b>Q</b>　How much impulse did the thrusters generate for the Mars Climate Orbiter?</p><p style="margin:0"><b>A</b>　100 lbf-s</p></div>
+      <div class="fig">
+        <div class="fig-wide"><svg id="f2-wide" role="img" aria-label="左欄 RLVR：模型把回答 y 交給環境，環境只回傳獎勵 r = −1.0。右欄 RLRF：環境回傳文字回饋 f「Please answer in Newton-seconds.」"></svg></div>
+        <div class="fig-narrow"><svg id="f2-a" role="img" aria-label="RLVR：模型把回答 y 交給環境，環境只回傳獎勵 r = −1.0"></svg><svg id="f2-b" role="img" aria-label="RLRF：環境回傳文字回饋 f「Please answer in Newton-seconds.」"></svg></div>
+      </div>
+    </div>
+    <p class="plate-f">依論文 Fig. 2 的結構重繪。細線表示只帶一個數字的獎勵，粗線表示帶有環境狀態的文字回饋。</p>
+  </div>
+  <div class="prose">
+    <p>Fig. 3 是論文程式環境回傳的回饋（仿 LeetCode 的格式）。它不只說明這次嘗試失敗，也指出失敗的位置與輸入：</p>
+  </div>
+  <div class="mono-box">Runtime Error
+ZeroDivisionError: division by zero
+Line 73 in separateSquares (Solution.py)
+Last Executed Input
+[[26,30,2],[11,23,1]]</div>
+  <div class="prose">
+    <p>本文要回答的問題是：沒有更強的外部教師時，如何把這種文字回饋轉成逐 token 的信用分配（credit assignment，判斷回答中哪些 token 該為結果負責）。</p>
+  </div>
+  <details class="deriv">
+    <summary>符號表</summary>
+    <div class="qa"><div class="tbl-wrap small" tabindex="0" aria-label="符號表" style="margin-top:12px"><table>
+      <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td>$x$</td><td>問題（prompt）</td></tr>
+      <tr><td>$y=(y_1,\dots,y_{|y|})$</td><td>模型的回答（一個 rollout）；$y_t$ 為第 $t$ 個 token，$y_{\lt t}$ 為其前綴；App. A 以 $T$ 表示長度</td></tr>
+      <tr><td>$V$、$\hat y_t$</td><td>詞彙表；位置 $t$ 上任一候選 token（不一定是實際取樣的 $y_t$）</td></tr>
+      <tr><td>$\pi_\theta(\cdot\mid x,y_{\lt t})$</td><td>學生：目前的策略（語言模型），參數 $\theta$</td></tr>
+      <tr><td>$f$</td><td>豐富回饋：環境輸出（如執行錯誤）及／或同組中成功的解答</td></tr>
+      <tr><td>$\pi_\theta(\cdot\mid x,f,y_{\lt t})$、$q_\theta$</td><td>自我教師：同一組參數，提示中多了 $f$；App. A 記為 $q_\theta(\cdot\mid x,f):=\pi_\theta(\cdot\mid\mathrm{reprompt}(x,f))$</td></tr>
+      <tr><td>$r$、$G$</td><td>純量獎勵（常為 0/1）；每題的 rollout 數（群組大小）</td></tr>
+      <tr><td>$J(\theta)$</td><td>目標：期望獎勵 $J(\theta)=\mathbb E_{x,\,y\sim\pi_\theta}[r]$</td></tr>
+      <tr><td>$A_{i,t}$</td><td>第 $i$ 個 rollout、位置 $t$ 的優勢（advantage）</td></tr>
+      <tr><td>$K$</td><td>top-K 蒸餾保留的 token 數（Table 12：100 或 20）</td></tr>
+      <tr><td>$\alpha$</td><td>教師正規化的更新率（EMA 或信任域，Eq. 10）；與 $\lambda$ 無關</td></tr>
+      <tr><td>$\lambda$、$\lambda_L$、$\lambda_{\mathrm{ent}}$</td><td>Eq. 3 中 GRPO 與 SDPO 優勢的混合權重（$\lambda=0.9$）；信任域的 Lagrange 乘子；Eq. 17 的熵係數</td></tr>
+      <tr><td>$k$</td><td>Sec. 5 的嘗試次數（discovery@k、pass@k）；本頁不以 $k$ 表示其他東西</td></tr>
+      </tbody></table></div></div>
+  </details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">RLVR 與 RLRF 的環境各回傳什麼？作者認為 RLVR 的主要限制是什麼？</p>
+    <p class="a">RLVR 回傳純量獎勵 $r$（常為二元）；RLRF 回傳 token 化回饋 $f$（如執行錯誤、評審意見），可同時包含獎勵與狀態。作者認為限制在於純量獎勵只含一個數字、沒有傳回環境狀態，不在 RL 本身（Sec. 1、Fig. 2）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="rich-feedback-and-retrospection.html">豐富回饋、事後回顧與 feedback-conditioned policy</a></p>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="grpo" data-toc="02" data-tt="GRPO">
+  <div class="ch-num">02 · GRPO</div>
+  <h2>GRPO 用群組平均估計優勢</h2>
+  <div class="prose">
+    <p><b>$\nabla\log\pi$ 是什麼。</b>模型在一個位置對每個候選 token 輸出分數（logit）$z$，經 softmax 得機率 $\pi$。$\nabla_z\log\pi(\hat y)=e_{\hat y}-\pi$：讓被選 token 的分數上升、其他依機率下降。數值例：三個候選 $\pi=(0.5,0.3,0.2)$，選第 1 個，方向是 $(+0.5,-0.3,-0.2)$。乘上優勢 $A$：$A>0$ 時沿此方向走（提高這個 token 的機率），$A\lt 0$ 時反向走。</p>
+    <p>訓練目標是期望獎勵 $J(\theta)=\mathbb E_{x,\,y\sim\pi_\theta}[r]$。策略梯度把它的梯度寫成</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\nabla J(\theta)=\mathbb E\Big[\sum_t A_t\,\nabla_\theta\log\pi_\theta(y_t\mid x,y_{\lt t})\Big]$$</div></div>
+  <div class="prose">
+    <p>優勢 $A$ 表示這個動作比平均好多少：比平均好就提高它的機率，比平均差就降低。GRPO（Group Relative Policy Optimization）不另外訓練價值網路，而是對每題取樣 $G$ 個 rollout，以群組平均當基準（Sec. 2.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$A^{\mathrm{GRPO}}_{i,t}:=r_i-\mathrm{mean}\{r_i\}_{i=1}^{G}$$</div><span class="eq-n">Sec. 2.1</span></div>
+  <div class="prose">
+    <p>本文的 GRPO 優勢不除以標準差（footnote 3，沿用 Liu et al. 2025b）。它有三個性質：(1) 優勢只施加在實際取樣的 token $y_{i,t}$ 上；(2) 同一 rollout 內所有位置的優勢相同，與 $t$ 無關；(3) 一組 $G$ 個 rollout 的獎勵全部相同（全對或全錯）時，所有優勢為 0，這一題沒有梯度，學習停止（Sec. 1）。例如 $G=8$ 中 2 個通過：$\bar r=0.25$，通過者的優勢是 +0.75，失敗者是 −0.25，總和為 0。</p>
+    <p><span class="dv">〔本頁推導〕</span>若每個 rollout 獨立、成功機率都是 $p$，一組優勢全為 0 的機率是 $(1-p)^G+p^G$。$G=8$、$p=0.1$ 時為 $0.9^8+0.1^8=0.4305$；每批 32 題（Table 12 的 question batch size）中，期望約 $32\times0.4305=13.8$ 題沒有梯度。$p=0.5$ 時只有 0.0078。這是獨立、同機率的簡化；實際上各 rollout 的成功率隨題目與訓練改變。</p>
+    <p>要得到逐 token 的稠密監督，一個辦法是從更強的教師蒸餾。但線上學習的目標是超越現有模型，通常沒有更強的教師（Sec. 1）。本文的做法是讓模型自己在看到回饋後擔任教師（下一章）。</p>
+  </div>
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>GRPO 的群組優勢與「優勢全為 0」的機率</h3></div>
+    <p class="plate-lead">點每一列左側的按鈕切換通過（✓）或失敗（✗）。每一列是一個 rollout 的 12 個 token，長條是該 rollout 的優勢：同一列每格都相同。</p>
+    <div class="ctl-row" style="margin-bottom:14px">
+      <span class="lbl" style="margin-right:4px">群組大小 G</span>
+      <div class="seg" id="c1-G" role="group" aria-label="群組大小 G"><button type="button" data-v="4" aria-pressed="false">4</button><button type="button" data-v="8" aria-pressed="true">8</button><button type="button" data-v="16" aria-pressed="false">16</button></div>
+      <button class="small-btn" type="button" id="c1-none">全部失敗</button>
+      <button class="small-btn" type="button" id="c1-all">全部通過</button>
+      <button class="small-btn pri" type="button" id="c1-rand">依 p 隨機取樣</button>
+    </div>
+    <div class="pg c1">
+      <div><div class="ro-list" id="c1-rows"></div><p class="zero-note hide" id="c1-zero">所有優勢為 0：這一題本步沒有梯度。</p></div>
+      <div class="ctl">
+        <div class="fig" id="c1-figbox"><svg id="c1-fig" role="img" aria-label="優勢全為 0 的機率對 p 的曲線，G = 4、8、16"></svg></div>
+        <div class="rng"><label class="lbl" for="c1-p">單次成功率 p<output id="c1-po">0.10</output></label><input id="c1-p" type="range" min="0" max="1" step="0.01" value="0.10"></div>
+        <p class="note" style="margin:0">右圖用 p；左圖用手動切換的結果，按「依 p 隨機取樣」可用 p 產生一組。</p>
+      </div>
+    </div>
+    <p class="readout" id="c1-ro" style="margin-top:16px"></p>
+    <p class="plate-f">優勢依 Sec. 2.1（不除以標準差）計算；右圖假設各 rollout 獨立、成功率相同〔本頁推導〕。隨機取樣用 mulberry32，seed 從 1 開始、每按一次加 1。讀數由本頁即時計算。</p>
+    <p class="sr" aria-live="polite" id="c1-live"></p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">本文 GRPO 優勢怎麼算？一組 rollout 獎勵全相同時會怎樣？$G=8$、每次成功率 0.1 時這種情況的機率？</p>
+    <p class="a">$A_{i,t}=r_i-\mathrm{mean}\{r_i\}$，不除以標準差，同一 rollout 內與 $t$ 無關；全相同時優勢全為 0、沒有梯度；機率 $(1-p)^G+p^G=0.4305$〔本頁推導，假設獨立同機率〕（Sec. 1、2.1、footnote 3）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="rlvr-grpo-credit-assignment.html">RLVR、GRPO 與信用分配瓶頸</a>、<a href="on-policy-distillation-imitation.html">On-policy 蒸餾與線上模仿學習</a></p>
+</section>
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="teacher" data-toc="03" data-tt="自我教師">
+  <div class="ch-num">03 · 自我教師</div>
+  <h2>同一個模型看到回饋後成為自我教師</h2>
+  <div class="callout"><p class="ct">核心觀察（Sec. 2）</p><p>同一個策略扮演兩個角色：初次作答的學生，與事後判斷動作價值的教師。</p></div>
+  <div class="prose">
+    <p>SDPO（Self-Distillation Policy Optimization）的<b>自我教師</b>是同一組參數 $\theta$、但提示中多了回饋 $f$ 的模型 $\pi_\theta(\cdot\mid x,f)$（App. A 記為 $q_\theta$）。學生 $\pi_\theta(\cdot\mid x)$ 看不到 $f$。教師看到更多資訊，因此「應該」比學生準確（Sec. 2）。教師的提示依 Table 2 的模板組成：</p>
+  </div>
+  <div class="tpl" role="group" aria-label="Table 2 自我教師模板">
+    <div class="tr"><div class="who">User</div><div class="body"><span class="ph">prompt</span></div></div>
+    <div class="tr"><div class="who">User</div><div class="body"><span class="cond">同組有成功的解答時才放，否則略過</span>Correct solution:
+<span class="ph">successful_previous_rollout</span></div></div>
+    <div class="tr"><div class="who">User</div><div class="body"><span class="cond">原嘗試失敗、且沒有成功解時才放，否則略過</span>The following is feedback from your unsuccessful earlier attempt:
+<span class="ph">environment_output</span></div></div>
+    <div class="tr"><div class="who">User</div><div class="body">Correctly solve the original question.</div></div>
+    <div class="tr"><div class="who">Assistant</div><div class="body"><span class="cond">學生原本的回答；教師不重新生成，只重新計算它的 log 機率</span><span class="ph">original_response</span></div></div>
+  </div>
+  <div class="prose">
+    <p>放入規則（Table 2 的說明）：同組有成功的解答時，放入「Correct solution」段落，否則略過；原嘗試失敗、且沒有成功解時，放入環境輸出段落，否則略過；若原嘗試本身成功，就把它當作 correct solution 傳入。Assistant 段的 <code>original_response</code> 是學生原本的回答，只用來在教師條件下重新計算每個 token 的 log 機率，教師不重新生成。因此額外成本只有一次前向傳播，不需要重新取樣（Sec. 1）。</p>
+    <p>Fig. 4 的例子（Qwen3-8B）：問題是「Write a python function that returns all numbers from 1 to n. Answer briefly.」，學生回答 <code>return list(range(1, n + 1))</code>，回饋是「Don't include n.」。圖中逐 token 顯示 $\log(P_{\text{teacher}}/P_{\text{student}})$：負值集中在少數幾個位置，其他位置接近 0。作者強調，教師沒有拿到解答，只靠回顧就定位出錯誤，而且這個訊號是稀疏的。下方 C2 以同一題為背景、用本頁構造的玩具數值重現這個現象；數值為本頁構造，不是論文 Fig. 4 的數據。</p>
+  </div>
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>自我教師的逐 token 機率比</h3><span class="pill">〔示意〕本頁構造的數值</span></div>
+    <p class="plate-lead">每一格是學生回答中的一個 token。SDPO 列是 log(q/π)：教師相對學生的機率比（05 章會說明它就是 SDPO 的優勢）。點選一格（或用 ← → 鍵）看該位置三個候選與「尾」（其餘 token 合計）的機率。</p>
+    <div class="ctl-row" style="margin-bottom:12px">
+      <div class="seg" id="c2-fb" role="group" aria-label="教師的上下文"><button type="button" data-v="0" aria-pressed="false">無回饋（教師上下文與學生相同）</button><button type="button" data-v="1" aria-pressed="true">環境回饋：Don't include n.</button></div>
+    </div>
+    <div class="rng" style="max-width:420px;margin-bottom:12px"><label class="lbl" for="c2-c">GRPO 列：同組其他 7 個 rollout 中的成功數 c<output id="c2-co">3</output></label><input id="c2-c" type="range" min="0" max="7" step="1" value="3"></div>
+    <div id="c2-grid"></div>
+    <div class="pg two" style="margin-top:16px">
+      <div class="fig" id="c2-detbox"><svg id="c2-det" role="img" aria-label="選取位置的學生與教師機率"></svg></div>
+      <div class="ctl"><p class="readout" id="c2-ro"></p><div class="legend"><span class="lg sw"><svg width="14" height="12" aria-hidden="true"><rect width="14" height="12" class="f-stu"/></svg>學生 π（實心）</span><span class="lg sw"><svg width="14" height="12" aria-hidden="true"><rect x=".75" y=".75" width="12.5" height="10.5" class="f-tea"/></svg>教師 q（斜線）</span></div></div>
+    </div>
+    <p class="plate-f">〔示意〕數值為本頁構造，分詞為示意分詞，不是論文 Fig. 4 的數據。尾 = max(0, 1 − 三個候選機率之和)。GRPO 列假設被畫的 rollout 本身失敗（r = 0），G = 8，值為 0 − c/8。讀數由本頁即時計算。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <div class="prose">
+    <p>在這組示意數值中，大多數位置的 $|\log(q/\pi)|\lt 0.04$，只有 <code> +</code>（−2.65）與 <code> 1</code>（−0.89）明顯為負。教師在 <code> +</code> 位置把機率移到 <code>))</code>（該候選的 log 比值為 +1.88），等於指出「應該在 n 後面直接結束括號」。GRPO 則對每個 token 給相同的值；同組沒有成功解時（$c=0$），GRPO 值全為 0，SDPO 仍有訊號，因為環境輸出不需要成功解。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">自我教師是什麼？Table 2 模板中的回饋段落何時放入？<code>original_response</code> 的作用？</p>
+    <p class="a">同一組參數的 $\pi_\theta(\cdot\mid x,f)$；有同組成功解時放「Correct solution」，原嘗試失敗且無成功解時放環境輸出；<code>original_response</code> 是學生原回答，只用來在教師條件下重算 log 機率，不重新生成（Sec. 2、Table 2）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="context-distillation-self-distillation.html">Context distillation 與自蒸餾</a></p>
+</section>
+
+<!-- S4a =========================================================== -->
+<section class="ch" id="loss" data-toc="04" data-tt="損失">
+  <div class="ch-num">04 · 損失</div>
+  <h2>SDPO 的損失是學生到自我教師的逐 token KL</h2>
+  <div class="prose">
+    <p>KL 散度 $\mathrm{KL}(p\|q)=\sum_i p(i)\log\frac{p(i)}{q(i)}$ 衡量分布 $p$ 與 $q$ 的差距：$p=q$ 時為 0，否則為正。例：$p=(0.5,0.5)$、$q=(0.9,0.1)$ 時，$\mathrm{KL}(p\|q)=0.5\log\frac{0.5}{0.9}+0.5\log\frac{0.5}{0.1}=0.511$。</p>
+    <p>SDPO 在學生自己取樣的回答 $y$ 上，對每個位置 $t$ 計算學生與教師下一個 token 分布的 KL，再加總成損失：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathcal L_{\mathrm{SDPO}}(\theta):=\sum_t \mathrm{KL}\Big(\pi_\theta(\cdot\mid x,y_{\lt t})\,\Big\|\,\mathrm{stopgrad}\big(\pi_\theta(\cdot\mid x,f,y_{\lt t})\big)\Big)$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="prose">
+    <p>學生分布放在 KL 的第一個位置，所以期望是對學生分布取的（reverse KL 方向）。stopgrad 表示計算梯度時把教師分布當作常數：梯度只流入學生的計算路徑，不流入教師。教師與學生共用參數，若不加 stopgrad，最小化 KL 也會把教師分布拉向學生分布，訓練訊號就不再反映回饋 $f$（Sec. 2）。</p>
+    <p>Alg. 1 的一次迭代如下。和 RLVR 管線相比，唯一新增的是第 4 列的教師 log 機率：</p>
+  </div>
+  <div class="algo" role="group" aria-label="Alg. 1">
+    <div class="row hd"><div>Alg. 1</div><div class="ex-h">說明</div></div>
+    <div class="row"><code>1  取一題 x</code><div class="ex">與 RLVR 相同。</div></div>
+    <div class="row"><code>2  取樣 G 個回答 y_i ~ π_θ(· | x)</code><div class="ex">學生作答，看不到回饋。</div></div>
+    <div class="row"><code>3  評估每個回答，得到回饋 f_i</code><div class="ex">環境輸出，及／或同組成功的解答（Table 2）。</div></div>
+    <div class="row"><code>4  計算 log π_θ(y_{i,t} | x, f_i, y_{i,&lt;t})</code><div class="ex">把回饋放進提示，對原回答做一次前向傳播；結果 stopgrad。</div></div>
+    <div class="row"><code>5  對 L_SDPO 做一步梯度下降</code><div class="ex">Eq. 1，只更新學生路徑。</div></div>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 1 是什麼？為什麼要 stopgrad？</p>
+    <p class="a">$\sum_t\mathrm{KL}(\pi_\theta(\cdot\mid x,y_{\lt t})\|\mathrm{stopgrad}(\pi_\theta(\cdot\mid x,f,y_{\lt t})))$；stopgrad 阻止梯度流入教師，避免教師分布被拉向學生分布而不再反映 $f$（Sec. 2）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="knowledge-distillation-foundations.html">知識蒸餾基礎：logit 蒸餾與序列層級蒸餾</a></p>
+</section>
+
+<!-- S4b =========================================================== -->
+<section class="ch" id="grad" data-toc="05" data-tt="梯度">
+  <div class="ch-num">05 · 梯度</div>
+  <h2>KL 的梯度就是以自我教師打分的策略梯度</h2>
+  <div class="prose">
+    <p>Prop. 2.1 把 Eq. 1 的梯度寫成策略梯度的形式（$\hat y_t$ 是位置 $t$ 上任一候選 token）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\nabla\mathcal L_{\mathrm{SDPO}}(\theta)=\mathbb E_{y\sim\pi_\theta(\cdot\mid x)}\Big[\sum_{t=1}^{|y|}\mathbb E_{\hat y_t\sim\pi_\theta(\cdot\mid x,y_{\lt t})}\Big[\log\frac{\pi_\theta(\hat y_t\mid x,y_{\lt t})}{\pi_\theta(\hat y_t\mid x,f,y_{\lt t})}\,\nabla_\theta\log\pi_\theta(\hat y_t\mid x,y_{\lt t})\Big]\Big]$$</div><span class="eq-n">Eq. 2</span></div>
+  <div class="prose">
+    <p>梯度下降沿負梯度方向走，所以最小化 Eq. 1 等於以下面這個優勢做策略梯度（Sec. 2.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$A^{\mathrm{SDPO}}_{i,t}(\hat y_{i,t})=\log\frac{\pi_\theta(\hat y_{i,t}\mid x,f_i,y_{i,\lt t})}{\pi_\theta(\hat y_{i,t}\mid x,y_{i,\lt t})}$$</div><span class="eq-n">Sec. 2.1</span></div>
+  <div class="prose">
+    <p>讀法：教師與學生對候選 token $\hat y$ 的機率完全一致時，優勢為 0；教師較看好的 token（教師機率大於學生）優勢為正，訓練會提高它的機率；教師較不看好的 token 優勢為負。03 章 C2 的 log(q/π) 就是這個優勢在取樣 token 上的值。實作上，只要把既有 RLVR 管線中的 GRPO 優勢換成 $A^{\mathrm{SDPO}}$ 即可（Sec. 2.1）。這個優勢形式只對 reverse KL（Eq. 1 的 $\mathrm{KL}(\pi\|q)$）證明過（Prop. 2.1）；改用 forward KL 或 Jensen–Shannon 散度時，論文沒有證明優勢仍是這個 log 比值。</p>
+    <p>與 GRPO 相比有兩點差異（Sec. 2.1）：(1) 回饋從 1 位元（通過／失敗）擴展到任意 token 序列；(2) 優勢變成稠密的 logit 層級：每個位置的每個候選 token 各有一個值，而不是整個 rollout 共用一個數字。</p>
+  </div>
+  <div class="tbl-wrap narrow" tabindex="0" aria-label="GRPO 與 SDPO 優勢對照"><table>
+    <caption>兩種優勢的對照</caption>
+    <thead><tr><th></th><th>$A^{\mathrm{GRPO}}$</th><th>$A^{\mathrm{SDPO}}$</th></tr></thead><tbody>
+    <tr><td>作用對象</td><td>實際取樣的 token $y_{i,t}$</td><td>每個位置的每個候選 token $\hat y$（實作取學生 top-K 加尾）</td></tr>
+    <tr><td>是否隨 $t$ 變</td><td>否，整個 rollout 同一值</td><td>是</td></tr>
+    <tr><td>何時為 0</td><td>組內獎勵全部相同</td><td>教師與學生對該 token 的機率相同</td></tr>
+    <tr><td>需要什麼</td><td>$G$ 個 rollout 的純量獎勵</td><td>回饋 $f$ 與一次教師前向傳播</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p><b>適用範圍。</b>Prop. 2.1 只對 Eq. 1 的 reverse KL 證明。Sec. 3 的實驗實際使用 Jensen–Shannon 散度（Table 12），論文沒有給 JS 的優勢形式；本頁寫到 JS 梯度時一律標〔本頁推導〕。</p>
+  </div>
+  <details class="deriv"><summary>推導：Prop. 2.1 的證明要點（App. B.1）</summary><div class="qa">
+    <p>固定位置 $t$，記 $\pi(\hat y)=\pi_\theta(\hat y\mid x,y_{\lt t})$、$A(\hat y)=\log\frac{q(\hat y)}{\pi(\hat y)}$。則 $\mathrm{KL}(\pi\|q)=-\sum_{\hat y}\pi(\hat y)A(\hat y)$。對 $\theta$ 微分並用乘積法則得兩項：$-\sum\nabla\pi\cdot A$ 與 $-\sum\pi\,\nabla A$。教師被 stopgrad，所以 $\nabla A=-\nabla\log\pi$，第二項成為 $\sum\pi\nabla\log\pi=\sum\nabla\pi=\nabla 1=0$。剩下 $-\sum\nabla\pi\cdot A=-\mathbb E_\pi[A\,\nabla\log\pi]$，即 Eq. 2。</p>
+  </div></details>
+  <details class="deriv"><summary>推導：KL 本身扮演 baseline〔本頁推導〕</summary><div class="qa">
+    <p>把單一位置的學生 logits $z$ 當自由參數，代入 $\nabla_z\log\pi(\hat y)=e_{\hat y}-\pi$：$-\partial\mathcal L/\partial z_k=\pi_k\big(A_k-\mathbb E_\pi[A]\big)$，且 $\mathbb E_\pi[A]=-\mathrm{KL}(\pi\|q)$。也就是說，優勢減去的基準值正好是負的 KL。06 章 C3 在數值上顯示這個等式。</p>
+  </div></details>
+  <details class="deriv"><summary>推導：序列層級的估計式（App. A.1，Eq. 5–8）</summary><div class="qa">
+    <p>App. A.1 指出：Eq. 5 的逐 token 估計式（假設產生 $y$ 的取樣分布固定）就是 Prop. 2.1。若改用整條序列的 KL（Eq. 7），梯度會多一項 $\mathbb E\big[\sum_t\mathrm{KL}_t\,\nabla\log\Pi_\theta(s_t)\big]$（Eq. 8，Amini et al. 2025），反映取樣分布本身也隨 $\theta$ 改變。作者試過這一項，「沒有可量測的增益」。</p>
+  </div></details>
+  <details class="deriv"><summary>推導：SDPO 與最大熵 RL（App. C.1）</summary><div class="qa">
+    <p>最大熵 RL $\arg\max\,\mathbb E\big[\sum_t r(y_t\mid x,y_{\lt t})\big]+\lambda_{\mathrm{ent}}H[\pi_\theta]$（Eq. 17）等價於最小化 $\sum_t\mathrm{KL}(\pi_\theta\|\pi^\star)$（Eq. 19）。取隱含獎勵 $r=\log q(y_t\mid x,f,y_{\lt t})$、$\lambda_{\mathrm{ent}}=1$ 即得 Eq. 1。作者據此稱 SDPO 為以回顧模型隱含構造稠密獎勵的最大熵 RL，並連到逆強化學習。</p>
+  </div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">SDPO 的優勢是什麼？何時為 0、為正、為負？和 GRPO 差在哪兩點？</p>
+    <p class="a">$A^{\mathrm{SDPO}}=\log\frac{\pi_\theta(\hat y\mid x,f,y_{\lt t})}{\pi_\theta(\hat y\mid x,y_{\lt t})}$；學生與教師完全一致時為 0，教師較看好為正、較不看好為負；回饋從 1 位元擴展到任意 token 序列，優勢變成稠密的 logit 層級；此形式只對 reverse KL 證明（Prop. 2.1、Sec. 2.1）。</p>
+  </div></details>
+</section>
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="practice" data-toc="06" data-tt="top-K 近似">
+  <div class="ch-num">06 · top-K 近似</div>
+  <h2>top-K 近似讓 logit 蒸餾放得進記憶體</h2>
+  <div class="prose">
+    <p>SDPO 唯一額外的計算是教師的 log 機率。這一步可以平行化，遠快於逐 token 的序列生成。Fig. 5（micro batch size 2）中，每個訓練步的時間增加 +17.1%（無程式環境）與 +5.8%（含程式環境）。Fig. 14 的虛擬碼：</p>
+  </div>
+  <div class="mono-box code" tabindex="0" aria-label="Fig. 14 虛擬碼">logprobs_student = compute_log_prob(batch)                 # T × V
+teacher_batch    = reprompt(batch, teacher_context)
+logprobs_teacher = compute_log_prob(teacher_batch).detach()  # stopgrad
+per_token_loss   = divergence(logprobs_student, logprobs_teacher)
+loss             = aggregate(per_token_loss, mode="token-mean")</div>
+  <div class="prose">
+    <p><code>divergence</code> 可以是三種散度之一（$\pi$ 為學生、$q$ 為教師）：</p>
+    <ul>
+      <li>reverse KL：$\mathrm{KL}(\pi\|q)$，即 Eq. 1；</li>
+      <li>forward KL：$\mathrm{KL}(q\|\pi)$；</li>
+      <li>Jensen–Shannon：$\tfrac12\mathrm{KL}(\pi\|m)+\tfrac12\mathrm{KL}(q\|m)$，$m=\tfrac{\pi+q}{2}$。論文只寫「symmetric Jensen–Shannon」，混合比例 1/2 為本頁採用；論文也沒有給 JS 的優勢形式。</li>
+    </ul>
+    <p><b>記憶體。</b>完整的 KL 需要同時保留學生與教師在整個詞彙表上的 logits。Eq. 11 只對學生機率最高的 $K$ 個 token 計算 KL 項，其餘 token 合併成一個「尾」類別：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathcal L\approx\sum_t\Big[\sum_{\hat y\in\mathrm{top}_K(\pi)}\pi(\hat y)\log\frac{\pi(\hat y)}{q(\hat y)}+\Big(1-\sum_{\mathrm{top}_K}\pi\Big)\log\frac{1-\sum_{\mathrm{top}_K}\pi}{1-\sum_{\mathrm{top}_K}q}\Big]$$</div><span class="eq-n">Eq. 11</span></div>
+  <div class="prose">
+    <p>top-K 依學生選。作者指出 $K=100$ 時幾乎沒有記憶體負擔，且保留大部分資訊（Sec. 2.2）；Table 12 中 Sec. 3 用 $K=100$，Sec. 4–5 用 $K=20$。Eq. 11 等於把非 top-K 的 token 合併成一個類別之後的精確 KL，因此<b>近似值 ≤ 精確值，尾部所有 token 的 $q/\pi$ 比值皆相同時兩者相等</b><span class="dv">〔本頁推導〕</span>。尾項不能省：省略它就不再是兩個機率分布之間的 KL。每個 rollout 因此有 $|y|\cdot(K+1)$ 個不同的優勢值（Sec. 4.2）。</p>
+  </div>
+  <details class="deriv"><summary>推導：為什麼近似值不會超過精確值〔本頁推導〕</summary><div class="qa">
+    <p>log-sum 不等式：對非負的 $a_i,b_i$，$\sum_i a_i\log\frac{a_i}{b_i}\ge\big(\sum_i a_i\big)\log\frac{\sum_i a_i}{\sum_i b_i}$，等號成立若且唯若 $a_i/b_i$ 全部相同。取 $a_i=\pi(\hat y_i)$、$b_i=q(\hat y_i)$ 為所有非 top-K 的 token：左邊是精確 KL 中尾部各項之和，右邊是 Eq. 11 的尾項。top-K 部分兩者相同，所以近似值 ≤ 精確值；尾部各 token 的 $\pi/q$（等價地 $q/\pi$）比值相同時相等。</p>
+  </div></details>
+  <div class="prose">
+    <p><b>離策略。</b>GRPO 基準用 Eq. 12：PPO 截斷、截斷重要性取樣 TIS（truncated importance sampling，以截斷後的機率比修正取樣分布與訓練分布的差異）、clip-higher、固定長度正規化。SDPO 推廣成 Eq. 13 的 logit 層級損失：對每個候選 token 以舊策略 $\pi_{\theta_{\mathrm{old}}}$ 的機率加權；實驗中 TIS 施加在 token 層級，而不是 logit 層級（App. A.4）。</p>
+    <p>下面的 C3 把 Eq. 1 縮小到一個位置：學生是 C2 第 9 格（<code> +</code>）的分布，教師固定，看梯度下降如何把學生拉向教師。</p>
+  </div>
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>單一位置的 logit 蒸餾</h3><span class="pill">〔示意〕本頁構造的數值</span></div>
+    <p class="plate-lead">簡化：把這個位置的 6 個學生 logits 當成獨立參數（實際模型中所有位置共用 θ）；教師固定（stopgrad）；純梯度下降。按「+1 步」看第一步的方向，按「執行到 200 步」看收斂。</p>
+    <div class="ctl-row" style="margin-bottom:10px">
+      <div class="seg" id="c3-div" role="group" aria-label="散度"><button type="button" data-v="rkl" aria-pressed="true">reverse KL</button><button type="button" data-v="fkl" aria-pressed="false">forward KL</button><button type="button" data-v="js" aria-pressed="false">JS</button></div>
+      <span class="lbl" style="margin-left:6px">學習率 η</span>
+      <div class="seg" id="c3-eta" role="group" aria-label="學習率"><button type="button" data-v="0.5" aria-pressed="false">0.5</button><button type="button" data-v="1" aria-pressed="true">1</button><button type="button" data-v="2" aria-pressed="false">2</button></div>
+    </div>
+    <div class="ctl-row" style="margin-bottom:14px">
+      <button class="small-btn" type="button" id="c3-s1">+1 步</button>
+      <button class="small-btn" type="button" id="c3-s10">+10 步</button>
+      <button class="small-btn pri" type="button" id="c3-run">執行到 200 步</button>
+      <button class="small-btn" type="button" id="c3-reset">重設</button>
+    </div>
+    <div class="pg c3">
+      <div class="fig" id="c3-barbox"><svg id="c3-bars" role="img" aria-label="學生與教師的機率、每個 token 的優勢與這一步 logits 的移動方向"></svg></div>
+      <div class="ctl">
+        <div class="fig" id="c3-lossbox"><svg id="c3-loss" role="img" aria-label="損失對步數，對數軸"></svg></div>
+        <div class="rng"><label class="lbl" for="c3-K">Eq. 11 的 K（只用於 reverse KL 近似）<output id="c3-Ko">3</output></label><input id="c3-K" type="range" min="1" max="6" step="1" value="3"></div>
+        <p class="readout" id="c3-ro"></p>
+      </div>
+    </div>
+    <p class="formula" id="c3-formula"></p>
+    <p class="plate-f">〔示意〕學生初始 π₀ 的前三個值與 C2 第 9 格相同，尾部拆成三個 token。reverse KL 的單一位置梯度等式與 JS 的梯度 ∂JS/∂π_j = ½ log(π_j/m_j) 為〔本頁推導〕；JS 的收斂行為只是這組玩具數值的結果。損失圖的 y 軸為對數 [1e-4, 3]，低於 1e-4 的值畫在下緣。讀數由本頁依 Eq. 1、Eq. 11 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+  <div class="prose">
+    <p>在 C3 中，reverse KL 第 0 步時 <code> +</code> 的移動方向為負（−0.5672）、<code>))</code> 為正（+0.5413），且 $-\nabla_z\mathcal L$ 與 $\pi_k(A_k-\mathbb E_\pi[A])$ 數值相同。三種散度都讓 $\pi$ 收斂到 $q$；在這組示意數值上 JS 起步較慢（初始梯度較小），這是本頁玩具例的結果，不是論文的結論。$K$ 從 1 增加到 6，近似值單調不減（1.97797 → 1.98356），在 $K=5$ 時等於精確值 1.98356；$K=2\to3$ 時差值不變，因為 <code> -</code> 與其後尾部的 $q/\pi$ 比值相同（都是 2）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 11 如何近似 KL？top-K 依誰選？論文用多少 K？近似值與精確值的大小關係？</p>
+    <p class="a">只對學生的前 K 個 token 計算 KL 項，其餘合併成一個尾項；依學生選；Sec. 3 用 100、Sec. 4–5 用 20；近似值 ≤ 精確值，尾部 $q/\pi$ 比值皆相同時相等〔本頁推導〕（App. A.3、Table 12）。</p>
+  </div></details>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="stable" data-toc="07" data-tt="穩定性">
+  <div class="ch-num">07 · 穩定性</div>
+  <h2>正規化教師讓自舉保持穩定</h2>
+  <div class="prose">
+    <p>教師與學生共用參數，所以教師會隨訓練改變。這可以帶來自舉（bootstrapping）：學生進步，教師跟著進步；也可能讓訓練不穩定。作者提出兩個修正（Sec. 2.3）：(1) 正規化教師；(2) 改用對稱的 Jensen–Shannon 散度（Agarwal et al. 2024 在外部教師的線上蒸餾中也觀察到較穩定）。</p>
+    <p><b>信任域教師。</b>限制教師與初始教師 $q_{\theta_{\mathrm{ref}}}$ 的距離：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\sum_t\mathrm{KL}\big(q\,\|\,q_{\theta_{\mathrm{ref}}}\big)\le\epsilon$$</div><span class="eq-n">Eq. 9</span></div>
+  <div class="prose"><p>閉式解（Prop. B.1）是初始教師與目前教師在 log 空間的加權平均：</p></div>
+  <div class="eq"><div class="eq-m">$$q^*(y_t\mid x,f,y_{\lt t})\propto\exp\big((1-\alpha)\log q_{\theta_{\mathrm{ref}}}(y_t\mid x,f,y_{\lt t})+\alpha\log q_\theta(y_t\mid x,f,y_{\lt t})\big)$$</div><span class="eq-n">Eq. 10、16</span></div>
+  <div class="prose">
+    <p>這裡 $\alpha=1/\lambda_L$，$\lambda_L$ 是約束的 Lagrange 乘子（寫成 $\lambda_L$，與 Eq. 3 的混合權重 $\lambda$ 無關）。$q_{\theta_{\mathrm{ref}}}$ 是<b>初始</b>教師，所以 $q^*$ 永遠以固定比例 $1-\alpha$ 錨定在初始教師上。App. B.2 末提到 Chen et al. (2025c) 以初始學生 $\pi_{\theta_{\mathrm{ref}}}$ 當參考，作者觀察到效果不如 $q_{\theta_{\mathrm{ref}}}$。</p>
+    <p><b>EMA 教師。</b>教師參數 $\theta'$ 是學生參數的指數移動平均：$\theta'\leftarrow(1-\alpha)\theta'+\alpha\theta$。兩者的取捨：EMA 需要額外的 GPU 記憶體存放 $\theta'$，但沒有執行時間開銷；信任域要多算一次 $q_{\theta_{\mathrm{ref}}}$ 的 log 機率，但若 $\theta_{\mathrm{ref}}$ 本來就因 KL 正規化而保留在記憶體中，就不需要額外記憶體。</p>
+    <p><span class="dv">〔本頁推導〕</span>從 $\theta'_0=\theta_0$ 開始，經過 $n$ 次 EMA 更新後，初始參數在 $\theta'$ 中的權重是 $(1-\alpha)^n$：$\alpha=0.01$、$n=80$ 為 0.4475，$\alpha=0.05$、$n=80$ 為 0.0165。論文沒有說 EMA 是每個優化步還是每批生成更新一次；Sec. 4 的 question batch 32、mini batch 1（Table 12）表示一個訓練步最多有 32 次優化步，若每個優化步都更新，訓練步數與 $n$ 就不相同（第 80 個訓練步時 $n$ 可達 2560）。</p>
+  </div>
+  <div class="tbl-wrap narrow" tabindex="0" aria-label="Table 4 教師正規化"><table>
+    <caption>Table 4：LCBv6，至第 90 步，3 seeds 的標準誤（$\alpha=0.01$）</caption>
+    <thead><tr><th>教師</th><th class="num">最高正確率</th><th class="num">平均正確率</th></tr></thead><tbody>
+    <tr><td>$q_\theta$（不正規化，最終發散）</td><td class="num">36.1 ± 1.6</td><td class="num">29.8 ± 1.3</td></tr>
+    <tr><td>$q_{\theta_{\mathrm{ref}}}$（凍結初始教師）</td><td class="num">48.8 ± 0.7</td><td class="num">44.4 ± 0.2</td></tr>
+    <tr class="hl"><td>信任域</td><td class="num">50.6 ± 0.9</td><td class="num">45.6 ± 0.2</td></tr>
+    <tr><td>EMA</td><td class="num">49.3 ± 0.3</td><td class="num">45.3 ± 0.2</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>Table 4 中，不正規化的教師 $q_\theta$ 最佳只有 36.1，訓練最終發散；凍結初始教師 48.8；信任域 50.6；EMA 49.3。作者的解讀：信任域與 EMA 勝過凍結教師，表示教師透過與學生共享參數而進步；但凍結教師也表現不錯。</p>
+  </div>
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>信任域教師與 EMA</h3><span class="pill">〔示意〕本頁構造的數值</span></div>
+    <p class="plate-lead">初始教師 q_ref 偏好 <code>))</code>；漂移後的教師 q_θ 已偏向學生原本的答案 <code> +</code>。拖動 α，看信任域教師 q* 位在兩者之間的哪裡。</p>
+    <div class="pg two">
+      <div class="fig" id="c4-barbox"><svg id="c4-bars" role="img" aria-label="初始教師、信任域教師與漂移後教師的機率"></svg>
+        <div class="legend"><span class="lg sw"><svg width="14" height="12" aria-hidden="true"><rect x=".75" y=".75" width="12.5" height="10.5" class="f-tea"/></svg>q_ref：初始教師（斜線）</span><span class="lg sw"><svg width="14" height="12" aria-hidden="true"><rect width="14" height="12" class="f-teas"/></svg>q*：信任域教師（實心）</span><span class="lg sw"><svg width="14" height="12" aria-hidden="true"><rect x="1" y="1" width="12" height="10" class="f-teao"/></svg>q_θ：漂移後的教師（空心）</span></div>
+      </div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c4-a">更新率 α<output id="c4-ao">0.01</output></label><input id="c4-a" type="range" min="0" max="1" step="0.01" value="0.01"></div>
+        <div class="ctl-row" id="c4-chips" role="group" aria-label="α 的常用值"><button class="chip" type="button" data-v="0.01" aria-pressed="true">0.01（Table 4；Table 12 Sec. 4–5）</button><button class="chip" type="button" data-v="0.05" aria-pressed="false">0.05（Table 12 Sec. 3）</button><button class="chip" type="button" data-v="0.5" aria-pressed="false">0.5</button><button class="chip" type="button" data-v="1" aria-pressed="false">1</button></div>
+        <div class="rng"><label class="lbl" for="c4-n">EMA 更新次數 n<output id="c4-no">80</output></label><input id="c4-n" type="range" min="0" max="200" step="1" value="80"></div>
+        <p class="note" style="margin:0">論文沒有說明 EMA 每個優化步還是每批生成更新一次；Sec. 4 一個訓練步最多有 32 次優化步，若每步都更新，訓練步數與 n 不相同。</p>
+        <p class="readout" id="c4-ro"></p>
+      </div>
+    </div>
+    <div class="mini2">
+      <div class="fig" id="c4-emabox"><svg id="c4-ema" role="img" aria-label="EMA：初始參數在 θ′ 中的權重對更新次數 n"></svg></div>
+      <div class="fig" id="c4-trbox"><svg id="c4-tr" role="img" aria-label="信任域：log 空間內插中初始教師的權重對 α"></svg></div>
+      <p class="mid"><span class="dv">〔本頁推導〕</span>兩者單位不同，不能直接比大小：左圖是參數的權重，會隨更新次數衰減；右圖是 log 分布內插中初始教師的權重，固定為 1 − α。</p>
+    </div>
+    <p class="plate-f">〔示意〕q_ref 為 C3 的教師 q；q_θ =（.70, .25, .02, .02, .005, .005）。q* 依 Eq. 10 計算；EMA 權重 (1 − α)ⁿ 為〔本頁推導〕。讀數由本頁即時計算。</p>
+    <p class="sr" aria-live="polite" id="c4-live"></p>
+  </div>
+  <div class="prose">
+    <p>在 C4 中，$\alpha=0.01$ 時 $q^*$ 幾乎等於初始教師（$\mathrm{KL}(q^*\|q_{\mathrm{ref}})=0.00004$），而且 $\mathrm{KL}(q^*\|q_{\mathrm{ref}})$ 隨 $\alpha$ 單調上升。$\alpha=0.05$、$n=80$ 次 EMA 更新後，初始參數的權重只剩 0.0165；信任域在 log 內插中給初始教師的權重固定為 0.95，不隨時間改變。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">兩種正規化教師怎麼定義？Table 4 中不正規化的教師結果如何？</p>
+    <p class="a">信任域 $q^*\propto\exp((1-\alpha)\log q_{\theta_{\mathrm{ref}}}+\alpha\log q_\theta)$，$q_{\theta_{\mathrm{ref}}}$ 為初始教師；EMA $\theta'\leftarrow(1-\alpha)\theta'+\alpha\theta$；不正規化最佳 36.1、最終發散，信任域 50.6、EMA 49.3、凍結 48.8（App. A.2、Table 4）。</p>
+  </div></details>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="nofb" data-toc="08" data-tt="無文字回饋">
+  <div class="ch-num">08 · 無文字回饋</div>
+  <h2>沒有文字回饋時以成功的 rollout 當回饋</h2>
+  <div class="prose">
+    <p>只有純量獎勵時，SDPO 把同批次、同題中成功的 rollout 當作失敗 rollout 的回饋 $f$（Table 2 的「Correct solution」段落），不需要修改既有的 RLVR 環境（Sec. 3）。</p>
+    <p><b>結果摘要。</b>整體最終正確率 SDPO 70.2%、GRPO 66.6%（Sec. 1）；回答平均短 3.2×（Table 8）。差距最大的是 Olmo3-7B-Instruct 的化學：SDPO 的回答短 11×，並在 50 分鐘就達到 GRPO 訓練 5 小時的正確率，等於 6× 加速（Sec. 3、Fig. 6）。</p>
+    <p><b>設定。</b>任務為 SciKnowEval L3 推理子集（化學、物理、生物、材料）與 ToolAlpaca 工具呼叫；模型為 Qwen3-8B 與 Olmo3-7B-Instruct；指標是 avg@16（每題取樣 16 次的平均正確率），對牆鐘訓練時間作圖（不含初始化與驗證）；每次實驗用 4 張 GH200，約 6 小時。基準是改良版 GRPO（非對稱截斷、不做有偏正規化、修正推論框架造成的離策略偏差），每批生成做 4 個離策略 mini batch 步；另報 on-policy GRPO。本節的 SDPO 嚴格 on-policy：每批生成只做一個梯度步（Table 12 Sec. 3 的 mini batch 32 等於 question batch 32）。</p>
+  </div>
+  <div class="tbl-wrap" tabindex="0" aria-label="Table 3 摘錄"><table>
+    <caption>Table 3 摘錄：1 小時／5 小時內的最高 avg@16（%）。底色格為 5h 欄 GRPO 較高者</caption>
+    <thead><tr><th>模型與方法</th><th class="num">化學 1h</th><th class="num">化學 5h</th><th class="num">生物 1h</th><th class="num">生物 5h</th><th class="num">工具 1h</th><th class="num">工具 5h</th></tr></thead><tbody>
+    <tr><td>Qwen3-8B + GRPO</td><td class="num">65.9</td><td class="num">74.5</td><td class="num">35.1</td><td class="num" style="background:var(--accent-soft)">59.9</td><td class="num">64.9</td><td class="num">67.7</td></tr>
+    <tr><td>Qwen3-8B + SDPO</td><td class="num">73.2</td><td class="num">80.9</td><td class="num">50.6</td><td class="num">56.8</td><td class="num">68.0</td><td class="num">68.5</td></tr>
+    <tr><td>Olmo3-7B-Instruct + GRPO</td><td class="num">39.7</td><td class="num">56.7</td><td class="num">35.6</td><td class="num" style="background:var(--accent-soft)">55.8</td><td class="num">56.4</td><td class="num" style="background:var(--accent-soft)">65.0</td></tr>
+    <tr><td>Olmo3-7B-Instruct + SDPO</td><td class="num">68.0</td><td class="num">80.0</td><td class="num">48.0</td><td class="num">52.8</td><td class="num">60.8</td><td class="num">62.1</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>Sec. 3.2 寫 SDPO 在「almost all runs」勝過 GRPO：Table 3 的 5h 欄有三格 GRPO 較高（Qwen3-8B 生物 59.9 &gt; 56.8、Olmo3 生物 55.8 &gt; 52.8、Olmo3 工具使用 65.0 &gt; 62.1）。在 Olmo3 化學上，SDPO 在 50 分鐘就達到 GRPO 5 小時的正確率（6× 加速），5 小時正確率高出 10 個百分點以上，回答長度縮短 11×（Fig. 6）。論文報告的整體最終正確率是 SDPO 70.2%、GRPO 66.6%（Sec. 1）。</p>
+  </div>
+  <p class="fn">註：70.2／66.6 的彙總方式論文沒有說明；本頁以 Table 3 十個 5h 欄位做算術平均得 SDPO 70.0、GRPO 66.8，Table 7 得 71.1／68.4。另外，App. E.2.1 說 Table 3 是「各模型各資料集分別選超參數」，Table 7 的標題卻說 Table 3 是「每個方法全域選一組」；本頁採表格標題的說法。</p>
+  <div class="prose">
+    <p><b>回答變短。</b>SDPO 的回答平均短 3.2×：Table 8（on-policy，各任務平均回答長度）中，Qwen3-8B 的 GRPO 為 820.8、SDPO 為 255.8；Olmo3 為 1095.4 對 343.9。Fig. 7 是訓練 50 步後同一題（分子在 pH 7.4 的 logD，正確答案 C）的回答摘錄：</p>
+  </div>
+  <div class="quote2">
+    <figure><blockquote>… Wait I’m going in circles… Wait, perhaps the correct answer is B… 101.85 ≈ 69.3… Ah, this works… Wait I think I messed up… Hmm… 101.85 ≈ 69.3… Thus, the correct answer is likely B: 1.85.</blockquote><figcaption>GRPO：5,549 tokens，答 B（錯）</figcaption></figure>
+    <figure><blockquote>… At pH 7.4, all functional groups are neutral… maintaining a balance between hydrophobic and hydrophilic character… with 2.61 (C) being a reasonable estimate…</blockquote><figcaption>SDPO：764 tokens，答 C（對）</figcaption></figure>
+  </div>
+  <div class="prose">
+    <p>GRPO 的回答有 25 次「Wait」、9 次「No.」、5 次「Hmm.」，「101.85 ≈ 69.3」重複四次。這一例 SDPO 短 7× 以上，但 7× 只是單一例子，平均是 Table 8 的 3.2×。作者認為回答變短與稠密信用分配產生的稀疏優勢有關（Fig. 21），這是作者的解釋，論文沒有做因果實驗。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">只有純量獎勵時 SDPO 用什麼當回饋？整體結果與回答長度？</p>
+    <p class="a">同批次同題的成功 rollout；最終正確率 70.2% 對 66.6%；平均回答長度短 3.2×（Table 8），Olmo3 化學 11× 短、6× 加速（Sec. 3）。</p>
+  </div></details>
+</section>
+
+<!-- S8a =========================================================== -->
+<section class="ch" id="code" data-toc="09" data-tt="程式題">
+  <div class="ch-num">09 · 程式題</div>
+  <h2>程式題的豐富回饋帶來更大的提升</h2>
+  <div class="prose">
+    <p><b>設定（Sec. 4）。</b>LiveCodeBench v6（LCBv6）共 131 題（2025 年 2–5 月）。公開測試（私有測試的 50% 隨機子集）在訓練時產生回饋，私有測試用於驗證；報告 4 個 rollout 的平均正確率；預設模型為 Qwen3-8B。回饋同時包含環境輸出（如 Fig. 3）與同組成功解。</p>
+    <p><b>主結果。</b>SDPO 的最終正確率是 48.8%，GRPO 是 41.2%；作為參考，公開排行榜上最強的 instruct 模型 Claude Sonnet 4 為 40.5%、Claude Opus 4 為 39.7%。效率上，SDPO 只用 GRPO 四分之一的生成次數（4× 少）就達到 GRPO 的最終正確率（Fig. 1）。Table 9 另外比較兩種 GRPO 類方法：GSPO（Group Sequence Policy Optimization，Zheng et al. 2025a，以整條序列的重要性比取代逐 token 的比值）與 CISPO（Chen et al. 2025a，截斷重要性權重本身而不截斷 token 的更新）。這兩個方法論文只引用、沒有說明，括號內是本頁的簡述。</p>
+  </div>
+  <div class="tbl-wrap narrow" tabindex="0" aria-label="Table 9"><table>
+    <caption>Table 9：LCBv6，Qwen3-8B，3 seeds 的標準差</caption>
+    <thead><tr><th>方法</th><th class="num">第 80 步正確率</th><th class="num">至第 80 步平均</th></tr></thead><tbody>
+    <tr><td>GRPO</td><td class="num">41.2 ± 0.8</td><td class="num">38.2 ± 0.0</td></tr>
+    <tr><td>GRPO，只更新高熵 token（Wang et al. 2025）</td><td class="num">37.8 ± 2.2</td><td class="num">35.9 ± 0.1</td></tr>
+    <tr><td>GSPO</td><td class="num">40.1 ± 2.3</td><td class="num">37.7 ± 0.1</td></tr>
+    <tr><td>CISPO</td><td class="num">41.2 ± 1.8</td><td class="num">37.8 ± 0.1</td></tr>
+    <tr class="hl"><td>SDPO</td><td class="num">48.8 ± 0.6</td><td class="num">43.8 ± 0.0</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p><b>依難度（Fig. 15）。</b>易／中／難題上 GRPO 為 90.1%／37.8%／11.6%，SDPO 為 91.7%／46.6%／18.9%；圖中標示的相對提升為 +2%／+23%／+63%，提升集中在中、難題。</p>
+    <p><b>模型規模（Fig. 8、17）。</b>結論是：模型越大，SDPO 對 GRPO 的領先越大；模型太小時 SDPO 可能落後。在 Qwen3 0.6B 到 8B 上，領先幅度隨規模增加。在 Qwen2.5-Instruct 上，SDPO 在 7B 勝過 GRPO，在最小的 1.5B 落後 GRPO。Sec. 4.1 另有一句說 Qwen2.5 在「8B」與 GRPO 相近，但 Fig. 17 的橫軸只有 1.5、3、7B，Qwen2.5-Instruct 也沒有 8B 版本，本頁無法確定這句指哪個模型，不據此下結論。作者認為自我教師的回顧能力似乎隨規模湧現。論文沒有給出規模曲線的數值，本頁只以文字呈現。</p>
+    <p><b>教師演進（Sec. 4.3，Fig. 10 右）。</b>訓練中自我教師的生成正確率顯著上升；學生在後期超過<b>初始</b>教師，所以這是自舉，而不只是模仿一個固定的教師。</p>
+    <p><b>遺忘（Sec. 4.4，Table 5）。</b>holdout 是不參與訓練的其他基準。SFT 基準是以自我教師的輸出做監督微調，需要 2× 的生成次數。</p>
+  </div>
+  <div class="tbl-wrap narrow small" tabindex="0" aria-label="Table 5 遺忘"><table>
+    <caption>Table 5：LCBv6 與 holdout 平均（%）</caption>
+    <thead><tr><th>方法</th><th class="num">LCBv6</th><th class="num">holdout 平均</th></tr></thead><tbody>
+    <tr><td>Base（Qwen3-8B）</td><td class="num">27.9</td><td class="num">43.5</td></tr>
+    <tr><td>SFT on self-teacher</td><td class="num">42.7</td><td class="num">41.4</td></tr>
+    <tr><td>GRPO</td><td class="num">41.2</td><td class="num">41.8</td></tr>
+    <tr class="hl"><td>SDPO</td><td class="num">48.8</td><td class="num">42.4</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>SDPO 的 LCBv6 最高，holdout 平均 42.4 高於 GRPO 的 41.8 與 SFT 的 41.4，但仍低於 base 的 43.5：三種訓練方法都有一些遺忘，SDPO 最少。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">LCBv6 上 SDPO 與 GRPO 的最終正確率？模型規模的影響？</p>
+    <p class="a">48.8% 對 41.2%，以 4× 少的生成數達到 GRPO 最終正確率；模型越大領先越多，Qwen2.5-1.5B 上落後 GRPO（Sec. 4、4.1）。</p>
+  </div></details>
+</section>
+
+<!-- S8b =========================================================== -->
+<section class="ch" id="ablate" data-toc="10" data-tt="消融">
+  <div class="ch-num">10 · 消融</div>
+  <h2>逐 logit 的信用分配與兩種回饋各有貢獻</h2>
+  <div class="prose">
+    <p><b>信用分配粒度（Sec. 4.2，Fig. 10 左）。</b>論文比較三種 SDPO：</p>
+    <ul>
+      <li><b>logit 層級</b>：學生的前 $K$ 個 token 加尾項，每個候選 token 各有一個優勢。Sec. 4.2 寫「學生前 100 個 token」；Sec. 4 主實驗的 Table 12 設定為 $K=20$。</li>
+      <li><b>token 層級</b>：每個位置只用最可能的 token。是否含尾項論文沒有寫，本頁解讀為 top-1 加尾項，即 Eq. 11 取 $K=1$。</li>
+      <li><b>序列層級</b>：把 SDPO 優勢平均成單一純量，像 GRPO 一樣施加在整個 rollout 上。</li>
+    </ul>
+    <p>結果排序是 logit 層級 &gt; token 層級 &gt; 序列層級 &gt; GRPO。即使序列層級（每個 rollout 只有一個數字）也勝過 GRPO，表示豐富回饋本身就帶來增益，不只靠稠密信用分配；稠密的信用分配再進一步提升。</p>
+  </div>
+  <div class="plate" id="c2b">
+    <div class="plate-h"><span class="id">C2b</span><h3>三種信用分配粒度給出的優勢</h3><span class="pill">〔示意〕本頁構造的數值</span></div>
+    <p class="plate-lead">同一組 C2 數值（有回饋），四列分別是 logit、token、序列層級 SDPO 與 GRPO。列名旁的數字是這個回答總共有幾個不同的優勢值。點選一格看該位置的數值。</p>
+    <div id="c2b-grid"></div>
+    <p class="readout" id="c2b-ro" style="margin-top:14px"></p>
+    <p class="plate-f">〔示意〕本例每格只有 3 個候選，logit 層級取 K = 3（每格 4 個值）；論文 Sec. 4 主實驗 K = 20，即每格 21 個。token 層級為本頁解讀（Eq. 11、K = 1）。GRPO 固定 c = 3（−0.375）。讀數由本頁依 Eq. 11 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c2b-live"></p>
+  </div>
+  <div class="prose">
+    <p>在 C2b 中，序列層級把第 9 格的 −2.65 稀釋成每格 −0.33；token 層級在第 9 格只剩取樣 token 與尾，看不到教師偏好的 <code>))</code>（+1.88）；第 9 格的位置損失在 $K=1$ 與 $K=3$ 時幾乎相同（1.978 對 1.983），差別在其他候選的方向資訊。</p>
+    <h3>與 GRPO 結合</h3>
+    <p>Sec. 4.5 把兩種優勢線性混合（Eq. 3）：$A^{\mathrm{SDPO+GRPO}}=\lambda A^{\mathrm{GRPO}}+(1-\lambda)A^{\mathrm{SDPO}}$，$\lambda=0.9$。GRPO 優勢是 $J(\theta)$ 的無偏 Monte Carlo 估計；SDPO 優勢有偏，但通常變異較低（類似 bootstrap 估計）。結果：混合版在 Qwen3-0.6B 上明顯勝過 SDPO，在較強的模型上略遜（Fig. 11）。</p>
+    <h3>回饋種類</h3>
+    <p>Table 6（訓練至第 60 步）比較教師上下文中放入哪些內容。「相同輸出比例」是教師的生成與學生原嘗試相同的比例，越低越好。</p>
+  </div>
+  <div class="tbl-wrap" tabindex="0" aria-label="Table 6 回饋種類"><table>
+    <caption>Table 6：回饋 $f$ 的內容（LCBv6，至第 60 步）</caption>
+    <thead><tr><th>$f$</th><th class="num">訓練前教師正確率</th><th class="num">相同輸出比例 ↓</th><th class="num">SDPO 學生正確率</th><th class="num">平均熵</th></tr></thead><tbody>
+    <tr><td>output</td><td class="num">32.5 ± 0.5</td><td class="num">13.7 ± 0.6</td><td class="num">39.9 ± 1.1</td><td class="num">0.40</td></tr>
+    <tr><td>own solution</td><td class="num">42.4 ± 1.0</td><td class="num">12.1 ± 0.7</td><td class="num">42.6 ± 1.3</td><td class="num">0.41</td></tr>
+    <tr class="hl"><td>output + own solution</td><td class="num">42.5 ± 1.2</td><td class="num">10.1 ± 0.2</td><td class="num">48.3 ± 1.4</td><td class="num">0.38</td></tr>
+    <tr><td>$y$ + output + own solution</td><td class="num">39.3 ± 0.8</td><td class="num">30.0 ± 0.9</td><td class="num">44.5 ± 1.3</td><td class="num">0.23</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>環境輸出加成功解最好（學生 48.3），單獨使用任一種都較差（39.9、42.6），兩者互補。把學生原嘗試 $y$ 也放進回饋，會讓教師偏向學生：相同輸出比例升到 30.0%，熵降到 0.23，探索減少，學生正確率降到 44.5。注意這和 Table 2 模板 Assistant 段的 <code>original_response</code> 不同：後者是被評分的對象，必須保留；被消融的是「回饋段落中也放入 $y$」。作者也發現結果對模板的語法變化不敏感。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">logit／token／序列層級 SDPO 各是什麼？排序？序列層級勝過 GRPO 代表什麼？</p>
+    <p class="a">logit：學生前 K 個 token（Sec. 4.2 寫 100，Sec. 4 主實驗 Table 12 為 20）及尾項；token：每個位置最可能的 token；序列：把 SDPO 優勢平均成單一純量；logit &gt; token &gt; 序列 &gt; GRPO；豐富回饋本身就帶來增益，不只靠稠密信用分配（Sec. 4.2、Fig. 10）。</p>
+    <p class="q">哪種回饋組合最好？把學生原嘗試放進回饋有什麼影響？</p>
+    <p class="a">環境輸出＋成功解最好（學生 48.3）；加入 $y$ 讓教師偏向學生、相同輸出比例升到 30.0%、熵降到 0.23、學生降到 44.5（Table 6）。</p>
+  </div></details>
+</section>
+
+<!-- S9 ============================================================ -->
+<section class="ch" id="ttt" data-toc="11" data-tt="測試時">
+  <div class="ch-num">11 · 測試時</div>
+  <h2>測試時自我蒸餾加速找到第一個解</h2>
+  <div class="prose">
+    <p>測試時（test time）面對單一難題，可以在同一題上反覆嘗試。Def. 5.1 把<b>發現時間</b>定義為第一次得到獎勵 1 的嘗試序號，並定義</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathrm{discovery@}k:=P(\text{發現時間}\le k)$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="prose">
+    <p>對固定模型做獨立取樣（best-of-k）時，discovery@k 等於 pass@k，也就是 $1-(1-p)^k$，$p$ 是單次成功率。</p>
+    <p>作者的論證（Sec. 5、footnote 9，沒有實驗量測）：在單一題目上做 RLVR 不會勝過 best-of-k，因為二元獎勵在第一次成功之前全為 0，沒有訊號。SDPO 每次嘗試都得到回饋，可以在找到解之前就修正；而且它把上下文 $c=(y_k,f_k)$ 壓縮進權重：把 $\pi_\theta(\cdot\mid x,c)$ 蒸餾成 $\pi_{\theta'}(\cdot\mid x)$（Fig. 12），因此不受上下文長度限制。</p>
+  </div>
+  <div class="plate" id="f12">
+    <div class="plate-h"><span class="id">Fig. 12 重繪</span><h3>每一輪把上一輪的嘗試與回饋寫進參數</h3></div>
+    <div class="fig-wide"><svg id="f12-svg" role="img" aria-label="三列流程：第 1 列 問題 x、θ₀、回答 y₁、回饋 f₁；第 2 列在 θ₀ 後加入 SDPO(y₁, f₁) 得到 θ₁，再產生 y₂、f₂；第 3 列再加入 SDPO(y₂, f₂) 得到 θ₂，產生 y₃、f₃"></svg></div>
+    <ol class="f12-list fig-narrow">
+      <li><span>第 1 輪</span><ol><li>問題 x</li><li class="th">θ₀</li><li>回答 y₁</li><li>回饋 f₁</li></ol></li>
+      <li><span>第 2 輪</span><ol><li>問題 x</li><li class="th">θ₀</li><li class="sd">SDPO(y₁, f₁)</li><li class="th">θ₁</li><li>回答 y₂</li><li>回饋 f₂</li></ol></li>
+      <li><span>第 3 輪</span><ol><li>問題 x</li><li class="th">θ₀</li><li class="sd">SDPO(y₁, f₁)</li><li class="th">θ₁</li><li class="sd">SDPO(y₂, f₂)</li><li class="th">θ₂</li><li>回答 y₃</li><li>回饋 f₃</li></ol></li>
+    </ol>
+    <p class="plate-f">上下文不放進提示，而是逐輪寫進參數；圖中每一輪畫成一次嘗試；實驗中每次 SDPO 更新用同一題的 16 個 rollout（Table 12 Sec. 5：question batch 1、rollouts 16）。SDPO 方框（綠框）表示把上一輪的 (y, f) 蒸餾進權重，θ 方框（藍框）是更新後的參數。</p>
+  </div>
+  <div class="prose">
+    <p><b>設定。</b>Qwen3-8B 的 pass@64 &lt; 0.5 的題目稱為 hard、&lt; 0.03 稱為 very hard；保留任一方法在 512 步、5 seeds 內至少解出一次的題目，得到 19 題 hard（其中 9 題 very hard）。best-of-k 以 2944 個獨立 rollout 做無偏的 pass@k 估計（Chen et al. 2021b）；多輪對話基準以先進先出的滑動視窗保留過去的回饋（最大 prompt 32k，模型上限 40k）；SDPO 每次更新用 question batch 1、16 個 rollout（Table 12 Sec. 5：學習率 1e-6、$K=20$、reverse KL、優勢截斷 5.0、EMA 0.01）。</p>
+    <p><span class="dv">〔本頁推導〕</span>pass@64 &lt; 0.03 等價於單次成功率 $p\lt 1-0.97^{1/64}\approx4.76\times10^{-4}$，在 2944 次取樣中期望只成功約 1.4 次；pass@64 &lt; 0.5 等價於 $p\lt 1.08\times10^{-2}$（期望約 31.7 次）。C5 畫出固定 $p$ 時的 best-of-k 曲線。</p>
+  </div>
+  <div class="plate" id="c5">
+    <div class="plate-h"><span class="id">C5</span><h3>discovery@k 與難題門檻</h3></div>
+    <p class="plate-lead">固定模型的 best-of-k：discovery@k = 1 − (1 − p)ᵏ。點「very hard 上限」看 p = 4.76e-4 時要多少次嘗試才有 22% 的機會找到解；切到「2944 次中成功 c 次」看論文用的無偏估計。</p>
+    <div class="ctl-row" style="margin-bottom:12px">
+      <div class="seg" id="c5-mode" role="group" aria-label="輸入方式"><button type="button" data-v="p" aria-pressed="true">單次成功率 p</button><button type="button" data-v="c" aria-pressed="false">2944 次中成功 c 次</button></div>
+      <div class="seg" id="c5-x" role="group" aria-label="x 軸"><button type="button" data-v="lin" aria-pressed="true">線性 x 軸</button><button type="button" data-v="log" aria-pressed="false">對數 x 軸</button></div>
+    </div>
+    <div class="pg side">
+      <div class="fig" id="c5-figbox"><svg id="c5-fig" role="img" aria-label="discovery@k 對嘗試次數 k 的曲線"></svg></div>
+      <div class="ctl">
+        <div id="c5-pctl">
+          <div class="rng"><label class="lbl" for="c5-lp">單次成功率 p（對數）<output id="c5-po">1.00e-3</output></label><input id="c5-lp" type="range" min="-5" max="-1" step="0.02" value="-3"></div>
+          <div class="ctl-row" role="group" aria-label="門檻"><button class="chip" type="button" data-p="4.758119e-4" aria-pressed="false">very hard 上限（4.76e-4）</button><button class="chip" type="button" data-p="1.077199e-2" aria-pressed="false">hard 上限（1.08e-2）</button></div>
+        </div>
+        <div id="c5-cctl" class="hide">
+          <div class="rng"><label class="lbl" for="c5-c">2944 次中成功次數 c<output id="c5-co">1</output></label><input id="c5-c" type="range" min="0" max="100" step="1" value="1"></div>
+        </div>
+        <p class="readout" id="c5-ro"></p>
+      </div>
+    </div>
+    <div class="tbl-wrap small" tabindex="0" aria-label="論文的 discovery@2750 彙總值" style="max-width:560px;margin-top:20px;margin-bottom:6px"><table>
+      <caption>論文 Sec. 5.2 的 discovery@2750（%）</caption>
+      <thead><tr><th>題組</th><th class="num">SDPO</th><th class="num">best-of-k</th><th class="num">多輪</th></tr></thead><tbody>
+      <tr><td>very hard（9 題）</td><td class="num">53.2</td><td class="num">41.5</td><td class="num">35.6</td></tr>
+      <tr><td>hard（19 題）</td><td class="num">78</td><td class="num">—</td><td class="num">—</td></tr>
+      </tbody></table></div>
+    <p class="note" style="margin:0 0 4px">這些是 9／19 題、5 seeds 的平均，不是某個單一 p 的曲線；各題 p 不同時，平均曲線不等於平均 p 的曲線。</p>
+    <p class="plate-f">曲線：p 模式為 −expm1(k·log1p(−p))；c 模式為無偏估計 1 − ∏(n − c − i)/(n − i)，n = 2944（Chen et al. 2021b）。截斷平均 = Σ_{j=0}^{2749} P(發現時間 &gt; j)，與 Table 10 的截斷定義相同。門檻換算為〔本頁推導〕。讀數由本頁依 Eq. 4 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c5-live"></p>
+  </div>
+  <div class="prose">
+    <p>在 C5 中，very hard 上限 $p=4.76\times10^{-4}$ 時 pass@64 = 0.030，要 523 次嘗試才有 22% 的機會找到解；$p=10^{-4}$ 時 2750 次內只有 24%。2944 次中只成功 1 次時，估計的 pass@64 為 0.0217，已低於 0.03。</p>
+    <p><b>結果（Sec. 5.2）。</b>very hard 題的 discovery@2750：SDPO 53.2%、best-of-k 41.5%、多輪 35.6%。在 very hard 題上，達到 22% 發現機率所需的生成數，SDPO 比 best-of-k 與多輪少約 3×；在 hard 題上，SDPO 的 discovery@2750 為 78%，達到 67% 發現機率時少約 2.4×。多輪與 best-of-k 分別只解出 68.4% 與 72.3% 的題目；多輪對話的上下文在 hard 題第 837（±466）步、very hard 題第 1007（±349）步用盡。</p>
+    <p>Q3 只有 SDPO 解出：<b>最早一次</b>在第 321 次嘗試找到解（20 次自我蒸餾更新，每次 16 個 rollout；論文沒有說是哪個 seed）；Table 10 中 Q3 的<b>平均</b>首次成功（5 seeds）是 1987，best-of-k ≥ 2750，加速 1.4×。</p>
+  </div>
+  <div class="tbl-wrap narrow" tabindex="0" aria-label="Table 10 摘錄"><table>
+    <caption>Table 10 摘錄：首次成功的平均生成數（截斷在 2750）。* 為 very hard</caption>
+    <thead><tr><th>題目</th><th class="num">SDPO</th><th class="num">best-of-k</th><th class="num">多輪</th><th class="num">加速（best-of-k → SDPO）</th></tr></thead><tbody>
+    <tr class="hl"><td>Hard（19 題，含 very hard）</td><td class="num">894</td><td class="num">1145</td><td class="num">1141</td><td class="num">1.3×</td></tr>
+    <tr class="hl"><td>Very hard（9 題）</td><td class="num">1739</td><td class="num">2180</td><td class="num">2121</td><td class="num">1.2×</td></tr>
+    <tr><td>Q3*</td><td class="num">1987</td><td class="num">≥ 2750</td><td class="num">≥ 2750</td><td class="num">1.4×</td></tr>
+    <tr><td>Q120</td><td class="num">24</td><td class="num">327</td><td class="num">70</td><td class="num">13.6×</td></tr>
+    <tr><td>Q69</td><td class="num">280</td><td class="num">134</td><td class="num">134</td><td class="num">0.5×</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>以首次成功的平均生成數計，加速是 1.3×（Hard 列：包含 9 題 very hard 在內的全部 19 題）與 1.2×（very hard）；單題最高 13.6×（Q120），也有單題比 best-of-k 慢（例如 Q69 為 0.5×）。所以「3×」只對應 very hard 題、22% 發現機率這一個分位，「2.4×」對應 hard 題、67%。</p>
+    <p>Table 11：初始自我教師在 19 題中有 15 題（約 79%；論文正文寫 78%，為截斷值）的正確率恰為 0%，其餘都低於 7%（最高是 Q43 的 6.25%）。單輪回饋不足以讓教師直接解題，但它的信用分配足以逐步改進策略。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">discovery@k 的定義？作者為什麼認為在單題上做 RLVR 不會勝過 best-of-k？pass@64 &lt; 0.03 代表單次成功率小於多少？very hard 題的 discovery@2750？</p>
+    <p class="a">$P(\text{發現時間}\le k)$；作者論證（footnote 9，未量測）：二元獎勵在第一次成功前沒有訊號；$p\lt 1-0.97^{1/64}\approx4.76\times10^{-4}$〔本頁推導〕；SDPO 53.2%、best-of-k 41.5%、多輪 35.6%（Def. 5.1、Eq. 4、Sec. 5.2）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="test-time-training-for-rl.html">測試時訓練與 test-time RL 與 SDPO 的 test-time self-distillation</a></p>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="impl" data-toc="12" data-tt="實作">
+  <div class="ch-num">12 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="tbl-wrap" tabindex="0" aria-label="Table 12 SDPO 超參數" style="max-width:860px"><table>
+    <caption>Table 12：SDPO 的設定</caption>
+    <thead><tr><th>項目</th><th>Sec. 3（無文字回饋）</th><th>Sec. 4（有文字回饋）</th><th>Sec. 5（測試時）</th></tr></thead><tbody>
+    <tr><td>模型</td><td>Qwen3-8B、Olmo3-7B-Instruct</td><td>Qwen3-8B</td><td>Qwen3-8B</td></tr>
+    <tr><td>thinking</td><td>False</td><td>False</td><td>False</td></tr>
+    <tr><td>最大 prompt／回答長度</td><td>2048／8192</td><td>同左</td><td>同左</td></tr>
+    <tr><td>question batch／mini batch／rollouts</td><td>32／32／8</td><td>32／1／8</td><td>1／1／16</td></tr>
+    <tr><td>取樣溫度；驗證 rollouts、溫度、top-p</td><td>1.0；16、0.6、0.95</td><td>1.0；4、0.6、0.95</td><td>1.0；—</td></tr>
+    <tr><td>top-K 蒸餾</td><td>100</td><td>20</td><td>20</td></tr>
+    <tr><td>散度</td><td>Jensen–Shannon</td><td>reverse KL</td><td>reverse KL</td></tr>
+    <tr><td>優勢截斷</td><td>—</td><td>—</td><td>5.0</td></tr>
+    <tr><td>教師 EMA 更新率</td><td>0.05</td><td>0.01</td><td>0.01</td></tr>
+    <tr><td>rollout IS clip</td><td>2</td><td>2</td><td>2</td></tr>
+    <tr><td>AdamW 學習率（constant）／warmup</td><td>1e-5／10</td><td>1e-6／0</td><td>1e-6／0</td></tr>
+    <tr><td>weight decay／梯度裁剪</td><td>0.01／1.0</td><td>同左</td><td>同左</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>GRPO 基準（Table 13，Sec. 3）：mini batch 8（預設）或 32（on-policy），ε-high 0.28，KL 係數 0，學習率 1e-6（預設）或 1e-5（on-policy），warmup 10。超參數搜尋（App. E.2.1）：學習率 {1e-5, 1e-6}、mini batch {8, 32}；SDPO 另外搜尋 forward KL 與 Jensen–Shannon。環境：verl、FSDP2、vLLM、PyTorch 2.7.0、CUDA 12.8。</p>
+    <h3>常見錯誤</h3>
+    <ol>
+      <li><b>忘記對教師 stopgrad。</b>教師分布會被拉向學生分布，訊號不再反映回饋（Sec. 2）。</li>
+      <li><b>把學生原嘗試 $y$ 放進回饋段落。</b>Table 6 中熵降到 0.23，學生 44.5，低於 48.3。模板 Assistant 段的 <code>original_response</code> 是被評分的對象，必須保留；要避免的是「回饋中也放入 $y$」。</li>
+      <li><b>不正規化教師。</b>Table 4 中 $q_\theta$ 最佳只有 36.1，最終發散；用信任域或 EMA（$\alpha=0.01$）。</li>
+      <li><b>同時保留兩份全詞彙 logits。</b>記憶體翻倍；用 Eq. 11 的 top-K（依學生選）加尾項，尾項不能省。</li>
+      <li><b>在弱模型上期待增益。</b>Qwen2.5-1.5B 上 SDPO 落後 GRPO；可改用 SDPO+GRPO（$\lambda=0.9$）。</li>
+      <li><b>散度方向與種類。</b>Eq. 1 是 $\mathrm{KL}(\text{學生}\|\text{教師})$；Table 12 中 Sec. 3 實際用 JS，Sec. 4–5 用 reverse KL。Prop. 2.1 的優勢形式只對 reverse KL 成立。</li>
+      <li><b>基準設定。</b>本文 GRPO 優勢不除以標準差（footnote 3）；離策略修正的 TIS 在 SDPO 中施加於 token 層級（App. A.4）。</li>
+    </ol>
+  </div>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="history" data-toc="13" data-tt="研究脈絡">
+  <div class="ch-num">13 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>SDPO 接在幾條路線的交會處：策略梯度與 PPO 提供優化框架，GRPO 與 RLVR 把它用在語言模型的推理上；知識蒸餾與線上蒸餾提供逐 token 的監督形式，但需要更強的教師；情境蒸餾與自我蒸餾讓同一個模型帶著額外上下文擔任教師。本文把額外上下文換成環境回饋，並證明蒸餾的梯度就是一種策略梯度。每張卡片連到對應的研究筆記，總覽見 <a href="sdpo-lineage-overview.html">SDPO 的研究脈絡總覽</a>。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="next" data-toc="14" data-tt="限制與延伸">
+  <div class="ch-num">14 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>SDPO 依賴模型的上下文學習能力：弱模型的自我教師可能無法從回饋找出錯誤，表現不如 GRPO。它也依賴回饋品質：沒有資訊或誤導的回饋無法帶來學習。在小模型、短生成的設定下，額外的教師 log 機率計算佔訓練時間的比例較大。作者列出的未來方向是長時程與代理環境、大規模多任務訓練、沒有驗證器的文字回饋任務，以及系統性研究推理行為的差異，例如模板的影響（Sec. 7）。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="sdpo-lineage-overview.html">SDPO（Reinforcement Learning via Self-Distillation）的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="rlvr-grpo-credit-assignment.html">RLVR、GRPO 與信用分配瓶頸</a><span>SDPO 要解決的問題</span></div></li>
+    <li><div><a href="knowledge-distillation-foundations.html">知識蒸餾基礎：logit 蒸餾與序列層級蒸餾</a><span>SDPO 損失的形式</span></div></li>
+    <li><div><a href="on-policy-distillation-imitation.html">On-policy 蒸餾與線上模仿學習</a><span>在學生自己的軌跡上由教師給回饋</span></div></li>
+    <li><div><a href="context-distillation-self-distillation.html">Context distillation 與自蒸餾</a><span>同一個模型帶額外上下文當教師</span></div></li>
+    <li><div><a href="rich-feedback-and-retrospection.html">豐富回饋、事後回顧與 feedback-conditioned policy</a><span>前人如何使用文字回饋</span></div></li>
+    <li><div><a href="test-time-training-for-rl.html">測試時訓練與 test-time RL 與 SDPO 的 test-time self-distillation</a><span>對單一難題做專門化</span></div></li>
+    <li><div><a href="test-time-training-naming.html">「Test-Time Training」的命名混淆：序列建模層 vs 分布偏移適應 vs 測試時 RL（TEMPO）</a><span>站內既有筆記（對應 App. C 與測試時訓練的關係）</span></div></li>
+    <li><div><a href="ttt-theory-and-applications.html">TTT 的理論還原與應用擴散（視覺、3D/4D、長上下文 LLM）</a><span>站內既有筆記</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Jonas Hübotter, Frederike Lübeck, Lejs Behric, Anton Baumann, et al. Reinforcement Learning via Self-Distillation. 2026. <a href="https://arxiv.org/abs/2601.20802">arXiv:2601.20802</a> · <a href="https://github.com/lasgroup/SDPO">github.com/lasgroup/SDPO</a>.</p>
+  <p>本頁的方程式與數字取自論文 v2；標示「本頁推導」的內容為本頁自行推導，標示「示意」的數值為本頁構造，都不是論文結論。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2010, "title": "A Reduction of Imitation Learning and Structured Prediction to No-Regret Online Learning", "authors_short": "Ross et al.", "arxiv": "1011.0686", "role": "線上模仿學習，on-policy 蒸餾的前身", "source": "2601.20802 §6.3 + arXiv abstract"}, {"year": 2015, "title": "Distilling the Knowledge in a Neural Network", "authors_short": "Hinton et al.", "arxiv": "1503.02531", "role": "知識蒸餾的基礎，SDPO 損失的形式", "source": "2601.20802 §6.3 + arXiv abstract"}, {"year": 2016, "title": "Sequence-Level Knowledge Distillation", "authors_short": "Kim & Rush", "arxiv": "1606.07947", "role": "序列層級蒸餾", "source": "2601.20802 §6.3 + arXiv listing"}, {"year": 2017, "title": "Thinking Fast and Slow with Deep Learning and Tree Search", "authors_short": "Anthony et al.", "arxiv": "1705.08439", "role": "Expert Iteration，學生模仿改進版自己", "source": "2601.20802 §6.1 + arXiv listing"}, {"year": 2017, "title": "Proximal Policy Optimization Algorithms", "authors_short": "Schulman et al.", "arxiv": "1707.06347", "role": "依賴價值網路的傳統 RL 演算法", "source": "2601.20802 §6.1 + arXiv abstract"}, {"year": 2020, "title": "Bootstrap your own latent: A new approach to self-supervised Learning", "authors_short": "Grill et al.", "arxiv": "2006.07733", "role": "自舉式學習，類比 augmented views", "source": "2601.20802 §6.1 + arXiv listing"}, {"year": 2022, "title": "Learning by Distilling Context", "authors_short": "Snell et al.", "arxiv": "2209.15189", "role": "自蒸餾概念的最早提出", "source": "2601.20802 §6.4 + arXiv listing"}, {"year": 2023, "title": "Let's Verify Step by Step", "authors_short": "Lightman et al.", "arxiv": "2305.20050", "role": "process reward model，逐步信用分配", "source": "2601.20802 §6.1 + arXiv listing"}, {"year": 2023, "title": "On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes", "authors_short": "Agarwal et al.", "arxiv": "2306.13649", "role": "語言模型的 on-policy 蒸餾", "source": "2601.20802 §6.3 + arXiv abstract"}, {"year": 2024, "title": "DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models", "authors_short": "Shao et al.", "arxiv": "2402.03300", "role": "提出 GRPO", "source": "2601.20802 §6.1 + arXiv abstract"}, {"year": 2025, "title": "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", "authors_short": "DeepSeek-AI", "arxiv": "2501.12948", "role": "RLVR 提升推理的代表", "source": "2601.20802 §6.1 + arXiv abstract"}, {"year": 2025, "title": "TTRL: Test-Time Reinforcement Learning", "authors_short": "Zuo et al.", "arxiv": "2504.16084", "role": "測試時 RL，多數決型 expert", "source": "2601.20802 §6.1 + arXiv listing"}, {"year": 2026, "title": "Reinforcement Learning via Self-Distillation", "authors_short": "Hübotter et al.", "arxiv": "2601.20802", "role": "本論文：以帶回饋的自己為老師做 on-policy 自蒸餾", "source": "本論文"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+const lgs=(d0,d1,r0,r1)=>{const a=Math.log(d0),b=Math.log(d1);return v=>r0+(Math.log(v)-a)/(b-a)*(r1-r0)};
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function frame(svg,o){
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m=o.m,x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=m.t;
+  const X=(o.xlog?lgs:lin)(o.x[0],o.x[1],x0,x1),Y=(o.ylog?lgs:lin)(o.y[0],o.y[1],y0,y1);
+  const g=el('g',null,svg);
+  (o.yt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.yf?o.yf(v):String(v)),yy=Y(val);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},g);tx(g,x0-8,yy+4,lab,{class:'tk','text-anchor':'end'})});
+  (o.xt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.xf?o.xf(v):String(v)),xx=X(val);el('line',{x1:xx,x2:xx,y1:y0,y2:y0+4,class:'axl'},g);tx(g,xx,y0+18,lab,{class:'tk','text-anchor':'middle'})});
+  el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  if(o.xl)tx(g,(x0+x1)/2,o.H-4,o.xl,{class:'al','text-anchor':'middle'});
+  if(o.yl)tx(g,4,12,o.yl,{class:'al'});
+  return {X,Y,g,x0,x1,y0,y1};
+}
+function arrow(g,x0,y0,x1,y1,cls,dash){const dx=x1-x0,dy=y1-y0,L=Math.hypot(dx,dy);if(L<2)return;const ux=dx/L,uy=dy/L,h=Math.min(10,L*.6);
+  el('line',{x1:x0,y1:y0,x2:x1-ux*h*.7,y2:y1-uy*h*.7,class:cls+(dash?' dash':'')},g);
+  el('path',{d:`M${x1} ${y1}L${x1-ux*h-uy*h*.45} ${y1-uy*h+ux*h*.45}L${x1-ux*h+uy*h*.45} ${y1-uy*h-ux*h*.45}Z`,class:cls+'-f'},g)}
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+function segInit(id,on){$$('#'+id+' button').forEach(b=>b.addEventListener('click',()=>{$$('#'+id+' button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));on(b.dataset.v)}))}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ---------- shared math (log space) ---------- */
+function lse(z){let m=-Infinity;for(const v of z)if(v>m)m=v;let s=0;for(const v of z)s+=Math.exp(v-m);return m+Math.log(s)}
+function softmax(z){const l=lse(z);return z.map(v=>Math.exp(v-l))}
+function kl(p,q){let s=0;for(let i=0;i<p.length;i++)if(p[i]>1e-300)s+=p[i]*Math.log(p[i]/q[i]);return s}
+function fmt(x,d){if(!isFinite(x))return x>0?'∞':'−∞';const v=Math.abs(x)<0.5*10**-d?0:x;return v.toFixed(d).replace('-','−')}
+function sgn(x,d){const s=fmt(x,d);return (x>0&&!/^0\.?0*$/.test(s))?'+'+s:s}
+function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const tokHTML=s=>esc(s).replace(/^ /,'<span class="sp">␣</span>');
+const tokTxt=s=>s.replace(/^ /,'␣');
+
+/* ---------- token grid (hero, C2, C2b) ---------- */
+const VMAX=2.7;
+function buildGrid(host,toks,rows,opts){host.textContent='';
+  const outer=document.createElement('div');outer.className='tgo';
+  const lab=document.createElement('div');lab.className='tg-lab';lab.setAttribute('aria-hidden','true');
+  lab.innerHTML='<span style="height:34px"></span>'+rows.map(r=>`<span style="height:${r.h}px;align-items:flex-start;padding-top:${r.mid-8}px">${r.label}</span>`).join('');
+  const box=document.createElement('div');box.className='tg';
+  if(opts.img){box.setAttribute('role','img');box.setAttribute('aria-label',opts.label)}else{box.setAttribute('role','listbox');box.setAttribute('aria-label',opts.label)}
+  const cells=toks.map((t,i)=>{const c=document.createElement('div');c.className='tg-c';if(!opts.img){c.setAttribute('role','option');c.setAttribute('aria-label',`第 ${i+1} 個 token：${tokTxt(t)}`)}
+    c.innerHTML=`<div class="tg-t">${tokHTML(t)}</div>`+rows.map(r=>`<div class="tg-r${r.multi?' multi':''}" style="--rh:${r.h}px;--mid:${r.mid}px"></div>`).join('');
+    box.appendChild(c);return c});
+  outer.append(lab,box);host.appendChild(outer);
+  return {box,cells,bars:cells.map(c=>$$('.tg-r',c))}}
+function setBars(r,vals,up,dn,cls,text){let h='';const n=vals.length,w=5,gap=2,tot=n*w+(n-1)*gap;
+  vals.forEach((v,j)=>{if(v===null)return;const H=Math.min(1,Math.abs(v)/VMAX)*(v>=0?up:dn),hh=Math.abs(v)<0.005?0:Math.max(1,H);
+    const c=cls||(v>=0?'p':'n'),pos=v>=0?'up':'dn',style=n>1?`left:calc(50% - ${tot/2}px + ${j*(w+gap)}px);height:${hh.toFixed(1)}px`:`height:${hh.toFixed(1)}px`;
+    h+=`<i class="${pos} ${c}" style="${style}"></i>`});
+  if(text!==undefined)h+=`<b>${text}</b>`;r.innerHTML=h}
+function initListbox(box,n,onSelect,sel){const opts=[...box.children];
+  function set(i,focus){i=Math.max(0,Math.min(n-1,i));opts.forEach((o,j)=>{o.setAttribute('aria-selected',String(j===i));o.tabIndex=j===i?0:-1});if(focus)opts[i].focus();onSelect(i)}
+  opts.forEach((o,j)=>o.addEventListener('click',()=>set(j,true)));
+  box.addEventListener('keydown',e=>{const cur=opts.findIndex(o=>o.tabIndex===0);let k=null;
+    if(e.key==='ArrowRight'||e.key==='ArrowDown')k=cur+1;else if(e.key==='ArrowLeft'||e.key==='ArrowUp')k=cur-1;else if(e.key==='Home')k=0;else if(e.key==='End')k=n-1;else if(e.key==='Enter'||e.key===' ')k=cur;
+    if(k!==null){e.preventDefault();set(k,true)}});
+  set(sel,false)}
+
+/* ---------- C2 data (〔示意〕, design 4.2) ---------- */
+const C2_ROWS=[
+ {tok:'def',cand:['def','class','import'],pi:[.97,.01,.01],q:[.97,.01,.01]},
+ {tok:' numbers_up_to_n',cand:[' numbers_up_to_n',' get_numbers',' nums'],pi:[.90,.05,.03],q:[.90,.05,.03]},
+ {tok:'(n):',cand:['(n):','(n: int):','():'],pi:[.98,.01,.005],q:[.97,.02,.005]},
+ {tok:' return',cand:[' return',' result',' for'],pi:[.80,.10,.05],q:[.82,.09,.05]},
+ {tok:' list',cand:[' list',' [',' range'],pi:[.70,.25,.03],q:[.68,.27,.03]},
+ {tok:'(range',cand:['(range','(map','(filter'],pi:[.95,.02,.01],q:[.95,.02,.01]},
+ {tok:'(1,',cand:['(1,','(n','(0,'],pi:[.92,.03,.03],q:[.90,.02,.06]},
+ {tok:' n',cand:[' n',' n-1',' n+1'],pi:[.96,.02,.01],q:[.93,.05,.005]},
+ {tok:' +',cand:[' +','))',' -'],pi:[.85,.14,.005],q:[.06,.92,.01]},
+ {tok:' 1',cand:[' 1',' 0',' n'],pi:[.97,.02,.005],q:[.40,.55,.01]},
+ {tok:'))',cand:['))',')',')]'],pi:[.97,.02,.005],q:[.95,.03,.01]}];
+const C2_TOKS=C2_ROWS.map(r=>r.tok);
+const tail=a=>Math.max(0,1-a.reduce((s,v)=>s+v,0));
+function c2Adv(row,fb){const q=fb?row.q:row.pi,tp=tail(row.pi),tq=tail(q);
+  return [0,1,2].map(j=>Math.log(q[j]/row.pi[j])).concat(tp>1e-12&&tq>1e-12?[Math.log(tq/tp)]:[null])}
+function c2KL(row,K){let L=0,tp=tail(row.pi),tq=tail(row.q);
+  for(let j=0;j<3;j++){if(j<K)L+=row.pi[j]*Math.log(row.pi[j]/row.q[j]);else{tp+=row.pi[j];tq+=row.q[j]}}
+  if(tp>1e-12)L+=tp*Math.log(tp/tq);return L}
+const seqMean=()=>C2_ROWS.reduce((s,r)=>s+c2Adv(r,true)[0],0)/C2_ROWS.length;
+
+/* ---------- hero ---------- */
+function initHero(){const rows=[{label:'GRPO',h:72,mid:30},{label:'SDPO',h:72,mid:30}];
+  const sd=C2_ROWS.map(r=>c2Adv(r,true)[0]);
+  const lbl='11 個 token 的逐 token 優勢（示意數值）。GRPO 每格都是 −0.375；SDPO 大多接近 0，只有「 +」為 −2.65、「 1」為 −0.89 明顯為負。';
+  const G=buildGrid($('#hero-grid'),C2_TOKS,rows,{img:true,label:lbl});
+  G.bars.forEach((b,i)=>{setBars(b[0],[-0.375],28,28,'g','−0.38');setBars(b[1],[sd[i]],28,28,null,sgn(sd[i],2))})}
+
+/* ---------- C1 ---------- */
+const c1={G:8,r:[1,0,0,1,0,0,0,0],p:0.10,seed:1};
+function grpoAdv(r){const m=r.reduce((a,b)=>a+b,0)/r.length;return r.map(v=>v-m)}
+function collapseProb(p,G){return Math.pow(1-p,G)+Math.pow(p,G)}
+function sampleC1(){const rnd=mulberry32(c1.seed++);c1.r=Array.from({length:c1.G},()=>rnd()<c1.p?1:0)}
+function buildC1Rows(){const host=$('#c1-rows');host.textContent='';
+  for(let i=0;i<c1.G;i++){const row=document.createElement('div');row.className='ro';
+    row.innerHTML=`<button type="button"></button><div class="band" aria-hidden="true">${'<span><i></i></span>'.repeat(12)}</div><output></output>`;
+    row.firstChild.addEventListener('click',()=>{c1.r[i]=1-c1.r[i];renderC1()});host.appendChild(row)}}
+function renderC1(){const A=grpoAdv(c1.r),rows=$$('#c1-rows .ro');
+  rows.forEach((row,i)=>{const b=row.firstChild,pass=c1.r[i]===1;b.setAttribute('aria-pressed',String(pass));b.textContent=pass?'✓':'✗';b.setAttribute('aria-label',`rollout ${i+1}：${pass?'通過':'失敗'}，優勢 ${fmt(A[i],3)}`);
+    const h=Math.min(1,Math.abs(A[i]))*14;$$('i',row).forEach(e=>{e.className=A[i]>=0?'p':'n';e.style.height=(Math.abs(A[i])<1e-9?0:Math.max(1,h)).toFixed(1)+'px'});row.lastChild.textContent=sgn(A[i],3)});
+  const same=c1.r.every(v=>v===c1.r[0]);$('#c1-zero').classList.toggle('hide',!same);
+  const mean=c1.r.reduce((a,b)=>a+b,0)/c1.G,P=collapseProb(c1.p,c1.G),sum=A.reduce((a,b)=>a+b,0);
+  $('#c1-po').textContent=c1.p.toFixed(2);
+  $('#c1-ro').innerHTML=`r̄ = <b>${fmt(mean,3)}</b> · A = [${A.map(a=>sgn(a,3)).join(', ')}] · 總和 = <b>${fmt(sum,3)}</b><br>P<sub>${c1.G}</sub>(p) = (1 − p)<sup>${c1.G}</sup> + p<sup>${c1.G}</sup> = <b class="acc">${fmt(P,4)}</b>（p = ${c1.p.toFixed(2)}）· 每批 32 題中約 <b>${fmt(32*P,1)}</b> 題沒有梯度`;
+  drawC1();announce('c1',`平均 ${fmt(mean,3)}，${same?'所有優勢為 0，':''}優勢全為 0 的機率 ${fmt(P,4)}`)}
+function drawC1(){const svg=$('#c1-fig'),W=widthOf($('#c1-figbox'),280,460),H=250;
+  const f=frame(svg,{W,H,m:{l:44,r:14,t:24,b:40},x:[0,1],y:[0,1],xt:[0,.25,.5,.75,1],yt:[0,.25,.5,.75,1],xl:'p（單次成功率）',yl:'優勢全為 0 的機率'});
+  [[4,'ink dash'],[8,'ink'],[16,'ink dot']].forEach(([G,cls])=>{const pts=[];for(let i=0;i<=200;i++){const p=i/200;pts.push([f.X(p),f.Y(collapseProb(p,G))])}
+    el('path',{d:lp(pts),class:cls,'stroke-width':G===c1.G?2.5:1.5,opacity:G===c1.G?1:.7},f.g);
+    tx(f.g,f.X(.2)+8,f.Y(collapseProb(.2,G))-5,'G = '+G,{class:'lab'})});
+  el('circle',{cx:f.X(c1.p),cy:f.Y(collapseProb(c1.p,c1.G)),r:6,class:'acc-dot'},f.g)}
+function initC1(){buildC1Rows();
+  segInit('c1-G',v=>{c1.G=+v;const k=Math.ceil(c1.G/4);c1.r=Array.from({length:c1.G},(_,i)=>i<k?1:0);buildC1Rows();renderC1()});
+  $('#c1-none').addEventListener('click',()=>{c1.r=c1.r.map(()=>0);renderC1()});
+  $('#c1-all').addEventListener('click',()=>{c1.r=c1.r.map(()=>1);renderC1()});
+  $('#c1-rand').addEventListener('click',()=>{sampleC1();renderC1()});
+  $('#c1-p').addEventListener('input',e=>{c1.p=+e.target.value;renderC1()});renderC1()}
+
+/* ---------- C2 ---------- */
+const c2={fb:true,c:3,sel:8};let c2G=null;
+function renderC2(){const grpo=-c2.c/8;$('#c2-co').textContent=c2.c;
+  c2G.bars.forEach((b,i)=>{const a=c2Adv(C2_ROWS[i],c2.fb)[0];setBars(b[0],[grpo],28,28,'g',fmt(grpo,2));setBars(b[1],[a],28,28,null,sgn(a,2))});
+  const row=C2_ROWS[c2.sel],A=c2Adv(row,c2.fb);
+  $('#c2-ro').innerHTML=`位置 ${c2.sel+1}「${esc(tokTxt(row.tok))}」<br>SDPO：log(q/π) = <b class="acc">${sgn(A[0],3)}</b>（取樣 token）<br>其他候選：${row.cand.slice(1).map((t,j)=>`${esc(tokTxt(t))} ${sgn(A[j+1],3)}`).join('、')}、尾 ${A[3]===null?'—':sgn(A[3],3)}<br>GRPO：<b>${fmt(grpo,3)}</b>（c = ${c2.c}，每格相同）`;
+  drawC2Det();announce('c2',`位置 ${c2.sel+1}，log(q/π) ${fmt(A[0],3)}，GRPO ${fmt(grpo,3)}`)}
+function drawC2Det(){const svg=$('#c2-det'),W=widthOf($('#c2-detbox'),300,480),H=210,row=C2_ROWS[c2.sel],q=c2.fb?row.q:row.pi,A=c2Adv(row,c2.fb);
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const names=row.cand.concat(['尾']),P=row.pi.concat([tail(row.pi)]),Q=q.concat([tail(q)]),top=24,base=128,gw=(W-16)/4,bw=Math.min(28,gw*.3);
+  tx(svg,8,14,'機率（0–1）',{class:'al'});el('line',{x1:8,x2:W-8,y1:base,y2:base,class:'axl'},svg);
+  names.forEach((nm,j)=>{const cx=8+gw*(j+.5);
+    [[P[j],'f-stu',-bw-2],[Q[j],'f-tea',2]].forEach(([v,cls,dx])=>{const h=v*(base-top);el('rect',{x:cx+dx,y:base-h,width:bw,height:Math.max(h,.5),class:cls},svg);tx(svg,cx+dx+bw/2,base-h-4,fmt(v,v<.1?3:2).replace(/^0/,''),{class:'vl','text-anchor':'middle'})});
+    tx(svg,cx,base+18,tokTxt(nm),{class:'mono','text-anchor':'middle'});
+    const a=A[j];tx(svg,cx,base+40,a===null?'—':sgn(a,2),{class:'labm','text-anchor':'middle',style:`fill:${a===null?'var(--ink-3)':a<-0.005?'var(--c-neg)':a>0.005?'var(--c-pos)':'var(--ink-2)'}`})});
+  tx(svg,8,H-8,'下排數字：log(q/π)',{class:'al'})}
+function initC2(){c2G=buildGrid($('#c2-grid'),C2_TOKS,[{label:'GRPO',h:72,mid:30},{label:'SDPO',h:72,mid:30}],{label:'學生回答的 11 個 token，選一格看詳細數值'});
+  segInit('c2-fb',v=>{c2.fb=v==='1';renderC2()});
+  $('#c2-c').addEventListener('input',e=>{c2.c=+e.target.value;renderC2()});
+  initListbox(c2G.box,11,i=>{c2.sel=i;renderC2()},8)}
+
+/* ---------- C2b ---------- */
+const c2b={sel:8};let c2bG=null;
+function tokLevel(row){const tp=1-row.pi[0],tq=1-row.q[0];return [Math.log(row.q[0]/row.pi[0]),Math.log(tq/tp)]}
+function renderC2b(){const Ab=seqMean();
+  c2bG.bars.forEach((b,i)=>{const r=C2_ROWS[i];setBars(b[0],c2Adv(r,true),26,26);setBars(b[1],tokLevel(r),26,26);setBars(b[2],[Ab],28,28,null,fmt(Ab,2));setBars(b[3],[-0.375],28,28,'g','−0.38')});
+  const r=C2_ROWS[c2b.sel],A=c2Adv(r,true),T=tokLevel(r);
+  const tot3=C2_ROWS.reduce((s,x)=>s+c2KL(x,3),0),tot1=C2_ROWS.reduce((s,x)=>s+c2KL(x,1),0);
+  $('#c2b-ro').innerHTML=`第 ${c2b.sel+1} 格「${esc(tokTxt(r.tok))}」 · logit：${A.map(v=>v===null?'—':sgn(v,3)).join(', ')}（${r.cand.map(t=>esc(tokTxt(t))).join('、')}、尾）· token：${sgn(T[0],3)}, ${sgn(T[1],3)}（${esc(tokTxt(r.tok))}、尾）· 序列：${fmt(Ab,3)} · GRPO：−0.375<br>Eq. 11 位置損失：K = 3 → <b class="acc">${fmt(c2KL(r,3),4)}</b>，K = 1 → <b>${fmt(c2KL(r,1),4)}</b> · 11 格總損失：K = 3 → ${fmt(tot3,4)}，K = 1 → ${fmt(tot1,4)} · Ā = ${fmt(Ab,4)}`;
+  announce('c2b',`第 ${c2b.sel+1} 格，K=3 損失 ${fmt(c2KL(r,3),4)}，K=1 損失 ${fmt(c2KL(r,1),4)}`)}
+function initC2b(){c2bG=buildGrid($('#c2b-grid'),C2_TOKS,[{label:'logit · 44',h:60,mid:30,multi:1},{label:'token · 22',h:60,mid:30,multi:1},{label:'序列 · 1',h:72,mid:30},{label:'GRPO · 1',h:72,mid:30}],{label:'四種粒度的優勢，選一格看詳細數值'});
+  initListbox(c2bG.box,11,i=>{c2b.sel=i;renderC2b()},8)}
+
+/* ---------- C3 ---------- */
+const C3_PI0=[.85,.14,.005,.003,.001,.001],C3_Q=[.06,.92,.01,.008,.0015,.0005],C3_TOK=[' +','))',' -',')',' *',','];
+const c3={div:'rkl',eta:1,z:null,step:0,hist:[],K:3,running:false};let c3raf=0;
+/* 〔本頁推導〕 JS branch: dJS/dpi_j = ½ log(pi_j/m_j); reverse KL: g_j = log(pi_j/q_j); both mapped to logits by pi_k(g_k − E_pi g). */
+function divLossGrad(z,q,div){const l=lse(z),lpi=z.map(v=>v-l),pi=lpi.map(Math.exp);let L=0;
+  if(div==='fkl'){for(let i=0;i<q.length;i++)L+=q[i]*(Math.log(q[i])-lpi[i]);return{L,pi,grad:pi.map((p,i)=>p-q[i])}}
+  let g;if(div==='rkl'){g=lpi.map((v,i)=>v-Math.log(q[i]));for(let i=0;i<q.length;i++)if(pi[i]>1e-300)L+=pi[i]*g[i]}
+  else{const m=pi.map((p,i)=>(p+q[i])/2);g=pi.map((p,i)=>.5*(lpi[i]-Math.log(m[i])));for(let i=0;i<q.length;i++)L+=(pi[i]>1e-300?.5*pi[i]*(lpi[i]-Math.log(m[i])):0)+.5*q[i]*Math.log(q[i]/m[i])}
+  const eg=pi.reduce((s,p,i)=>s+p*g[i],0);return{L,pi,g,eg,grad:pi.map((p,i)=>p*(g[i]-eg))}}
+function topKApprox(pi,q,K){const idx=pi.map((_,i)=>i).sort((a,b)=>pi[b]-pi[a]||a-b);let L=0,tp=0,tq=0;
+  idx.forEach((i,r)=>{if(r<K){if(pi[i]>1e-300)L+=pi[i]*Math.log(pi[i]/q[i])}else{tp+=pi[i];tq+=q[i]}});if(tp>1e-300)L+=tp*Math.log(tp/tq);return L}
+function resetC3(){c3.z=C3_PI0.map(Math.log);c3.step=0;c3.hist=[divLossGrad(c3.z,C3_Q,c3.div).L]}
+function stepC3(n){for(let i=0;i<n&&c3.step<200;i++){const r=divLossGrad(c3.z,C3_Q,c3.div);c3.z=c3.z.map((v,j)=>v-c3.eta*r.grad[j]);c3.step++;c3.hist.push(divLossGrad(c3.z,C3_Q,c3.div).L)}}
+function renderC3(quiet){const r=divLossGrad(c3.z,C3_Q,c3.div),pi=r.pi,A=pi.map((p,i)=>Math.log(C3_Q[i]/p)),EA=pi.reduce((s,p,i)=>s+p*A[i],0),ng=r.grad.map(v=>-v);
+  const exact=kl(pi,C3_Q),apx=topKApprox(pi,C3_Q,c3.K);
+  drawC3Bars(pi,A,EA,ng);drawC3Loss();
+  $('#c3-Ko').textContent=c3.K;
+  const nm={rkl:'reverse KL',fkl:'forward KL',js:'JS'}[c3.div];
+  $('#c3-ro').innerHTML=`步數 <b>${c3.step}</b> · ${nm} L = <b class="acc">${fmt(r.L,4)}</b> · π(<code>))</code>) = <b>${fmt(pi[1],4)}</b><br>reverse KL 精確值 = ${fmt(exact,5)}<br>top-K 近似（K = ${c3.K}）= ${fmt(apx,5)} · 差值 = ${fmt(exact-apx,5)}`;
+  const v=a=>'['+a.map(x=>sgn(x,4)).join(', ')+']';
+  let f;if(c3.div==='rkl'){const pa=pi.map((p,i)=>p*(A[i]-EA));f=`−∇<sub>z</sub>L = π(A − E<sub>π</sub>[A])（Prop. 2.1 的單一位置版本〔本頁推導〕）<br>−∇<sub>z</sub>L = ${v(ng)}<br>π(A − E<sub>π</sub>[A]) = ${v(pa)}，E<sub>π</sub>[A] = ${fmt(EA,4)} = −L`}
+  else if(c3.div==='fkl')f=`−∇<sub>z</sub>L = q − π = ${v(ng)}`;
+  else f=`−∇<sub>z</sub>L = −π(g − E<sub>π</sub>[g])，g = ½ log(π/m)〔本頁推導；論文沒有給 JS 的優勢形式〕<br>= ${v(ng)}`;
+  $('#c3-formula').innerHTML=f;
+  if(!quiet)announce('c3',`第 ${c3.step} 步，損失 ${fmt(r.L,4)}，π 在 )) 上為 ${fmt(pi[1],4)}`)}
+function drawC3Bars(pi,A,EA,ng){const svg=$('#c3-bars'),W=widthOf($('#c3-barbox'),300,580),H=430;
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const L=8,gw=(W-2*L)/6,bw=Math.min(22,gw*.32),cx=j=>L+gw*(j+.5),showV=W>=420;
+  // band 1: probabilities
+  tx(svg,L,14,'π（實心）與 q（斜線）',{class:'al'});const b1=122,t1=34;el('line',{x1:L,x2:W-L,y1:b1,y2:b1,class:'axl'},svg);
+  for(let j=0;j<6;j++){[[pi[j],'f-stu',-bw-1],[C3_Q[j],'f-tea',1]].forEach(([v,cls,dx])=>{const h=v*(b1-t1);el('rect',{x:cx(j)+dx,y:b1-h,width:bw,height:Math.max(h,.5),class:cls},svg);if(showV&&v>=.02)tx(svg,cx(j)+dx+bw/2,b1-h-4,fmt(v,2).replace(/^0/,''),{class:'vl','text-anchor':'middle'})});
+    tx(svg,cx(j),b1+17,tokTxt(C3_TOK[j]),{class:'mono','text-anchor':'middle'})}
+  // band 2: advantages
+  const sym=(top,bot,vals,mx,lab,fmtd,ref)=>{const mid=(top+bot)/2,hh=(bot-top)/2;tx(svg,L,top-16,lab,{class:'al'});el('line',{x1:L,x2:W-L,y1:mid,y2:mid,class:'zero'},svg);
+    vals.forEach((v,j)=>{const h=Math.min(1,Math.abs(v)/mx)*hh;el('rect',{x:cx(j)-bw/2,y:v>=0?mid-h:mid,width:bw,height:Math.max(h,Math.abs(v)>1e-6?.8:0),class:v>=0?'f-pos':'f-neg'},svg);
+      tx(svg,cx(j),v>=0?Math.max(top-2,mid-h-4):Math.min(bot+10,mid+h+12),sgn(v,fmtd),{class:'vl','text-anchor':'middle'})});
+    if(ref!==undefined){const y=mid-Math.max(-1,Math.min(1,ref/mx))*hh;el('line',{x1:L,x2:W-L,y1:y,y2:y,class:'ref'},svg);tx(svg,L+gw*3,y-4,'E_π[A] = '+fmt(ref,3),{class:'vl','text-anchor':'middle'})}};
+  sym(178,270,A,3,'A = log(q/π)；虛線為 E_π[A]',2,EA);
+  const mx=Math.max(1e-4,...ng.map(Math.abs))*1.15;
+  sym(334,416,ng,mx,'−∇zL：這一步 logits 的移動方向（尺度隨步數調整）',4)}
+function drawC3Loss(){const svg=$('#c3-loss'),W=widthOf($('#c3-lossbox'),280,440),H=220;
+  const f=frame(svg,{W,H,m:{l:46,r:12,t:22,b:38},x:[0,200],y:[1e-4,3],ylog:true,xt:[0,50,100,150,200],yt:[[1e-4,'1e-4'],[1e-3,'1e-3'],[1e-2,'0.01'],[.1,'0.1'],[1,'1']],xl:'步數',yl:'損失 L（對數軸）'});
+  const pts=c3.hist.map((L,i)=>[f.X(i),f.Y(Math.min(3,Math.max(L,1e-4)))]);el('path',{d:lp(pts),class:'tot'},f.g);
+  const last=pts[pts.length-1];el('circle',{cx:last[0],cy:last[1],r:5,class:'acc-dot'},f.g)}
+function runC3(){const btn=$('#c3-run');if(c3.running){c3.running=false;cancelAnimationFrame(c3raf);btn.textContent='執行到 200 步';renderC3();return}
+  if(c3.step>=200)return;if(RM){stepC3(200);renderC3();return}
+  c3.running=true;btn.textContent='停止';const tick=()=>{if(!c3.running)return;stepC3(4);renderC3(true);if(c3.step<200)c3raf=requestAnimationFrame(tick);else{c3.running=false;btn.textContent='執行到 200 步';renderC3()}};tick()}
+function stopC3(){c3.running=false;cancelAnimationFrame(c3raf);$('#c3-run').textContent='執行到 200 步'}
+function initC3(){resetC3();
+  segInit('c3-div',v=>{stopC3();c3.div=v;resetC3();renderC3()});
+  segInit('c3-eta',v=>{stopC3();c3.eta=+v;resetC3();renderC3()});
+  $('#c3-s1').addEventListener('click',()=>{stopC3();stepC3(1);renderC3()});
+  $('#c3-s10').addEventListener('click',()=>{stopC3();stepC3(10);renderC3()});
+  $('#c3-run').addEventListener('click',runC3);
+  $('#c3-reset').addEventListener('click',()=>{stopC3();resetC3();renderC3()});
+  $('#c3-K').addEventListener('input',e=>{c3.K=+e.target.value;renderC3()});renderC3(true)}
+
+/* ---------- C4 ---------- */
+const C4_QTH=[.70,.25,.02,.02,.005,.005];
+const c4={alpha:0.01,n:80};
+function trTeacher(qref,qth,a){return softmax(qref.map((v,i)=>(1-a)*Math.log(v)+a*Math.log(qth[i])))}
+function renderC4(){const a=c4.alpha,qs=trTeacher(C3_Q,C4_QTH,a),k1=kl(qs,C3_Q),k2=kl(qs,C4_QTH),w=Math.pow(1-a,c4.n);
+  $('#c4-ao').textContent=a.toFixed(2);$('#c4-no').textContent=c4.n;$('#c4-a').value=a;
+  $$('#c4-chips .chip').forEach(c=>c.setAttribute('aria-pressed',String(Math.abs(+c.dataset.v-a)<1e-9)));
+  $('#c4-ro').innerHTML=`α = <b>${a.toFixed(2)}</b> · q*( +) = <b>${fmt(qs[0],4)}</b> · q*(<code>))</code>) = ${fmt(qs[1],4)}<br>KL(q*‖q_ref) = <b class="acc">${fmt(k1,5)}</b> · KL(q*‖q_θ) = ${fmt(k2,5)}<br>EMA：n = ${c4.n} 次更新後初始參數權重 (1 − α)ⁿ = <b>${fmt(w,4)}</b> · 信任域：初始教師權重 1 − α = <b>${fmt(1-a,2)}</b>`;
+  drawC4(qs);announce('c4',`α ${a.toFixed(2)}，KL(q*‖q_ref) ${fmt(k1,5)}，EMA 權重 ${fmt(w,4)}`)}
+function drawC4(qs){const svg=$('#c4-bars'),W=widthOf($('#c4-barbox'),300,520),H=190;
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const L=8,gw=(W-2*L)/6,bw=Math.min(18,gw*.26),base=150,top=24,cx=j=>L+gw*(j+.5);tx(svg,L,14,'機率（0–1）',{class:'al'});el('line',{x1:L,x2:W-L,y1:base,y2:base,class:'axl'},svg);
+  for(let j=0;j<6;j++){[[C3_Q[j],'f-tea',-1.5*bw-2],[qs[j],'f-teas',-bw/2],[C4_QTH[j],'f-teao',bw/2+2]].forEach(([v,cls,dx])=>{const h=v*(base-top);el('rect',{x:cx(j)+dx,y:base-h,width:bw,height:Math.max(h,.5),class:cls},svg)});
+    tx(svg,cx(j),base+18,tokTxt(C3_TOK[j]),{class:'mono','text-anchor':'middle'})}
+  const a=c4.alpha;
+  const W2=widthOf($('#c4-emabox'),260,420),H2=190;
+  let f=frame($('#c4-ema'),{W:W2,H:H2,m:{l:40,r:12,t:24,b:38},x:[0,200],y:[0,1],xt:[0,50,100,150,200],yt:[0,.5,1],xl:'EMA 更新次數 n',yl:'EMA：初始參數在 θ′ 中的權重'});
+  const pts=[];for(let n=0;n<=200;n+=2)pts.push([f.X(n),f.Y(Math.pow(1-a,n))]);el('path',{d:lp(pts),class:'ink'},f.g);el('circle',{cx:f.X(c4.n),cy:f.Y(Math.pow(1-a,c4.n)),r:5,class:'acc-dot'},f.g);
+  const W3=widthOf($('#c4-trbox'),260,420);
+  f=frame($('#c4-tr'),{W:W3,H:H2,m:{l:40,r:12,t:24,b:38},x:[0,1],y:[0,1],xt:[0,.25,.5,.75,1],yt:[0,.5,1],xl:'α',yl:'信任域：log 空間內插中初始教師的權重'});
+  el('path',{d:lp([[f.X(0),f.Y(1)],[f.X(1),f.Y(0)]]),class:'ink'},f.g);el('circle',{cx:f.X(a),cy:f.Y(1-a),r:5,class:'acc-dot'},f.g)}
+function initC4(){$('#c4-a').addEventListener('input',e=>{c4.alpha=+e.target.value;renderC4()});
+  $('#c4-n').addEventListener('input',e=>{c4.n=+e.target.value;renderC4()});
+  $$('#c4-chips .chip').forEach(c=>c.addEventListener('click',()=>{c4.alpha=+c.dataset.v;renderC4()}));renderC4()}
+
+/* ---------- C5 ---------- */
+const c5={mode:'p',p:1e-3,c:1,xlog:false};const N5=2944,B5=2750;
+function disc(p,k){return -Math.expm1(k*Math.log1p(-p))}
+function kFor(p,tau){if(!(p>0))return Infinity;return Math.ceil(Math.log1p(-tau)/Math.log1p(-p))}
+function tmean(p,B){B=B||B5;return -Math.expm1(B*Math.log1p(-p))/p}
+function passkCurve(n,c,kmax){kmax=kmax||B5;const out=new Float64Array(kmax+1);let prod=1;
+  for(let k=1;k<=kmax;k++){const num=n-c-(k-1),den=n-(k-1);prod=num<=0?0:prod*num/den;out[k]=1-prod}return out}
+function c5Curve(){if(c5.mode==='c')return passkCurve(N5,c5.c,B5);const out=new Float64Array(B5+1);for(let k=0;k<=B5;k++)out[k]=disc(c5.p,k);return out}
+function renderC5(){const cur=c5Curve(),firstK=t=>{for(let k=1;k<=B5;k++)if(cur[k]>=t)return k;return Infinity};
+  let k22,k50,tm;if(c5.mode==='p'){k22=kFor(c5.p,.22);k50=kFor(c5.p,.5);tm=tmean(c5.p)}else{k22=firstK(.22);k50=firstK(.5);tm=0;for(let j=0;j<B5;j++)tm+=1-cur[j]}
+  const kf=k=>k>B5?'&gt; 2750':String(k);
+  $('#c5-po').textContent=c5.p.toExponential(2);$('#c5-co').textContent=c5.c;
+  $('#c5-pctl').classList.toggle('hide',c5.mode!=='p');$('#c5-cctl').classList.toggle('hide',c5.mode!=='c');
+  $$('#c5-pctl .chip').forEach(b=>b.setAttribute('aria-pressed',String(Math.abs(+b.dataset.p-c5.p)<1e-12)));
+  $('#c5-ro').innerHTML=(c5.mode==='p'?`p = <b>${c5.p.toExponential(3)}</b>`:`c = <b>${c5.c}</b> / ${N5}`)+`<br>pass@64 = <b class="acc">${fmt(cur[64],4)}</b><br>discovery@2750 = <b>${fmt(cur[B5],4)}</b><br>k(22%) = <b>${kf(k22)}</b> · k(50%) = <b>${kf(k50)}</b><br>截斷平均首次成功 = <b>${fmt(tm,1)}</b>`;
+  drawC5(cur);announce('c5',`pass@64 ${fmt(cur[64],4)}，discovery@2750 ${fmt(cur[B5],4)}，達到 22% 需要 ${k22>B5?'超過 2750':k22} 次`)}
+function drawC5(cur){const svg=$('#c5-fig'),W=widthOf($('#c5-figbox'),300,680),H=280;
+  const xt=c5.xlog?[[1,'1'],[10,'10'],[64,'64'],[100,'100'],[1000,'1000'],[2750,'2750']]:[0,500,1000,1500,2000,2500];
+  const f=frame(svg,{W,H,m:{l:44,r:14,t:24,b:40},x:c5.xlog?[1,B5]:[0,B5],xlog:c5.xlog,y:[0,1],xt,yt:[0,.25,.5,.75,1],xl:'嘗試次數 k',yl:'discovery@k'});
+  [.22,.5].forEach(t=>{el('line',{x1:f.x0,x2:f.x1,y1:f.Y(t),y2:f.Y(t),class:'ref'},f.g);tx(f.g,f.x1-4,f.Y(t)-5,Math.round(t*100)+'%',{class:'vl','text-anchor':'end'})});
+  el('line',{x1:f.X(64),x2:f.X(64),y1:f.y0,y2:f.y1,class:'cur'},f.g);if(!c5.xlog)tx(f.g,f.X(64)+4,f.y1+10,'k = 64',{class:'vl'});
+  const pts=[];if(c5.xlog){for(let i=0;i<=300;i++){const k=Math.min(B5,Math.round(Math.pow(B5,i/300)));pts.push([f.X(k),f.Y(cur[k])])}}else{for(let k=0;k<=B5;k+=5)pts.push([f.X(k),f.Y(cur[k])])}
+  el('path',{d:lp(pts),class:'acc'},f.g)}
+function initC5(){segInit('c5-mode',v=>{c5.mode=v;renderC5()});segInit('c5-x',v=>{c5.xlog=v==='log';renderC5()});
+  $('#c5-lp').addEventListener('input',e=>{c5.p=Math.pow(10,+e.target.value);renderC5()});
+  $$('#c5-pctl .chip').forEach(b=>b.addEventListener('click',()=>{c5.p=+b.dataset.p;$('#c5-lp').value=Math.log10(c5.p);renderC5()}));
+  $('#c5-c').addEventListener('input',e=>{c5.c=+e.target.value;renderC5()});renderC5()}
+
+/* ---------- static figures: Fig. 2 and Fig. 12 ---------- */
+function drawLoop(g,ox,rich){const T=(x,y,s,c,a)=>tx(g,ox+x,y,s,Object.assign({class:c},a||{}));
+  T(170,20,rich?'RLRF：豐富回饋':'RLVR：可驗證獎勵','ttl',{'text-anchor':'middle'});
+  el('rect',{x:ox+30,y:38,width:280,height:40,rx:10,class:'box'},g);T(170,63,'模型（agent）','lab',{'text-anchor':'middle'});
+  el('rect',{x:ox+30,y:178,width:280,height:40,rx:10,class:'box'},g);T(170,203,'環境','lab',{'text-anchor':'middle'});
+  arrow(g,ox+285,80,ox+285,176,'ink');T(292,132,'回答 y','lab');
+  if(rich){arrow(g,ox+52,176,ox+52,80,'thick');T(60,112,'回饋 f','lab');
+    el('rect',{x:ox+112,y:100,width:146,height:52,rx:8,class:'box-m'},g);T(122,121,'Please answer','mono');T(122,140,'in Newton-seconds.','mono')}
+  else{arrow(g,ox+52,176,ox+52,80,'thin');T(60,132,'獎勵 r = −1.0','lab')}}
+function initStatic(){const sz=(s,w,h)=>{s.setAttribute('viewBox',`0 0 ${w} ${h}`);s.setAttribute('width',w);s.setAttribute('height',h)};
+  const wide=$('#f2-wide');sz(wide,720,240);drawLoop(el('g',null,wide),10,false);drawLoop(el('g',null,wide),370,true);
+  const a=$('#f2-a'),b=$('#f2-b');sz(a,340,240);sz(b,340,240);drawLoop(el('g',null,a),0,false);drawLoop(el('g',null,b),0,true);
+  const s=$('#f12-svg');sz(s,720,210);const g=el('g',null,s),nw=76,gap=12,x0=6,colX=c=>x0+c*(nw+gap),rowY=r=>8+r*72,nh=46;
+  const rows=[[['問題 x'],['θ₀','th'],['回答 y₁'],['回饋 f₁']],[['問題 x'],['θ₀','th'],['SDPO','sd','(y₁, f₁)'],['θ₁','th'],['回答 y₂'],['回饋 f₂']],[['問題 x'],['θ₀','th'],['SDPO','sd','(y₁, f₁)'],['θ₁','th'],['SDPO','sd','(y₂, f₂)'],['θ₂','th'],['回答 y₃'],['回饋 f₃']]];
+  rows.forEach((row,r)=>row.forEach(([t,k,t2],c)=>{const x=colX(c),y=rowY(r);el('rect',{x,y,width:nw,height:nh,rx:8,class:k==='sd'?'box-sd':k==='th'?'box-th':'box'},g);
+    if(t2){tx(g,x+nw/2,y+20,t,{class:'lab','text-anchor':'middle'});tx(g,x+nw/2,y+37,t2,{class:'labm','text-anchor':'middle'})}else tx(g,x+nw/2,y+28,t,{class:'lab','text-anchor':'middle'});
+    if(c)arrow(g,x-gap+1,y+nh/2,x-1,y+nh/2,'thin')}));
+  [[0,3,1,2],[1,5,2,4]].forEach(([r,c,r2,c2])=>arrow(g,colX(c)+nw/2,rowY(r)+nh,colX(c2)+nw/2+10,rowY(r2)-1,'thin',true))}
+
+/* ---------- timeline ---------- */
+const TL_GROUP={'1707.06347':['rl','rlvr-grpo-credit-assignment'],'2402.03300':['rl','rlvr-grpo-credit-assignment'],'2501.12948':['rl','rlvr-grpo-credit-assignment'],'2305.20050':['rl','rlvr-grpo-credit-assignment'],
+ '1503.02531':['kd','knowledge-distillation-foundations'],'1606.07947':['kd','knowledge-distillation-foundations'],
+ '1011.0686':['opd','on-policy-distillation-imitation'],'2306.13649':['opd','on-policy-distillation-imitation'],
+ '2209.15189':['sd','context-distillation-self-distillation'],'1705.08439':['sd','context-distillation-self-distillation'],'2006.07733':['sd','context-distillation-self-distillation'],
+ '2504.16084':['ttt','test-time-training-for-rl'],'2601.20802':['me',null]};
+const TL_NAME={rl:'策略梯度與 RLVR',kd:'蒸餾',opd:'線上蒸餾與模仿學習',sd:'情境蒸餾／自我蒸餾',ttt:'測試時訓練',me:'本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data)||!data.length)throw 0}catch(e){$('.tl-ctl').classList.add('hide');$('#rail').classList.add('hide');return}
+  data=data.map((e,i)=>({e,i})).sort((a,b)=>(+a.e.year||0)-(+b.e.year||0)||a.i-b.i).map(o=>o.e);
+  const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const slug=g[1];const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${slug?`<a href="${slug}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+
+/* ---------- toc, theme, appbar ---------- */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));
+  addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+/* ---------- self test (?test) ---------- */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t)=>Math.abs(a-b)<=(t??1e-4)+1e-9;
+  // C1
+  const A1=grpoAdv([1,0,0,1,0,0,0,0]);ok(near(A1[0],.75)&&near(A1[1],-.25)&&near(A1.reduce((a,b)=>a+b,0),0),'C1 adv');
+  [[.01,.9227],[.05,.6634],[.1,.4305],[.3,.0577],[.5,.0078],[.9,.4305]].forEach(([p,v])=>ok(near(collapseProb(p,8),v),'C1 P8('+p+')'));
+  ok(near(collapseProb(.1,4),.6562),'C1 P4');ok(near(collapseProb(.1,16),.1853),'C1 P16');ok(near(32*collapseProb(.1,8),13.8,.05),'C1 32P');
+  ok(collapseProb(0,8)===1&&collapseProb(1,8)===1,'C1 endpoints');
+  // C2
+  const A2=[0,0,-.010,.025,-.029,0,-.022,-.032,-2.651,-.886,-.021],K3=[0,0,.0031,.0019,.0011,0,.0116,.0150,1.9827,.7791,.0052],K1=[0,0,.0019,.0013,.0009,0,.0024,.0081,1.9780,.7694,.0049];
+  C2_ROWS.forEach((r,i)=>{ok(near(c2Adv(r,true)[0],A2[i],.001),'C2 A t='+(i+1));ok(near(c2KL(r,3),K3[i],.001),'C2 KL3 t='+(i+1));ok(near(c2KL(r,1),K1[i],.001),'C2 KL1 t='+(i+1));
+    ok(tail(r.pi)>=0&&tail(r.q)>=0,'C2 tail≥0 t='+(i+1));ok(c2Adv(r,false).every(v=>v===null||v===0),'C2 no-fb zero t='+(i+1))});
+  const r9=c2Adv(C2_ROWS[8],true);[-2.651,1.883,.693,.693].forEach((v,j)=>ok(near(r9[j],v,.001),'C2 row9 logit '+j));
+  ok(near(seqMean(),-.3296),'C2 seq mean');ok(near(-7/8,-.875)&&near(-3/8,-.375),'C2 GRPO c');
+  // C3
+  const z0=C3_PI0.map(Math.log),g0=divLossGrad(z0,C3_Q,'rkl');ok(near(g0.L,1.9836),'C3 rkl L0');
+  [-.5672,.5413,.0134,.0089,.0024,.0013].forEach((v,j)=>ok(near(-g0.grad[j],v),'C3 -grad '+j));
+  ok(near(divLossGrad(z0,C3_Q,'fkl').L,1.5881),'C3 fkl L0');ok(near(divLossGrad(z0,C3_Q,'js').L,.3664),'C3 js L0');
+  const run=(div,eta,n)=>{let z=z0.slice();for(let i=0;i<n;i++){const r=divLossGrad(z,C3_Q,div);z=z.map((v,j)=>v-eta*r.grad[j])}const r=divLossGrad(z,C3_Q,div);return{L:r.L,p:r.pi[1]}};
+  [['rkl',1,1,1.2332],['rkl',1,10,.0074,.9132],['rkl',1,50,.0039],['rkl',1,200,.0006,.9214],['rkl',.5,1,1.6374],['rkl',.5,10,.0271,.8720],['rkl',2,1,.4727],['rkl',2,10,.0051,.9276],['fkl',1,1,.5629],['fkl',1,10,.0124,.8996],['js',1,1,.3371],['js',1,10,.0668,.6459],['js',1,50,.0023],['js',1,200,.0010,.9257]]
+    .forEach(([d,e,n,L,p])=>{const r=run(d,e,n);ok(near(r.L,L)&&(p===undefined||near(r.p,p)),`C3 ${d} η=${e} @${n}: L=${r.L.toFixed(5)} p=${r.p.toFixed(4)}`)});
+  [1.97797,1.98274,1.98274,1.98327,1.98356,1.98356].forEach((v,i)=>ok(near(topKApprox(C3_PI0,C3_Q,i+1),v,1e-5),'C3 topK K='+(i+1)));ok(near(kl(C3_PI0,C3_Q),1.98356,1e-5),'C3 exact');
+  // C4
+  [[0,.06,0,1.03406],[.01,.0621,.00004,1.02526],[.05,.0714,.00121,.98822],[.1,.0847,.00534,.93771],[.25,.1386,.04468,.75853],[.5,.2864,.26958,.39960],[.75,.4956,.77575,.09989],[1,.7,1.44371,0]]
+    .forEach(([a,p,k1,k2])=>{const q=trTeacher(C3_Q,C4_QTH,a);ok(near(q[0],p)&&near(kl(q,C3_Q),k1,1e-5)&&near(kl(q,C4_QTH),k2,1e-5),'C4 α='+a)});
+  [[.01,80,.4475],[.01,200,.1340],[.05,80,.0165],[.05,10,.5987]].forEach(([a,n,v])=>ok(near(Math.pow(1-a,n),v),`C4 EMA ${a},${n}`));
+  // C5
+  [[1e-5,.0006,.0271,Infinity,69315,2712.5],[1e-4,.0064,.2404,2485,6932,2404.4],[4.758119e-4,.03,.7299,523,1457,1533.9],[1e-3,.062,.9362,249,693,936.2],[1.077199e-2,.5,1,23,64,92.8]]
+    .forEach(([p,a,b,k22,k50,t])=>{const kk=kFor(p,.22);ok(near(disc(p,64),a)&&near(disc(p,2750),b)&&(k22===Infinity?kk>2750:kk===k22)&&kFor(p,.5)===k50&&near(tmean(p),t,.1),'C5 p='+p)});
+  [[0,0,0],[1,.0217,.9341],[2,.0430,.9957],[5,.1041,1],[32,.5069,1]].forEach(([c,a,b])=>{const cv=passkCurve(2944,c,2750);ok(near(cv[64],a)&&near(cv[2750],b),'C5 c='+c)});
+  ok(kFor(0,.22)===Infinity,'C5 kFor(0)');ok(near(1-Math.pow(.97,1/64),4.758119e-4,1e-9),'C5 threshold');
+  ok(!!document.querySelector('.katex'),'KaTeX rendered');
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ---------- boot ---------- */
+initTheme();initToc();initStatic();initHero();initC1();initC2();initC2b();initC3();initC4();initC5();renderTimeline();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{drawC1();drawC2Det();renderC3(true);renderC4();renderC5()})});
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false})}
+let tested=false;const maybeTest=()=>{if(!tested&&/[?&]test\b/.test(location.search)){tested=true;selfTest()}};
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath();maybeTest()});
+})();
+</script>
+</body>
+</html>
