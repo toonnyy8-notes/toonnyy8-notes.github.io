@@ -1,5 +1,5 @@
-import re,json,os
-os.chdir(os.path.dirname(os.path.abspath(__file__)))  # run from anywhere; database files go to the repo root,csv,collections
+import re,json,os,csv,collections
+os.chdir(os.path.dirname(os.path.abspath(__file__)))  # run from anywhere; database files go to the repo root
 P=json.load(open('papers_raw.json'))
 TAGS={
 'Diffusion':r'diffusion|denois|score[- ]based|score matching|\bDDPM|\bDDIM',
