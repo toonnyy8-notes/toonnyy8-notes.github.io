@@ -1,0 +1,70 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>從 One-Minute Video 到 LaCT：大 chunk Test-Time Training</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600&family=JetBrains+Mono&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<style>
+:root{--bg:#faf9f5;--surface:#f4f2ec;--ink:#1f1e1c;--muted:#6b6862;--line:#e4e1da;--accent:#c96442;--accent-soft:#f5dfd3}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#191917;--surface:#232320;--ink:#ecebe7;--muted:#a19e96;--line:#34332f;--accent:#e08a6b;--accent-soft:#3a2a23}}
+:root[data-theme=dark]{--bg:#191917;--surface:#232320;--ink:#ecebe7;--muted:#a19e96;--line:#34332f;--accent:#e08a6b;--accent-soft:#3a2a23}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.8 Inter,"Noto Sans TC",system-ui,sans-serif}
+.top{position:sticky;top:0;z-index:5;background:color-mix(in oklab,var(--bg) 88%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.top div{max-width:760px;margin:0 auto;padding:12px 16px;display:flex;gap:16px;font-size:14px}
+.top a{color:var(--muted);text-decoration:none}.top a:hover{color:var(--accent)}
+.progress{height:2px;background:var(--accent);transform-origin:0 50%;transform:scaleX(0)}
+article{max-width:760px;margin:0 auto;padding:40px 16px 40px}
+.kicker{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+h1{font-family:"Noto Serif TC",serif;font-weight:600;font-size:clamp(28px,4.2vw,40px);line-height:1.3;margin:10px 0 28px}
+h2{font-family:"Noto Serif TC",serif;font-weight:600;font-size:24px;margin:56px 0 16px;padding-top:8px;border-top:1px solid var(--line)}
+h3{font-size:19px;font-weight:600;margin:36px 0 10px}
+p,li{color:var(--ink)}a{color:var(--accent);text-underline-offset:3px}
+strong{font-weight:600}
+ul,ol{padding-left:1.3em}li{margin:6px 0}li::marker{color:var(--accent)}
+blockquote{margin:20px 0;padding:12px 18px;border-left:3px solid var(--accent);background:var(--surface);border-radius:0 12px 12px 0;color:var(--muted)}
+code{font-family:"JetBrains Mono",monospace;font-size:.86em;background:var(--surface);padding:2px 6px;border-radius:6px}
+pre{background:var(--surface);padding:16px;border-radius:12px;overflow-x:auto}pre code{background:none;padding:0}
+.table{overflow-x:auto;margin:20px 0;border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.6}
+th,td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:var(--surface);font-weight:600}tr:last-child td{border-bottom:0}
+.related{margin-top:64px;padding:24px;border-radius:20px;background:var(--surface)}
+.related h2{border:0;margin:0 0 12px;padding:0;font-size:20px}
+.related a{display:block;padding:8px 0;border-top:1px solid var(--line);text-decoration:none;color:var(--ink);font-size:15px}
+.related a:hover{color:var(--accent)}
+</style></head><body>
+<div class="top"><div><a href="../index.html">← Paper Master</a><a href="index.html">所有教學</a></div><div class="progress" id="pg"></div></div>
+<article><div class="kicker">研究筆記 · Architectures &amp; Efficiency</div><div id="doc"></div><section class="related"><h2>相關筆記</h2><a href="ttt-sequence-modeling-overview.html">Test-Time Training 作為序列建模架構：主系列演進總覽</a><a href="ttt-linear-mlp.html">原版 TTT：TTT-Linear / TTT-MLP（隱藏狀態是一個在測試時被訓練的模型）</a><a href="ttt-theory-and-applications.html">TTT 的理論還原與應用擴散（視覺、3D/4D、長上下文 LLM）</a><a href="test-time-training-naming.html">「Test-Time Training」的命名混淆：序列建模層 vs 分布偏移適應 vs 測試時 RL（TEMPO）</a></section><section class="related"><h2>資料庫中的相關論文</h2><a href="../index.html#paper-244">Test-Time Training Done Right</a></section></article>
+<script type="text/markdown" id="md"># 從 One-Minute Video 到 LaCT：大 chunk Test-Time Training
+
+屬於 [TTT 序列建模總覽](ttt-sequence-modeling-overview.html)。前身見 [原版 TTT](ttt-linear-mlp.html)。
+
+## 影片轉折點：One-Minute Video Generation（arXiv:2504.05298，CVPR 2025）
+Karan Dalal、Yu Sun 等把 TTT 層加進預訓練的 Diffusion Transformer（5B），fine-tune 後能從文字 storyboard 生成一分鐘、多場景、時間一致的 Tom and Jerry 卡通。abstract 載明：「Compared to baselines such as Mamba~2, Gated DeltaNet, and sliding-window attention layers, TTT layers generate much more coherent videos...leading by 34 Elo points in a human evaluation of 100 videos per method」。這是 TTT 主系列首次大規模進入生成式長序列，也暴露了「小 chunk 更新在 N 維資料（影片）上既慢又不自然」的問題，直接動機了 LaCT。限制：5B 基模限制、有 artifact。code：github.com/test-time-training/ttt-video-dit。
+
+## LaCT / Test-Time Training Done Right（Zhang et al., arXiv:2505.23884，ICLR 2026）
+**設計理念。** Zhang et al.（MIT + Adobe Research）觀察到：原版 TTT 的算術強度（FLOPs/記憶體存取）被 chunk 大小 b 上限約束，小 b 使 TTT 層 memory-bound，FLOPs 利用率 <5%、難以超過 10%。LaCT 反其道而行，用 **2,048 到 1,000,000 token** 的超大 chunk 作為更新單位。
+
+**數學原理（與 mini-batch TTT 的差異）。** LaCT 的 chunk 更新對 chunk 內「所有」key-value pair 的損失和求梯度，再一次更新：
+- `g = ∇_W Σ_{i=1}^{b} η_i ℓ(f_W(k_i), v_i)`（對整個 chunk 的加總損失）
+- `W ← weight-update(W, g)`，接著對所有 query 套用同一份更新後權重 `o_i = f_W(q_i)`
+
+關鍵差異：原版每 token（或每 16/64 token）更新一次、chunk 內維持細粒度因果；LaCT 一個大 chunk 才更新一次、chunk 內 token 被當成「無序集合」。為補回 chunk 內局部依賴，LaCT 在同一層搭配 **sliding-window attention**（SWA 與 TTT 共用 QKV）。compute-to-memory 比例 `r = 2h²b/(2h²+4hb) ≤ min(h/2, b)`，清楚顯示算術強度被 chunk 大小 b 限制。
+- 內層損失用負點積：`ℓ = − f_W(k_i)^⊤ v_i`
+- 非線性 fast weight 用無 bias 的 SwiGLU-MLP：`f_W(x) = W_2[SiLU(W_1 x) ∘ (W_3 x)]`，三個矩陣 W₁,W₂,W₃
+- 更新可選 vanilla GD + L2 weight normalization，或 **Muon**（對矩陣梯度做 Newton–Schulz 正交化：若 g=USVᵀ 則 Muon(g)≈UVᵀ），再 L2 normalize；不使用顯式 weight decay
+
+**實驗結果。** GPU 利用率達「up to 70% on NVIDIA A100s」，僅需數十行純 PyTorch、無需自訂 kernel；非線性 state size「up to 40% of model parameters」（前人僅 0.1%–5%）。
+- Novel view synthesis：prefill 從 16.1s 降到 1.4s，最長 1M token context（128 張影像），在稀疏視角下勝過 3D Gaussian Splatting（GSO 256-res 上 full-attention baseline 達 37.9 dB @48 views，LaCT 自身約 37.6 dB）。
+- 語言建模：大 chunk 線性遞迴在語言上初期略遜 GLA/DeltaNet（語言無天然 chunk 結構），但搭配大非線性 state + Muon 後反超。
+- 影片：把 14B Wan 2.1 雙向影片 diffusion 改造成自回歸，每 8.8s 片段約 56,160 token。
+
+**優缺點。** 優勢：硬體效率、可放大 state 容量、可用先進 optimizer、跨模態（集合/N 維格點）、無需客製 kernel。缺陷：chunk 內失去因果順序（靠 SWA 補）、語言任務不一定贏純線性注意力、單一超大 chunk 在很長序列上易 catastrophic forgetting/overfitting（後續 FSM/LaCET 即針對此，見 [TTT 理論與應用](ttt-theory-and-applications.html)）。
+
+**注意。** LaCT 的「>70% on H100」未在正文逐字證實，正文明載的是「up to 70% on NVIDIA A100s」。
+
+**自習。** arXiv:2505.23884、project page tianyuanzhang.com/projects/ttt-done-right、code github.com/a1600012888/LaCT。</script>
+<script>
+const md = document.getElementById('md').textContent;
+document.getElementById('doc').innerHTML = marked.parse(md, {gfm: true});
+document.querySelectorAll('#doc table').forEach(t => { const w = document.createElement('div'); w.className = 'table'; t.replaceWith(w); w.appendChild(t); });
+document.querySelectorAll('#doc a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+const pg = document.getElementById('pg');
+addEventListener('scroll', () => { const h = document.documentElement; pg.style.transform = `scaleX(${h.scrollTop / (h.scrollHeight - h.clientHeight || 1)})`; }, {passive: true});
+</script></body></html>

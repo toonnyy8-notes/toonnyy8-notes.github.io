@@ -1,0 +1,65 @@
+---
+slug: latent-diffusion-rae-overview
+title: Latent Diffusion 兩大主線總覽：Diffusability 與 RAE（2025 下半年 – 2026.09）
+cluster: Diffusion & Generative Models
+kind: hub
+tags: [latent-diffusion, diffusability, rae, tokenizer, overview]
+sources: [latent-diffusion-rae.md]
+arxiv: ["2606.03578", "2510.11690", "2606.24888", "2501.01423", "2605.18324", "2601.16208", "2606.15553", "2604.28190", "2603.05630", "2503.03206", "2410.06940", "2502.09509", "2502.03444", "2502.14831", "2510.12586", "2511.20645", "2512.10794", "2512.19693", "2512.13687", "2602.02493", "2607.14088", "2608.13556", "2511.13720"]
+related: ["diffusability-systematic-study", "representation-autoencoder-rae", "pixel-space-diffusion", "optimization-dilemma-semantic-alignment", "diffusability-latent-regularizers", "velocity-irreducible-variance", "rae-followups", "rae-distillation-drifting", "generative-eval-metrics", "latent-diffusion-open-problems"]
+---
+# Latent Diffusion 兩大主線總覽：Diffusability 與 RAE（2025 下半年 – 2026.09）
+
+## TL;DR
+- **Diffusability（可擴散性）研究已從「各說各話的單一代理指標」收斂成「多面向共識」**：Kling 團隊的系統性研究（arXiv:2606.03578）在 86 個 tokenizer × 4 個 backbone 上證實，語意可分性（LNC）、空間結構（SRSS）與新提出的 Velocity Irreducible Variance（VIV，與 gFID 的 Pearson=0.87）三者最能穩定預測 gFID，且 SRSS+LNC 聯合迴歸 R²=0.91；rFID 與 gFID 的錯配（optimization dilemma）本質是「高維 latent 難學」而非「壓縮不足」。見 [系統性比較研究](diffusability-systematic-study.html)。
+- **RAE（Representation Autoencoder，arXiv:2510.11690）以凍結 DINOv2/SigLIP2 + 訓練 ViT decoder 取代 VAE**，其 DiT^DH 在 ImageNet 256 達 1.51 FID（無 guidance）、1.13（256² 與 512² 皆用 AutoGuidance），並主張「應成為 DiT 新預設」；但它高度依賴 noise schedule shift、width≥token-dim、wide DDT head 等修正，且 latent 各向異性極高導致 CFG 與蒸餾困難——這正是 diffusability 研究中「語意可分性↑但 spectral anisotropy 帶來張力」的具體案例。見 [RAE](representation-autoencoder-rae.html)。
+- **兩條路線的張力尚未解決，且出現 pixel-space 第三勢力反撲**：若 latent 價值主要來自語意先驗（RAE）而非壓縮，則 latent 層的必要性受質疑；但 DiffusionBench（arXiv:2606.24888）在統一框架重訓 JiT/PixNerd/PixelGen 等 pixel-space 方法時，於 80 epoch 未觀察到加速收斂，顯示「表徵先驗」目前仍需某種 encoder 承載。見 [pixel-space 第三路線](pixel-space-diffusion.html)。
+
+## Key Findings
+1. **錯配問題的本質**：VA-VAE/LightningDiT（CVPR 2025 Oral，arXiv:2501.01423）首次系統化命名「optimization dilemma」（見 [optimization dilemma 與語意/空間對齊](optimization-dilemma-semantic-alignment.html)）。
+2. **六到七種 diffusability 觀點**：語意可分性、空間結構、仿射等變性、頻譜平滑度、流形連續性、分布均勻性、速度歧義（velocity ambiguity）。這些多半各自搭配一個自我解釋的代理指標，泛化性存疑（見 [latent 正則化觀點](diffusability-latent-regularizers.html)、[VIV](velocity-irreducible-variance.html)）。
+3. **系統性裁決**：Zhong et al. 顯示 VIV、語意可分性、空間結構跨 backbone/tokenizer 家族最穩定；仿射等變性最弱（被剔除）；頻譜平滑度、分布均勻性、VIV 之間存在共線性，多數其他觀點近似正交。
+4. **RAE 路線快速分化**：原始 RAE → RAEv2（Improved Baselines，arXiv:2605.18324，RAE 與 REPA 互補、self-guidance 取代 AutoGuidance）→ Scale-RAE（T2I，arXiv:2601.16208，相對 FLUX VAE 4.0×/4.6× 收斂加速）→ 蒸餾（Drifting Models，arXiv:2606.15553）→ 影片（V-RAE、VideoRAE）。見 [RAE 後續改進](rae-followups.html)、[RAE 蒸餾](rae-distillation-drifting.html)。
+5. **評估指標本身在演進**：gFID 被批評為「Goodhart 化」，出現 FDr⁶（六個表徵空間平均，arXiv:2604.28190）、iFID（arXiv:2603.05630，Pearson/Spearman ≈0.85）、DiffusionBench（同時評 ImageNet 與 T2I）。見 [生成評估指標](generative-eval-metrics.html)。
+6. **理論支撐**：Wang & Pehlevan（NeurIPS 2025 Spotlight，arXiv:2503.03206）的頻譜偏置理論（τ∝λ⁻¹）為「高頻能量少 = 較好 diffusability」提供了機制解釋。
+
+## 時間軸
+- **2024.10** REPA（arXiv:2410.06940，ICLR 2025 Oral）：對齊 diffusion 中間層與 DINOv2 特徵，SiT 訓練加速 >17.5×（在 <400K steps 內即匹配 SiT-XL 訓練 7M steps 的無 CFG 表現），最終 FID 1.42（w/ CFG + guidance interval）。
+- **2025.01** VA-VAE / LightningDiT（arXiv:2501.01423，CVPR 2025 Oral）：命名 optimization dilemma；VF Loss；ImageNet-256 FID 1.35，64 epoch 達 2.11（>21× 加速，官方 repo 稱 21.8×）。
+- **2025.02** EQ-VAE（arXiv:2502.09509，ICML 2025）：仿射等變正則化；DiT-XL 加速 ×7、REPA ×4。
+- **2025.02** MAETok（arXiv:2502.03444，ICML 2025 Spotlight）：mask modeling AE；證明「不需要 variational」；ImageNet-512 gFID 1.69、76× 訓練加速、31× 推論吞吐，僅用 128 tokens。
+- **2025.02** Improving Diffusability of Autoencoders（arXiv:2502.14831，Snap Research，ICML 2025）：頻譜分析找出 latent 高頻過量；scale equivariance 正則化；FID −19%、FVD ≥−44%。
+- **2025.03** Wang & Pehlevan 頻譜偏置理論（arXiv:2503.03206，NeurIPS 2025 Spotlight）。
+- **2025.10** RAE（arXiv:2510.11690，ICLR 2026）與「There is No VAE」（arXiv:2510.12586）同月出現，兩條對立路線正面對決。
+- **2025.11–12** pixel-space 井噴：PixelDiT（arXiv:2511.20645）、iREPA（arXiv:2512.10794，ICLR 2026）、Prism Hypothesis（arXiv:2512.19693）、Scalable Visual Tokenizers（arXiv:2512.13687）。
+- **2026.01–03** Scale-RAE（arXiv:2601.16208）、PixelGen（arXiv:2602.02493）、iFID（arXiv:2603.05630）、RAEv2（arXiv:2605.18324）。
+- **2026.06** 系統性裁決與統一評測集中出現：Diffusing in the Right Space（arXiv:2606.03578）、DiffusionBench（arXiv:2606.24888）、RAE 蒸餾（arXiv:2606.15553）、Representation Fréchet Loss（arXiv:2604.28190）。
+- **2026.07–08** 影片延伸：VideoRAE（arXiv:2607.14088）、V-RAE（arXiv:2608.13556）。
+
+## 選 tokenizer / latent space 的建議（研究或產品）
+1. **ImageNet class-conditional、追求最快收斂**：直接採 RAE（DINOv2-B encoder + ViT decoder），並務必套用配方——width≥token-dim、dimension-dependent noise schedule shift、self-guidance（RAEv2 版）與末 k 層求和。基準：無 guidance 應接近 1.5 FID、80 epoch 內達 SOTA。
+2. **T2I / 大規模**：用 Scale-RAE（SigLIP-2）但**投資 decoder 的 targeted data**（文字、臉），並以 DiffusionBench 同時評 ImageNet 與 T2I，不要只看 ImageNet FID。
+3. **若無法負擔 RAE 的 decoder 訓練或高維成本**：退而用 VA-VAE / EQ-VAE / MAETok 對現有 VAE 做語意/等變/mask 正則化——EQ-VAE 只需 ≤20K fine-tune steps，CP 值最高。
+
+指標選擇建議見 [系統性比較研究](diffusability-systematic-study.html) 與 [生成評估指標](generative-eval-metrics.html)；蒸餾建議見 [RAE 蒸餾](rae-distillation-drifting.html)。
+
+**改變上述建議的門檻/benchmark：**
+- 若 pixel-space 方法在統一框架（NanoGen 類）下開始展現與 latent 相當的收斂加速，且 T2I 指標追平 → 重新評估是否還需 latent 層。
+- 若某 diffusability 指標在 T2I（非 class-conditional）上仍維持 >0.8 相關 → 可推廣為通用選型準則（目前僅在 ImageNet 驗證）。
+
+## 一般注意事項
+- **時間與可複現性**：大量引用 2026 年的 arXiv 預印本（如 2606.03578、2605.18324、2606.24888、2606.15553），多數尚未經完整同儕審查，數字可能於改版變動。RAE 的「新預設」宣稱為作者立場，尚待獨立大規模複現。
+- **DiffusionBench 的負相關**：ImageNet 與 T2I 排名 Pearson −0.377 至 −0.580 [Hugging Face](https://huggingface.co/papers/2606.24888) 是強烈警訊——大量「ImageNet 上」的加速/FID 數字未必遷移到 T2I，讀者切勿外推。
+- **部分 arXiv 編號與年份**：Scale-RAE 實際編號為 2601.16208（task 中以 project page URL 指涉）；Wang & Pehlevan 為 2503.03206，於 NeurIPS 2025 Spotlight 發表（task 標記 2026 為會議年份差異）。少數延伸工作（PV-VAE、KVAE、Both Semantics and Reconstruction Matter、Delving into Video VAE Spectral Biasing）僅由二手引用或摘要確認存在，未逐一取得原文核對全部數字。JiT 的 x-prediction 版本對應 Li & He「Back to Basics: Let denoising generative models denoise」（arXiv:2511.13720）。
+
+## 建議閱讀順序
+1. [optimization dilemma 與語意／空間對齊（VA-VAE、REPA、MAETok、iREPA）](optimization-dilemma-semantic-alignment.html)
+2. [其他 diffusability 觀點：等變性、頻譜平滑、流形連續、分布均勻](diffusability-latent-regularizers.html)
+3. [Velocity Irreducible Variance（VIV）](velocity-irreducible-variance.html)
+4. [Diffusability 系統性比較研究（Zhong et al.）](diffusability-systematic-study.html)
+5. [生成評估指標的演進：gFID 之外](generative-eval-metrics.html)
+6. [RAE：Representation Autoencoder 取代 VAE](representation-autoencoder-rae.html)
+7. [RAE 後續改進與延伸：RAEv2、Scale-RAE、影片 RAE](rae-followups.html)
+8. [RAE 的蒸餾困難與 Drifting Models](rae-distillation-drifting.html)
+9. [pixel-space diffusion 第三路線](pixel-space-diffusion.html)
+10. [Latent diffusion 開放問題](latent-diffusion-open-problems.html)

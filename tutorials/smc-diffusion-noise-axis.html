@@ -1,0 +1,60 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>沿 diffusion 噪聲軸的 SMC 後驗取樣：FPS、MCGdiff、TDS、SMCDiff</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600&family=JetBrains+Mono&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<style>
+:root{--bg:#faf9f5;--surface:#f4f2ec;--ink:#1f1e1c;--muted:#6b6862;--line:#e4e1da;--accent:#c96442;--accent-soft:#f5dfd3}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#191917;--surface:#232320;--ink:#ecebe7;--muted:#a19e96;--line:#34332f;--accent:#e08a6b;--accent-soft:#3a2a23}}
+:root[data-theme=dark]{--bg:#191917;--surface:#232320;--ink:#ecebe7;--muted:#a19e96;--line:#34332f;--accent:#e08a6b;--accent-soft:#3a2a23}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.8 Inter,"Noto Sans TC",system-ui,sans-serif}
+.top{position:sticky;top:0;z-index:5;background:color-mix(in oklab,var(--bg) 88%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.top div{max-width:760px;margin:0 auto;padding:12px 16px;display:flex;gap:16px;font-size:14px}
+.top a{color:var(--muted);text-decoration:none}.top a:hover{color:var(--accent)}
+.progress{height:2px;background:var(--accent);transform-origin:0 50%;transform:scaleX(0)}
+article{max-width:760px;margin:0 auto;padding:40px 16px 40px}
+.kicker{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+h1{font-family:"Noto Serif TC",serif;font-weight:600;font-size:clamp(28px,4.2vw,40px);line-height:1.3;margin:10px 0 28px}
+h2{font-family:"Noto Serif TC",serif;font-weight:600;font-size:24px;margin:56px 0 16px;padding-top:8px;border-top:1px solid var(--line)}
+h3{font-size:19px;font-weight:600;margin:36px 0 10px}
+p,li{color:var(--ink)}a{color:var(--accent);text-underline-offset:3px}
+strong{font-weight:600}
+ul,ol{padding-left:1.3em}li{margin:6px 0}li::marker{color:var(--accent)}
+blockquote{margin:20px 0;padding:12px 18px;border-left:3px solid var(--accent);background:var(--surface);border-radius:0 12px 12px 0;color:var(--muted)}
+code{font-family:"JetBrains Mono",monospace;font-size:.86em;background:var(--surface);padding:2px 6px;border-radius:6px}
+pre{background:var(--surface);padding:16px;border-radius:12px;overflow-x:auto}pre code{background:none;padding:0}
+.table{overflow-x:auto;margin:20px 0;border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.6}
+th,td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:var(--surface);font-weight:600}tr:last-child td{border-bottom:0}
+.related{margin-top:64px;padding:24px;border-radius:20px;background:var(--surface)}
+.related h2{border:0;margin:0 0 12px;padding:0;font-size:20px}
+.related a{display:block;padding:8px 0;border-top:1px solid var(--line);text-decoration:none;color:var(--ink);font-size:15px}
+.related a:hover{color:var(--accent)}
+</style></head><body>
+<div class="top"><div><a href="../index.html">← Paper Master</a><a href="index.html">所有教學</a></div><div class="progress" id="pg"></div></div>
+<article><div class="kicker">研究筆記 · Diffusion &amp; Generative Models</div><div id="doc"></div><section class="related"><h2>相關筆記</h2><a href="long-sequence-consistency-overview.html">時序 Diffusion / Flow Matching 的長序列一致性與 zero-shot 音源分離總覽</a><a href="blockwise-smc-time-axis.html">沿時間軸的 block-wise SMC + diffusion prior：研究缺口與分階段建議</a></section></article>
+<script type="text/markdown" id="md"># 沿 diffusion 噪聲軸的 SMC 後驗取樣：FPS、MCGdiff、TDS、SMCDiff
+
+屬於 [長序列一致性總覽](long-sequence-consistency-overview.html)。
+
+## 兩種序貫性
+diffusion 有兩個時間軸——(a) 去噪軸（noise level t: T→0），(b) 資料/序列軸（audio time n）。本筆記的方法全部沿 (a)；沿 (b) 的序貫（autoregressive 生成、chunk-by-chunk、FIFO 佇列）**都是單軌跡確定性 rollout，不做粒子重採樣**。
+
+## 沿噪聲軸的 SMC 方法
+- **FPS**（Dou & Song, ICLR 2024, arXiv:2308.14409）：證明「Bayesian posterior sampling 是 Bayesian filtering 的特例」，把去噪鏈 t=N→0 當 state-space 濾波問題，粒子數→∞ 時漸近精確。注意：不同來源對 FPS 編號略有出入（此處採 2308.14409 / OpenReview id=tplXNcHZs1），引用前建議再核對。
+- **MCGdiff**（Cardoso et al., ICLR 2024 oral, arXiv:2308.07983）：把恢復問題寫成「從前向 diffusion 改編的 Feynman-Kac model」，SMC 沿噪聲等級求解。
+- **TDS**（Wu, Trippe et al., NeurIPS 2023, arXiv:2306.17775）：用 twisting function 做 reconstruction-guidance proposal，SMC 沿去噪步驟。
+- **SMCDiff**（Trippe et al., ICLR 2023, arXiv:2206.04119）：同理。
+- **LD-SMC**（arXiv:2502.05908）：提到少粒子 + GPU 平行以緩解粒子退化。
+
+## 相反關係的工作
+DiffPF（arXiv:2507.15716）是把 diffusion 放進傳統粒子濾波的狀態更新，非「用 SMC 沿時間重採樣 diffusion 生成的訊號塊」。
+
+## 關鍵洞見
+這兩條線（沿噪聲軸的 SMC、沿時間軸的序貫生成）從未被結合。沿時間軸做 SMC（粒子=不同的分離假設，沿 audio 時間塊傳播並依與觀測/前段一致性重加權），用 diffusion prior 作 proposal，是空白。具體提案見 [沿時間軸的 block-wise SMC](blockwise-smc-time-axis.html)。</script>
+<script>
+const md = document.getElementById('md').textContent;
+document.getElementById('doc').innerHTML = marked.parse(md, {gfm: true});
+document.querySelectorAll('#doc table').forEach(t => { const w = document.createElement('div'); w.className = 'table'; t.replaceWith(w); w.appendChild(t); });
+document.querySelectorAll('#doc a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+const pg = document.getElementById('pg');
+addEventListener('scroll', () => { const h = document.documentElement; pg.style.transform = `scaleX(${h.scrollTop / (h.scrollHeight - h.clientHeight || 1)})`; }, {passive: true});
+</script></body></html>

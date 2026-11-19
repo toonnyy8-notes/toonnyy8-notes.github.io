@@ -1,0 +1,62 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>原版 TTT：TTT-Linear / TTT-MLP（隱藏狀態是一個在測試時被訓練的模型）</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600&family=JetBrains+Mono&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<style>
+:root{--bg:#faf9f5;--surface:#f4f2ec;--ink:#1f1e1c;--muted:#6b6862;--line:#e4e1da;--accent:#c96442;--accent-soft:#f5dfd3}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#191917;--surface:#232320;--ink:#ecebe7;--muted:#a19e96;--line:#34332f;--accent:#e08a6b;--accent-soft:#3a2a23}}
+:root[data-theme=dark]{--bg:#191917;--surface:#232320;--ink:#ecebe7;--muted:#a19e96;--line:#34332f;--accent:#e08a6b;--accent-soft:#3a2a23}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.8 Inter,"Noto Sans TC",system-ui,sans-serif}
+.top{position:sticky;top:0;z-index:5;background:color-mix(in oklab,var(--bg) 88%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.top div{max-width:760px;margin:0 auto;padding:12px 16px;display:flex;gap:16px;font-size:14px}
+.top a{color:var(--muted);text-decoration:none}.top a:hover{color:var(--accent)}
+.progress{height:2px;background:var(--accent);transform-origin:0 50%;transform:scaleX(0)}
+article{max-width:760px;margin:0 auto;padding:40px 16px 40px}
+.kicker{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+h1{font-family:"Noto Serif TC",serif;font-weight:600;font-size:clamp(28px,4.2vw,40px);line-height:1.3;margin:10px 0 28px}
+h2{font-family:"Noto Serif TC",serif;font-weight:600;font-size:24px;margin:56px 0 16px;padding-top:8px;border-top:1px solid var(--line)}
+h3{font-size:19px;font-weight:600;margin:36px 0 10px}
+p,li{color:var(--ink)}a{color:var(--accent);text-underline-offset:3px}
+strong{font-weight:600}
+ul,ol{padding-left:1.3em}li{margin:6px 0}li::marker{color:var(--accent)}
+blockquote{margin:20px 0;padding:12px 18px;border-left:3px solid var(--accent);background:var(--surface);border-radius:0 12px 12px 0;color:var(--muted)}
+code{font-family:"JetBrains Mono",monospace;font-size:.86em;background:var(--surface);padding:2px 6px;border-radius:6px}
+pre{background:var(--surface);padding:16px;border-radius:12px;overflow-x:auto}pre code{background:none;padding:0}
+.table{overflow-x:auto;margin:20px 0;border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.6}
+th,td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:var(--surface);font-weight:600}tr:last-child td{border-bottom:0}
+.related{margin-top:64px;padding:24px;border-radius:20px;background:var(--surface)}
+.related h2{border:0;margin:0 0 12px;padding:0;font-size:20px}
+.related a{display:block;padding:8px 0;border-top:1px solid var(--line);text-decoration:none;color:var(--ink);font-size:15px}
+.related a:hover{color:var(--accent)}
+</style></head><body>
+<div class="top"><div><a href="../index.html">← Paper Master</a><a href="index.html">所有教學</a></div><div class="progress" id="pg"></div></div>
+<article><div class="kicker">研究筆記 · Architectures &amp; Efficiency</div><div id="doc"></div><section class="related"><h2>相關筆記</h2><a href="ttt-sequence-modeling-overview.html">Test-Time Training 作為序列建模架構：主系列演進總覽</a><a href="ttt-theory-and-applications.html">TTT 的理論還原與應用擴散（視覺、3D/4D、長上下文 LLM）</a><a href="lact-large-chunk-ttt.html">從 One-Minute Video 到 LaCT：大 chunk Test-Time Training</a><a href="in-place-ttt.html">In-Place TTT：把現成 LLM 的 MLP 投影矩陣當 fast weight</a><a href="test-time-training-naming.html">「Test-Time Training」的命名混淆：序列建模層 vs 分布偏移適應 vs 測試時 RL（TEMPO）</a></section><section class="related"><h2>資料庫中的相關論文</h2><a href="../index.html#paper-242">Learning to (Learn at Test Time): RNNs with Expressive Hidden States</a><a href="../index.html#paper-243">Titans: Learning to Memorize at Test Time</a></section></article>
+<script type="text/markdown" id="md"># 原版 TTT：TTT-Linear / TTT-MLP
+
+arXiv:2407.04620（已更新到 v4，2025-08-31）。屬於 [TTT 序列建模總覽](ttt-sequence-modeling-overview.html)。
+
+## 直觀與數學原理
+作者（Yu Sun, Xinhao Li, Karan Dalal 等 12 人，Stanford/UCSD/Berkeley）的統一觀點是：所有序列層都是「一個隨更新規則轉移的隱藏狀態」。Attention 的隱藏狀態是不斷成長的 KV cache（故 O(n²)）；RNN 的隱藏狀態是固定大小向量（故表達力受限）。TTT 的關鍵一步是讓隱藏狀態本身成為一個帶權重 `W` 的模型 `f`，而更新規則是對一個自監督損失做一步梯度下降：
+
+- 更新規則：`W_t = W_{t-1} − η ∇ℓ(W_{t-1}; x_t)`
+- 自監督損失（多視角重建）：`ℓ(W; x_t) = ‖f(θ_K x_t; W) − θ_V x_t‖²`
+- 輸出規則：`z_t = f(θ_Q x_t; W_t)`
+
+其中 θ_K、θ_V、θ_Q 是可學的低秩投影（類比 attention 的 K/V/Q）。直覺：fast weight `W` 是一個「聯想記憶」，要從被破壞的輸入 `θ_K x_t` 重建出 `θ_V x_t`。兩個實例化：**TTT-Linear**（f 是線性模型）與 **TTT-MLP**（f 是兩層 MLP）。
+
+## 與周邊家族的關係（重要）
+從 test-time regression 框架看：若 f 是線性、損失為負點積，更新規則就退化成 **linear attention**；若 f 是線性、損失為 MSE，就得到 **DeltaNet** 的 delta rule（MSE 強迫重建值在方向與大小上都接近目標，因而產生「遺忘」機制）。**Titans**（2501.00663）在此之上加了 momentum 與 weight decay（遺忘）；**Atlas / MesaNet / Miras** 則進一步改 optimizer 或改成對所有過去 token 全域最優。這說明 TTT 是這一整個「現代 RNN / 線性注意力」家族的母框架之一。反方向的理論還原（TTT≈learned linear attention）見 [TTT 理論與應用](ttt-theory-and-applications.html)。
+
+## 平行化技巧
+因更新是序列性的，原版用 **mini-batch TTT**：把序列切成 chunk，chunk 內所有梯度都對 chunk 開頭的 `W` 計算，於是可平行；再用 dual form 加速。但其官方 PyTorch 實作在 GPU 上 FLOPs 利用率 <5%，這正是 [LaCT](lact-large-chunk-ttt.html) 要解決的痛點。
+
+## 自習資源
+原論文 arXiv:2407.04620（JAX 與 PyTorch 兩版 code：github.com/test-time-training）；Yingfa Chen 的部落格〈The Rise of Test-Time Training〉對 attention→linear attention→TTT→LaCT 的推導極清晰；Erik Steiger〈Non-Linear Attention and Test-Time-Training〉系列把 optimizer/objective 的設計空間講透。</script>
+<script>
+const md = document.getElementById('md').textContent;
+document.getElementById('doc').innerHTML = marked.parse(md, {gfm: true});
+document.querySelectorAll('#doc table').forEach(t => { const w = document.createElement('div'); w.className = 'table'; t.replaceWith(w); w.appendChild(t); });
+document.querySelectorAll('#doc a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+const pg = document.getElementById('pg');
+addEventListener('scroll', () => { const h = document.documentElement; pg.style.transform = `scaleX(${h.scrollTop / (h.scrollHeight - h.clientHeight || 1)})`; }, {passive: true});
+</script></body></html>

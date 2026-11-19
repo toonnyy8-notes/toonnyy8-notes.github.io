@@ -1,0 +1,62 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>連續擴散語言模型的噪聲／時間排程</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600&family=JetBrains+Mono&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<style>
+:root{--bg:#faf9f5;--surface:#f4f2ec;--ink:#1f1e1c;--muted:#6b6862;--line:#e4e1da;--accent:#c96442;--accent-soft:#f5dfd3}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#191917;--surface:#232320;--ink:#ecebe7;--muted:#a19e96;--line:#34332f;--accent:#e08a6b;--accent-soft:#3a2a23}}
+:root[data-theme=dark]{--bg:#191917;--surface:#232320;--ink:#ecebe7;--muted:#a19e96;--line:#34332f;--accent:#e08a6b;--accent-soft:#3a2a23}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.8 Inter,"Noto Sans TC",system-ui,sans-serif}
+.top{position:sticky;top:0;z-index:5;background:color-mix(in oklab,var(--bg) 88%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.top div{max-width:760px;margin:0 auto;padding:12px 16px;display:flex;gap:16px;font-size:14px}
+.top a{color:var(--muted);text-decoration:none}.top a:hover{color:var(--accent)}
+.progress{height:2px;background:var(--accent);transform-origin:0 50%;transform:scaleX(0)}
+article{max-width:760px;margin:0 auto;padding:40px 16px 40px}
+.kicker{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+h1{font-family:"Noto Serif TC",serif;font-weight:600;font-size:clamp(28px,4.2vw,40px);line-height:1.3;margin:10px 0 28px}
+h2{font-family:"Noto Serif TC",serif;font-weight:600;font-size:24px;margin:56px 0 16px;padding-top:8px;border-top:1px solid var(--line)}
+h3{font-size:19px;font-weight:600;margin:36px 0 10px}
+p,li{color:var(--ink)}a{color:var(--accent);text-underline-offset:3px}
+strong{font-weight:600}
+ul,ol{padding-left:1.3em}li{margin:6px 0}li::marker{color:var(--accent)}
+blockquote{margin:20px 0;padding:12px 18px;border-left:3px solid var(--accent);background:var(--surface);border-radius:0 12px 12px 0;color:var(--muted)}
+code{font-family:"JetBrains Mono",monospace;font-size:.86em;background:var(--surface);padding:2px 6px;border-radius:6px}
+pre{background:var(--surface);padding:16px;border-radius:12px;overflow-x:auto}pre code{background:none;padding:0}
+.table{overflow-x:auto;margin:20px 0;border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.6}
+th,td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:var(--surface);font-weight:600}tr:last-child td{border-bottom:0}
+.related{margin-top:64px;padding:24px;border-radius:20px;background:var(--surface)}
+.related h2{border:0;margin:0 0 12px;padding:0;font-size:20px}
+.related a{display:block;padding:8px 0;border-top:1px solid var(--line);text-decoration:none;color:var(--ink);font-size:15px}
+.related a:hover{color:var(--accent)}
+</style></head><body>
+<div class="top"><div><a href="../index.html">← Paper Master</a><a href="index.html">所有教學</a></div><div class="progress" id="pg"></div></div>
+<article><div class="kicker">研究筆記 · Diffusion Language Models</div><div id="doc"></div><section class="related"><h2>相關筆記</h2><a href="continuous-flow-lm-overview.html">2026 年連續 flow / flow matching 語言模型總覽</a><a href="representation-autoencoder-rae.html">RAE：以凍結表徵編碼器（Representation Autoencoder）取代 VAE</a><a href="hybrid-continuous-discrete-lm.html">混合連續—離散擴散語言模型</a><a href="flow-map-few-step-distillation.html">連續 flow 語言模型的少步生成：flow map / consistency / 分佈匹配蒸餾</a><a href="cdlm-representation-space.html">連續擴散語言模型的表示空間與 rounding / decoder 問題</a><a href="cdlm-scaling.html">連續擴散語言模型的規模化策略與大模型結果（Sigma、Lafa 等）</a></section><section class="related"><h2>資料庫中的相關論文</h2><a href="../index.html#paper-9">Large Flow Language Models</a></section></article>
+<script type="text/markdown" id="md"># 連續擴散語言模型的噪聲／時間排程
+
+屬於 [2026 年連續 flow 語言模型總覽](continuous-flow-lm-overview.html)。影像 latent 擴散中依資料維度做的 noise schedule shift 見 [RAE](representation-autoencoder-rae.html)。
+
+| 做法 | 論文 | 內容 | 證據 |
+|---|---|---|---|
+| time warping（舊） | CDCD（2022） | 依 loss 的 CDF 重新分配時間取樣 | — |
+| 解碼錯誤率排程 | FLM、DFM、GSF | 選 β(t) 使 P(argmax x_t ≠ argmax x₁) 隨 t 近似線性變化 | 見下方說明 |
+| 混合排程 | DFM、Scaling CFM | α_t=(1−λ)t+λγ_t | 見下方說明 |
+| 可學 Gumbel / logNSR 排程 | LangFlow | information-uniform 原則 | Gen PPL 約 1000 → 154 |
+| 截斷 + 自適應排程 | S-FLM | 依 \|dL̂/dt\| 的反 CDF 每 50 步更新，參考 InfoNoise | GSM8K 7.7% → 11.1%（加入自適應） |
+| logit-normal 時間取樣 | ELF | 沿用影像 rectified flow | — |
+| 常數 per-timestep loss | RePlaid | 最小化 ELBO 估計變異數 | — |
+| 逐位置時間 | Clock Diffusion（2610.00894）、Lafa、DFM | 位置相依時鐘 u^ℓ(t)；Lafa 以 loss 反 CDF 學 per-token time | — |
+
+（S-FLM：[arxiv](https://arxiv.org/pdf/2605.11125v3)；ELF：[arxiv](https://arxiv.org/pdf/2605.10938)）
+
+- **解碼錯誤率排程。** FLM 稱此舉「greatly improves training stability」。GSF 圖 4 顯示，在大詞彙量下 FLM 的解碼錯誤集中在 t≈0.8 附近，是一個急遽的相變，必須做時間重參數化。 [arxiv](https://arxiv.org/html/2610.00497) 解碼錯誤率排程最早由 CANDI 提出（見 [混合連續—離散方法](hybrid-continuous-discrete-lm.html)）。
+- **混合排程的消融。** Scaling CFM 在 400M 規模掃 λ，最佳值約 0.75，λ=1（純錯誤率排程）時崩潰。DFM 使用 λ=0.9。
+- **逐位置時間。** Lafa 學到的 per-token time 自然呈現由左到右的順序，論文寫明「this left-to-right bias is not manually imposed」。 [arxiv](https://arxiv.org/html/2610.28559)
+- GSF 的 Gumbel 耦合讓所需的時間 warping 溫和許多（見 [少步蒸餾](flow-map-few-step-distillation.html)）。</script>
+<script>
+const md = document.getElementById('md').textContent;
+document.getElementById('doc').innerHTML = marked.parse(md, {gfm: true});
+document.querySelectorAll('#doc table').forEach(t => { const w = document.createElement('div'); w.className = 'table'; t.replaceWith(w); w.appendChild(t); });
+document.querySelectorAll('#doc a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+const pg = document.getElementById('pg');
+addEventListener('scroll', () => { const h = document.documentElement; pg.style.transform = `scaleX(${h.scrollTop / (h.scrollHeight - h.clientHeight || 1)})`; }, {passive: true});
+</script></body></html>

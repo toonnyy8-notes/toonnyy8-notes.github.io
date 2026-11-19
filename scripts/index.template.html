@@ -58,6 +58,7 @@ svg:active{cursor:grabbing}
 .dim .node.hl circle{opacity:1}
 .dim .node.hl text{opacity:1}
 .dim .link.hl{stroke:var(--accent);stroke-opacity:.8}
+.node.lbl text{opacity:1}
 .node.sel circle{stroke:var(--ink);stroke-width:2.5}
 .node.sel text{opacity:1;fill:var(--ink);font-weight:600}
 .legend{position:absolute;left:16px;bottom:16px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;box-shadow:var(--shadow);font-size:12px;color:var(--muted);max-width:280px}
@@ -106,7 +107,7 @@ svg:active{cursor:grabbing}
 
 <main>
   <svg id="graph" role="img" aria-label="論文關聯圖"></svg>
-  <div class="legend">節點大小＝被其他論文列為相關的次數；顏色＝研究群集；連線＝主題相似。拖曳平移、滾輪縮放、點節點看詳情。</div>
+  <div class="legend">節點大小＝被其他論文列為相關的次數；顏色＝研究群集；連線＝主題相似。拖曳平移；滾輪縮放會拉開節點間距、節點與文字大小不變，放大後顯示標題；點節點看詳情。</div>
 </main>
 
 <aside id="right"><div id="detail"><div class="empty">點選圖上的論文節點，或從左側清單選一篇，這裡會顯示完整資訊與最相關的論文。</div></div></aside>
@@ -148,7 +149,9 @@ document.getElementById('q').oninput = e => { state.q = e.target.value.trim().to
 // graph
 const svg = d3.select('#graph');
 const g = svg.append('g');
-const zoom = d3.zoom().scaleExtent([.2, 6]).on('zoom', e => g.attr('transform', e.transform));
+// semantic zoom: the transform moves node positions apart; circles and labels keep their screen size
+let T = d3.zoomIdentity, K0 = 1; // K0 = scale of the fitted overview
+const zoom = d3.zoom().scaleExtent([.2, 12]).on('zoom', e => { T = e.transform; draw(); });
 svg.call(zoom);
 const links = [];
 const seen = new Set();
@@ -161,8 +164,9 @@ nodeSel.append('circle').attr('r', radius).attr('fill', d => color(d.cluster))
   .append('title').text(d => d.title);
 nodeSel.append('text').attr('dy', d => -radius(d) - 3).attr('text-anchor','middle').text(d => d.title.length > 48 ? d.title.slice(0,46) + '…' : d.title);
 nodeSel.call(d3.drag()
+  .subject((e,d) => ({x: T.applyX(d.x), y: T.applyY(d.y)}))
   .on('start', (e,d) => { if (!e.active) sim.alphaTarget(.2).restart(); d.fx = d.x; d.fy = d.y; })
-  .on('drag', (e,d) => { d.fx = e.x; d.fy = e.y; })
+  .on('drag', (e,d) => { d.fx = T.invertX(e.x); d.fy = T.invertY(e.y); })
   .on('end', (e,d) => { if (!e.active) sim.alphaTarget(0); d.fx = d.fy = null; }));
 
 const center = c => { const a = clusters.indexOf(c) / clusters.length * Math.PI * 2; return [Math.cos(a) * 340, Math.sin(a) * 340]; };
@@ -174,19 +178,23 @@ const sim = d3.forceSimulation(DATA)
   .force('collide', d3.forceCollide(d => radius(d) + 2))
   .stop();
 sim.tick(400); // settle layout up front so the first paint and the fit are stable
-sim.on('tick', () => {
-    linkSel.attr('x1', d => d.source.x).attr('y1', d => d.source.y).attr('x2', d => d.target.x).attr('y2', d => d.target.y);
-    nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
-  });
-sim.on('tick')();
+function draw(){
+  linkSel.attr('x1', d => T.applyX(d.source.x)).attr('y1', d => T.applyY(d.source.y)).attr('x2', d => T.applyX(d.target.x)).attr('y2', d => T.applyY(d.target.y));
+  nodeSel.attr('transform', d => `translate(${T.applyX(d.x)},${T.applyY(d.y)})`);
+  // labels appear once nodes are spread far enough apart to read them
+  const z = T.k / K0;
+  nodeSel.classed('lbl', d => z >= 5 || (z >= 2.5 && d.degree >= 6));
+}
+sim.on('tick', draw);
+draw();
 function fit(){
   const {width, height} = svg.node().getBoundingClientRect();
   const xs = DATA.map(d => d.x), ys = DATA.map(d => d.y);
   const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
-  const k = Math.min(width / (x1 - x0 + 80), height / (y1 - y0 + 80), 2);
+  const k = K0 = Math.min(width / (x1 - x0 + 80), height / (y1 - y0 + 80), 2);
   svg.call(zoom.transform, d3.zoomIdentity.translate(width/2 - k*(x0+x1)/2, height/2 - k*(y0+y1)/2).scale(k));
 }
-fit(); addEventListener('resize', fit);
+fit();
 
 function visible(d){
   if (!state.clusters.has(d.cluster)) return false;

@@ -1,0 +1,69 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>TTT-E2E：以 next-token prediction 做測試時學習、以 meta-learning 學初始化</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600&family=JetBrains+Mono&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<style>
+:root{--bg:#faf9f5;--surface:#f4f2ec;--ink:#1f1e1c;--muted:#6b6862;--line:#e4e1da;--accent:#c96442;--accent-soft:#f5dfd3}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#191917;--surface:#232320;--ink:#ecebe7;--muted:#a19e96;--line:#34332f;--accent:#e08a6b;--accent-soft:#3a2a23}}
+:root[data-theme=dark]{--bg:#191917;--surface:#232320;--ink:#ecebe7;--muted:#a19e96;--line:#34332f;--accent:#e08a6b;--accent-soft:#3a2a23}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.8 Inter,"Noto Sans TC",system-ui,sans-serif}
+.top{position:sticky;top:0;z-index:5;background:color-mix(in oklab,var(--bg) 88%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.top div{max-width:760px;margin:0 auto;padding:12px 16px;display:flex;gap:16px;font-size:14px}
+.top a{color:var(--muted);text-decoration:none}.top a:hover{color:var(--accent)}
+.progress{height:2px;background:var(--accent);transform-origin:0 50%;transform:scaleX(0)}
+article{max-width:760px;margin:0 auto;padding:40px 16px 40px}
+.kicker{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+h1{font-family:"Noto Serif TC",serif;font-weight:600;font-size:clamp(28px,4.2vw,40px);line-height:1.3;margin:10px 0 28px}
+h2{font-family:"Noto Serif TC",serif;font-weight:600;font-size:24px;margin:56px 0 16px;padding-top:8px;border-top:1px solid var(--line)}
+h3{font-size:19px;font-weight:600;margin:36px 0 10px}
+p,li{color:var(--ink)}a{color:var(--accent);text-underline-offset:3px}
+strong{font-weight:600}
+ul,ol{padding-left:1.3em}li{margin:6px 0}li::marker{color:var(--accent)}
+blockquote{margin:20px 0;padding:12px 18px;border-left:3px solid var(--accent);background:var(--surface);border-radius:0 12px 12px 0;color:var(--muted)}
+code{font-family:"JetBrains Mono",monospace;font-size:.86em;background:var(--surface);padding:2px 6px;border-radius:6px}
+pre{background:var(--surface);padding:16px;border-radius:12px;overflow-x:auto}pre code{background:none;padding:0}
+.table{overflow-x:auto;margin:20px 0;border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.6}
+th,td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:var(--surface);font-weight:600}tr:last-child td{border-bottom:0}
+.related{margin-top:64px;padding:24px;border-radius:20px;background:var(--surface)}
+.related h2{border:0;margin:0 0 12px;padding:0;font-size:20px}
+.related a{display:block;padding:8px 0;border-top:1px solid var(--line);text-decoration:none;color:var(--ink);font-size:15px}
+.related a:hover{color:var(--accent)}
+</style></head><body>
+<div class="top"><div><a href="../index.html">← Paper Master</a><a href="index.html">所有教學</a></div><div class="progress" id="pg"></div></div>
+<article><div class="kicker">研究筆記 · Architectures &amp; Efficiency</div><div id="doc"></div><section class="related"><h2>相關筆記</h2><a href="ttt-sequence-modeling-overview.html">Test-Time Training 作為序列建模架構：主系列演進總覽</a><a href="test-time-training-naming.html">「Test-Time Training」的命名混淆：序列建模層 vs 分布偏移適應 vs 測試時 RL（TEMPO）</a></section></article>
+<script type="text/markdown" id="md"># TTT-E2E：以 next-token prediction 做測試時學習、以 meta-learning 學初始化
+
+arXiv:2512.23675，原 TTT 團隊的直系新作。屬於 [TTT 序列建模總覽](ttt-sequence-modeling-overview.html)。
+
+**作者與狀態。** Arnuv Tandon、Karan Dalal、Xinhao Li、Daniel Koceja、Marcel Rød、Sam Buchanan、Xiaolong Wang、Jure Leskovec、Sanmi Koyejo、Tatsunori Hashimoto、Carlos Guestrin、Jed McCaleb、Yejin Choi、Yu Sun（Astera Institute、NVIDIA、Stanford、UC Berkeley、UC San Diego），2025-12-29 preprint；Yu Sun 為 project lead。code：github.com/test-time-training/e2e。
+
+## 設計理念與「End-to-End」的兩層含義
+把長上下文建模從「架構設計」重構為「持續學習」。
+- **測試時 E2E**：內層直接優化網路尾端的 next-token prediction（交叉熵）損失 `ℓ_t(W)=CE(f(x_{t-1};W), x_t)`，而非層內重建代理損失。
+- **訓練時 E2E**：用 meta-learning 學 fast weight 的初始化 `W_0`——把每條訓練序列當測試序列，對它做 TTT，再對「TTT 之後的最終損失」用 gradients-of-gradients 優化 `W_0`。
+
+這與主流 dynamic evaluation 的 TTT-naive（`L=⅟T Σ ℓ_t(W_0)`）形成對比；TTT-naive 僅略勝無 attention baseline，TTT-E2E 幾乎追平 full attention。
+
+## 架構與更新
+標準 Transformer + sliding-window attention 當「工作記憶/短期記憶」，被更新的權重當「長期記憶」。三個實作要點：（1）只 TTT MLP 層（凍結 embedding/norm/attention，否則外層不穩）；（2）只更新最後 1/4 的 block；（3）更新 block 內加一個靜態第二 MLP 當「安全」儲存以抗遺忘。mini-batch 更新：`W_i = W_{i-1} − η·(1/b)·Σ_t ∇ℓ_t(W_{i-1})`。主結果用 window k=8K、mini-batch b=1K（需 k≥b，使模型在 TTT 更新前仍能在 mini-batch 內記住 context）。
+
+## 實驗結果
+- 3B 模型、164B token：context 擴展行為與 full attention 一致，而 Mamba 2、Gated DeltaNet 不行。
+- 推理延遲恆定，abstract 載明「TTT-E2E has constant inference latency regardless of context length, making it 2.7× faster than full attention for 128K context」（H100）。
+- hidden state「5x larger hidden state (88M vs. 18M for the 760M model)」。
+- 但在 Needle-in-Haystack（RULER 128K）上 full attention 大幅領先——因 TTT-E2E 的機制是壓縮而非無損 recall。
+- 訓練延遲是已知弱點：128K 時比 full attention 快 1.2×，但 8K 時慢 3.4×（雙重反傳未被 cuDNN 最佳化）。
+
+## 注意事項
+「TTT-E2E 在 2M context 快 35×」出現在第三方部落格，arXiv v2 正文只證實「128K 快 2.7×、延遲恆定」；此類超大倍率宣稱應視為未經原文證實。
+
+## 使用門檻
+若資料是 1D 語言且追求 SOTA recall，優先考慮 full attention 或 hybrid；若 context >128K 且延遲/吞吐是瓶頸，TTT-E2E 的恆定延遲（2.7× @128K）開始划算。</script>
+<script>
+const md = document.getElementById('md').textContent;
+document.getElementById('doc').innerHTML = marked.parse(md, {gfm: true});
+document.querySelectorAll('#doc table').forEach(t => { const w = document.createElement('div'); w.className = 'table'; t.replaceWith(w); w.appendChild(t); });
+document.querySelectorAll('#doc a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+const pg = document.getElementById('pg');
+addEventListener('scroll', () => { const h = document.documentElement; pg.style.transform = `scaleX(${h.scrollTop / (h.scrollHeight - h.clientHeight || 1)})`; }, {passive: true});
+</script></body></html>

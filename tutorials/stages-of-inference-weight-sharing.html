@@ -1,0 +1,57 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>四階段推論假說（Lad et al.）與權重共享、looped 模型的可解釋性</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600&family=JetBrains+Mono&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<style>
+:root{--bg:#faf9f5;--surface:#f4f2ec;--ink:#1f1e1c;--muted:#6b6862;--line:#e4e1da;--accent:#c96442;--accent-soft:#f5dfd3}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#191917;--surface:#232320;--ink:#ecebe7;--muted:#a19e96;--line:#34332f;--accent:#e08a6b;--accent-soft:#3a2a23}}
+:root[data-theme=dark]{--bg:#191917;--surface:#232320;--ink:#ecebe7;--muted:#a19e96;--line:#34332f;--accent:#e08a6b;--accent-soft:#3a2a23}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.8 Inter,"Noto Sans TC",system-ui,sans-serif}
+.top{position:sticky;top:0;z-index:5;background:color-mix(in oklab,var(--bg) 88%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.top div{max-width:760px;margin:0 auto;padding:12px 16px;display:flex;gap:16px;font-size:14px}
+.top a{color:var(--muted);text-decoration:none}.top a:hover{color:var(--accent)}
+.progress{height:2px;background:var(--accent);transform-origin:0 50%;transform:scaleX(0)}
+article{max-width:760px;margin:0 auto;padding:40px 16px 40px}
+.kicker{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+h1{font-family:"Noto Serif TC",serif;font-weight:600;font-size:clamp(28px,4.2vw,40px);line-height:1.3;margin:10px 0 28px}
+h2{font-family:"Noto Serif TC",serif;font-weight:600;font-size:24px;margin:56px 0 16px;padding-top:8px;border-top:1px solid var(--line)}
+h3{font-size:19px;font-weight:600;margin:36px 0 10px}
+p,li{color:var(--ink)}a{color:var(--accent);text-underline-offset:3px}
+strong{font-weight:600}
+ul,ol{padding-left:1.3em}li{margin:6px 0}li::marker{color:var(--accent)}
+blockquote{margin:20px 0;padding:12px 18px;border-left:3px solid var(--accent);background:var(--surface);border-radius:0 12px 12px 0;color:var(--muted)}
+code{font-family:"JetBrains Mono",monospace;font-size:.86em;background:var(--surface);padding:2px 6px;border-radius:6px}
+pre{background:var(--surface);padding:16px;border-radius:12px;overflow-x:auto}pre code{background:none;padding:0}
+.table{overflow-x:auto;margin:20px 0;border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.6}
+th,td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:var(--surface);font-weight:600}tr:last-child td{border-bottom:0}
+.related{margin-top:64px;padding:24px;border-radius:20px;background:var(--surface)}
+.related h2{border:0;margin:0 0 12px;padding:0;font-size:20px}
+.related a{display:block;padding:8px 0;border-top:1px solid var(--line);text-decoration:none;color:var(--ink);font-size:15px}
+.related a:hover{color:var(--accent)}
+</style></head><body>
+<div class="top"><div><a href="../index.html">← Paper Master</a><a href="index.html">所有教學</a></div><div class="progress" id="pg"></div></div>
+<article><div class="kicker">研究筆記 · Interpretability &amp; Theory</div><div id="doc"></div><section class="related"><h2>相關筆記</h2><a href="weight-sharing-recursive-overview.html">層間權重共享 × 層級 LoRA 鬆綁總覽</a><a href="depth-redundancy-adjacent-methods.html">深度冗餘的相鄰路線：Mixture-of-Depths、深度剪枝、MoEUT</a><a href="relaxed-recursive-transformer.html">Relaxed Recursive Transformer（RRT）與層級 LoRA 鬆綁</a><a href="depth-nonuniform-lora-rank.html">深度非均勻 LoRA rank 分配 × 遞迴模型：研究空白與方向</a><a href="recursive-transformer-followups.html">遞迴 Transformer 後續工作：MoR、Ouro、MoL、CoLa 與 recurrent-depth</a></section><section class="related"><h2>資料庫中的相關論文</h2><a href="../index.html#paper-280">The Remarkable Robustness of LLMs: Stages of Inference?</a></section></article>
+<script type="text/markdown" id="md"># 四階段推論假說（Lad et al.）與權重共享、looped 模型的可解釋性
+
+屬於 [層間權重共享總覽](weight-sharing-recursive-overview.html)。
+
+## Lad et al. 四階段與 U 形敏感度的啟示
+Lad et al.（The Remarkable Robustness of LLMs: Stages of Inference?, arXiv:2406.19384）：刪除/交換相鄰層後保留 72–95% top-1 準確率；層越多越穩健； [Hugging Face](https://huggingface.co/papers/2406.19384) **首尾層脆弱、中間層穩健**（ [Emergent Mind](https://www.emergentmind.com/papers/2406.19384) U 形）；四階段為 detokenization → feature engineering → prediction ensembling → residual sharpening。 [arxiv](https://arxiv.org/pdf/2406.19384)
+
+對權重共享的直接設計啟示：
+- 中間「feature engineering」階段本質上就是「對殘差流做迭代精修」，與 looped/遞迴的「重複套用同一 block」高度同構——這解釋了為何中間層最適合被 tie/loop，也解釋了 Gromov et al. 為何能安全移除中段層（見 [相鄰路線](depth-redundancy-adjacent-methods.html)）。
+- 首尾層脆弱 → 不應共享、應保留獨立參數（[RRT](relaxed-recursive-transformer.html) 的 Stepwise 正是「固定首尾、只在中間取樣」， [arxiv](https://arxiv.org/html/2410.20672v3) 可視為對此假說的隱性呼應，雖然 Bae et al. 的動機引用的是 layer-skipping 文獻而非 Lad et al.）。
+- 由此推出的「深度非均勻 rank 分配」空白見 [深度非均勻 LoRA rank](depth-nonuniform-lora-rank.html)。
+
+## 對 looped/recurrent 模型的機械可解釋性分析
+- A Mechanistic Analysis of Looped Reasoning Language Models（arXiv:2604.11791, 2026）：分析 Huginn-0125、retrofitted Llama、Ouro，發現每個 cycle 層收斂到不同不動點、recurrent block 沿 latent 空間走一致的循環軌跡、attention head 行為隨迭代穩定；**經驗上 recurrent block 學到的「stages of inference」與 feedforward 模型相似，並沿深度每次迭代重複這些階段**—— [arXiv](https://arxiv.org/html/2604.11791v1) 這直接把 Lad et al. 的四階段結構延伸到 looped 模型，是本題最相關的交叉工作。（註：亦觀察到並非所有模型都達到嚴格不動點，例如 Ouro 未如 Huginn 般快速收斂。）
+- LOTUS（arXiv:2606.31779）：把 post-loop latent 經 base LM head 投影可還原 gold reasoning steps，顯示 latent 空間可解釋、與 CoT 對齊。 [arXiv](https://arxiv.org/html/2606.31779v2)
+- Pappone et al.（2025）分析 recurrent-depth 的「two-scale」latent 動態（快 intra-loop、慢 inter-token）。</script>
+<script>
+const md = document.getElementById('md').textContent;
+document.getElementById('doc').innerHTML = marked.parse(md, {gfm: true});
+document.querySelectorAll('#doc table').forEach(t => { const w = document.createElement('div'); w.className = 'table'; t.replaceWith(w); w.appendChild(t); });
+document.querySelectorAll('#doc a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+const pg = document.getElementById('pg');
+addEventListener('scroll', () => { const h = document.documentElement; pg.style.transform = `scaleX(${h.scrollTop / (h.scrollHeight - h.clientHeight || 1)})`; }, {passive: true});
+</script></body></html>

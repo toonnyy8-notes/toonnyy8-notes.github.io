@@ -5,7 +5,8 @@
 - 資料來源：`raymin-notes` 分支的 `ai-research-topic-papers.md`、`diffusion-channels-papers.md`，以及 `toonnyy8-notes` 分支的 `waiting-to-read-papers.md`（只收各檔「一、論文」部分）
 - `papers.csv`：Excel 可直接開啟（UTF-8 BOM）。欄位：Paper ID、Title、Authors、Year、URL、Source File & Branch、Source Category、Cluster、Core Topic / Summary、Tags、Related Paper IDs
 - `papers.json`：同一份資料，給關聯圖使用
-- `tutorials/`：清單中已有的 Claude 互動教學（10 份，加上回到關聯圖的導覽列），以及 6 份研究筆記（原始 Markdown 在 `scripts/notes/`，轉成網頁並連到資料庫中的相關論文）
+- `tutorials/`：10 份 Claude 互動教學（加上回到關聯圖的導覽列），以及研究筆記：6 份原始長筆記（`scripts/notes_raw/`）依「高內聚、低耦合」拆成 6 篇總覽＋44 篇主題筆記（`scripts/notes_split/`），每篇連到資料庫中引用的論文
+- `AGENTS.md`：專案設計意圖與各步驟的整理規範
 
 ## 整理方式
 
