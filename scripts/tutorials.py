@@ -1,6 +1,6 @@
 import json,re,os,html
 os.chdir(os.path.dirname(os.path.abspath(__file__)))  # paths below are relative to scripts/; pages are written to the repo root
-P=json.load(open('../papers.json')); byid={p['id']:p for p in P}
+P=[json.loads(l) for l in open('../papers.jsonl')]; byid={p['id']:p for p in P}
 # interactive tutorials: one entry per page in tutorials_raw/ (slug, title, paper ids)
 T=[(t['slug'],t['title'],t['papers']) for t in json.load(open('tutorial_list.json'))]
 os.makedirs('../tutorials',exist_ok=True)

@@ -6,7 +6,7 @@ Paper Master 把「研究手記」Discord 伺服器裡收集的論文，整理�
 
 三個原則貫穿所有產出：
 
-- **單一事實來源**：每篇論文在 `papers.csv` / `papers.json` 只有一列，每個概念在研究筆記裡只寫一次。
+- **單一事實來源**：每篇論文在 `papers.csv` / `papers.jsonl` / `papers.db` 只有一列，每個概念在研究筆記裡只寫一次。
 - **高內聚、低耦合**：一篇筆記只談一個主題，其他篇用連結引用，不重複內容。詳細規則見下方「研究筆記」一節。
 - **可重新產生**：所有產出都由 `scripts/` 從來源清單建出，改資料就改來源或腳本，不手改產出檔。
 
@@ -21,7 +21,7 @@ Paper Master 把「研究手記」Discord 伺服器裡收集的論文，整理�
 
 產出都在 `paper-master` 分支，做完 commit 並 push 到這個分支：
 
-- `papers.csv`（UTF-8 BOM，Excel 直接開）與 `papers.json`
+- `papers.csv`（UTF-8 BOM，Excel 直接開）、`papers.jsonl`（一篇一行，關聯圖與重建的資料來源）與 `papers.db`（SQLite，供 SQL 查詢）
 - `index.html`：互動式論文關聯圖
 - `tutorials/`：互動教學與研究筆記；`tutorials/index.html` 是總目錄
 

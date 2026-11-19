@@ -1,4 +1,4 @@
-import re,json,os,csv,collections
+import re,json,os,csv,collections,sqlite3
 os.chdir(os.path.dirname(os.path.abspath(__file__)))  # run from anywhere; database files go to the repo root
 P=json.load(open('papers_raw.json'))
 TAGS={
@@ -55,10 +55,10 @@ CL={
 }
 BROAD={'GAN','VAE','Self-Supervised','Meta-Learning','Efficient Inference','Architecture','Reasoning','Interpretability','Representation Learning','VLM / Multimodal','Pretraining','Post-Training','Benchmark','Data','Memory','Agents','Sampling / MCMC','Learning Theory'}
 cat2cl={c:k for k,v in CL.items() for c in v}
-# Paper IDs are permanent (tutorials and notes link to #paper-<id>): keep the id from the previous papers.json, append new papers after the max.
+# Paper IDs are permanent (tutorials and notes link to #paper-<id>): keep the id from the previous papers.jsonl, append new papers after the max.
 AXID=re.compile(r'(\d{4}\.\d{4,5})')
 pkey=lambda url:(AXID.search(url).group(1) if re.search(r'arxiv\.org|alphaxiv\.org|huggingface\.co/papers',url) and AXID.search(url) else url.split('#')[0].rstrip('/'))
-prev={pkey(q['url']):q['id'] for q in json.load(open('../papers.json'))} if os.path.exists('../papers.json') else {}
+prev={pkey(q['url']):q['id'] for q in map(json.loads,open('../papers.jsonl'))} if os.path.exists('../papers.jsonl') else {}
 nxt=max(prev.values(),default=0)
 for p in P:
   k=p['arxiv'] or p['key']
@@ -94,5 +94,22 @@ with open('../papers.csv','w',newline='',encoding='utf-8-sig') as f:
 keep=['id','title','url','authors','year','sources','branch','cats','cluster','tags','summary','related','degree']
 data=[{k:p[k] for k in keep} for p in P]
 for d in data: d['authors']=d['authors'][:8]
-json.dump(data,open('../papers.json','w'),ensure_ascii=False)
+with open('../papers.jsonl','w') as f:  # one paper per line, so git diffs show only the papers that changed
+  for d in data: f.write(json.dumps(d,ensure_ascii=False)+'\n')
+if os.path.exists('../papers.db'): os.remove('../papers.db')
+db=sqlite3.connect('../papers.db')  # same data, normalised for SQL: many-valued fields get their own tables
+db.executescript("""CREATE TABLE papers(id INTEGER PRIMARY KEY,title TEXT,url TEXT,year TEXT,cluster TEXT,summary TEXT,degree INTEGER);
+CREATE TABLE authors(paper_id INTEGER REFERENCES papers,pos INTEGER,name TEXT);
+CREATE TABLE tags(paper_id INTEGER REFERENCES papers,tag TEXT);
+CREATE TABLE sources(paper_id INTEGER REFERENCES papers,source TEXT,branch TEXT);
+CREATE TABLE categories(paper_id INTEGER REFERENCES papers,category TEXT);
+CREATE TABLE related(paper_id INTEGER REFERENCES papers,related_id INTEGER REFERENCES papers,rank INTEGER);""")
+for p in P:
+  db.execute('INSERT INTO papers VALUES(?,?,?,?,?,?,?)',(p['id'],p['title'],p['url'],p['year'],p['cluster'],p['summary'],p['degree']))
+  db.executemany('INSERT INTO authors VALUES(?,?,?)',[(p['id'],i,a) for i,a in enumerate(p['authors'])])
+  db.executemany('INSERT INTO tags VALUES(?,?)',[(p['id'],t) for t in p['tags']])
+  db.executemany('INSERT INTO sources VALUES(?,?,?)',[(p['id'],s,re.search(r'\((.*?)\)',s).group(1)) for s in p['sources']])
+  db.executemany('INSERT INTO categories VALUES(?,?)',[(p['id'],c) for c in p['cats']])
+  db.executemany('INSERT INTO related VALUES(?,?,?)',[(p['id'],r,i+1) for i,r in enumerate(p['related'])])
+db.commit(); db.close()
 print(collections.Counter(p['cluster'] for p in P).most_common()); print(df.most_common())
