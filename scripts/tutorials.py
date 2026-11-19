@@ -56,6 +56,10 @@ for slug in order:
   rn=[r for r in n.get('related') or [] if r in notes and r!=slug]
   backs=[o for o in order if slug in (notes[o].get('related') or []) and o not in rn and o!=slug]
   rel=''
+  # interactive tutorials covering any paper this note cites (or, for a hub, its children cite)
+  tl=[t for t in out if 'kind' not in t and set(t['papers'])&set(n['papers'])]
+  if tl:
+    rel+='<section class="related"><h2>互動教學</h2>'+''.join(f'<a href="{t["file"]}"><span>教學</span>{html.escape(t["title"])}</a>' for t in tl)+'</section>'
   if rn or backs:
     rel+='<section class="related"><h2>相關筆記</h2>'+''.join(f'<a href="{r}.html"><span>{noteno(r)}</span>{html.escape(notes[r]["title"])}</a>' for r in rn+backs)+'</section>'
   if n['papers']:
