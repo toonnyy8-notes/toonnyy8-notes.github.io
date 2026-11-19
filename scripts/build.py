@@ -40,16 +40,18 @@ TAGS={
 'Pretraining':r'pretrain|pre-train|scaling up|100b',
 }
 CL={
-'Diffusion & Generative Models':['擴散模型：基礎與設計空間','擴散模型：引導','擴散模型：取樣器與 ODE 求解','擴散模型：蒸餾與少步生成','擴散模型：曝光偏差','擴散模型：潛空間、反演與編輯','擴散模型：最佳傳輸與耦合','擴散模型：逆問題與 Plug-and-Play','擴散模型 × 強化學習','擴散模型應用：影像、3D 與多模態','語音：合成、轉換與聲碼器','GAN','VAE','Normalizing Flows','能量模型','Neural ODE 與連續時間模型','diffusion-model','causal-diffusion','Diffusion、Flow Matching 與生成模型','Basic Diffusion','Energy based Models','3D generation','Music generation'],
-'Diffusion Language Models':['離散擴散與擴散語言模型','非自回歸文字生成','dLLM','dVLM','Diffusion Language Models（dLLM）'],
-'RL, Reasoning & Self-Distillation':['大型語言模型：推理與代理','大型語言模型：對齊、編輯與解碼時對齊','離線強化學習與決策模型','RL','自蒸餾、強化學習與推理','post training','Reward Hacking','Self improving','Evolution Strategies'],
-'Agents & Self-Improvement':['Text Gradient (Agent)','Agent、Context Engineering 與 LLM 應用','RAG','Research idea'],
-'Memory & Continual Learning':['測試時訓練與長期記憶','記憶、Test-Time Training 與持續學習','Memory System','Local Support Learning / Catastrophic Forgetting'],
-'Architectures & Efficiency':['大型語言模型：高效訓練、推論與長度外推','Loop LLM','new backbone','高效推論、架構與系統','Hidden state Compression'],
-'Interpretability & Theory':['Interpretable AI','Interpretation: High Attention','可解釋性與學習理論','LLM streering','Learning Dynamic','Gradient decent','CV interpretation','Statistics','教材'],
-'Vision-Language & Embodied':['VLM 與多模態','VLM: Tool calling','VLM Test time compute','VLM 痛點','Benchmark','Alignment','Physical Robot Learning','Few-shot learning'],
-'Training, Data & Representation':['自監督學習','半監督學習','元學習','大型語言模型：微調','文字風格轉換','情感支持對話','其他','LLM 訓練專題','Data curation & Auto generation','資料篩選、合成資料與資料效率','JEPA 與表徵學習'],
-'Safety & Security':['Cybersecurity AI','AI security（各種use case）'],
+'Diffusion & Generative Models':['擴散模型：基礎與設計空間', '擴散模型：引導', '擴散模型：取樣器與 ODE 求解', '擴散模型：蒸餾與少步生成', '擴散模型：曝光偏差', '擴散模型：潛空間、反演與編輯', '擴散模型：最佳傳輸與耦合', '擴散模型：逆問題與 Plug-and-Play', '擴散模型 × 強化學習', '擴散模型應用：影像、3D 與多模態', 'diffusion-model', 'causal-diffusion', 'Diffusion、Flow Matching 與生成模型', 'Basic Diffusion', '3D generation'],
+'Diffusion Language Models':['離散擴散與擴散語言模型', '非自回歸文字生成', 'dLLM', 'dVLM', 'Diffusion Language Models（dLLM）'],
+'RL, Reasoning & Self-Distillation':['大型語言模型：推理與代理', '大型語言模型：對齊、編輯與解碼時對齊', '離線強化學習與決策模型', 'RL', '自蒸餾、強化學習與推理', 'post training', 'Reward Hacking', 'Self improving', 'Evolution Strategies'],
+'Agents & Self-Improvement':['Text Gradient (Agent)', 'Agent、Context Engineering 與 LLM 應用', 'RAG', 'Research idea'],
+'Memory & Continual Learning':['測試時訓練與長期記憶', '記憶、Test-Time Training 與持續學習', 'Memory System', 'Local Support Learning / Catastrophic Forgetting'],
+'Architectures & Efficiency':['大型語言模型：高效訓練、推論與長度外推', 'Loop LLM', 'new backbone', '高效推論、架構與系統', 'Hidden state Compression'],
+'Interpretability & Theory':['Interpretable AI', 'Interpretation: High Attention', '可解釋性與學習理論', 'LLM streering', 'Learning Dynamic', 'Gradient decent', 'CV interpretation', 'Statistics', '教材'],
+'Vision-Language & Embodied':['VLM 與多模態', 'VLM: Tool calling', 'VLM Test time compute', 'VLM 痛點', 'Benchmark', 'Alignment', 'Physical Robot Learning', 'Few-shot learning'],
+'Training, Data & Representation':['自監督學習', '半監督學習', '元學習', '大型語言模型：微調', '文字風格轉換', '情感支持對話', '其他', 'LLM 訓練專題', 'Data curation & Auto generation', '資料篩選、合成資料與資料效率', 'JEPA 與表徵學習'],
+'Safety & Security':['Cybersecurity AI', 'AI security（各種use case）'],
+'Speech & Audio':['語音：合成、轉換與聲碼器', 'Music generation'],
+'GAN, VAE, Flows & EBM':['GAN', 'VAE', 'Normalizing Flows', '能量模型', 'Neural ODE 與連續時間模型', 'Energy based Models'],
 }
 BROAD={'GAN','VAE','Self-Supervised','Meta-Learning','Efficient Inference','Architecture','Reasoning','Interpretability','Representation Learning','VLM / Multimodal','Pretraining','Post-Training','Benchmark','Data','Memory','Agents','Sampling / MCMC','Learning Theory'}
 cat2cl={c:k for k,v in CL.items() for c in v}
