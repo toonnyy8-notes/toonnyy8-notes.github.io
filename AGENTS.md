@@ -56,6 +56,6 @@ Paper Master 把「研究手記」Discord 伺服器裡收集的論文，整理�
 - **合併重複**：同一內容出現在多處時只寫成一篇，其他篇用 `[標題](slug.html)` 連結過去。寫新筆記前先檢查 `scripts/notes_split/` 裡有沒有現成的主題可以引用或擴充。
 - **總覽（hub）**：每個主題區一篇短總覽，用幾段話說明全貌，並依閱讀順序連到子筆記。
 - **保留事實**：數字、arXiv ID、引用照原文，不自行補充或「更新」。
-- **frontmatter**：每篇以 YAML 開頭，欄位為 `slug`、`title`、`cluster`（資料庫的 10 個群集之一）、`kind`（`hub` 或 `topic`）、`tags`、`arxiv`（文中引用的所有 arXiv ID）、`sources`、`related`（連到的其他 slug）。`index.json` 依閱讀順序列出所有筆記。
+- **frontmatter**：每篇以 YAML 開頭，欄位為 `slug`、`title`、`cluster`（資料庫的 12 個群集之一）、`kind`（`hub` 或 `topic`）、`tags`、`arxiv`（文中引用的所有 arXiv ID）、`sources`、`related`（連到的其他 slug）。`index.json` 依閱讀順序列出所有筆記。
 
 建置時，`arxiv` 欄位決定筆記連到資料庫中的哪些論文，`related` 決定「相關筆記」與總目錄的分組，所以兩欄都要完整。
