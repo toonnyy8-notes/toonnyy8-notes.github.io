@@ -4,9 +4,9 @@ title: Flow matching、interpolant 與速度場／denoiser 的關係
 cluster: Diffusion Language Models
 kind: topic
 tags: [flow-matching, stochastic-interpolant, rectified-flow, denoiser]
-arxiv: ["2602.16813", "2210.02747", "2209.03003", "2511.13720"]
+arxiv: ["2602.16813", "2210.02747", "2209.03003", "2511.13720", "2209.15571"]
 sources: [paper-2602.16813-section-3, arxiv-abstracts]
-related: ["fmlm-lineage-overview", "fmlm-flow-map-distillation-lineage", "fmlm-onehot-denoiser-two-time", "flow-matching-velocity-target", "x-prediction-manifold-view"]
+related: [fmlm-lineage-overview, fmlm-flow-map-distillation-lineage, fmlm-onehot-denoiser-two-time, flow-matching-velocity-target, x-prediction-manifold-view]
 ---
 # Flow matching、interpolant 與速度場／denoiser 的關係
 
@@ -15,7 +15,7 @@ related: ["fmlm-lineage-overview", "fmlm-flow-map-distillation-lineage", "fmlm-o
 ## 前置工作
 
 - Lipman 等人 *Flow Matching for Generative Modeling*（2210.02747，2022）與 Liu 等人 *Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow*（2209.03003，2022）提出以回歸速度場訓練連續生成模型。
-- Albergo、Boffi、Vanden-Eijnden 的 stochastic interpolants（JMLR 2025，本文 [15]）提供統一框架。本文第 3.2 節說明沿用 Lipman 等人與該框架。（該框架的 arXiv ID 未在此驗證。）
+- Albergo、Boffi、Vanden-Eijnden 的 stochastic interpolants（JMLR 2025，本文 [15]）提供統一框架。本文第 3.2 節說明沿用 Lipman 等人與該框架。（該框架的 arXiv ID 未在此驗證；Lafa 論文引用處對應的 arXiv 2209.15571 為其前作 *Building Normalizing Flows with Stochastic Interpolants*。）
 - Li 與 He 的 *Back to Basics: Let Denoising Generative Models Denoise*（2511.13720，2025）指出速度預測在 |V| 遠大於網路特徵維度 d 時會欠擬合，本文以此作為改用 denoiser 的理由。
 
 ## 本文使用的式子

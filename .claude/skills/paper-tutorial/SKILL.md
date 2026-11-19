@@ -52,6 +52,10 @@ prompt 檔中的 `{ID}`（資料庫編號）、`{ARXIV}`、`{TITLE}`、`{SLUG}`�
    - 執行 `python3 .claude/skills/paper-tutorial/scripts/add_tutorial.py {ID} {SLUG} "{TITLE}"`。它併入筆記與 index.json、登錄 `tutorial_list.json`、在最新消息加一則公告，並重建所有頁面。
    - commit 與 push 到 `paper-master`。
    - 完成條件：`tutorials/{SLUG}.html` 存在，且關聯圖詳情卡與總覽筆記都連得到它。
+7. **批次筆記去重**（只在多篇平行建構後）
+   - 平行寫的筆記會重複解釋同一個模型或脈絡。全部上架後，依主題區把新筆記與同區既有筆記分組，每組派一隻 Sonnet 跑 `prompts/dedup.md`（`{FILES}` 為該組可編輯的筆記，`{HUBS}` 為唯讀總覽，`{MAP}` 為該組的對照檔），各組檔案不重疊、同時跑。
+   - 執行 `python3 .claude/skills/paper-tutorial/scripts/merge_notes.py <對照檔…>`。它刪除被合併的筆記，把所有筆記、教學頁、`index.json` 中指向它的連結改到保留的那篇，並重建頁面。
+   - 完成條件：腳本回報 `dangling links: none`，並在最新消息加一則 `note` 公告。
 
 ## 回報
 

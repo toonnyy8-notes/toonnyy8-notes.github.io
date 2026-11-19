@@ -6,7 +6,7 @@ kind: topic
 tags: [mdp, policy, grpo, bernoulli, accuracy-efficiency]
 arxiv: ["2512.09106", "2505.22618", "2502.09992", "2508.15487"]
 sources: ["paper.txt §3, §4"]
-related: [unmasking-policies-dllm-overview, confidence-thresholding-heuristics, rl-post-training-dllm-grpo, semi-ar-block-generation, dllm-llada-dream-models]
+related: [unmasking-policies-dllm-overview, confidence-thresholding-heuristics, rl-post-training-dllm-grpo, semi-ar-block-generation, large-masked-dlms-llada-dream]
 ---
 # Unmasking 作為 MDP 與輕量 policy 設計
 

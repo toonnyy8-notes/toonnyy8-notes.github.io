@@ -6,15 +6,14 @@ kind: topic
 tags: [flow-matching, embedding-flow, clean-token-denoiser, continuous-diffusion-lm]
 arxiv: ["2610.28559", "2210.02747", "2209.15571", "2211.15089", "2602.16813", "2605.10938", "2604.11748", "2605.07013"]
 sources: ["arXiv abstracts", "paper.txt §2.1, §4"]
-related: ["lafa-lineage-overview", "lafa-asynchronous-tokenwise-time", "lafa-self-conditioning-and-flow-map", "flow-matching-velocity-target", "cdlm-training-objective", "cdlm-representation-space", "fmlm-continuous-text-diffusion"]
+related: [lafa-lineage-overview, lafa-asynchronous-tokenwise-time, lafa-self-conditioning-and-flow-map, flow-matching-velocity-target, cdlm-training-objective, cdlm-representation-space, fmlm-continuous-text-diffusion]
 ---
 # 以詞嵌入為空間的 flow 與 clean-token 去噪器
 
 屬於 [Lafa 研究脈絡總覽](lafa-lineage-overview.html)。
 
 ## 基礎
-- Flow Matching（Lipman et al., 2022，2210.02747）：摘要稱是以回歸固定條件機率路徑的向量場，訓練連續正規化流（CNF）的免模擬方法。
-- Stochastic Interpolants（Albergo et al.，論文引用；對應的 arXiv 2209.15571 為其前作 Building Normalizing Flows with Stochastic Interpolants）：以內插路徑建構 flow。Lafa 的內插 `I_t = (1-t)x0 + t x1` 屬此類。速度目標的說明見 [Flow matching 的速度目標](flow-matching-velocity-target.html)。
+Lafa 以 Flow Matching（Lipman et al., 2022，2210.02747）與 Stochastic Interpolants（Albergo et al.，論文引用）為基礎，內插 `I_t = (1-t)x0 + t x1` 屬此類。基礎與速度目標見 [Flow matching、interpolant 與速度場／denoiser 的關係](fmlm-flow-matching-interpolant.html) 與 [Flow matching 的速度目標](flow-matching-velocity-target.html)。
 
 ## 連續語言模型
 - CDCD（Dieleman et al., 2022，2211.15089）：以連續擴散處理類別資料，Lafa 沿用其 time warping。背景見 [連續空間的文字擴散](fmlm-continuous-text-diffusion.html)。

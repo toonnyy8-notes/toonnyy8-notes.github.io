@@ -6,7 +6,7 @@ kind: topic
 tags: [lookup-memory, engram, knn-lm, retrieval, explicit-memory]
 arxiv: ["2607.25380", "1911.00172", "2306.07174", "2511.01581", "2602.00398", "2601.07372", "2402.04624"]
 sources: ["arXiv:2607.25380 §IV-B, §IV-E, Table I, Table II"]
-related: ["llmmem-explicit-parameterized-test-time-memory", "llmmem-hybrid-management-evaluation", "llmmem-moe-as-conditional-memory", "llmmem-taxonomy-overview", "llmmem-three-axes-taxonomy"]
+related: [engram-module-design, llmmem-explicit-parameterized-test-time-memory, llmmem-hybrid-management-evaluation, llmmem-moe-as-conditional-memory, llmmem-taxonomy-overview, llmmem-three-axes-taxonomy]
 ---
 # 查表式外顯記憶
 
@@ -18,7 +18,7 @@ related: ["llmmem-explicit-parameterized-test-time-memory", "llmmem-hybrid-manag
 2. 邊界類別：Memorizing Transformers 把內部 key–value 表示存入不可微的記憶並以近似最近鄰檢索；LongMem（arXiv:2306.07174）把凍結主幹抽出的 key–value 存入快取記憶庫，再以 SideNet 檢索並融合。論文把它們視為顯式 datastore 與隱式 activation 記憶之間的邊界類別，不放進主分類表。
 3. 可編輯的記憶庫：PlugLM 以可微的外掛 key–value 記憶取代部分 FFN 層，起點是 FFN 本來就像隱式 key–value 儲存；ExplicitLM（arXiv:2511.01581）用逐層的顯式記憶庫，條目是人可讀的 token 序列，並以兩階段可微檢索存取。論文強調它們不是 RAG，因為記憶庫作為架構元件被訓練與呼叫，且提供在糾纏的參數記憶中難以做到的定向更新。
 4. FFN 作為查表：MemoryLLM（Plug-n-play 可解釋 feed-forward 記憶，arXiv:2602.00398）把 FFN 重新詮釋為不依賴 context 的逐 token 檢索模組，從 token embedding 直接訓練解耦的 FFN 記憶，輸出可預先計算成 token 層級查表。論文指出它與可自我更新的 MEMORYLLM（arXiv:2402.04624）概念不同，後者是推論時重新整理的潛在記憶池。
-5. Engram（Cheng 等，arXiv:2601.07372，論文標題為 Conditional memory via scalable lookup: A new axis of sparsity for large language models）：資訊存在稀疏啟用的槽位，以結構化雜湊檢索；模型依當前隱藏狀態做選擇性查表，不經完整 attention 重算歷史。論文強調它把記憶稀疏性與專家稀疏性分開：MoE 稀疏啟用參數化轉換，Engram 稀疏定址儲存的條目。核心貢獻是容量可獨立於稠密計算成長的定址基底，受限於索引方案的準確度與碰撞行為。Table I 把它標為離線、長期、雜湊查表槽。
+5. Engram（Cheng 等，arXiv:2601.07372，論文標題為 Conditional memory via scalable lookup: A new axis of sparsity for large language models）：資訊存在稀疏啟用的槽位，以結構化雜湊檢索；模型依當前隱藏狀態做選擇性查表，不經完整 attention 重算歷史。論文強調它把記憶稀疏性與專家稀疏性分開：MoE 稀疏啟用參數化轉換，Engram 稀疏定址儲存的條目。核心貢獻是容量可獨立於稠密計算成長的定址基底，受限於索引方案的準確度與碰撞行為。Table I 把它標為離線、長期、雜湊查表槽。模組本身的設計見 [Engram 模組的設計](engram-module-design.html)。
 
 ## 與 RAG 的界線
 

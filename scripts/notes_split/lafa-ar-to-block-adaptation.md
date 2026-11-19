@@ -6,7 +6,7 @@ kind: topic
 tags: [block-diffusion, ar-adaptation, prefix-cache, block-bidirectional-attention]
 arxiv: ["2610.28559", "2503.09573", "2508.15487", "2512.14067", "2512.06776", "2512.22737"]
 sources: ["arXiv abstracts", "paper.txt §2, §4"]
-related: ["lafa-lineage-overview", "lafa-embedding-flow-denoiser", "lafa-parallel-decoding-background", "semi-ar-block-generation", "dllm-llada-dream-models"]
+related: [lafa-lineage-overview, lafa-embedding-flow-denoiser, lafa-parallel-decoding-background, semi-ar-block-generation, large-masked-dlms-llada-dream]
 ---
 # 從預訓練 AR 模型調整為 block 模型
 
@@ -18,7 +18,7 @@ Lafa 採用標準的 block-autoregressive 分解：長度 M 的序列切成大�
 ## 從 AR 模型調整
 訓練大型擴散模型的成本高，因此一組工作改由預訓練 AR 權重出發：
 
-- Dream 7B（2508.15487）：論文將其列為擴展到數十億參數的離散擴散模型（見 [LLaDA 與 Dream](dllm-llada-dream-models.html)）。
+- Dream 7B（2508.15487）：論文將其列為擴展到數十億參數的離散擴散模型（見 [LLaDA 與 Dream](large-masked-dlms-llada-dream.html)）。
 - Efficient-DLM（2512.14067）：摘要稱研究 AR 轉 dLM 的轉換，因為從頭訓練的學習效率落後於 AR。
 - From Next-Token to Next-Block（2512.06776）：摘要稱提出由 AR 權重調整為 block 擴散模型的方法。
 - WeDLM（2512.22737）：摘要稱使其與標準因果注意力相容以利快速推論。

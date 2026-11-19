@@ -6,7 +6,7 @@ kind: topic
 tags: [discrete-diffusion, masked-diffusion, factorization-error]
 arxiv: ["2602.16813", "2107.03006", "2310.16834", "2406.07524", "2407.15595", "2506.10892", "2502.09992", "2410.08709"]
 sources: [paper-2602.16813-intro-background, arxiv-abstracts]
-related: ["fmlm-lineage-overview", "fmlm-parallel-decoding-motivation", "fmlm-onehot-denoiser-two-time", "hybrid-continuous-discrete-lm"]
+related: [fmlm-lineage-overview, lafa-parallel-decoding-background, fmlm-onehot-denoiser-two-time, hybrid-continuous-discrete-lm]
 ---
 # 離散擴散語言模型與少步時的因子化誤差
 

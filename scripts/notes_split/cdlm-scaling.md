@@ -6,7 +6,7 @@ kind: topic
 tags: [scaling, ar-initialization, block-diffusion, self-speculative-decoding, sigma, lafa]
 sources: [flow-matching-lm-2026.md]
 arxiv: ["2605.07820", "2605.18530", "2610.02665", "2610.28559", "2606.27617", "2610.00894"]
-related: ["continuous-flow-lm-overview", "flow-map-few-step-distillation", "cdlm-representation-space", "cdlm-noise-schedule"]
+related: [continuous-flow-lm-overview, flow-map-few-step-distillation, cdlm-representation-space, cdlm-noise-schedule]
 ---
 # 連續擴散語言模型的規模化策略與大模型結果（Sigma、Lafa 等）
 
@@ -33,8 +33,7 @@ related: ["continuous-flow-lm-overview", "flow-map-few-step-distillation", "cdlm
 
 ## Lafa 的設計
 - **Lafa 的 macro-average：** 有二手報導稱 8B macro-average 為 63.1%，AR SFT 為 56.8%，Efficient-DLM 為 63.5%。 [aiweekly](https://aiweekly.co/alerts/lafa-flow-language-model-hits-254x-ar-throughput-at-7b-scale) 此數字未能從原文表格直接核對，引用時應回查原文。
-- 論文稱 flow 訓練有多 token 預測效果，能保留甚至提升 AR 能力。 [arxiv](https://arxiv.org/abs/2610.28559)
-- 推論時以 flow 產生草稿，由同一模型的 AR 頭驗證（self-speculative decoding）。 [arxiv](https://arxiv.org/abs/2610.28559)
+- 多 token 預測效果與 flow 草稿加 AR 驗證的做法見 [自我推測解碼](lafa-self-speculative-decoding.html)。 [arxiv](https://arxiv.org/abs/2610.28559)
 - 與既有做法的對照：論文 §1 寫明其少於 30B tokens 的訓練「cheaper than comparable adaptation of discrete diffusion models that use up to 500B tokens」。
 - 學到的 per-token time 呈由左到右順序，見 [噪聲／時間排程](cdlm-noise-schedule.html)。
 

@@ -6,17 +6,13 @@ kind: topic
 tags: [mixture-of-experts, conditional-memory, routing, explicit-memory]
 arxiv: ["2607.25380", "2101.03961", "2112.06905", "2401.04088", "2401.06066", "2601.07372"]
 sources: ["arXiv:2607.25380 §IV-C, Table I"]
-related: ["llmmem-explicit-lookup-memory-engram", "llmmem-explicit-parameterized-test-time-memory", "llmmem-taxonomy-overview", "llmmem-three-axes-taxonomy"]
+related: [moe-conditional-computation-lineage, llmmem-explicit-lookup-memory-engram, llmmem-explicit-parameterized-test-time-memory, llmmem-taxonomy-overview, llmmem-three-axes-taxonomy]
 ---
 # MoE 作為條件參數記憶
 
 綜述（arXiv:2607.25380 §IV-C）把 Mixture-of-Experts 歸為嵌在參數空間的離線顯式記憶。稠密 Transformer 層的所有參數都參與每次前向；MoE 維護一組專家子網路，由學到的路由函數依輸入只啟用稀疏子集合。給定隱藏狀態 h，路由器對 E 個專家產生稀疏閘控分布，輸出為被選專家輸出以閘控權重加總。
 
-## 發展順序
-
-1. Switch Transformer（Fedus、Zoph、Shazeer，arXiv:2101.03961）與 GLaM（arXiv:2112.06905）：論文引用它們說明稀疏專家啟用可把模型容量擴展到兆級參數，同時每 token 的 FLOPs 大致不變。
-2. Mixtral（arXiv:2401.04088）：論文描述每層八個專家、top-2 路由，並提到專家出現專門化。
-3. DeepSeek-MoE（arXiv:2401.06066）：論文描述它以細粒度專家切分與負載平衡策略提升專門化的穩定性與效率。
+發展脈絡（Switch Transformer、GLaM、Mixtral、DeepSeek-MoE 及其論文描述）見 [MoE 與條件式計算的發展](moe-conditional-computation-lineage.html)。
 
 ## 記憶詮釋
 

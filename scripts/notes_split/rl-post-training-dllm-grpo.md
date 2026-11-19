@@ -6,7 +6,7 @@ kind: topic
 tags: [grpo, ppo, d1, reinforcement-learning, post-training]
 arxiv: ["1707.06347", "2402.03300", "2504.12216", "2512.09106"]
 sources: ["paper.txt §3.3, §5", "arXiv API metadata"]
-related: [unmasking-policies-dllm-overview, learned-unmasking-concurrent-work, unmasking-mdp-policy-design]
+related: [unmasking-policies-dllm-overview, rlvr-grpo-credit-assignment, learned-unmasking-concurrent-work, unmasking-mdp-policy-design]
 ---
 # dLLM 的強化學習後訓練與 GRPO
 
@@ -14,7 +14,7 @@ related: [unmasking-policies-dllm-overview, learned-unmasking-concurrent-work, u
 
 ## 演算法來源
 
-PPO（Schulman 等人，2017，「Proximal Policy Optimization Algorithms」，1707.06347）是 policy gradient 方法。GRPO 由 Shao 等人在「DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models」（2402.03300）提出。論文稱 GRPO 是比早期 policy gradient 更簡單、更可擴展的替代方案。
+PPO（1707.06347）與 GRPO（DeepSeekMath，2402.03300）的定義與來源見 [RLVR、GRPO 與信用分配瓶頸](rlvr-grpo-credit-assignment.html)。論文稱 GRPO 是比早期 policy gradient 更簡單、更可擴展的替代方案。
 
 ## dLLM 上的 RL
 
