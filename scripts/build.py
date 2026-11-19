@@ -1,4 +1,5 @@
-import re,json,csv,collections
+import re,json,os
+os.chdir(os.path.dirname(os.path.abspath(__file__)))  # run from anywhere; database files go to the repo root,csv,collections
 P=json.load(open('papers_raw.json'))
 TAGS={
 'Diffusion':r'diffusion|denois|score[- ]based|score matching|\bDDPM|\bDDIM',
@@ -71,11 +72,11 @@ for p in P:
   p['related']=[i for s,i in sorted(sc,reverse=True)[:6]]
 deg=collections.Counter(i for p in P for i in p['related'])
 for p in P: p['degree']=deg[p['id']]
-with open('papers.csv','w',newline='',encoding='utf-8-sig') as f:
+with open('../papers.csv','w',newline='',encoding='utf-8-sig') as f:
   w=csv.writer(f);w.writerow(['Paper ID','Title','Authors','Year','URL','Source File & Branch','Source Category','Cluster','Core Topic / Summary','Tags','Related Paper IDs'])
   for p in P: w.writerow([p['id'],p['title'],', '.join(p['authors'][:6])+(' et al.' if len(p['authors'])>6 else ''),p['year'],p['url'],'; '.join(p['sources']),'; '.join(p['cats']),p['cluster'],p['summary'],'; '.join(p['tags']),', '.join(map(str,p['related']))])
 keep=['id','title','url','authors','year','sources','branch','cats','cluster','tags','summary','related','degree']
 data=[{k:p[k] for k in keep} for p in P]
 for d in data: d['authors']=d['authors'][:8]
-json.dump(data,open('papers.json','w'),ensure_ascii=False)
+json.dump(data,open('../papers.json','w'),ensure_ascii=False)
 print(collections.Counter(p['cluster'] for p in P).most_common()); print(df.most_common())

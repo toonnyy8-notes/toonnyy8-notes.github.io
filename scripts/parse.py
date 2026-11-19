@@ -1,4 +1,5 @@
-import re,json,urllib.request,time
+import re,json,urllib.request,time,os
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 SRC=[('ai-research-topic-papers.md','raymin-notes'),('diffusion-channels-papers.md','raymin-notes'),('waiting-to-read-papers.md','toonnyy8-notes')]
 AX=re.compile(r'(?:arxiv\.org/(?:abs|pdf|html)/|alphaxiv\.org/(?:abs|overview)/|huggingface\.co/papers/)(\d{4}\.\d{4,5})')
 papers={};order=[]
