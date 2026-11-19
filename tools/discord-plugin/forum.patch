@@ -1,0 +1,70 @@
+--- a/server.ts
++++ b/server.ts
+@@ -598,7 +598,7 @@
+     {
+       name: 'fetch_messages',
+       description:
+-        "Fetch recent messages from a Discord channel. Returns oldest-first with message IDs. Discord's search API isn't exposed to bots, so this is the only way to look back.",
++        "Fetch recent messages from a Discord channel. Returns oldest-first with message IDs. Discord's search API isn't exposed to bots, so this is the only way to look back. Given a forum channel, it lists the forum's posts (title and post id) instead; pass a post id to read that post's messages.",
+       inputSchema: {
+         type: 'object',
+         properties: {
+@@ -624,6 +624,10 @@
+             type: 'string',
+             description: 'Message in the parent channel to start the thread from, usually the one you are answering. Prefer this; omit it only for a standalone thread.',
+           },
++          text: {
++            type: 'string',
++            description: 'Forum channels only: body of the new forum post (defaults to name).',
++          },
+         },
+         required: ['chat_id', 'name'],
+       },
+@@ -688,6 +692,27 @@
+         return { content: [{ type: 'text', text: result }] }
+       }
+       case 'fetch_messages': {
++        // local patch: a forum channel has no messages of its own — list its posts (threads) instead.
++        // Same allowlist gate as create_thread's forum branch; posts are then readable via fetch_messages(post id).
++        const forum = await client.channels.fetch(args.channel as string)
++        if (forum?.type === ChannelType.GuildForum) {
++          if (!(forum.id in loadAccess().groups)) {
++            throw new Error(`channel ${forum.id} is not allowlisted — add via /discord:access`)
++          }
++          const posts = new Map((await forum.threads.fetchActive()).threads)
++          let before: Date | undefined
++          for (let page = 0; page < 10; page++) { // ponytail: 10 pages × 100 archived posts cap
++            const res = await forum.threads.fetchArchived({ type: 'public', limit: 100, before })
++            for (const [id, t] of res.threads) posts.set(id, t)
++            const oldest = [...res.threads.values()].map(t => t.archivedAt).filter(Boolean).sort((a, b) => a!.getTime() - b!.getTime())[0]
++            if (!res.hasMore || !oldest) break
++            before = oldest
++          }
++          const rows = [...posts.values()]
++            .sort((a, b) => (a.createdTimestamp ?? 0) - (b.createdTimestamp ?? 0))
++            .map(t => `[${t.createdAt?.toISOString() ?? '?'}] ${t.name.replace(/[\r\n]+/g, ' ')}  (post id: ${t.id}, ${t.archived ? 'archived' : 'active'}, ${t.messageCount ?? '?'} msgs)`)
++          return { content: [{ type: 'text', text: rows.length ? `forum ${forum.name}: ${rows.length} posts\n` + rows.join('\n') : '(no posts)' }] }
++        }
+         const ch = await fetchAllowedChannel(args.channel as string)
+         const limit = Math.min((args.limit as number) ?? 20, 100)
+         const msgs = await ch.messages.fetch({ limit })
+@@ -781,6 +806,19 @@
+         }
+       }
+       case 'create_thread': {
++        // local patch: forum channels aren't text-based, so fetchAllowedChannel rejects them.
++        // Same allowlist gate, then create a forum post instead of a thread.
++        const raw = await client.channels.fetch(args.chat_id as string)
++        if (raw?.type === ChannelType.GuildForum) {
++          if (!(raw.id in loadAccess().groups)) {
++            throw new Error(`channel ${raw.id} is not allowlisted — add via /discord:access`)
++          }
++          const post = await raw.threads.create({
++            name: args.name as string,
++            message: { content: (args.text as string) || (args.name as string) },
++          })
++          return { content: [{ type: 'text', text: `forum post created (id: ${post.id}) — use it as chat_id to reply there.` }] }
++        }
+         const ch = await fetchAllowedChannel(args.chat_id as string)
+         if (ch.isThread()) {
+           throw new Error(`chat_id is already a thread — reply in it, or pass its parent channel ${ch.parentId} to start a new one`)
