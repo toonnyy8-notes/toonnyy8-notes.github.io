@@ -1,0 +1,1293 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>R-Zero 互動教學</title>
+<meta name="description" content="圖解 R-Zero（arXiv 2508.05004）：同一個語言模型分成 Challenger 與 Solver，以多數決偽標籤與不確定性獎勵從零外部資料訓練推理能力；篩選、重複懲罰、GRPO 與迭代後的表現下降。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js" onerror="document.documentElement.classList.add('nokatex')"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onerror="document.documentElement.classList.add('nokatex')"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+
+/* ---- No. 447 additions ---- */
+:root{--c-ref:var(--c-par)}
+details.more{max-width:760px;margin:16px 0 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.more>summary{cursor:pointer;list-style:none;padding:12px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px;color:var(--ink-2)}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.more[open]>summary::before{transform:rotate(45deg)}
+details.more>.tscroll{margin:0 12px 12px}
+details.more.mini{margin:0;border-radius:10px}
+details.more.mini>summary{font-size:13px;padding:8px 14px}
+details.more.mini .readout{margin:0 8px 8px}
+.lg.sq::before{width:9px;height:9px;border:2px solid var(--ink);border-radius:1px}
+.lg.ring::before{width:12px;height:12px;border:2px solid var(--accent);border-radius:50%}
+.lg.dia::before{width:9px;height:9px;border:2px solid var(--ink);transform:rotate(45deg)}
+.lg.cref::before{border-top:3px dashed var(--c-ref)}
+.lg.samp::before{border-top:1.5px solid var(--ink-2)}
+.quote{padding:10px 16px;border:1px solid var(--line);background:var(--surface);border-radius:10px}
+.note.small{font-size:13px;margin:-6px 0 0;line-height:1.55}
+.hero-strip{max-width:520px;margin:8px 0 0}
+.hero-strip .cap{font-size:13px;color:var(--ink-3)}
+svg .samp{stroke:var(--ink-2);stroke-width:1.2;fill:none;opacity:.7}
+svg .cref{stroke:var(--c-ref);stroke-width:3;fill:none;stroke-dasharray:7 5}
+svg .plan{stroke:var(--accent);stroke-width:3;fill:none}
+svg .plan0{stroke:var(--ink-2);stroke-width:1.6;fill:none}
+svg .mk{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .mk-acc{fill:none;stroke:var(--accent);stroke-width:2.5}
+svg .cell{stroke:var(--line);stroke-width:.5}
+svg .cur-col{fill:none;stroke:var(--ink);stroke-width:2}
+svg .frame{fill:none;stroke:var(--line)}
+svg .warn{font:500 14px var(--f-body);fill:var(--accent)}
+.warm{max-width:760px;margin:12px 0 24px;display:flex;flex-direction:column;gap:12px;padding:18px 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+.lane{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lane-h{font:500 12px/1 var(--f-mono);color:var(--ink-3);width:4.5em}
+.nd{padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);font-size:14px;line-height:1.3}
+.nd.acc{border-color:var(--accent);background:var(--accent-soft)}
+.ar{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-2)}
+.ar::before{content:"";width:22px;border-top:2px solid var(--ink-2)}
+.ar::after{content:"";width:0;height:0;border-left:6px solid var(--ink-2);border-top:4px solid transparent;border-bottom:4px solid transparent;margin-left:-6px}
+.ar.dash::before{border-top-style:dashed}
+.plate .readout{white-space:pre-line}
+@media (max-width:599px){.lane-h{width:100%}}
+/* ---- No. 32 additions ---- */
+.katex-warn{display:none;max-width:760px;margin:12px 0;padding:10px 14px;border:1px solid var(--line);border-radius:10px;font-size:14px;color:var(--ink-2);background:var(--surface-2)}
+.nokatex .katex-warn{display:block}
+.toy{color:var(--accent);border-color:color-mix(in oklab,var(--accent) 50%,var(--line));border-style:dashed}
+.tmpl{max-width:760px;margin:16px 0 20px;padding:16px 18px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);font:400 13px/1.7 var(--f-mono);color:var(--ink-2);white-space:pre-wrap;word-break:break-word}
+.tmpl b{color:var(--ink);font-weight:500}
+dl.ro{display:grid;grid-template-columns:auto auto;gap:4px 14px;margin:0;font:400 13px/1.6 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px}
+dl.ro dt{color:var(--ink-3)}dl.ro dd{margin:0;color:var(--ink);text-align:right}
+dl.ro .tgt{font-weight:600;color:var(--accent)}
+.lead-assume{font:500 15px/1.6 var(--f-body);color:var(--ink);margin:0 0 10px;padding:10px 14px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));background:var(--accent-soft);border-radius:10px}
+svg .halo{paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round}
+svg .hatch-ln{stroke:var(--ink-3);stroke-width:1}
+svg .band{fill:url(#hatch-band);stroke:none}
+svg .bar{fill:var(--c-par)}
+svg .barw{fill:url(#hatch-w);stroke:var(--c-perp);stroke-width:1}
+svg .hw-ln{stroke:var(--c-perp);stroke-width:1.5}
+svg .curc{fill:none;stroke:var(--accent);stroke-width:2.5}
+svg .box{fill:var(--surface);stroke:var(--line);stroke-width:1.2}
+svg .box-c{stroke:var(--c-par);stroke-width:3}
+svg .box-s{stroke:var(--c-perp);stroke-width:3}
+svg .arr{stroke:var(--ink-2);stroke-width:1.5;fill:none}
+svg .arrh{fill:var(--ink-2)}
+svg .lock{fill:var(--ink-3)}
+svg .star{fill:var(--accent);stroke:var(--surface);stroke-width:1}
+svg .sel-ring{fill:none;stroke:var(--accent);stroke-width:2}
+svg .hit{fill:transparent;cursor:pointer}
+.lg.sq::before{width:12px;height:12px;border:0;background:var(--c-par)}
+.lg.hatch::before{width:14px;height:12px;border:1px solid var(--ink-3);background-image:linear-gradient(135deg,transparent 40%,var(--ink-3) 40% 60%,transparent 60%);background-size:4px 4px}
+.lg.shape::before{content:none}
+.lg.tdash::before{border-top:2px dashed var(--ink)}
+.lg.tdot::before{border-top:3px dotted var(--accent)}
+.lg.tdd::before{border-top:2px dashed var(--c-perp)}
+.lg .mk{font:500 14px/1 var(--f-mono)}
+/* C1 slots */
+.slots{display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:6px;margin:0 0 10px}
+@media (max-width:599px){.slots{grid-template-columns:repeat(5,minmax(0,1fr))}}
+.slot{position:relative}
+.slot select{width:100%;min-height:44px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-mono);text-align:center;padding:0 2px;appearance:none;-webkit-appearance:none;cursor:pointer}
+.slot.same select{border:2px solid var(--c-par)}
+.slot .tg{position:absolute;top:-7px;right:-4px;font:500 11px/1 var(--f-body);background:var(--c-par);color:var(--surface);border-radius:6px;padding:2px 4px;pointer-events:none}
+.sel{min-height:40px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);font:500 14px/1 var(--f-body);padding:0 10px;max-width:220px}
+/* C2 */
+.c2-top{gap:12px 20px;margin:0 0 12px}
+.c2-tau{min-width:220px;flex:1}
+.c2t td{vertical-align:middle;padding:8px 10px}
+.c2t th{padding:8px 10px}
+.c2t textarea{width:100%;min-width:180px;min-height:44px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font:400 13px/1.45 var(--f-mono);padding:6px 8px;resize:vertical}
+.c2t .bad{color:var(--accent);font-weight:600}
+.c2t .grp{display:inline-block;font:500 12px/1 var(--f-mono);padding:4px 8px;border:1px solid var(--line);border-radius:999px;white-space:nowrap}
+.c2t .grp.multi{border-color:var(--c-perp);border-style:dashed;color:var(--ink)}
+.stepper{display:inline-flex;align-items:center;gap:2px}
+.stepper button{min-width:32px;min-height:36px;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;cursor:pointer;font:500 14px/1 var(--f-mono)}
+.stepper output{min-width:24px;text-align:center;font:500 14px/1 var(--f-mono)}
+.adv{display:flex;align-items:center;gap:6px;min-width:110px}
+.adv .bar-w{position:relative;flex:1;height:10px;background:var(--surface-2);border-radius:4px;min-width:50px}
+.adv .bar-w i{position:absolute;top:0;bottom:0;background:var(--c-par);border-radius:4px}
+.adv .bar-w i.neg{background-image:linear-gradient(135deg,transparent 40%,var(--c-perp) 40% 60%,transparent 60%);background-size:4px 4px;border:1px solid var(--c-perp)}
+.adv .bar-w::after{content:"";position:absolute;left:50%;top:-3px;bottom:-3px;border-left:1px solid var(--ink-3)}
+.adv b{font:500 13px/1 var(--f-mono);min-width:52px;text-align:right}
+.c2-off .c-rep,.c2-off2 .c-adv{display:none}
+.dmat{border-collapse:collapse;font:400 12px/1 var(--f-mono);margin:4px 0}
+.dmat td,.dmat th{padding:6px 7px;text-align:center;border:1px solid var(--line)}
+.dmat td.lt{outline:2px solid var(--accent);outline-offset:-2px;font-weight:600;color:var(--ink)}
+.dlist{margin:6px 0;padding-left:18px;font:400 13px/1.7 var(--f-mono);color:var(--ink-2)}
+.wide-only{display:block}.narrow-only{display:none}
+@media (max-width:599px){
+  .wide-only{display:none}.narrow-only{display:block}
+  table.c2t thead{display:none}
+  table.c2t tr{display:block;border-top:1px solid var(--line);padding:10px 12px}
+  table.c2t td{display:grid;grid-template-columns:6.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.c2t td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  .c2t textarea{min-width:0}
+  table.c2t td.num{text-align:left}
+  table.c2t td:first-child{font-weight:600}
+}
+/* C3 */
+.c3-plu{font-size:14px;color:var(--ink-2);margin:0 0 6px;min-height:1.6em}
+.c3-plu b{color:var(--ink)}
+.adv-ctl,.ctl.adv{padding-top:10px}
+/* C4 */
+.c4-fig{border-radius:10px}
+.c4-fig:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+.hero-c{max-width:560px;margin:8px 0 0}
+#fig2{max-width:760px;margin:12px 0 4px}
+@media (max-width:479px){table.stack td.num{text-align:left}}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs><pattern id="hatch-band" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" class="hatch-ln"/></pattern><pattern id="hatch-w" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="5" class="hw-ln"/></pattern></defs></svg>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 32</span>
+  <span class="ttl">R-Zero：從零資料自我演化的推理模型</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+<p class="katex-warn">數學式排版載入失敗，以下保留原始 TeX。</p>
+
+<!-- S0 -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 32</b> · 互動教學 · arXiv 2508.05004 · ICLR 2026</div>
+  <h1><span class="lat">R-Zero</span>：從零資料自我演化的推理模型</h1>
+  <p class="dek">同一個語言模型分成出題模型與解題模型。解題模型對一題的答案約一半相同時，出題模型的獎勵最高；解題模型以自己出現最多次的答案當標籤來學習。</p>
+  <p class="byline">Chengsong Huang、Wenhao Yu 等（Tencent AI Seattle Lab 等，2025；v4 2026）〈R-Zero: Self-Evolving Reasoning LLM from Zero Data〉</p>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 兩個角色</span><p>Challenger（出題模型）與 Solver（解題模型）都從同一個語言模型複製而來，之後分開訓練。</p></div>
+    <div class="fact"><span class="n">02 · 獎勵</span><p>Solver 對一題回答 10 次，出現最多次的答案當作標籤。10 個答案中恰好 5 個與標籤相同時，Challenger 得到最高獎勵。</p></div>
+    <div class="fact"><span class="n">03 · 結果與限制</span><p>Qwen3-4B-Base 在 7 個數學基準（AMC、MATH-500 等競賽題與應用題集）的平均分由 42.58 升到 49.07，第 3 輪（第 45 步）之後下降；較小的模型在第 1–2 輪就達到峰值。</p></div>
+  </div>
+  <div class="fig hero-c" id="hero-c"><svg role="img" aria-label="c 軸：10 個答案中與標籤相同的個數，3 到 7 個的題目被保留"></svg></div>
+  <p class="note small">c 軸：10 個答案中與標籤相同的個數。長條高度是 Challenger 的不確定性獎勵，斜線區（3–7）是 Solver 訓練資料保留的範圍。本頁的 C1、C3 用同一條軸。</p>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2508.05004">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-32">在關聯圖中查看</a>
+    <a class="btn" href="rzero-lineage-hub.html">研究筆記總覽</a>
+    <a class="btn" href="https://github.com/Chengsong-Huang/R-Zero">程式碼 ↗</a>
+  </div>
+</section>
+
+<!-- S1 -->
+<section class="ch" id="why" data-toc="01" data-tt="動機">
+  <div class="ch-num">01 · 動機</div>
+  <h2>目標是不用任何人類題目與標籤</h2>
+  <div class="prose">
+    <p>大型語言模型（large language model, LLM）可以看成一個<b>策略</b>（policy）：給定一段提示，它以某個機率分布產生回答。強化學習（reinforcement learning, RL）的做法是讓模型實際產生回答（一次完整的取樣稱為一個 <b>rollout</b>），替每個回答算一個<b>獎勵</b>（reward），再調整參數，提高高獎勵回答的機率。</p>
+    <p>訓練推理能力的 RL 有三類做法，差別在於需要什麼外部資源（Sec. 1）。第一類是 RLVR（reinforcement learning with verifiable rewards，以可自動驗證的獎勵做 RL）：例如把模型的數學答案與標準答案比對，答對得 1。它需要人類整理的題目與標準答案，作者指出這類資料成本高、難以擴大。第二類是<b>無標籤 RL</b>（label-free RL）：用模型自己的輸出當獎勵，例如回答的信心、輸出熵、多次回答的一致性；不需要標籤，但仍需要一批現成的題目。第三類是<b>自我出題</b>（self-challenging）：讓模型自己出題，但多數方法依賴程式執行器（code executor）確認題目可解、答案正確，例如 Absolute Zero（Zhao et al. 2025a）；沒有執行器的領域無法這樣做。</p>
+    <p><b>R-Zero 的起點與兩個角色。</b>R-Zero 從一個基底 LLM 出發，把它初始化成兩份參數分開的模型：<b>Challenger</b>（出題模型，記為 $Q_\theta$）負責出題，<b>Solver</b>（解題模型，記為 $S_\phi$）負責解題。兩者輪流訓練，整個過程不使用任何外部題目或標籤（Sec. 2.1）。每一輪分三個階段：(1) 固定 Solver，訓練 Challenger 出讓 Solver 最不確定的題；(2) 兩者都固定，用 Challenger 產生候選題並篩選成 Solver 的訓練集；(3) 固定 Challenger，在訓練集上訓練 Solver。然後進入下一輪（Fig. 2、Alg. 1）。</p>
+    <p>論文把題目限定在數學（Sec. 2.2）：數學答案可以客觀比對，Solver 自己的多數決就能產生標籤，不需要程式執行器。附錄 H 另外測試了不限定數學的版本（第 09 章）。</p>
+  </div>
+  <div class="fig" id="fig2"><svg role="img" aria-label="R-Zero 的一輪：上排訓練 Challenger，Solver 固定；下排 Challenger 固定，產生 8000 題、篩選後訓練 Solver；完成後進入下一輪"></svg></div>
+  <p class="note small">Fig. 2 重繪。鎖頭與「固定」表示該階段不更新的模型。</p>
+  <div class="prose"><p class="note"><b>本節符號</b>：$Q_\theta$ = Challenger（參數 $\theta$）；$S_\phi$ = Solver（參數 $\phi$）。</p></div>
+  <p class="read">延伸閱讀：<a href="rzero-grpo-rlvr-foundation.html">R-Zero 使用的訓練基礎：GRPO 與 RLVR</a>、<a href="rzero-label-free-intrinsic-rewards.html">無標籤 RL：熵、信心與 self-certainty 獎勵</a>、<a href="rzero-self-play-task-generation.html">自我對弈與模型自產任務</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">R-Zero 從什麼開始？兩個角色各做什麼？</p>
+    <p class="a">從一個基底 LLM 出發，初始化成參數分開的 Challenger（出題）與 Solver（解題），輪流訓練；不使用任何外部題目或標籤（Sec. 2.1）。</p>
+  </div></details>
+</section>
+
+<!-- S2 -->
+<section class="ch" id="vote" data-toc="02" data-tt="偽標籤與獎勵">
+  <div class="ch-num">02 · 偽標籤與獎勵</div>
+  <h2>出現最多次的答案成為偽標籤，一致程度決定獎勵</h2>
+  <div class="prose">
+    <p>Challenger 產生一道題 $x$ 之後，向目前的 Solver 取樣 $m$ 個答案 $y_1,\dots,y_m$（論文 $m=10$；答案指 <code>\boxed{}</code> 內的最終答案）。</p>
+    <p><b>偽標籤與 $\hat p$。</b>Solver 對同一題答 $m=10$ 次，出現最多次的答案稱為偽標籤（pseudo-label）$\tilde y(x)$。這裡的多數決是 plurality：只要比其他答案出現得多就算，不必過半，所以 10 個答案中只有 3 個相同也可能成為偽標籤。$\hat p$ 是與 $\tilde y$ 相同的答案比例；論文稱為 empirical accuracy，但它衡量的是一致性，不是對真實答案的正確率（Sec. 2.2）。本頁另記 $c$ 為與偽標籤相同的答案個數，所以 $\hat p=c/m$。</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\hat p(x;S_\phi)=\frac1m\sum_{j=1}^m\mathbb 1\{y_j=\tilde y(x)\}$$</div><span class="eq-n">Sec. 2.2</span></div>
+  <div class="eq"><div class="eq-m">$$r_{\text{uncertainty}}(x;\phi)=1-2\left|\hat p(x;S_\phi)-\tfrac12\right|$$</div><span class="eq-n">Sec. 2.2</span></div>
+  <div class="prose">
+    <p><b>不確定性獎勵的值。</b>不確定性獎勵為 $r_{\text{uncertainty}}=1-2|\hat p-\frac12|$。$m=10$ 時，$c=5$ 得 1，$c=10$ 得 0，$c=1$ 得 0.2<span class="tag">本頁推導</span>。$c=1..10$ 依序是 0.2、0.4、0.6、0.8、1.0、0.8、0.6、0.4、0.2、0。多數答案至少出現 1 次，所以 $\hat p\ge 1/m$，十個答案全部不同時仍得 0.2；十個全部相同時得 0，因為這題對 Solver 太簡單。作者設計這個獎勵，是要 Challenger 出 Solver 的答案約一半與偽標籤相同的題，作者把這種題描述為「在 Solver 能力的邊緣」（Abstract）。平手時偽標籤選哪一個，論文沒有規定；平手不影響 $\hat p$ 與獎勵，只影響偽標籤本身。</p>
+    <p>$\hat p$ 不是正確率：若 Solver 穩定地給出同一個錯誤答案，$\hat p$ 很高而偽標籤是錯的。第 06 章會用 C3 計算這種情形有多常見。</p>
+  </div>
+
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>十個答案的多數決與不確定性獎勵</h3></div>
+    <p class="lead-assume">這裡不模擬 Solver，由你直接指定 10 個答案；圖只示範論文的計算規則。</p>
+    <div class="pg two">
+      <div class="fig">
+        <div class="slots" id="c1-slots" role="group" aria-label="10 個答案"></div>
+        <div id="c1-bars"><svg role="img" aria-label="c 軸長條圖"></svg></div>
+        <div class="legend"><span class="lg sq">不確定性獎勵（長條）</span><span class="lg dot">App. F：變異數 ×4（虛線）</span><span class="lg hatch">保留區 c = 3–7（斜線）</span></div>
+      </div>
+      <div class="ctl">
+        <div><div class="lbl">預設組合</div><div class="ctl-row" id="c1-presets">
+          <button class="chip" type="button" data-p="same">全部相同</button>
+          <button class="chip" type="button" data-p="half">五比五</button>
+          <button class="chip" type="button" data-p="all">十個都不同</button>
+          <button class="chip" type="button" data-p="wrong">一致的錯誤</button></div></div>
+        <label class="chk"><input type="checkbox" id="c1-show"> 顯示對錯</label>
+        <div class="rng hide" id="c1-truth-w"><label class="lbl" for="c1-truth">真正答案</label><select id="c1-truth" class="sel"></select></div>
+        <dl class="ro" id="c1-read"></dl>
+        <p class="sr" id="c1-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依 Sec. 2.2 的兩個式子與 Sec. 3.1 的保留條件（3–7 個）即時計算。虛線 $4\hat p(1-\hat p)$ 是把 App. F 的變異數乘 4 以便與獎勵比較<span class="tag">本頁推導</span>；預設的 10 個答案為<span class="tag">示範值</span>。</p>
+  </div>
+  <div class="prose">
+    <p>元件中可以看到：獎勵只看 $c$，與答案的內容無關；「十個都不同」仍得 0.2；「一致的錯誤」得 0.6 且被保留，但偽標籤是錯的；兩條曲線都在 $c=5$ 最高。</p>
+    <p><b>App. F 的理論動機。</b>作者引用的下界 $D_{\mathrm{KL}}(S_\phi\|S^*)\ge\hat p(1-\hat p)/(2\beta^2)$ 正比於二元獎勵的變異數，在 $\hat p=0.5$ 最大，所以作者主張成功率約 50% 的題目學習潛力最大。這個下界的前提是熵正則化的最佳策略 $S^*$ 與二元獎勵，其中的 $\hat p$ 是 Solver 對真實答案的成功率；實作代入的是多數決一致率，兩者不同，偽標籤錯誤時差距可以很大。這是作者引用的動機（Shi et al. 2025a、Bae et al. 2025），論文沒有證明，而且只說明最大值的位置，沒有推出折線的形狀（App. F）。</p>
+  </div>
+  <details class="more"><summary>App. F 的式子與兩條曲線的關係</summary>
+    <div class="prose">
+      <p>App. F 寫的是：目前策略與最佳策略的 KL 散度有下界</p>
+      <p>$$D_{\mathrm{KL}}(S_\phi\,\|\,S^*)\ \ge\ \frac{\hat p(1-\hat p)}{2\beta^2}$$</p>
+      <p>這裡的 $\beta$ 是熵正則化的溫度，與第 03 章 GRPO 損失裡的 KL 權重 $\beta$ 同符號、不同意思。App. F 寫的是 $r_{\text{uncertainty}}\propto 1-2|\hat p-\frac12|$，下界只說明「最大值在 0.5」。</p>
+      <p>令 $v=|\hat p-\frac12|\in[0,\frac12]$，則 $4\hat p(1-\hat p)-(1-2v)=2v(1-2v)\ge0$<span class="tag">本頁推導</span>。兩者在 $\hat p\in\{0,0.5,1\}$ 相等，其餘位置折線較低。</p>
+    </div></details>
+  <div class="prose"><p class="note"><b>本節符號</b>：$x$ = 題目；$y_j$ = 第 $j$ 個答案；$m$ = 答案數；$\tilde y$ = 偽標籤；$\hat p$ = 與偽標籤相同的比例；$c$ = 與偽標籤相同的個數；$r_{\text{uncertainty}}$ = 不確定性獎勵。</p></div>
+  <p class="read">延伸閱讀：<a href="rzero-majority-vote-pseudo-labels.html">多數決偽標籤：TTRL 與 self-consistency 訓練</a>、<a href="rzero-difficulty-curriculum.html">難度課程：成功率接近 50% 的題目</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$\tilde y$ 與 $\hat p$ 怎麼算？$\hat p$ 是正確率嗎？$c=5,10,1$ 時不確定性獎勵各是多少？App. F 的 $\hat p$ 與實作的 $\hat p$ 相同嗎？</p>
+    <p class="a">出現最多次的答案（不必過半）為 $\tilde y$；$\hat p$ = 與 $\tilde y$ 相同的比例，是一致性不是正確率。$c=5$：1，$c=10$：0，$c=1$：0.2。不同：App. F 的 $\hat p$ 是熵正則化最佳策略前提下對真實答案的成功率，實作代入的是多數決一致率。</p>
+  </div></details>
+</section>
+
+<!-- S3 -->
+<section class="ch" id="grpo" data-toc="03" data-tt="GRPO">
+  <div class="ch-num">03 · GRPO</div>
+  <h2>GRPO 在同一題的多個回答之間比較獎勵</h2>
+  <div class="prose">
+    <p>Challenger 與 Solver 都用 GRPO（Group Relative Policy Optimization，Shao et al. 2024）更新。GRPO 不另外訓練價值函數，而是對同一個提示 $u$ 取樣 $G$ 個回答 $o_1,\dots,o_G$（App. I 原文把提示記為 $q$；本頁改記為 $u$，因為 $q$ 留給第 06 章的答對機率）。</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\hat A_{i}=\frac{R(u,o_i)-\mathrm{mean}\{R(u,o_1),\dots,R(u,o_G)\}}{\mathrm{std}\{R(u,o_1),\dots,R(u,o_G)\}+\varepsilon_{\text{norm}}}$$</div><span class="eq-n">App. I.1</span></div>
+  <div class="prose">
+    <p><b>優勢值。</b>GRPO 對同一提示取 $G$ 個回答，以 $\hat A_i=(R_i-\text{mean})/(\text{std}+\varepsilon_{\text{norm}})$ 計算優勢值，同一回答的所有 token 共用 $\hat A_i$（App. I.1）。比群組平均好的回答優勢為正，更新時提高它的機率；比平均差的回答優勢為負。$\varepsilon_{\text{norm}}$ 是避免除以 0 的小常數。若群組內的獎勵全部相同，分子為 0，$\hat A_i=0$：優勢為 0，策略梯度項為零，但損失中的 KL 項仍在<span class="tag">本頁推導</span>。所以「一題要有一部分回答得高分、一部分得低分」才會產生學習訊號。</p>
+    <p>例：5 個回答的獎勵為 (1, 0, 1, 1, 0)，平均 0.6，樣本標準差 0.548，優勢為 (+0.730, −1.095, +0.730, +0.730, −1.095)<span class="tag">本頁推導</span>（忽略 $\varepsilon_{\text{norm}}$）。標準差用母體或樣本公式，論文沒有寫明，本頁用樣本標準差<span class="tag">本頁設定</span>。</p>
+    <p>Challenger 的提示是固定的（App. B.2 的同一組系統訊息與使用者訊息），所以 Challenger 產生的每一道題都是同一提示的回答；論文的設定是每個提示 4 個 rollout 為一組（App. B.1.2）。</p>
+  </div>
+  <details class="more"><summary>完整的 GRPO 損失（App. I.1）</summary>
+    <div class="prose">
+      <p>令 $r_\theta(o_{i,t})=\pi_\theta(o_{i,t}\mid u,o_{i,\lt t})/\pi_{\theta_{\text{old}}}(o_{i,t}\mid u,o_{i,\lt t})$ 為新舊策略給第 $t$ 個 token 的機率比，損失為</p>
+      <div class="eq"><div class="eq-m">$$\mathcal L_{\text{GRPO}}(\theta)=-\frac1G\sum_{i=1}^G\frac1{|o_i|}\sum_{t=1}^{|o_i|}\min\!\Big(r_\theta\hat A_{i},\ \mathrm{clip}(r_\theta,1-\epsilon,1+\epsilon)\hat A_{i}\Big)+\beta\,\mathrm{KL}\big(\pi_\theta\,\|\,\pi_{\theta_{\text{old}}}\big)$$</div><span class="eq-n">App. I.1</span></div>
+      <p>裁切（clip）限制一次更新的幅度；KL 項限制策略偏移。論文寫的 KL 對象是 $\pi_{\theta_{\text{old}}}$，許多實作是對固定的參考模型，本頁照錄原文。App. B 的 KL 係數為 $10^{-2}$。</p>
+    </div></details>
+  <div class="prose"><p class="note"><b>本節符號</b>：$u$ = 提示；$o_i$ = 第 $i$ 個回答；$G$ = 群組大小；$R$ = 獎勵；$\hat A_i$ = 優勢值；$\varepsilon_{\text{norm}}$ = 數值穩定常數。</p></div>
+  <p class="read">延伸閱讀：<a href="r1-grpo-outcome-rewards.html">GRPO 與規則式結果獎勵（DeepSeek-R1-Zero）</a>、<a href="rlvr-grpo-credit-assignment.html">RLVR、GRPO 與信用分配瓶頸</a>、<a href="ppo-grpo-dapo-llm-rl-objectives.html">PPO、GRPO、DAPO 與 LLM 的 RL 目標</a>、<a href="policy-gradient-baselines-score-function.html">Policy gradient、baseline 與 score function</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">GRPO 如何得到優勢值？群組獎勵全部相同時發生什麼？</p>
+    <p class="a">同一提示取 $G$ 個回答，$\hat A_i=(R_i-\text{mean})/(\text{std}+\varepsilon_{\text{norm}})$；全部相同時優勢為 0，策略梯度項為零，KL 項仍在。</p>
+  </div></details>
+</section>
+
+<!-- S4 -->
+<section class="ch" id="format" data-toc="04" data-tt="格式與合成">
+  <div class="ch-num">04 · 格式與合成</div>
+  <h2>Challenger 的獎勵先檢查格式，再扣掉重複懲罰</h2>
+  <div class="prose">
+    <p><b>格式檢查。</b>Challenger 被要求把題目放在 <code>&lt;question&gt;</code> 與 <code>&lt;/question&gt;</code> 之間。輸出不符合這個結構時，最終獎勵直接為 0，不再計算其他項，也不必送去 Solver 取樣（Sec. 2.2）。</p>
+  </div>
+  <div class="tmpl" role="figure" aria-label="格式範例">合格：&lt;question&gt;Compute the sum of all primes below 50.&lt;/question&gt;   → 繼續計算
+不合格：&lt;question&gt;Compute the sum of all primes below 50.   → 獎勵 0（缺少結尾標籤）</div>
+  <div class="prose">
+    <p><b>合成獎勵。</b>通過格式檢查的題目，最終獎勵為</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$r_i=\max\big(0,\ r_{\text{uncertainty}}(x_i;\phi)-r_{\text{rep}}(x_i)\big)$$</div><span class="eq-n">Sec. 2.2</span></div>
+  <div class="prose">
+    <p>$r_{\text{rep}}$ 是重複懲罰：一道題與同一批的其他題目太像時要扣的分數，下一章定義。$\max(0,\cdot)$ 讓最終獎勵不為負。得到一批題目的 $r_i$ 之後，Challenger 用第 03 章的 GRPO 更新。</p>
+  </div>
+  <div class="prose"><p class="note"><b>本節符號</b>：$r_{\text{rep}}$ = 重複懲罰（下一章定義）；$r_i$ = 第 $i$ 題的最終獎勵。</p></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">缺少 <code>&lt;/question&gt;</code> 的輸出得幾分？</p>
+    <p class="a">0，且不再計算其他項（Sec. 2.2）。</p>
+  </div></details>
+</section>
+
+<!-- S5 -->
+<section class="ch" id="repeat" data-toc="05" data-tt="重複懲罰">
+  <div class="ch-num">05 · 重複懲罰</div>
+  <h2>重複懲罰依 BLEU 相似度把題目分群</h2>
+  <div class="prose">
+    <p>若沒有重複懲罰，Challenger 可以反覆產生同一類高獎勵的題目。作者用 BLEU 衡量兩道題有多像。BLEU 數兩段文字共有的連續 1 到 4 個詞（n-gram），以 0 到 1 的分數表示，越高越像；作者選它是因為計算快，這個計算在 rollout 中要做很多次（Sec. 2.2）。</p>
+    <p>實作分三步（App. B.4）。(1) 兩兩距離 $d_{ij}=1-\mathrm{BLEU}(x_i,x_j)$，BLEU 用 NLTK 的 <code>sentence_bleu</code> 與 <code>SmoothingFunction().method1</code>（某一階 n-gram 完全沒有命中時，以 0.1 個命中數代替 0），以空白切詞，不轉小寫、不去標點。(2) 以凝聚式階層分群（agglomerative clustering）分群：每道題先自成一群，反覆合併距離最近的兩群；兩群的距離取跨群所有題目對的平均（average linkage），直到最近的兩群距離也不小於門檻 $\tau_{\text{BLEU}}=0.5$（Sec. 3.1）。(3) 第 $k$ 群 $C_k$ 中每道題的懲罰為 $r_{\text{rep}}(x_i)=\lambda|C_k|/B$，$B$ 是批次大小，$\lambda=1$。群越大，懲罰越大；自成一群的題目也有 $1/B$ 的懲罰。</p>
+    <p><b>Challenger 的完整獎勵。</b>綜合第 04 章與本章：缺 <code>&lt;question&gt;</code> 標籤的輸出直接為 0；其餘題目以 $d_{ij}=1-\mathrm{BLEU}$ 做平均連結分群（$\tau_{\text{BLEU}}=0.5$），$r_{\text{rep}}=\lambda|C_k|/B$，$\lambda=1$；最終獎勵 $r_i=\max(0,r_{\text{uncertainty}}-r_{\text{rep}})$（Sec. 2.2、App. B.4）。</p>
+    <p>兩個論文沒有寫明的細節（本頁設定）：<code>sentence_bleu</code> 不對稱，本頁在 $i\lt j$ 時以 $x_i$ 為假設句、$x_j$ 為參考句，這也是 scikit-learn 讀取不對稱距離矩陣的方式；格式不合的題目不參與分群，但計入 $B$ 與 GRPO 群組。</p>
+  </div>
+
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>一個批次的 Challenger 獎勵管線</h3><span class="tag toy">示範值</span></div>
+    <p class="lead-assume">8 道題與每題的 c 都是示範值；Solver 的回答沒有模擬，c 由你設定。這裡把 8 題當成一組（B = 8）來算重複懲罰與 GRPO 優勢；論文的批次更大，每個 GRPO 群組是 4 個 rollout。</p>
+    <div class="steps" id="c2-steps" role="group" aria-label="步驟"></div>
+    <div class="ctl-row c2-top">
+      <div class="rng c2-tau"><label class="lbl" for="c2-tau">分群門檻 τ <output id="c2-tauo"></output></label><input type="range" id="c2-tau" min="0.2" max="0.95" step="0.05" value="0.5"></div>
+      <label class="chk" id="c2-abl-w"><input type="checkbox" id="c2-abl"> 去掉重複懲罰（Table 3 消融）</label>
+      <button class="small-btn" type="button" id="c2-reset">還原預設</button>
+    </div>
+    <div id="c2-table"></div>
+    <div id="c2-dist"></div>
+    <p class="readout" id="c2-sum"></p>
+    <p class="sr" id="c2-live" aria-live="polite"></p>
+    <p class="plate-f">讀數由本頁依 Sec. 2.2、App. B.4（BLEU：NLTK sentence_bleu + method1；平均連結分群）與 App. I.1（優勢）即時計算，與 verify/c2_batch.py 的 nltk、scikit-learn 交叉驗證結果一致。BLEU 方向、樣本標準差、$B=8$ 與以 8 題為一組為<span class="tag">本頁設定</span>；群組獎勵的標準差小於 $10^{-9}$ 時優勢設為 0。</p>
+  </div>
+  <div class="prose">
+    <p>元件中可以看到：第 1、2 題只差 100 與 200，距離 0.151，在滑桿範圍內（τ ≥ 0.20）都同群，各扣 0.25；τ 由 0.50 升到 0.65 時第 4、5 題合併（距離 0.638），升到 0.70 時第 3 題併入第 1、2 題的群（平均距離 0.655）；第 6 題 $c=9$，不確定性獎勵只有 0.2，優勢為負；去掉重複懲罰時，重複的第 1 題與獨特的第 7 題都拿到 1.0；格式不合的第 8 題優勢最低。</p>
+  </div>
+  <div class="prose"><p class="note"><b>本節符號</b>：$\mathrm{BLEU}$ = n-gram 重疊分數；$d_{ij}$ = 距離；$\tau_{\text{BLEU}}$ = 分群門檻；$C_k$ = 第 $k$ 群；$B$ = 批次大小；$\lambda$ = 懲罰係數。</p></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">格式、重複懲罰、合成獎勵各怎麼算？</p>
+    <p class="a">缺 <code>&lt;question&gt;</code> 標籤直接為 0；$d_{ij}=1-\mathrm{BLEU}$，平均連結分群（$\tau_{\text{BLEU}}=0.5$），$r_{\text{rep}}=\lambda|C_k|/B$，$\lambda=1$；$r_i=\max(0,r_{\text{uncertainty}}-r_{\text{rep}})$。</p>
+  </div></details>
+</section>
+
+<!-- S6 -->
+<section class="ch" id="filter" data-toc="06" data-tt="篩選">
+  <div class="ch-num">06 · 篩選</div>
+  <h2>只保留 3 到 7 個答案相同的題目給 Solver</h2>
+  <div class="prose">
+    <p><b>Solver 資料的篩選。</b>Challenger 更新後，先取樣 $N=8{,}000$ 道候選題；每題向目前的 Solver 取 $m=10$ 個答案，算出偽標籤 $\tilde y_i$ 與 $\hat p_i$，只保留 $|\hat p_i-\frac12|\le\delta$ 的題目，$\delta=0.25$，也就是 10 個答案中有 3–7 個與偽標籤相同（含 3 與 7）（Sec. 2.3、3.1）。保留下來的 $(x_i,\tilde y_i)$ 組成 Solver 的訓練集 $\mathcal S$。作者說明篩選有兩個用途：一是去掉太易（8 個以上相同）與太難（2 個以下相同）的題；二是隱性的品質控制，移除低一致性的題，因為 $\hat p$ 很低常表示題目含糊、無解，或偽標籤不可靠（Sec. 2.3）。</p>
+    <p><b>篩選的盲點。</b>第二個用途有條件。下面的 C3 用一個玩具模型計算：正確答案是最常見的答案時，$c$ 越大偽標籤越可靠，作者的說法成立；某個錯誤答案比正確答案更常見時，$c$ 常落在 3–7 而多數答案是錯的，而且這時 $c$ 越大標籤越不可靠<span class="tag">本頁推導</span>。例如只有一個錯誤答案、每次答對的機率為 0.3 時，約六成（0.616）的題目通過篩選，其中偽標籤正確的只有 0.158。篩選不會移除這類「一致的錯誤」。論文以 GPT-4o 的答案當真值量測篩選後的偽標籤正確率：Table 5 三輪依序 79.0%、69.0%、63.0%，共下降 16 個百分點（Sec. 4.4）。</p>
+  </div>
+
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>偽標籤有多可靠：精確枚舉</h3><span class="tag toy">本頁推導</span></div>
+    <p class="lead-assume">假設 Solver 的 m 個答案彼此獨立，每次答對的機率為 q；答錯時以固定比例落在 K 個錯誤答案上。這是本頁的玩具模型，不是論文的實驗。</p>
+    <p class="plate-lead">參數：q 是每個答案答對的機率；K 是不同錯誤答案的個數；s 是最常見的錯誤答案佔全部錯誤機率的比例（s = 1/K 表示錯誤平均分散，s = 1 表示錯誤全部集中在同一個答案）；m 是每題的答案數。情境鈕只改變錯誤答案的分布（K 與 s）。</p>
+    <div class="pg two">
+      <div class="fig">
+        <p class="c3-plu" id="c3-plu"></p>
+        <div id="c3-hist"><svg role="img" aria-label="c 的分布，分成偽標籤正確與錯誤"></svg></div>
+        <div class="legend"><span class="lg sq">偽標籤正確（實心）</span><span class="lg hatch">偽標籤錯誤（斜線）</span><span class="lg shape">長條上方數字：P(正確∣c)</span></div>
+        <div id="c3-sweep"><svg role="img" aria-label="四個機率對答對機率 q 的曲線"></svg></div>
+        <div class="legend"><span class="lg par">偽標籤正確率（實線）</span><span class="lg tdash">保留率（虛線）</span><span class="lg tdot">保留者正確率（點線）</span><span class="lg tdd">平均不確定性獎勵（長短虛線）</span></div>
+      </div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c3-q">答對機率 q <output id="c3-qo"></output></label><input type="range" id="c3-q" min="0" max="1" step="0.01" value="0.5"></div>
+        <div><div class="lbl">錯誤答案的分布</div><div class="ctl-row" id="c3-scen">
+          <button class="chip" type="button" data-s="spread">錯誤答案分散</button>
+          <button class="chip" type="button" data-s="medium">中等</button>
+          <button class="chip" type="button" data-s="concentrated">集中在一個錯誤答案</button></div></div>
+        <details class="more mini"><summary>進階</summary>
+          <div class="ctl adv">
+            <div><div class="lbl">錯誤答案個數 K</div><div class="seg" id="c3-K" role="radiogroup" aria-label="錯誤答案個數 K"></div></div>
+            <div class="rng"><label class="lbl" for="c3-s">最常見錯誤答案的比例 s <output id="c3-so"></output></label><input type="range" id="c3-s" min="0.34" max="1" step="0.01" value="0.5"><span class="note small" id="c3-smin"></span></div>
+            <div><div class="lbl">答案數 m</div><div class="seg" id="c3-m" role="radiogroup" aria-label="答案數 m"></div></div>
+          </div></details>
+        <dl class="ro" id="c3-read"></dl>
+        <p class="sr" id="c3-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁精確枚舉所有答案計數組合後即時計算（與 verify/c3_enum.py 相同）：最常見的錯誤答案機率 $p_1=(1-q)s$，其餘每個 $p_r=(1-q)(1-s)/(K-1)$（$K=1$ 時 $p_r=0$）；平手時偽標籤以均勻隨機選出<span class="tag">本頁設定</span>。長條上方的「—」表示該 c 在此設定下不可能出現。</p>
+  </div>
+  <div class="prose">
+    <p><b>元件呈現的兩面。</b>預設（中等、$q=0.5$）的偽標籤正確率 0.787，保留率 0.945，$P(\text{正確}\mid c)$ 隨 $c$ 上升。換成「錯誤答案分散」、$q=0.3$，正確答案仍是最常見的答案，$P(\text{正確}\mid c)$ 由 $c=2$ 的 0.201 升到 $c=10$ 的 0.998，這是作者說法成立的情形。換成「中等」、$q=0.3$，最常見的錯誤答案機率 0.35 已高於 0.3，$P(\text{正確}\mid c)$ 先升後降（$c=5$ 為 0.356，$c=10$ 為 0.176）。換成「集中在一個錯誤答案」、$q=0.3$，$c$ 越大越不可靠（$c=6$：0.155，$c=8$：0.006）。把 $q$ 拉到 0（完全不會），偽標籤正確率為 0，平均不確定性獎勵卻有 0.820：不確定性獎勵衡量的是答案分散的程度，與答案對錯無關。$q$ 越低偽標籤越不可靠，是這個模型假設的直接結果，不是論文 Table 5 趨勢的證據。</p>
+  </div>
+  <div class="prose"><p class="note"><b>本節符號</b>：$N$ = 候選題數；$\delta$ = 篩選帶寬；$\mathcal S$ = Solver 訓練集。C3 另有 $q$、$K$、$s$、$m$（見圖版）。</p></div>
+  <p class="read">延伸閱讀：<a href="rzero-majority-vote-pseudo-labels.html">多數決偽標籤：TTRL 與 self-consistency 訓練</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">候選題數、取樣數與保留條件？篩選的兩個用途？什麼情況下題目通過篩選、偽標籤卻是錯的？</p>
+    <p class="a">$N=8{,}000$，$m=10$，保留 3–7 個相同（$\delta=0.25$）；去掉太易與太難、移除低一致性的題。某個錯誤答案比正確答案更常見時，$c$ 常落在 3–7 而多數答案錯誤；Table 5 篩選後偽標籤正確率 79.0%、69.0%、63.0%。</p>
+  </div></details>
+</section>
+
+<!-- S7 -->
+<section class="ch" id="solver" data-toc="07" data-tt="Solver 與一輪">
+  <div class="ch-num">07 · Solver 與一輪</div>
+  <h2>Solver 以偽標籤為獎勵做 GRPO，三個階段組成一輪</h2>
+  <div class="prose">
+    <p><b>Solver 訓練。</b>對訓練集中的每一題，Solver 產生一組答案（每題 5 個 rollout），答案等於偽標籤得 1，否則得 0，再用 GRPO 更新（Sec. 2.4、App. B.1.1）。論文的式子寫成「$x_j$ matches」，應為 $y_j$。這就是 RLVR 的形式（App. I.2），只是「標準答案」換成偽標籤。每一輪 Challenger 訓練 5 步、Solver 訓練 15 步；論文表格中的數字是 Solver 訓練 45 步（3 輪）之後的結果，圖中則每 15 步評估一次（App. B.1、Sec. 3.1.1）。</p>
+    <p>若 Solver 每個 rollout 等於偽標籤的機率為 $\rho$，5 個 rollout 全部相同（優勢全為 0、策略梯度項為零）的機率是 $\rho^5+(1-\rho)^5$<span class="tag">本頁推導</span>：$\rho=0.5$ 時 0.0625，$\rho=0.9$ 時 0.590。去掉 8 個以上相同的題，可以減少不產生梯度的群組。</p>
+  </div>
+  <div class="algo" role="table" aria-label="Alg. 1 逐行對照">
+    <div class="row hd" role="row"><div role="columnheader">虛擬碼（App. G）</div><div class="ex-h" role="columnheader">說明</div></div>
+    <div class="row" role="row"><code>for each self-play iteration do</code><div class="ex">每一輪包含下面三個階段</div></div>
+    <div class="row" role="row"><code>  // Phase 1: Challenger Training (Sec 2.2)</code><div class="ex">階段 1：訓練 Challenger，Solver 固定</div></div>
+    <div class="row" role="row"><code>  for each Challenger training step do</code><div class="ex">每輪 5 步（App. B.1.2）</div></div>
+    <div class="row" role="row"><code>    Sample question group {x_i} ~ Q_θ(·)</code><div class="ex">Challenger 從固定提示產生一組題目</div></div>
+    <div class="row" role="row"><code>    if FormatCheck(x_i) is invalid then r_i ← 0</code><div class="ex">缺 &lt;question&gt; 標籤：獎勵 0，不再計算</div></div>
+    <div class="row" role="row"><code>    else Sample m answers {y_j} ~ S_ϕ(·∣x_i)</code><div class="ex">向目前的 Solver 取 m = 10 個答案</div></div>
+    <div class="row" role="row"><code>      ỹ_i ← MajorityVote({y_j})</code><div class="ex">出現最多次的答案 = 偽標籤</div></div>
+    <div class="row" role="row"><code>      p̂_i ← (1/m) Σ_j 1{y_j = ỹ_i}</code><div class="ex">與偽標籤相同的比例</div></div>
+    <div class="row" role="row"><code>      r_uncertainty ← 1 − 2∣p̂_i − 1/2∣</code><div class="ex">不確定性獎勵</div></div>
+    <div class="row" role="row"><code>      r_rep(x_i) via BLEU clustering</code><div class="ex">重複懲罰（第 05 章）</div></div>
+    <div class="row" role="row"><code>      r_i ← max(0, r_uncertainty − r_rep(x_i))</code><div class="ex">合成獎勵</div></div>
+    <div class="row" role="row"><code>    Update Q_θ via GRPO using {r_i}</code><div class="ex">用 GRPO 更新 Challenger</div></div>
+    <div class="row" role="row"><code>  // Phase 2: Solver Dataset Construction (Sec 2.3)</code><div class="ex">階段 2：建立 Solver 訓練集，兩個模型都固定</div></div>
+    <div class="row" role="row"><code>  S ← ∅; sample N candidates {x_k} ~ Q_θ(·)</code><div class="ex">N = 8,000 道候選題</div></div>
+    <div class="row" role="row"><code>  for each x_k: sample m answers, ỹ_k, p̂_k</code><div class="ex">同上面三行（原文 3 行）</div></div>
+    <div class="row" role="row"><code>    if ∣p̂_k − 1/2∣ ≤ δ then add (x_k, ỹ_k) to S</code><div class="ex">δ = 0.25：保留 3–7 個相同的題</div></div>
+    <div class="row" role="row"><code>  // Phase 3: Solver Training (Sec 2.4)</code><div class="ex">階段 3：訓練 Solver，Challenger 固定</div></div>
+    <div class="row" role="row"><code>  for each minibatch (x, ỹ) ∈ S do</code><div class="ex">每輪 15 步（App. B.1.1）</div></div>
+    <div class="row" role="row"><code>    Sample G answers {y_j} ~ S_ϕ(·∣x)</code><div class="ex">每題 5 個 rollout</div></div>
+    <div class="row" role="row"><code>    r_j ← 1(y_j = ỹ)</code><div class="ex">等於偽標籤得 1，否則 0</div></div>
+    <div class="row" role="row"><code>    Update S_ϕ via GRPO using {r_j}</code><div class="ex">用 GRPO 更新 Solver</div></div>
+  </div>
+  <div class="tscroll"><table class="stack"><caption>主要超參數（App. B.1、Sec. 3.1）</caption>
+    <thead><tr><th>項目</th><th>Solver</th><th>Challenger</th></tr></thead><tbody>
+    <tr><td data-h="項目">全域批次／學習率／weight decay</td><td data-h="Solver">128／10⁻⁶／10⁻²</td><td data-h="Challenger">同左</td></tr>
+    <tr><td data-h="項目">KL 係數</td><td data-h="Solver">10⁻²</td><td data-h="Challenger">10⁻²</td></tr>
+    <tr><td data-h="項目">每輪最多步數</td><td data-h="Solver">15</td><td data-h="Challenger">5</td></tr>
+    <tr><td data-h="項目">rollout 數／溫度／top-p</td><td data-h="Solver">5／1.0／0.99</td><td data-h="Challenger">4／1.0／0.99</td></tr>
+    <tr><td data-h="項目">每輪資料</td><td data-h="Solver">N = 8,000，m = 10，保留 3–7 個相同</td><td data-h="Challenger">m = 10；τ = 0.5，λ = 1</td></tr>
+  </tbody></table></div>
+  <div class="prose"><p class="note">程式以 EasyR1 為基礎，使用 BF16 混合精度與 FlashAttention 2（App. B.1）。<b>本節符號</b>：$\rho$ = 一個 rollout 等於偽標籤的機率（段落內定義）。</p></div>
+  <p class="read">延伸閱讀：<a href="rzero-challenger-solver-pipeline.html">R-Zero 的 Challenger–Solver 迭代流程</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Solver 的獎勵是什麼？每輪兩個角色各訓練幾步？表格數字是第幾步？</p>
+    <p class="a">答案等於偽標籤得 1，否則 0，用 GRPO（每題 5 個 rollout）；每輪 Challenger 5 步、Solver 15 步；表格為 Solver 45 步（3 輪）之後。</p>
+  </div></details>
+</section>
+
+<!-- S8 -->
+<section class="ch" id="setup" data-toc="08" data-tt="實驗設定">
+  <div class="ch-num">08 · 實驗設定</div>
+  <h2>實驗用四個基底模型與十個基準</h2>
+  <div class="prose">
+    <p>基底模型為 Qwen3-4B-Base、Qwen3-8B-Base，以及 OctoThinker-3B、OctoThinker-8B（由 Llama-3.1 繼續訓練而來），用來檢驗方法在不同模型家族上的效果（Sec. 3.1）。</p>
+    <p>數學有 7 個基準（App. C）：AMC（美國數學競賽題）、Minerva（大學程度的量化推理題）、MATH-500（競賽數學的 500 題子集）、GSM8K（小學應用題）、OlympiadBench（奧林匹亞等級題）、AIME-2024 與 AIME-2025（美國數學邀請賽）。AMC 與 AIME 報 mean@32，即每題取樣 32 次的平均正確率；其餘報貪婪解碼的正確率。答案是否等價由 GPT-4o 判定（App. B.3，溫度 0.1）。一般推理有 3 個基準：MMLU-Pro（多學科選擇題的加難版）、SuperGPQA（285 個學科、研究所程度、在網路上查不到答案的題）、BBEH（BIG-Bench Hard 的加難版），報精確比對正確率。</p>
+    <p>比較的方法有三個：Base Model（未訓練）；<b>R-Zero (base challenger)</b>，Solver 用未訓練的 Challenger 出的題目訓練，用來檢驗 Challenger 的 RL 訓練是否必要；Absolute Zero（Zhao et al. 2025a），也是自我出題，但以程式執行器驗證。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">R-Zero (base challenger) 基準檢驗什麼？</p>
+    <p class="a">Solver 用未訓練 Challenger 出的題目訓練，檢驗 Challenger 的 RL 是否必要。</p>
+  </div></details>
+</section>
+
+<!-- S9 -->
+<section class="ch" id="results" data-toc="09" data-tt="結果">
+  <div class="ch-num">09 · 結果</div>
+  <h2>R-Zero 提高數學與一般推理分數</h2>
+  <div class="tscroll"><table class="stack"><caption>Table 1、Table 2 摘錄：數學平均（7 項）與一般推理平均（3 項）</caption>
+    <thead><tr><th>模型</th><th class="num">Base</th><th class="num">Absolute Zero</th><th class="num">base challenger</th><th class="num">R-Zero</th></tr></thead><tbody>
+    <tr><td data-h="模型">Qwen3-4B 數學</td><td class="num" data-h="Base">42.57</td><td class="num" data-h="Absolute Zero">46.42</td><td class="num" data-h="base challenger">45.01</td><td class="num" data-h="R-Zero">49.93</td></tr>
+    <tr><td data-h="模型">Qwen3-4B 一般</td><td class="num" data-h="Base">26.34</td><td class="num" data-h="Absolute Zero">29.33</td><td class="num" data-h="base challenger">28.52</td><td class="num" data-h="R-Zero">31.15</td></tr>
+    <tr><td data-h="模型">Qwen3-8B 數學</td><td class="num" data-h="Base">48.64</td><td class="num" data-h="Absolute Zero">52.68</td><td class="num" data-h="base challenger">52.10</td><td class="num" data-h="R-Zero">53.72</td></tr>
+    <tr><td data-h="模型">Qwen3-8B 一般</td><td class="num" data-h="Base">31.98</td><td class="num" data-h="Absolute Zero">34.40</td><td class="num" data-h="base challenger">31.29</td><td class="num" data-h="R-Zero">34.50</td></tr>
+    <tr><td data-h="模型">OctoThinker-3B 數學</td><td class="num" data-h="Base">26.64</td><td class="num" data-h="Absolute Zero">27.23</td><td class="num" data-h="base challenger">27.51</td><td class="num" data-h="R-Zero">29.32</td></tr>
+    <tr><td data-h="模型">OctoThinker-3B 一般</td><td class="num" data-h="Base">7.47</td><td class="num" data-h="Absolute Zero">16.03</td><td class="num" data-h="base challenger">10.04</td><td class="num" data-h="R-Zero">11.12</td></tr>
+    <tr><td data-h="模型">OctoThinker-8B 數學</td><td class="num" data-h="Base">36.41</td><td class="num" data-h="Absolute Zero">36.60</td><td class="num" data-h="base challenger">36.98</td><td class="num" data-h="R-Zero">38.52</td></tr>
+    <tr><td data-h="模型">OctoThinker-8B 一般</td><td class="num" data-h="Base">11.70</td><td class="num" data-h="Absolute Zero">18.40</td><td class="num" data-h="base challenger">21.30</td><td class="num" data-h="R-Zero">23.00</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <p><b>主要結果與基準。</b>Qwen3-4B-Base 的數學平均由 42.58 升到 49.07（Fig. 3、Table 3；與 Abstract 的 +6.49 吻合；Table 1 同一列記為 42.57 → 49.93）。base challenger 基準是讓 Solver 用未訓練 Challenger 出的題目訓練，Table 1 中 Qwen3-4B 得 45.01，用來檢驗 Challenger 的 RL 是否必要；作者以 base challenger 與 R-Zero 之間的差距說明 Challenger 的 RL 訓練有效。四個模型的 R-Zero 數學平均都高於 Base、base challenger 與 Absolute Zero。例外也照實列出：一般推理上，OctoThinker-3B 的 Absolute Zero（16.03）高於 R-Zero（11.12）；Qwen3-4B 的 AIME25 由 Base 的 10.30 降為 9.60。作者認為數學訓練可以轉移到一般推理（Sec. 3.3）。</p>
+  </div>
+  <div class="callout">
+    <p class="ct">論文文字與表格不一致的數字（原文如此）</p>
+    <p>(a) Abstract 的 +6.49 等於 Fig. 3／Table 3 的 49.07 − 42.58，但 Table 1 為 42.57 → 49.93（+7.36）。(b) Abstract 寫一般推理 +7.54，Table 2 為 31.15 − 26.34 = +4.81。(f) Sec. 4.1 寫去掉篩選後一般平均「掉超過 6 分」，Table 3 為 31.15 − 26.69 = 4.46。(i) Table 4 的 Human 數學平均（本頁計算）為 50.55，Fig. 4 的同一基準為 48.99。本頁以表格與圖中的數字為準。</p>
+  </div>
+  <div class="tscroll"><table class="stack"><caption>Table 3：消融（Qwen3-4B-Base）</caption>
+    <thead><tr><th>設定</th><th class="num">數學平均</th><th class="num">一般平均</th></tr></thead><tbody>
+    <tr><td data-h="設定">R-Zero</td><td class="num" data-h="數學平均">49.07</td><td class="num" data-h="一般平均">31.15</td></tr>
+    <tr><td data-h="設定">去掉重複懲罰</td><td class="num" data-h="數學平均">45.76</td><td class="num" data-h="一般平均">28.73</td></tr>
+    <tr><td data-h="設定">去掉篩選</td><td class="num" data-h="數學平均">47.35</td><td class="num" data-h="一般平均">26.69</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <p><b>消融結果。</b>Table 3 中，R-Zero 的數學／一般平均為 49.07／31.15；去掉重複懲罰為 45.76／28.73；去掉篩選為 47.35／26.69。作者認為重複懲罰讓題目多樣，篩選同時校準難度並移除低一致性的雜訊題（Sec. 4.1）。</p>
+    <p><b>與人類標註資料搭配</b>（Sec. 4.3，Fig. 4，標註資料為 math12k）。每輪 R-Zero 之後再以標註資料做 GRPO。Fig. 4 的兩個系列為「R-Zero Only」與「R-Zero + Human」，橫軸為 Base Model、Step 15、30、45，虛線是 Base 直接以標註資料訓練的基準。4B：R-Zero + Human 依序 48.99（虛線基準）、50.55、51.34、49.62，最高比基準多 2.35 分（Step 30）；8B：依序 53.15（基準）、54.92、55.62、56.84，R-Zero Only 為 48.64、52.39、53.24、53.62，最高多 3.69 分（Step 45）。Table 4 比較把標註資料混入 R-Zero 資料一起訓練：論文文字寫它優於單用任一種，但逐項看並非全勝，數學 7 項中 Human 在 AMC、Minerva、OlympiadBench 較高；本頁算出的數學平均為 Human 50.55、R-Zero 49.93、R-Zero + Human 51.03。作者說混合訓練不如「先 R-Zero、後標註資料」的順序，原因標為待研究。</p>
+    <p><b>不限定數學</b>（App. H，Table 8）。拿掉提示中的數學限定後，8B 的一般推理三項都略升（SuperGPQA 31.38 → 32.29、MMLU-Pro 61.53 → 61.83、BBEH 10.60 → 10.88）；4B 則有升有降。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Qwen3-4B 的數學平均由多少升到多少？去掉重複懲罰與篩選後的數學／一般平均？</p>
+    <p class="a">42.58 → 49.07（Fig. 3、Table 3；Table 1 記 42.57 → 49.93）；R-Zero 49.07／31.15，去重複懲罰 45.76／28.73，去篩選 47.35／26.69。</p>
+  </div></details>
+</section>
+
+<!-- S10 -->
+<section class="ch" id="collapse" data-toc="10" data-tt="迭代後下降">
+  <div class="ch-num">10 · 迭代後下降</div>
+  <h2>數輪之後表現下降，偽標籤正確率也下降</h2>
+  <div class="prose">
+    <p><b>題目變難，標籤變差</b>（Sec. 4.4，Table 5）。每輪之後取 200 題（篩選後），以 GPT-4o 的答案為真值。固定的 Step-15 Solver 在三輪題目上的正確率為 59.0 → 53.0 → 47.0，表示題目變難；篩選後偽標籤正確率為 79.0% → 69.0% → 63.0%。</p>
+    <p><b>迭代後表現下降與作者的解釋。</b>Fig. 3 中，Qwen3-0.6B、1.7B、4B 的峰值分別在 Step 15、30、45，即第 1、2、3 輪（每輪 Solver 15 步）；之後表現下降，模型越大峰值越晚。Table 7 以 Gemini 標註，峰值時的偽標籤正確率分別是 70.6%、55.2%、48.8%：0.6B 在正確率仍有 70.6% 時就開始下降，4B 到 48.8% 才下降，沒有共同的門檻。所以作者認為標籤雜訊不是唯一原因，並推測另有只用自產資料訓練造成的模型崩潰（model collapse：多樣性流失、自身偏差被放大）；這是作者的假說，論文沒有直接量測多樣性（App. E）。另外，兩個角色共用同一份參數的 Single-R-Zero 在第 1 輪後就下降，各輪的偽標籤正確率也都較低（Table 6）。作者推測同一個模型既出題又解題，會產生「來自內部偏差的過度自信」（App. D）。</p>
+    <p>Table 6 與 Table 7 的 4B 第 1 輪偽標籤正確率是 71.0%，Table 5 是 79.0%，兩者的標註者（Gemini、GPT-4o）與樣本不同，不能直接比較。</p>
+  </div>
+
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>迭代中的表現與偽標籤正確率：論文數據</h3></div>
+    <p class="lead-assume">這裡只畫論文報告的量測值（Fig. 3 圖中標籤、Table 6、Table 7），沒有任何模擬。Table 7 的文字說 500 題取自「a later training iteration」，但表中有 Step 15–60 四欄；每欄的抽樣方式論文沒有說明。</p>
+    <div class="ctl-row"><div class="seg" id="c4-view" role="radiogroup" aria-label="檢視"></div><div class="ctl-row" id="c4-sizes" role="group" aria-label="模型大小"></div></div>
+    <div class="fig c4-fig" id="c4-fig" tabindex="0" role="group" aria-label="迭代圖：左右方向鍵移動步數，上下方向鍵切換系列">
+      <div id="c4-top"><svg role="img" aria-label="數學平均對步數"></svg></div>
+      <div id="c4-bot"><svg role="img" aria-label="偽標籤正確率對步數"></svg></div>
+    </div>
+    <div class="legend" id="c4-legend"></div>
+    <p class="readout" id="c4-read"></p>
+    <div id="c4-tab"></div>
+    <p class="sr" id="c4-live" aria-live="polite"></p>
+    <p class="plate-f">資料照錄論文；峰值（星形）與「峰值時的正確率」由資料即時求出。Table 6 的 Step 45 為 49.12，Fig. 3 為 49.07，原文如此。</p>
+  </div>
+  <div class="prose"><p>圖中可以看到：0.6B 峰值在 Step 15（第 1 輪，正確率 70.6%）、1.7B 在 Step 30（第 2 輪，55.2%）、4B 在 Step 45（第 3 輪，48.8%）；偽標籤正確率持續下降，但表現開始下降的時間點各不相同。</p></div>
+  <p class="read">延伸閱讀：<a href="rzero-self-training-collapse.html">自我訓練的崩壞風險：model collapse 與 reward hacking</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">0.6B、1.7B、4B 的峰值在哪一步？為什麼作者認為不只是標籤雜訊？</p>
+    <p class="a">Step 15、30、45（第 1、2、3 輪）；峰值時偽標籤正確率 70.6%、55.2%、48.8%，沒有共同門檻，所以作者推測另有模型崩潰；Single-R-Zero 更早下降、正確率更低（Table 6）。</p>
+  </div></details>
+</section>
+
+<!-- S11 -->
+<section class="ch" id="impl" data-toc="11" data-tt="實作">
+  <div class="ch-num">11 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="prose"><p>Challenger 的提示模板（App. B.2，原文照錄）：</p></div>
+  <div class="tmpl" role="figure" aria-label="Challenger 提示模板">System: You are an expert competition-math problem setter. FIRST, in your private scratch-pad, think step-by-step to design a brand-new, non-trivial problem. The problem could come from any field of mathematics, including but not limited to algebra, geometry, number theory, combinatorics, prealgebra, probability, statistics, and calculus. Aim for a difficulty such that fewer than 30% of advanced high-school students could solve it. Avoid re-using textbook clichés or famous contest problems.
+THEN, without revealing any of your private thoughts, output exactly the following two blocks:
+<b>&lt;question&gt;</b>
+{The full problem statement on one or more lines}
+<b>&lt;/question&gt;</b>
+
+\boxed{final answer}
+
+Do NOT output anything else—no explanations, no extra markup.
+User: Generate one new, challenging reasoning question now. Remember to format the output exactly as instructed.</div>
+  <div class="tmpl" role="figure" aria-label="Solver 提示模板">System: Please reason step by step, and put your final answer within \boxed{}.
+User: {problem statement}</div>
+  <div class="prose">
+    <p><b>常見錯誤。</b></p>
+    <ol>
+      <li>把 $\hat p$ 當成正確率：它是與多數決答案相同的比例，一致的錯誤答案也會得到高 $\hat p$。</li>
+      <li>篩選門檻換算錯：$\delta=0.25$、$m=10$ 對應 3–7 個（含）；換 $m$ 時要重新換算，例如 $m=5$ 時為 2–3 個<span class="tag">本頁推導</span>。</li>
+      <li>平手處理（論文未規定）：獎勵不受影響，但偽標籤會受影響，實作要固定規則。</li>
+      <li>BLEU 的方向與切詞：<code>sentence_bleu</code> 不對稱，方向論文未規定；論文有規定的是以空白切詞、不正規化、method1 平滑。</li>
+      <li>格式不合的輸出直接給 0（Sec. 2.2）；不送去 Solver 取樣可省計算<span class="tag">本頁建議</span>。</li>
+      <li>每輪要用目前的 Solver 計算 $\hat p$ 與篩選；訓練 Challenger 時 Solver 固定，訓練 Solver 時 Challenger 固定。</li>
+      <li>兩個角色用兩份參數（App. D）。</li>
+      <li>迭代不要預設越多越好：依模型大小，Fig. 3 的峰值在第 1–3 輪；用外部驗證集監控並選 checkpoint<span class="tag">本頁建議</span>。</li>
+    </ol>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$m=5$ 時，$\delta=0.25$ 保留幾個相同答案的題？</p>
+    <p class="a">2–3 個（$|c/5-0.5|\le0.25$）。</p>
+  </div></details>
+</section>
+
+<!-- S12 -->
+<section class="ch" id="history" data-toc="12" data-tt="研究脈絡">
+  <div class="ch-num">12 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>R-Zero 接在幾條脈絡之後：以可驗證獎勵做 RL（DeepSeekMath 提出的 GRPO、DeepSeek-R1）；不用標籤的獎勵（熵最小化、self-certainty、以多數決當獎勵的 TTRL）；自我對弈與模型自產任務（SPIN、Absolute Zero、Self-Challenging）；以成功率約 50% 的題目最有效率的難度課程。只用自產資料訓練的崩潰風險（model collapse、reward hacking）則是 R-Zero 第 10 章結果的背景。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">哪一篇工作以多數決作為無標籤 RL 的獎勵？</p>
+    <p class="a">TTRL（Zuo et al. 2025，arXiv 2504.16084）。</p>
+  </div></details>
+</section>
+
+<!-- S13 -->
+<section class="ch" id="next" data-toc="13" data-tt="限制與延伸">
+  <div class="ch-num">13 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>作者列出的限制（Sec. 6–7）：R-Zero 依賴可以客觀驗證正確性的領域（數學），難以直接用在創意寫作、對話等主觀任務；目前的標註（多數決）與驗證策略不一定適用所有題型。作者列出的未來方向是提高效率、更穩健的標註方法，以及擴展到新領域。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="rzero-lineage-hub.html">R-Zero 的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="rzero-grpo-rlvr-foundation.html">R-Zero 使用的訓練基礎：GRPO 與 RLVR</a><span>背景</span></div></li>
+    <li><div><a href="r1-grpo-outcome-rewards.html">GRPO 與規則式結果獎勵（DeepSeek-R1-Zero）</a><span>背景（No. 550）</span></div></li>
+    <li><div><a href="rlvr-grpo-credit-assignment.html">RLVR、GRPO 與信用分配瓶頸</a><span>背景</span></div></li>
+    <li><div><a href="rzero-label-free-intrinsic-rewards.html">無標籤 RL：熵、信心與 self-certainty 獎勵</a><span>前作</span></div></li>
+    <li><div><a href="rzero-majority-vote-pseudo-labels.html">多數決偽標籤：TTRL 與 self-consistency 訓練</a><span>前作</span></div></li>
+    <li><div><a href="rzero-self-play-task-generation.html">自我對弈與模型自產任務（SPIN、Absolute Zero、Self-Challenging）</a><span>前作</span></div></li>
+    <li><div><a href="rzero-difficulty-curriculum.html">難度課程：成功率接近 50% 的題目</a><span>前作</span></div></li>
+    <li><div><a href="rzero-challenger-solver-pipeline.html">R-Zero 的 Challenger–Solver 迭代流程</a><span>本論文的方法</span></div></li>
+    <li><div><a href="rzero-self-training-collapse.html">自我訓練的崩壞風險：model collapse 與 reward hacking</a><span>限制</span></div></li>
+    <li><div><a href="test-time-training-for-rl.html">測試時訓練與 test-time RL 與 SDPO 的 test-time self-distillation</a><span>站內相關</span></div></li>
+    <li><div><a href="ppo-grpo-dapo-llm-rl-objectives.html">PPO、GRPO、DAPO 與 LLM 的 RL 目標</a><span>站內相關（No. 129）</span></div></li>
+    <li><div><a href="policy-gradient-baselines-score-function.html">Policy gradient、baseline 與 score function</a><span>站內相關（No. 129）</span></div></li>
+    <li><div><a href="r1-star-self-generated-reasoning.html">STaR：以模型自產的推理軌跡微調</a><span>站內相關（No. 550）</span></div></li>
+  </ol>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">作者列出 R-Zero 的主要限制是什麼？</p>
+    <p class="a">依賴可客觀驗證正確性的領域，難以用在創意寫作、對話等主觀任務（Sec. 6）。</p>
+  </div></details>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Chengsong Huang, Wenhao Yu, Xiaoyang Wang, Hongming Zhang, Zongxia Li, Ruosen Li, Jiaxin Huang, Haitao Mi, Dong Yu. R-Zero: Self-Evolving Reasoning LLM from Zero Data. ICLR 2026. <a href="https://arxiv.org/abs/2508.05004">arXiv:2508.05004</a>（v4）。</p>
+  <p>本頁的方程式與數字取自論文 v4；標示「本頁推導」的內容為本頁自行推導，「示範值」為教學用的數值，「本頁設定」為論文未寫明、本頁自行決定的規則，「本頁建議」為實務建議，皆非論文結論。C1–C3 的讀數在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2024, "title": "Self-Play Fine-Tuning Converts Weak Language Models to Strong Language Models", "authors_short": "Chen et al.", "arxiv": "2401.01335", "role": "LLM 與自己前一輪版本對弈，不需額外人工標註", "source": "abstract"}, {"year": 2024, "title": "DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models", "authors_short": "Shao et al.", "arxiv": "2402.03300", "role": "提出 GRPO；R-Zero 兩個角色的訓練演算法", "source": "abstract; R-Zero §1"}, {"year": 2024, "title": "How Bad is Training on Synthetic Data? A Statistical Analysis of Language Model Collapse", "authors_short": "Seddik et al.", "arxiv": "2404.05090", "role": "只用合成資料訓練無法避免 model collapse", "source": "abstract; R-Zero 附錄 E"}, {"year": 2024, "title": "Self-Consistency Preference Optimization", "authors_short": "Prasad et al.", "arxiv": "2411.04109", "role": "把 self-consistency 用於訓練，一致答案優於不一致答案", "source": "abstract"}, {"year": 2025, "title": "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", "authors_short": "DeepSeek-AI", "arxiv": "2501.12948", "role": "以可驗證獎勵 RL 訓練推理；RLVR 路線代表", "source": "abstract; R-Zero §1"}, {"year": 2025, "title": "TTRL: Test-Time Reinforcement Learning", "authors_short": "Zuo et al.", "arxiv": "2504.16084", "role": "以多數決作為無標籤 RL 的獎勵", "source": "abstract"}, {"year": 2025, "title": "Efficient Reinforcement Finetuning via Adaptive Curriculum Learning", "authors_short": "Shi et al.", "arxiv": "2504.05520", "role": "依近期獎勵調整難度；R-Zero 附錄 F 的理論依據之一", "source": "abstract; R-Zero 附錄 F"}, {"year": 2025, "title": "Online Difficulty Filtering for Reasoning Oriented Reinforcement Learning", "authors_short": "Bae et al.", "arxiv": "2504.03380", "role": "預期改善下界由成功率變異數決定，中等難度最佳", "source": "abstract; R-Zero 附錄 F"}, {"year": 2025, "title": "Absolute Zero: Reinforced Self-play Reasoning with Zero Data", "authors_short": "Zhao et al.", "arxiv": "2505.03335", "role": "單一模型自行提出並解決任務的零資料 RLVR；R-Zero 的比較基準", "source": "abstract; R-Zero 表 1"}, {"year": 2025, "title": "The Unreasonable Effectiveness of Entropy Minimization in LLM Reasoning", "authors_short": "Agarwal et al.", "arxiv": "2505.15134", "role": "以熵最小化作無標籤訓練", "source": "abstract; R-Zero §1"}, {"year": 2025, "title": "Learning to Reason without External Rewards", "authors_short": "Zhao et al.", "arxiv": "2505.19590", "role": "以 self-certainty 作為 GRPO 的唯一獎勵（RLIF）", "source": "abstract"}, {"year": 2025, "title": "SeRL: Self-Play Reinforcement Learning for Large Language Models with Limited Data", "authors_short": "Fang et al.", "arxiv": "2505.20347", "role": "self-instruction 加多數決獎勵，有限初始資料", "source": "abstract"}, {"year": 2025, "title": "Can Large Reasoning Models Self-Train?", "authors_short": "Shafayat et al.", "arxiv": "2505.21444", "role": "多數決自我訓練可行，但長時間出現 reward hacking 與崩壞", "source": "abstract"}, {"year": 2025, "title": "Self-Challenging Language Model Agents", "authors_short": "Zhou et al.", "arxiv": "2506.01716", "role": "agent 自產 Code-as-Task 並以 RL 訓練", "source": "abstract; R-Zero §1"}, {"year": 2025, "title": "R-Zero: Self-Evolving Reasoning LLM from Zero Data", "authors_short": "Huang et al.", "arxiv": "2508.05004", "role": "Challenger–Solver 共同演化，零外部題目與標籤", "source": "本論文"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function frame(box,W,H){const svg=$('svg',box);svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);return svg}
+const f3=v=>(Math.abs(v)<5e-4?0:v).toFixed(3),f2=v=>(Math.abs(v)<5e-3?0:v).toFixed(2);
+const sgn3=v=>(Math.abs(v)<5e-4?'0.000':(v>0?'+':'−')+Math.abs(v).toFixed(3));
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+function segInit(box,opts,cur,label,onPick){box.textContent='';opts.forEach(o=>{const b=document.createElement('button');b.type='button';b.setAttribute('role','radio');
+    b.textContent=label?label(o):String(o);b.dataset.v=String(o);box.appendChild(b)});
+  const sync=v=>$$('button',box).forEach(b=>{const on=b.dataset.v===String(v);b.setAttribute('aria-checked',String(on));b.setAttribute('aria-pressed',String(on));b.tabIndex=on?0:-1});sync(cur);
+  box.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const v=opts.find(o=>String(o)===b.dataset.v);sync(v);onPick(v)});
+  box.addEventListener('keydown',e=>{const bs=$$('button',box),i=bs.findIndex(b=>b.tabIndex===0);let j=i;if(e.key==='ArrowRight'||e.key==='ArrowDown')j=(i+1)%bs.length;else if(e.key==='ArrowLeft'||e.key==='ArrowUp')j=(i-1+bs.length)%bs.length;else return;e.preventDefault();bs[j].focus();bs[j].click()});
+  return sync}
+function defs(){}
+const dbn=(f,ms)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>f(...a),ms)}};
+
+/* ================= shared math (mirrors verify/*.py) ================= */
+const EPS=1e-12;
+const rUnc=(c,m)=>1-2*Math.abs(c/m-.5);
+const keep=(c,m)=>Math.abs(c/m-.5)<=.25+EPS;
+function vote(slots){const cnt=new Map();slots.forEach(a=>cnt.set(a,(cnt.get(a)||0)+1));let c=0;cnt.forEach(v=>{if(v>c)c=v});
+  const tied=[...cnt.keys()].filter(k=>cnt.get(k)===c).sort();return{c,tied,label:tied[0]}}
+// C2: BLEU = nltk sentence_bleu([ref], hyp, smoothing_function=method1), weights .25 x 4
+function toks(s){return s.trim().split(/\s+/).filter(Boolean)}
+function ngr(t,n){const m=new Map();for(let i=0;i+n<=t.length;i++){const k=t.slice(i,i+n).join('\u0001');m.set(k,(m.get(k)||0)+1)}return m}
+function bleu(hyp,ref){const h=toks(hyp),r=toks(ref),nums=[],dens=[];
+  for(let n=1;n<=4;n++){const hc=ngr(h,n),rc=ngr(r,n);let num=0,tot=0;hc.forEach((v,g)=>{num+=Math.min(v,rc.get(g)||0);tot+=v});nums.push(num);dens.push(Math.max(1,tot))}
+  if(nums[0]===0)return 0;const c=h.length,rl=r.length,bp=c>rl?1:(c===0?0:Math.exp(1-rl/c));
+  let s=0;for(let i=0;i<4;i++){const p=nums[i]===0?.1/dens[i]:nums[i]/dens[i];s+=.25*Math.log(p)}return bp*Math.exp(s)}
+function extractQ(raw){const m=/<question>([\s\S]*?)<\/question>/.exec(raw);return m?m[1].trim():null}
+function distMatrix(qs){const n=qs.length,d=Array.from({length:n},()=>new Float64Array(n));for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){d[i][j]=d[j][i]=1-bleu(qs[i],qs[j])}return d}
+function avgLinkage(d,tau){let cl=d.map((_,i)=>[i]);while(cl.length>1){let best=null;
+    for(let a=0;a<cl.length;a++)for(let b=a+1;b<cl.length;b++){let s=0;for(const i of cl[a])for(const j of cl[b])s+=d[i][j];const v=s/(cl[a].length*cl[b].length);if(best===null||v<best[0]-EPS)best=[v,a,b]}
+    if(best[0]>=tau)break;const[,a,b]=best;cl[a]=cl[a].concat(cl[b]);cl.splice(b,1)}return cl}
+function advantages(rs){const n=rs.length;let mu=0;rs.forEach(v=>mu+=v);mu/=n;let ss=0;rs.forEach(v=>ss+=(v-mu)**2);const sd=Math.sqrt(ss/(n-1));
+  const zero=sd<1e-9;return{A:rs.map(v=>zero?0:(v-mu)/(sd+1e-6)),mu,sd,zero}}
+const RAW_DEFAULT=[
+ '<question>Find the number of positive integers n less than 100 such that n^2 + 1 is divisible by 5.</question>',
+ '<question>Find the number of positive integers n less than 200 such that n^2 + 1 is divisible by 5.</question>',
+ '<question>Find the number of positive integers k less than 500 for which k^3 - k is divisible by 7.</question>',
+ '<question>A circle of radius 3 is inscribed in a right triangle with hypotenuse 15. Find the area of the triangle.</question>',
+ '<question>A circle of radius 4 is inscribed in a square. Find the area of the region inside the square but outside the circle.</question>',
+ '<question>Let f(x) = x^2 - 6x + 10. Find the minimum value of f(f(x)) over all real x.</question>',
+ '<question>How many ways can 6 distinct books be arranged on a shelf so that two specific books are not adjacent?</question>',
+ '<question>Compute the sum of all primes below 50.'];
+const C_DEFAULT=[5,6,4,7,3,9,5,5];
+function pipeline(raw,cs,tau,useRep){const B=raw.length,qs=raw.map(extractQ),valid=[];qs.forEach((q,i)=>{if(q!==null)valid.push(i)});
+  const d=distMatrix(valid.map(i=>qs[i])),clusters=avgLinkage(d,tau).map(c=>c.map(k=>valid[k]).sort((a,b)=>a-b)).sort((a,b)=>a[0]-b[0]);
+  const size={},gid={};clusters.forEach((c,g)=>c.forEach(i=>{size[i]=c.length;gid[i]=g+1}));
+  const rows=raw.map((_,i)=>{if(qs[i]===null)return{i,ok:false,ru:null,rr:null,r:0};const ru=rUnc(cs[i],10),rr=useRep?size[i]/B:0;return{i,ok:true,ru,rr,size:size[i],g:gid[i],r:Math.max(0,ru-rr)}});
+  return{qs,valid,d,clusters,rows,adv:advantages(rows.map(r=>r.r))}}
+// C3: exact enumeration, bucketed by (n0, n1)
+const LF=[0];for(let i=1;i<=40;i++)LF[i]=LF[i-1]+Math.log(i);
+const BK=new Map();
+function buildBuckets(m,K){const key=m+'|'+K;if(BK.has(key))return BK.get(key);const B=new Map(),n=new Array(K+1).fill(0);
+  function rec(pos,left){if(pos===K){n[K]=left;emit();return}for(let i=0;i<=left;i++){n[pos]=i;rec(pos+1,left-i)}}
+  function emit(){let lc=LF[m];for(const x of n)lc-=LF[x];const coef=Math.exp(lc);let c=0;for(const x of n)if(x>c)c=x;let tn=0,in0=false;n.forEach((x,i)=>{if(x===c){tn++;if(i===0)in0=true}});
+    const corr=in0?1/tn:0,ok=keep(c,m)?1:0,r=rUnc(c,m),k=n[0]+','+(K>=1?n[1]:0);let b=B.get(k);
+    if(!b){b={n0:n[0],n1:n[1],corr:0,pass:0,cp:0,r:0,hc:new Float64Array(m+1),hw:new Float64Array(m+1)};B.set(k,b)}
+    b.corr+=coef*corr;b.pass+=coef*ok;b.cp+=coef*corr*ok;b.r+=coef*r;b.hc[c]+=coef*corr;b.hw[c]+=coef*(1-corr)}
+  rec(0,m);const arr=[...B.values()];BK.set(key,arr);return arr}
+function evalBuckets(B,m,K,q,s){if(K===1)s=1;const p1=(1-q)*s,pr=K>1?(1-q)*(1-s)/(K-1):0;
+  const o={corr:0,pass:0,cp:0,r:0,hc:new Float64Array(m+1),hw:new Float64Array(m+1)};
+  for(const b of B){const w=Math.pow(q,b.n0)*Math.pow(p1,b.n1)*Math.pow(pr,m-b.n0-b.n1);if(w===0)continue;o.corr+=w*b.corr;o.pass+=w*b.pass;o.cp+=w*b.cp;o.r+=w*b.r;
+    for(let c=0;c<=m;c++){o.hc[c]+=w*b.hc[c];o.hw[c]+=w*b.hw[c]}}
+  o.cgp=o.pass>EPS?o.cp/o.pass:NaN;return o}
+function plurality(q,K,s){if(K===1)s=1;const w=(1-q)*s;return q>w+EPS?'yes':(Math.abs(q-w)<EPS?'tie':'no')}
+const sMin=K=>Math.ceil(100/K)/100;
+const SCEN={spread:{K:5,s:.2},medium:{K:3,s:.5},concentrated:{K:1,s:1}};
+// C4 data (Fig. 3 labels, Table 7, Table 6)
+const STEPS=['Base','15','30','45','60'];
+const FIG3={'0.6B':[16.77,27.39,27.15,25.05,25.15],'1.7B':[32.71,39.19,39.20,37.03,38.27],'4B':[42.58,48.06,48.44,49.07,46.52]};
+const TAB7={'0.6B':[null,70.6,53.4,50.8,44.0],'1.7B':[null,69.4,55.2,52.2,45.2],'4B':[null,71.0,56.2,48.8,42.2]};
+const TAB6={'R-Zero':{perf:[null,48.06,48.44,49.12,46.52],acc:[null,71.0,56.2,48.8,42.2]},'Single-R-Zero':{perf:[null,47.31,46.95,45.57,43.89],acc:[null,63.4,46.6,32.6,33.8]}};
+function peak(arr){let b=-1;arr.forEach((v,i)=>{if(v!==null&&(b<0||v>arr[b]))b=i});return b}
+
+/* ================= c axis (hero, C1) ================= */
+function cBars(box,opts){const W=widthOf(box,260,560),H=opts.H||170,L=34,R=10,T=opts.T||22,B=40,svg=frame(box,W,H);defs(svg);const m=10;
+  const bw=(W-L-R)/m,x=c=>L+(c-1)*bw,y=lin(0,1,H-B,T);
+  el('rect',{x:x(3),y:T-6,width:5*bw,height:H-B-T+6,class:'band',opacity:.55},svg);
+  tx(svg,W-R,T-9,'斜線：保留 3–7',{class:'tk','text-anchor':'end'});
+  [0,.5,1].forEach(v=>{el('line',{x1:L,x2:W-R,y1:y(v),y2:y(v),class:'grid'},svg);tx(svg,L-6,y(v)+4,String(v),{class:'tk','text-anchor':'end'})});
+  for(let c=1;c<=m;c++){const r=rUnc(c,m);el('rect',{x:x(c)+bw*.18,y:y(r),width:bw*.64,height:Math.max(0,H-B-y(r)),class:'bar'},svg);tx(svg,x(c)+bw/2,H-B+16,String(c),{class:'tk','text-anchor':'middle'})}
+  tx(svg,(L+W-R)/2,H-4,'c（與標籤相同的答案數）',{class:'tk','text-anchor':'middle'});
+  if(opts.curve){const pts=[];for(let c=1;c<=m;c++){const p=c/m;pts.push([x(c)+bw/2,y(4*p*(1-p))])}el('path',{d:lp(pts),class:'dash',style:'stroke:var(--c-perp);stroke-width:2;fill:none;stroke-dasharray:5 4'},svg);
+    pts.forEach(p=>el('circle',{cx:p[0],cy:p[1],r:3,style:'fill:var(--surface);stroke:var(--c-perp);stroke-width:1.5'},svg))}
+  if(opts.cur){const c=opts.cur,r=rUnc(c,m);el('rect',{x:x(c)+bw*.1,y:y(r)-3,width:bw*.8,height:Math.max(0,H-B-y(r))+3,class:'curc'},svg);
+    tx(svg,L,12,`目前 c = ${c}，獎勵 ${r.toFixed(2)}`,{class:'labm'})}
+  return svg}
+
+/* ================= Fig. 2 ================= */
+function drawFig2(){const box=$('#fig2'),W=widthOf(box,300,760),narrow=W<600;
+  const rows=[{t:'階段 1：Challenger 訓練',cls:'box-c',b:[['Challenger','產生一組題目',0],['Solver（固定）','每題回答 10 次',1],['多數決','不確定性獎勵 − 重複懲罰',0]],back:'GRPO 更新 Challenger',bf:2,bt:0},
+    {t:'階段 2–3：Solver 訓練',cls:'box-s',b:[['Challenger（固定）','產生 8,000 道題',1],['Solver','回答 10 次，保留 3–7 個相同',0],['偽標籤當獎勵','答案相同得 1，否則 0',0]],back:'GRPO 更新 Solver',bf:2,bt:1}];
+  let H,pos=[];
+  if(!narrow){const bw=(W-60)/3,bh=62;H=300;rows.forEach((r,ri)=>{const y0=30+ri*140;r.b.forEach((b,bi)=>pos.push({ri,bi,x:20+bi*(bw+10),y:y0,w:bw,h:bh}))})}
+  else{const bh=58;H=2*(3*(bh+26)+40)+10;rows.forEach((r,ri)=>{const y0=26+ri*(3*(bh+26)+40);r.b.forEach((b,bi)=>pos.push({ri,bi,x:20,y:y0+bi*(bh+26),w:W-80,h:bh}))})}
+  const svg=frame(box,W,H);const mk=el('defs',null,svg);const m=el('marker',{id:'ah',viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:7,markerHeight:7,orient:'auto-start-reverse'},mk);el('path',{d:'M0 0L10 5L0 10z',class:'arrh'},m);
+  rows.forEach((r,ri)=>{const P=pos.filter(p=>p.ri===ri);tx(svg,P[0].x,P[0].y-10,r.t,{class:'lab'});
+    P.forEach((p,bi)=>{const b=r.b[bi];el('rect',{x:p.x,y:p.y,width:p.w,height:p.h,rx:10,class:'box'},svg);el('line',{x1:p.x+1.5,x2:p.x+1.5,y1:p.y+8,y2:p.y+p.h-8,class:r.cls},svg);
+      tx(svg,p.x+14,p.y+24,b[0],{class:'lab'});tx(svg,p.x+14,p.y+44,b[1],{class:'al'});
+      if(b[2]){const lx=p.x+p.w-26,ly=p.y+12;el('rect',{x:lx,y:ly+7,width:14,height:10,rx:2,class:'lock'},svg);el('path',{d:`M${lx+3} ${ly+7}v-3a4 4 0 0 1 8 0v3`,style:'fill:none;stroke:var(--ink-3);stroke-width:1.6'},svg)}
+      if(bi<2){const q=P[bi+1];if(!narrow)el('line',{x1:p.x+p.w,y1:p.y+p.h/2,x2:q.x-1,y2:q.y+q.h/2,class:'arr','marker-end':'url(#ah)'},svg);else el('line',{x1:p.x+p.w/2,y1:p.y+p.h,x2:q.x+q.w/2,y2:q.y-1,class:'arr','marker-end':'url(#ah)'},svg)}});
+    const a=P[r.bf],b=P[r.bt];
+    if(!narrow){const yy=a.y+a.h+18;el('path',{d:`M${a.x+a.w/2} ${a.y+a.h}V${yy}H${b.x+b.w/2}V${b.y+b.h+1}`,class:'arr','marker-end':'url(#ah)'},svg);tx(svg,(a.x+b.x+b.w)/2+a.w/4,yy+15,r.back,{class:'al','text-anchor':'middle'})}
+    else{const xx=a.x+a.w+18;el('path',{d:`M${a.x+a.w} ${a.y+a.h/2}H${xx}V${b.y+b.h/2}H${b.x+b.w+1}`,class:'arr','marker-end':'url(#ah)'},svg);const t=tx(svg,xx+6,(a.y+b.y)/2+a.h/2,r.back,{class:'tk'});t.setAttribute('transform',`rotate(90 ${xx+6} ${(a.y+b.y)/2+a.h/2})`)}});
+  const lastTop=pos[2],firstBot=pos[3];
+  if(!narrow){tx(svg,W-20,firstBot.y-10,'完成後進入下一輪 ↺',{class:'tk','text-anchor':'end'})}
+  else tx(svg,20,H-6,'完成後回到階段 1，進入下一輪 ↺',{class:'tk'})}
+
+/* ================= C1 ================= */
+const LET='ABCDEFGHIJ'.split('');
+const c1={slots:'AAAAAABBBC'.split(''),show:false,truth:'A'};
+function c1Render(){const v=vote(c1.slots),p=v.c/10,r=rUnc(v.c,10),kp=keep(v.c,10);
+  $$('#c1-slots .slot').forEach((d,i)=>{const same=v.tied.length===1&&c1.slots[i]===v.label;d.classList.toggle('same',same);$('.tg',d).classList.toggle('hide',!same);$('select',d).value=c1.slots[i]});
+  cBars($('#c1-bars'),{curve:true,cur:v.c,H:210,T:36});
+  const tie=v.tied.length>1;let correct='';
+  if(c1.show)correct=tie?'取決於平手規則':(c1.truth===v.label?'正確':'錯誤');
+  const rows=[['偽標籤',tie?`平手：${v.tied.join('、')}`:v.label],['c（相同答案數）',String(v.c)],['相同答案比例 p',p.toFixed(2)],['不確定性獎勵',r.toFixed(2)],['保留（3–7）',kp?'是':'否']];
+  if(c1.show)rows.push(['偽標籤是否正確',correct]);
+  $('#c1-read').innerHTML=rows.map(([a,b],i)=>`<dt>${a}</dt><dd${i===3?' class="tgt"':''}>${b}</dd>`).join('')+(tie?'<dt>附註</dt><dd>論文未規定平手選法，獎勵不受影響</dd>':'');
+  $('#c1-bars svg').setAttribute('aria-label',`c = ${v.c}，不確定性獎勵 ${r.toFixed(2)}，${kp?'保留':'不保留'}`);
+  announce('c1',`偽標籤 ${tie?'平手':v.label}，c = ${v.c}，獎勵 ${r.toFixed(2)}，${kp?'保留':'不保留'}${c1.show?'，'+correct:''}`)}
+function initC1(){const box=$('#c1-slots');box.textContent='';
+  c1.slots.forEach((a,i)=>{const d=document.createElement('div');d.className='slot';const s=document.createElement('select');s.setAttribute('aria-label',`第 ${i+1} 個答案`);
+    LET.forEach(L=>{const o=document.createElement('option');o.value=L;o.textContent=L;s.appendChild(o)});s.value=a;s.addEventListener('change',()=>{c1.slots[i]=s.value;c1Render()});
+    d.appendChild(s);const t=document.createElement('span');t.className='tg';t.textContent='同';t.setAttribute('aria-hidden','true');d.appendChild(t);box.appendChild(d)});
+  const tr=$('#c1-truth');LET.concat(['都不是']).forEach(L=>{const o=document.createElement('option');o.value=L;o.textContent=L;tr.appendChild(o)});tr.value=c1.truth;
+  tr.addEventListener('change',()=>{c1.truth=tr.value;c1Render()});
+  const show=$('#c1-show'),setShow=v=>{c1.show=v;show.checked=v;$('#c1-truth-w').classList.toggle('hide',!v)};
+  show.addEventListener('change',()=>{setShow(show.checked);c1Render()});
+  $('#c1-presets').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const p=b.dataset.p;
+    if(p==='same')c1.slots=Array(10).fill('A');else if(p==='half')c1.slots='AAAAABBBBB'.split('');else if(p==='all')c1.slots=LET.slice();
+    else{c1.slots='CCCCCCCAAA'.split('');c1.truth='A';tr.value='A';setShow(true)}
+    $$('#c1-presets button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));c1Render()});
+  $$('#c1-presets button').forEach(x=>x.setAttribute('aria-pressed','false'));c1Render()}
+
+/* ================= C2 ================= */
+const c2={raw:RAW_DEFAULT.slice(),c:C_DEFAULT.slice(),tau:.5,abl:false,step:1};
+const STEP_NAMES=['只有不確定性獎勵','加上重複懲罰','加上 GRPO 優勢'];
+function c2Build(){const box=$('#c2-table');
+  box.innerHTML=`<div class="tscroll"><table class="c2t"><caption>8 道題的獎勵（示範值）</caption><thead><tr><th>#</th><th>題目（Challenger 原始輸出，可編輯）</th><th>格式</th><th>c</th><th class="num">不確定性</th><th class="c-rep">群</th><th class="num c-rep">重複懲罰</th><th class="num">獎勵 r</th><th class="c-adv">優勢</th></tr></thead><tbody></tbody></table></div>`;
+  const tb=$('tbody',box);c2.raw.forEach((_,i)=>{const tr=document.createElement('tr');
+    tr.innerHTML=`<td data-h="#">${i+1}</td><td data-h="題目"><textarea maxlength="500" rows="2" aria-label="第 ${i+1} 題的原始輸出"></textarea></td><td data-h="格式" class="f"></td><td data-h="c"><span class="stepper"><button type="button" aria-label="第 ${i+1} 題 c 減 1">−</button><output></output><button type="button" aria-label="第 ${i+1} 題 c 加 1">+</button></span></td><td data-h="不確定性" class="num ru"></td><td data-h="群" class="c-rep g"></td><td data-h="重複懲罰" class="num c-rep rr"></td><td data-h="獎勵 r" class="num r"></td><td data-h="優勢" class="c-adv"><span class="adv"><span class="bar-w"><i></i></span><b></b></span></td>`;
+    const ta=$('textarea',tr);ta.value=c2.raw[i];ta.addEventListener('input',dbn(()=>{c2.raw[i]=ta.value;c2Render()},300));
+    const[bm,bp]=$$('.stepper button',tr);bm.addEventListener('click',()=>{c2.c[i]=Math.max(1,c2.c[i]-1);c2Render()});bp.addEventListener('click',()=>{c2.c[i]=Math.min(10,c2.c[i]+1);c2Render()});
+    tb.appendChild(tr)})}
+function c2Render(){const st=c2.step,useRep=st>=2&&!c2.abl,P=pipeline(c2.raw,c2.c,c2.tau,useRep),rows=P.rows,adv=P.adv;
+  const plate=$('#c2');plate.classList.toggle('c2-off',st<2);plate.classList.toggle('c2-off2',st<3);
+  $('#c2-tau').closest('.rng').classList.toggle('hide',st<2);$('#c2-abl-w').classList.toggle('hide',st<2);
+  $$('#c2-table tbody tr').forEach((tr,i)=>{const r=rows[i];$('output',tr).textContent=c2.c[i];
+    $('.f',tr).innerHTML=r.ok?'合格':'<span class="bad">不合格</span>';$('.ru',tr).textContent=r.ok?r.ru.toFixed(3):'—';
+    $('.g',tr).innerHTML=r.ok?`<span class="grp${r.size>1?' multi':''}">群 ${r.g}${r.size>1?'（'+r.size+' 題）':''}</span>`:'—';
+    $('.rr',tr).textContent=r.ok?(useRep?r.rr.toFixed(3):'0（不計）'):'—';$('.r',tr).textContent=r.r.toFixed(3);
+    const a=adv.A[i],w=Math.min(50,Math.abs(a)/2*50),bar=$('.bar-w i',tr);bar.className=a<0?'neg':'';bar.style.left=(a<0?50-w:50)+'%';bar.style.width=w+'%';$('.adv b',tr).textContent=sgn3(a)});
+  // distance view
+  const V=P.valid,d=P.d;let h='';
+  if(st>=2){h+=`<div class="wide-only"><div class="tscroll"><table class="dmat"><caption>BLEU 距離 d = 1 − BLEU（外框：d &lt; τ）</caption><thead><tr><th></th>${V.map(i=>`<th>${i+1}</th>`).join('')}</tr></thead><tbody>`;
+    V.forEach((i,a)=>{h+=`<tr><th>${i+1}</th>`+V.map((j,b)=>a===b?'<td>—</td>':`<td class="${d[a][b]<c2.tau?'lt':''}">${d[a][b].toFixed(2)}</td>`).join('')+'</tr>'});h+='</tbody></table></div></div>';
+    const pairs=[];V.forEach((i,a)=>V.forEach((j,b)=>{if(a<b)pairs.push([d[a][b],i,j])}));pairs.sort((x,y)=>x[0]-y[0]);
+    h+=`<div class="narrow-only"><p class="note small">最接近的 5 組題目（d &lt; τ 標 ✓）</p><ol class="dlist">${pairs.slice(0,5).map(p=>`<li>第 ${p[1]+1}、${p[2]+1} 題：d = ${p[0].toFixed(3)}${p[0]<c2.tau?' ✓':''}</li>`).join('')}</ol></div>`;
+    h+=`<p class="note small">目前門檻下的分群：${P.clusters.map(c=>'{'+c.map(i=>i+1).join(', ')+'}').join(' ')}${rows.some(r=>!r.ok)?'；格式不合：第 '+rows.filter(r=>!r.ok).map(r=>r.i+1).join('、')+' 題':''}</p>`}
+  $('#c2-dist').innerHTML=h;
+  const nb=rows.filter(r=>!r.ok).length;let s=`τ = ${c2.tau.toFixed(2)}，分成 ${P.clusters.length} 群（格式不合 ${nb} 題），平均獎勵 ${adv.mu.toFixed(3)}，標準差 ${adv.sd.toFixed(3)}`;
+  if(st<2)s=`第 1 步：獎勵 = 不確定性獎勵（格式不合為 0）；平均 ${adv.mu.toFixed(3)}`;if(st>=3&&adv.zero)s+='；群組獎勵全同：優勢為 0，策略梯度項為零';
+  $('#c2-sum').textContent=s;announce('c2',s)}
+function initC2(){c2Build();const sb=$('#c2-steps');STEP_NAMES.forEach((n,i)=>{const b=document.createElement('button');b.type='button';b.innerHTML=`<span class="s">${i+1}</span>${n}`;b.addEventListener('click',()=>{c2.step=i+1;syncSteps();c2Render()});sb.appendChild(b)});
+  const syncSteps=()=>$$('button',sb).forEach((b,i)=>b.setAttribute('aria-pressed',String(i+1===c2.step)));syncSteps();
+  const t=$('#c2-tau'),to=$('#c2-tauo'),up=()=>{c2.tau=+t.value;to.textContent=c2.tau.toFixed(2);t.setAttribute('aria-valuetext','τ = '+c2.tau.toFixed(2))};up();
+  t.addEventListener('input',()=>{up();c2Render()});
+  $('#c2-abl').addEventListener('change',e=>{c2.abl=e.target.checked;c2Render()});
+  $('#c2-reset').addEventListener('click',()=>{c2.raw=RAW_DEFAULT.slice();c2.c=C_DEFAULT.slice();c2.tau=.5;c2.abl=false;t.value=.5;up();$('#c2-abl').checked=false;$$('#c2-table textarea').forEach((ta,i)=>ta.value=c2.raw[i]);c2Render()});
+  c2Render()}
+
+/* ================= C3 ================= */
+const c3={q:.5,K:3,s:.5,m:10,scen:'medium'};
+function c3Render(){const B=buildBuckets(c3.m,c3.K),o=evalBuckets(B,c3.m,c3.K,c3.q,c3.s),m=c3.m,pl=plurality(c3.q,c3.K,c3.s);
+  const plTxt={yes:'是',tie:'並列',no:'否，最常見的是某個錯誤答案'}[pl];
+  $('#c3-plu').innerHTML=`正確答案是否為最常見答案：<b>${plTxt}</b>`;
+  // histogram
+  {const box=$('#c3-hist'),W=widthOf(box,260,560),H=222,L=40,R=8,T=26,Bm=42,svg=frame(box,W,H);defs(svg);const bw=(W-L-R)/m,x=c=>L+(c-1)*bw;
+   let ymax=0;for(let c=1;c<=m;c++)ymax=Math.max(ymax,o.hc[c]+o.hw[c]);ymax=Math.max(.05,Math.ceil(ymax*10)/10);const y=lin(0,ymax,H-Bm,T);
+   const lo=Math.ceil(m*.25-EPS),hi=Math.floor(m*.75+EPS);el('rect',{x:x(lo),y:T-14,width:(hi-lo+1)*bw,height:H-Bm-T+14,class:'band',opacity:.45},svg);
+   [0,ymax/2,ymax].forEach(v=>{el('line',{x1:L,x2:W-R,y1:y(v),y2:y(v),class:'grid'},svg);tx(svg,L-6,y(v)+4,v.toFixed(2),{class:'tk','text-anchor':'end'})});
+   for(let c=1;c<=m;c++){const a=o.hc[c],b=o.hw[c];const x0=x(c)+bw*.15,w=bw*.7;
+     el('rect',{x:x0,y:y(a),width:w,height:Math.max(0,H-Bm-y(a)),class:'bar'},svg);el('rect',{x:x0,y:y(a+b),width:w,height:Math.max(0,y(a)-y(a+b)),class:'barw'},svg);
+     if(m<=10||c%2===0)tx(svg,x(c)+bw/2,H-Bm+15,String(c),{class:'tk','text-anchor':'middle'});
+     if(m<=10){const t=a+b>EPS?(a/(a+b)).toFixed(2).replace(/^0/,''):'—';tx(svg,x(c)+bw/2,Math.max(12,y(a+b)-4),t,{class:'tk','text-anchor':'middle'})}}
+   tx(svg,(L+W-R)/2,H-4,'c（與偽標籤相同的答案數）',{class:'tk','text-anchor':'middle'});
+   svg.setAttribute('aria-label',`c 的分布；偽標籤正確率 ${f3(o.corr)}`)}
+  // sweep
+  {const box=$('#c3-sweep'),W=widthOf(box,260,560),narrow=W<420,H=212,L=40,R=narrow?10:92,T=10,Bm=40,svg=frame(box,W,H),x=lin(0,1,L,W-R),y=lin(0,1,H-Bm,T);
+   [0,.5,1].forEach(v=>{el('line',{x1:L,x2:W-R,y1:y(v),y2:y(v),class:'grid'},svg);tx(svg,L-6,y(v)+4,String(v),{class:'tk','text-anchor':'end'});tx(svg,x(v),H-Bm+15,String(v),{class:'tk','text-anchor':'middle'})});
+   tx(svg,(L+W-R)/2,H-4,'答對機率 q',{class:'tk','text-anchor':'middle'});
+   const S=[[],[],[],[]];for(let i=0;i<=100;i++){const q=i/100,e=evalBuckets(B,m,c3.K,q,c3.s);S[0].push([x(q),y(e.corr)]);S[1].push([x(q),y(e.pass)]);if(e.pass>EPS)S[2].push([x(q),y(e.cgp)]);S[3].push([x(q),y(e.r)])}
+   const st=['stroke:var(--c-par);stroke-width:2.5;fill:none','stroke:var(--ink);stroke-width:2;fill:none;stroke-dasharray:6 4','stroke:var(--accent);stroke-width:2.5;fill:none;stroke-dasharray:1.5 3.5;stroke-linecap:round','stroke:var(--c-perp);stroke-width:2;fill:none;stroke-dasharray:9 3 2 3'];
+   const nm=['偽標籤正確率','保留率','保留者正確率','平均獎勵'];
+   S.forEach((p,i)=>{if(p.length)el('path',{d:lp(p),style:st[i]},svg)});
+   el('line',{x1:x(c3.q),x2:x(c3.q),y1:T,y2:H-Bm,style:'stroke:var(--ink-3);stroke-width:1'},svg);
+   if(!narrow){const ends=S.map((p,i)=>({i,y:p.length?p[p.length-1][1]:y(0)})).sort((a,b)=>a.y-b.y);for(let k=1;k<ends.length;k++)if(ends[k].y-ends[k-1].y<14)ends[k].y=ends[k-1].y+14;
+     ends.forEach(e=>tx(svg,W-R+6,e.y+4,nm[e.i],{class:'al'}))}
+   svg.setAttribute('aria-label','四條曲線對答對機率 q：'+nm.join('、'))}
+  const rows=[['偽標籤正確率',f3(o.corr)],['保留率（3–7）',f3(o.pass)],['保留者中的正確率',o.pass>EPS?f3(o.cgp):'—（沒有題目被保留）'],['平均不確定性獎勵',f3(o.r)],['最常見答案',plTxt]];
+  $('#c3-read').innerHTML=rows.map(([a,b],i)=>`<dt>${a}</dt><dd${i===2?' class="tgt"':''}>${b}</dd>`).join('');
+  announce('c3',`q = ${c3.q.toFixed(2)}，偽標籤正確率 ${f3(o.corr)}，保留率 ${f3(o.pass)}，保留者正確率 ${o.pass>EPS?f3(o.cgp):'無'}`)}
+let c3SyncK,c3SyncM;
+function c3SetS(){const s=$('#c3-s'),mn=sMin(c3.K);s.min=mn;s.disabled=c3.K===1;if(c3.K===1)c3.s=1;if(c3.s<mn)c3.s=mn;s.value=c3.s;$('#c3-so').textContent=c3.s.toFixed(2);
+  $('#c3-smin').textContent=c3.K===1?'只有一個錯誤答案（s 固定為 1）':`下限 ${mn.toFixed(2)}（= ⌈100/K⌉/100）`;s.setAttribute('aria-valuetext','s = '+c3.s.toFixed(2))}
+function c3SyncScen(){$$('#c3-scen button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.s===c3.scen)))}
+function initC3(){const q=$('#c3-q');const upQ=()=>{c3.q=+q.value;$('#c3-qo').textContent=c3.q.toFixed(2);q.setAttribute('aria-valuetext','q = '+c3.q.toFixed(2))};upQ();
+  q.addEventListener('input',()=>{upQ();c3Render()});
+  c3SyncK=segInit($('#c3-K'),[1,2,3,4,5],c3.K,null,k=>{c3.K=k;c3.scen=null;c3SyncScen();c3SetS();c3Render()});
+  c3SyncM=segInit($('#c3-m'),[5,10,20],c3.m,null,v=>{c3.m=v;c3Render()});
+  $('#c3-s').addEventListener('input',e=>{c3.s=+e.target.value;c3.scen=null;c3SyncScen();c3SetS();c3Render()});
+  $('#c3-scen').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const S=SCEN[b.dataset.s];c3.scen=b.dataset.s;c3.K=S.K;c3.s=S.s;c3SyncK(c3.K);c3SyncScen();c3SetS();c3Render()});
+  c3SyncScen();c3SetS();c3Render()}
+
+/* ================= C4 ================= */
+const c4={view:'size',sizes:new Set(['0.6B','1.7B','4B']),sel:{si:0,xi:1}};
+const SHP={'0.6B':'circle','1.7B':'square','4B':'tri','R-Zero':'circle','Single-R-Zero':'square'},SCOL={'0.6B':'--c-par','1.7B':'--c-perp','4B':'--accent','R-Zero':'--accent','Single-R-Zero':'--ink-2'};
+function c4Series(){if(c4.view==='size')return['0.6B','1.7B','4B'].filter(k=>c4.sizes.has(k)).map(k=>({k,top:FIG3[k],bot:TAB7[k],dash:false}));
+  return['R-Zero','Single-R-Zero'].map(k=>({k,top:TAB6[k].perf,bot:TAB6[k].acc,dash:k!=='R-Zero'}))}
+function mark(svg,s,x,y,col,r=4.5){const st=`fill:var(${col});stroke:var(--surface);stroke-width:1`;if(s==='circle')el('circle',{cx:x,cy:y,r,style:st},svg);
+  else if(s==='square')el('rect',{x:x-r,y:y-r,width:2*r,height:2*r,style:st},svg);else el('path',{d:`M${x} ${y-r-1}L${x+r+1} ${y+r}L${x-r-1} ${y+r}Z`,style:st},svg)}
+function star(svg,x,y,r=8){let d='';for(let i=0;i<10;i++){const a=-Math.PI/2+i*Math.PI/5,rr=i%2?r*.45:r;d+=(i?'L':'M')+(x+rr*Math.cos(a)).toFixed(1)+' '+(y+rr*Math.sin(a)).toFixed(1)}el('path',{d:d+'Z',class:'star'},svg)}
+function c4Chart(box,key,lo,hi,unit){const ser=c4Series(),W=widthOf(box,280,640),narrow=W<480,H=key==='top'?220:200,L=44,R=narrow?12:104,T=16,B=key==='bot'?40:22,svg=frame(box,W,H);
+  const x=lin(0,4,L+10,W-R-10),y=lin(lo,hi,H-B,T);
+  const ticks=[];for(let v=Math.ceil(lo/10)*10;v<=hi;v+=10)ticks.push(v);ticks.forEach(v=>{el('line',{x1:L,x2:W-R,y1:y(v),y2:y(v),class:'grid'},svg);tx(svg,L-6,y(v)+4,v+unit,{class:'tk','text-anchor':'end'})});
+  if(key==='bot')STEPS.forEach((s,i)=>{tx(svg,x(i),H-B+15,narrow?(i?s:'B'):(i?'Step '+s:'Base'),{class:'tk','text-anchor':'middle'});if(i)tx(svg,x(i),H-B+30,`第 ${i} 輪`,{class:'tk','text-anchor':'middle'})});
+  tx(svg,L,T-4,key==='top'?'數學平均':'偽標籤正確率（%）',{class:'al'});
+  const ends=[];
+  ser.forEach((s,si)=>{const a=s[key],col=SCOL[s.k],pts=[];a.forEach((v,i)=>{if(v!==null)pts.push([x(i),y(v),i,v])});
+    el('path',{d:lp(pts),style:`stroke:var(${col});stroke-width:2.2;fill:none${s.dash?';stroke-dasharray:6 4':''}`},svg);
+    const pk=peak(s.top);pts.forEach(p=>{if(p[2]===pk)star(svg,p[0],p[1]);else mark(svg,SHP[s.k],p[0],p[1],col);
+      const h=el('circle',{cx:p[0],cy:p[1],r:12,class:'hit'},svg);h.addEventListener('click',()=>{c4.sel={si,xi:p[2]};c4Render()})});
+    if(key==='bot'&&pk>0&&a[pk]!==null)tx(svg,x(pk)+(pk<4?10:-10),y(a[pk])-8,`峰值時 ${a[pk].toFixed(1)}%`,{class:'tk halo','text-anchor':pk<4?'start':'end'});
+    const last=pts[pts.length-1];ends.push({y:last[1],t:s.k+' '+last[3].toFixed(key==='top'?2:1),col})});
+  // peak guide lines across both charts
+  ser.forEach(s=>{const pk=peak(s.top);el('line',{x1:x(pk),x2:x(pk),y1:T,y2:H-B,style:`stroke:var(${SCOL[s.k]});stroke-width:1;stroke-dasharray:3 4;opacity:.7`},svg)});
+  if(!narrow){ends.sort((a,b)=>a.y-b.y);for(let k=1;k<ends.length;k++)if(ends[k].y-ends[k-1].y<14)ends[k].y=ends[k-1].y+14;
+    const over=ends.length?ends[ends.length-1].y-(H-B):0;if(over>0)ends.forEach(e=>e.y-=over);
+    ends.forEach(e=>tx(svg,W-R+8,e.y+4,e.t,{class:'al'}))}
+  const sel=c4.sel,ss=ser[sel.si];if(ss){const v=ss[key][sel.xi];if(v!==null&&v!==undefined)el('circle',{cx:x(sel.xi),cy:y(v),r:9,class:'sel-ring'},svg)}
+  return svg}
+function c4Render(){const ser=c4Series();if(c4.sel.si>=ser.length)c4.sel.si=0;
+  if(c4.view==='size'){c4Chart($('#c4-top'),'top',10,55,'');c4Chart($('#c4-bot'),'bot',30,80,'')}else{c4Chart($('#c4-top'),'top',40,55,'');c4Chart($('#c4-bot'),'bot',30,80,'')}
+  $('#c4-legend').innerHTML=ser.map(s=>`<span class="lg shape"><span class="mk" style="color:var(${SCOL[s.k]})">${{circle:'●',square:'■',tri:'▲'}[SHP[s.k]]}</span>${s.k}${s.dash?'（虛線）':''}</span>`).join('')+'<span class="lg shape"><span class="mk" style="color:var(--accent)">★</span>峰值</span>';
+  const s=ser[c4.sel.si],i=c4.sel.xi;let txt='';if(s){const a=s.top[i],b=s.bot[i];txt=`${s.k}，${i?'Step '+STEPS[i]+'（第 '+i+' 輪）':'Base'}：數學平均 ${a===null?'—':a.toFixed(2)}；偽標籤正確率 ${b===null?'—':b.toFixed(1)+'%'}`}
+  $('#c4-read').textContent=txt||'點選或以方向鍵選擇資料點';
+  $('#c4-tab').innerHTML=`<div class="tscroll"><table class="stack"><caption>峰值（由資料即時求出）</caption><thead><tr><th>系列</th><th>峰值步數</th><th class="num">峰值分數</th><th class="num">峰值時偽標籤正確率</th></tr></thead><tbody>${ser.map(s=>{const p=peak(s.top);return`<tr><td data-h="系列">${s.k}</td><td data-h="峰值步數">${p?'Step '+STEPS[p]+'（第 '+p+' 輪）':'Base'}</td><td class="num" data-h="峰值分數">${s.top[p].toFixed(2)}</td><td class="num" data-h="峰值時正確率">${s.bot[p]===null?'—':s.bot[p].toFixed(1)+'%'}</td></tr>`}).join('')}</tbody></table></div>`;
+  announce('c4',txt)}
+function initC4(){segInit($('#c4-view'),['size','share'],'size',v=>v==='size'?'模型大小（Fig. 3、Table 7）':'兩個模型 vs 共用參數（Table 6）',v=>{c4.view=v;c4.sel={si:0,xi:1};$('#c4-sizes').classList.toggle('hide',v!=='size');c4Render()});
+  const sz=$('#c4-sizes');['0.6B','1.7B','4B'].forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.textContent=k;b.setAttribute('aria-pressed','true');
+    b.addEventListener('click',()=>{if(c4.sizes.has(k)&&c4.sizes.size>1)c4.sizes.delete(k);else c4.sizes.add(k);b.setAttribute('aria-pressed',String(c4.sizes.has(k)));c4.sel={si:0,xi:1};c4Render()});sz.appendChild(b)});
+  $('#c4-fig').addEventListener('keydown',e=>{const n=c4Series().length,s=c4.sel;if(e.key==='ArrowRight')s.xi=Math.min(4,s.xi+1);else if(e.key==='ArrowLeft')s.xi=Math.max(c4.view==='size'?0:1,s.xi-1);
+    else if(e.key==='ArrowDown')s.si=(s.si+1)%n;else if(e.key==='ArrowUp')s.si=(s.si-1+n)%n;else return;e.preventDefault();c4Render()});
+  c4Render()}
+
+/* ================= timeline / toc / theme ================= */
+const TL_GROUP={'2402.03300':['rlvr','rzero-grpo-rlvr-foundation'],'2501.12948':['rlvr','rzero-grpo-rlvr-foundation'],
+ '2505.15134':['lf','rzero-label-free-intrinsic-rewards'],'2505.19590':['lf','rzero-label-free-intrinsic-rewards'],
+ '2411.04109':['mv','rzero-majority-vote-pseudo-labels'],'2504.16084':['mv','rzero-majority-vote-pseudo-labels'],'2505.20347':['mv','rzero-majority-vote-pseudo-labels'],
+ '2401.01335':['sp','rzero-self-play-task-generation'],'2505.03335':['sp','rzero-self-play-task-generation'],'2506.01716':['sp','rzero-self-play-task-generation'],
+ '2504.05520':['cur','rzero-difficulty-curriculum'],'2504.03380':['cur','rzero-difficulty-curriculum'],
+ '2404.05090':['col','rzero-self-training-collapse'],'2505.21444':['col','rzero-self-training-collapse'],
+ '2508.05004':['me','rzero-challenger-solver-pipeline']};
+const TL_NAME={rlvr:'RLVR 與 GRPO',lf:'無標籤 RL',mv:'多數決偽標籤',sp:'自我對弈與自產任務',cur:'難度課程',col:'崩潰風險',me:'本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  data=data.map((e,i)=>[e,i]).sort((a,b)=>(Number(a[0].year)||0)-(Number(b[0].year)||0)||a[1]-b[1]).map(p=>p[0]);
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];if(!TL_GROUP[e.arxiv])console.warn('timeline: ungrouped',e.arxiv);used.add(g[0]);const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${g[1]?`<a href="${g[1]}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+/* ================= self test (design.md section 5.5) ================= */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t=1e-4)=>Math.abs(a-b)<=t+1e-12;
+  // C1 (5.1)
+  {const R=[.2,.4,.6,.8,1,.8,.6,.4,.2,0],K=[0,0,1,1,1,1,1,0,0,0];ok(R.every((r,i)=>near(rUnc(i+1,10),r,1e-9))&&K.every((k,i)=>keep(i+1,10)===!!k),'C1 table');
+   const v=vote('AAAAAABBBC'.split(''));ok(v.c===6&&v.label==='A'&&near(rUnc(v.c,10),.8,1e-9),'C1 default');
+   const w=vote('CCCCCCCAAA'.split(''));ok(w.c===7&&w.label==='C'&&keep(7,10)&&near(rUnc(7,10),.6,1e-9),'C1 consistent wrong');
+   ok(vote('AAAAABBBBB'.split('')).tied.length===2,'C1 tie')}
+  // C2 (5.2)
+  {const q=RAW_DEFAULT.map(extractQ);ok(q[7]===null&&near(bleu(q[0],q[1]),.8492),'C2 bleu(q1,q2)='+bleu(q[0],q[1]).toFixed(4));
+   const T=[[.5,true,'[[0,1],[2],[3],[4],[5],[6]]',[.861,.213,.618,-.030,-.030,-1.327,1.266,-1.570],.4844,.3085],
+            [.65,true,'[[0,1],[2],[3,4],[5],[6]]',[.943,.308,.705,-.327,-.327,-1.201,1.340,-1.439],.4531,.3149],
+            [.7,true,'[[0,1,2],[3,4],[5],[6]]',[.838,.123,.123,-.145,-.145,-1.129,1.732,-1.397],.3906,.2796],
+            [.5,false,'[[0,1],[2],[3],[4],[5],[6]]',[1.037,.484,.484,-.069,-.069,-1.176,1.037,-1.729],.6250,.3615]];
+   T.forEach(([tau,rep,cl,A,mu,sd])=>{const P=pipeline(RAW_DEFAULT,C_DEFAULT,tau,rep);ok(JSON.stringify(P.clusters)===cl&&P.adv.A.every((a,i)=>near(a,A[i],6e-4))&&near(P.adv.mu,mu)&&near(P.adv.sd,sd),`C2 tau=${tau} rep=${rep}`)});
+   const P=pipeline(RAW_DEFAULT,C_DEFAULT,.2,true);ok(JSON.stringify(P.clusters)==='[[0,1],[2],[3],[4],[5],[6]]','C2 tau=0.20');
+   ok(advantages(Array(8).fill(.375)).A.every(a=>a===0),'C2 equal rewards -> 0')}
+  // C3 (5.3)
+  {const T=[[10,3,.5,.5,.7869,.9449,.7750,.8024],[10,3,.7,.5,.9792,.6172,.9663,.5790],[10,1,.3,1,.0988,.6156,.1579,.5761],[10,3,0,.5,0,.9445,NaN,.8202]];
+   T.forEach(([m,K,q,s,a,b,c,r])=>{const o=evalBuckets(buildBuckets(m,K),m,K,q,s);ok(near(o.corr,a,5e-4)&&near(o.pass,b,5e-4)&&(isNaN(c)?(o.cgp===0||isNaN(o.cgp)):near(o.cgp,c,5e-4))&&near(o.r,r,5e-4),`C3 m=${m} K=${K} q=${q}`)});
+   const pc=(o,c)=>o.hc[c]/(o.hc[c]+o.hw[c]);
+   const o1=evalBuckets(buildBuckets(10,1),10,1,.3,1);ok(near(pc(o1,6),.155,5e-4)&&near(pc(o1,8),.006,5e-4),'C3 concentrated P(ok|c)');
+   const o2=evalBuckets(buildBuckets(10,3),10,3,.3,.5);ok(near(pc(o2,5),.356,5e-4)&&near(pc(o2,10),.176,5e-4)&&plurality(.3,3,.5)==='no','C3 medium q=0.3 P(ok|c)');
+   let tot=0;const o3=evalBuckets(buildBuckets(20,5),20,5,.37,.6);for(let c=0;c<=20;c++)tot+=o3.hc[c]+o3.hw[c];ok(Math.abs(tot-1)<1e-9,'C3 total prob');
+   ok([1,2,3,4,5].map(sMin).join()==='1,0.5,0.34,0.25,0.2','C3 s min')}
+  // C4 (5.4)
+  ok(peak(FIG3['0.6B'])===1&&peak(FIG3['1.7B'])===2&&peak(FIG3['4B'])===3&&TAB7['0.6B'][1]===70.6&&TAB7['4B'][3]===48.8,'C4 peaks');
+  ok(peak(TAB6['R-Zero'].perf)===3&&peak(TAB6['Single-R-Zero'].perf)===1,'C4 Table 6 peaks');
+  // DOM
+  ok($$('details.check').length===13,'check boxes: '+$$('details.check').length);
+  {const tl=JSON.parse($('#timeline-data').textContent);ok(tl.length===15&&tl.every(e=>TL_GROUP[e.arxiv]),'timeline groups')}
+  ok(!!document.querySelector('.katex')||document.documentElement.classList.contains('nokatex'),'KaTeX rendered');
+  ok(!document.querySelector('.katex-error'),'no KaTeX errors');
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'')}
+
+/* ================= boot ================= */
+initTheme();initToc();cBars($('#hero-c'),{H:150,T:22});drawFig2();initC1();initC2();initC3();initC4();renderTimeline();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{cBars($('#hero-c'),{H:150,T:22});drawFig2();c1Render();c3Render();c4Render()})});
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false})}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath();if(!document.querySelector('.katex')&&typeof katex==='undefined')document.documentElement.classList.add('nokatex');if(/[?&]test\b/.test(location.search))setTimeout(selfTest,50)});
+})();
+</script>
+</body>
+</html>

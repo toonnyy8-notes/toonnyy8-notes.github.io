@@ -1,0 +1,130 @@
+
+<!-- S10 -->
+<section class="ch" id="collapse" data-toc="10" data-tt="迭代後下降">
+  <div class="ch-num">10 · 迭代後下降</div>
+  <h2>數輪之後表現下降，偽標籤正確率也下降</h2>
+  <div class="prose">
+    <p><b>題目變難，標籤變差</b>（Sec. 4.4，Table 5）。每輪之後取 200 題（篩選後），以 GPT-4o 的答案為真值。固定的 Step-15 Solver 在三輪題目上的正確率為 59.0 → 53.0 → 47.0，表示題目變難；篩選後偽標籤正確率為 79.0% → 69.0% → 63.0%。</p>
+    <p><b>迭代後表現下降與作者的解釋。</b>Fig. 3 中，Qwen3-0.6B、1.7B、4B 的峰值分別在 Step 15、30、45，即第 1、2、3 輪（每輪 Solver 15 步）；之後表現下降，模型越大峰值越晚。Table 7 以 Gemini 標註，峰值時的偽標籤正確率分別是 70.6%、55.2%、48.8%：0.6B 在正確率仍有 70.6% 時就開始下降，4B 到 48.8% 才下降，沒有共同的門檻。所以作者認為標籤雜訊不是唯一原因，並推測另有只用自產資料訓練造成的模型崩潰（model collapse：多樣性流失、自身偏差被放大）；這是作者的假說，論文沒有直接量測多樣性（App. E）。另外，兩個角色共用同一份參數的 Single-R-Zero 在第 1 輪後就下降，各輪的偽標籤正確率也都較低（Table 6）。作者推測同一個模型既出題又解題，會產生「來自內部偏差的過度自信」（App. D）。</p>
+    <p>Table 6 與 Table 7 的 4B 第 1 輪偽標籤正確率是 71.0%，Table 5 是 79.0%，兩者的標註者（Gemini、GPT-4o）與樣本不同，不能直接比較。</p>
+  </div>
+
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>迭代中的表現與偽標籤正確率：論文數據</h3></div>
+    <p class="lead-assume">這裡只畫論文報告的量測值（Fig. 3 圖中標籤、Table 6、Table 7），沒有任何模擬。Table 7 的文字說 500 題取自「a later training iteration」，但表中有 Step 15–60 四欄；每欄的抽樣方式論文沒有說明。</p>
+    <div class="ctl-row"><div class="seg" id="c4-view" role="radiogroup" aria-label="檢視"></div><div class="ctl-row" id="c4-sizes" role="group" aria-label="模型大小"></div></div>
+    <div class="fig c4-fig" id="c4-fig" tabindex="0" role="group" aria-label="迭代圖：左右方向鍵移動步數，上下方向鍵切換系列">
+      <div id="c4-top"><svg role="img" aria-label="數學平均對步數"></svg></div>
+      <div id="c4-bot"><svg role="img" aria-label="偽標籤正確率對步數"></svg></div>
+    </div>
+    <div class="legend" id="c4-legend"></div>
+    <p class="readout" id="c4-read"></p>
+    <div id="c4-tab"></div>
+    <p class="sr" id="c4-live" aria-live="polite"></p>
+    <p class="plate-f">資料照錄論文；峰值（星形）與「峰值時的正確率」由資料即時求出。Table 6 的 Step 45 為 49.12，Fig. 3 為 49.07，原文如此。</p>
+  </div>
+  <div class="prose"><p>圖中可以看到：0.6B 峰值在 Step 15（第 1 輪，正確率 70.6%）、1.7B 在 Step 30（第 2 輪，55.2%）、4B 在 Step 45（第 3 輪，48.8%）；偽標籤正確率持續下降，但表現開始下降的時間點各不相同。</p></div>
+  <p class="read">延伸閱讀：<a href="rzero-self-training-collapse.html">自我訓練的崩壞風險：model collapse 與 reward hacking</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">0.6B、1.7B、4B 的峰值在哪一步？為什麼作者認為不只是標籤雜訊？</p>
+    <p class="a">Step 15、30、45（第 1、2、3 輪）；峰值時偽標籤正確率 70.6%、55.2%、48.8%，沒有共同門檻，所以作者推測另有模型崩潰；Single-R-Zero 更早下降、正確率更低（Table 6）。</p>
+  </div></details>
+</section>
+
+<!-- S11 -->
+<section class="ch" id="impl" data-toc="11" data-tt="實作">
+  <div class="ch-num">11 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="prose"><p>Challenger 的提示模板（App. B.2，原文照錄）：</p></div>
+  <div class="tmpl" role="figure" aria-label="Challenger 提示模板">System: You are an expert competition-math problem setter. FIRST, in your private scratch-pad, think step-by-step to design a brand-new, non-trivial problem. The problem could come from any field of mathematics, including but not limited to algebra, geometry, number theory, combinatorics, prealgebra, probability, statistics, and calculus. Aim for a difficulty such that fewer than 30% of advanced high-school students could solve it. Avoid re-using textbook clichés or famous contest problems.
+THEN, without revealing any of your private thoughts, output exactly the following two blocks:
+<b>&lt;question&gt;</b>
+{The full problem statement on one or more lines}
+<b>&lt;/question&gt;</b>
+
+\boxed{final answer}
+
+Do NOT output anything else—no explanations, no extra markup.
+User: Generate one new, challenging reasoning question now. Remember to format the output exactly as instructed.</div>
+  <div class="tmpl" role="figure" aria-label="Solver 提示模板">System: Please reason step by step, and put your final answer within \boxed{}.
+User: {problem statement}</div>
+  <div class="prose">
+    <p><b>常見錯誤。</b></p>
+    <ol>
+      <li>把 $\hat p$ 當成正確率：它是與多數決答案相同的比例，一致的錯誤答案也會得到高 $\hat p$。</li>
+      <li>篩選門檻換算錯：$\delta=0.25$、$m=10$ 對應 3–7 個（含）；換 $m$ 時要重新換算，例如 $m=5$ 時為 2–3 個<span class="tag">本頁推導</span>。</li>
+      <li>平手處理（論文未規定）：獎勵不受影響，但偽標籤會受影響，實作要固定規則。</li>
+      <li>BLEU 的方向與切詞：<code>sentence_bleu</code> 不對稱，方向論文未規定；論文有規定的是以空白切詞、不正規化、method1 平滑。</li>
+      <li>格式不合的輸出直接給 0（Sec. 2.2）；不送去 Solver 取樣可省計算<span class="tag">本頁建議</span>。</li>
+      <li>每輪要用目前的 Solver 計算 $\hat p$ 與篩選；訓練 Challenger 時 Solver 固定，訓練 Solver 時 Challenger 固定。</li>
+      <li>兩個角色用兩份參數（App. D）。</li>
+      <li>迭代不要預設越多越好：依模型大小，Fig. 3 的峰值在第 1–3 輪；用外部驗證集監控並選 checkpoint<span class="tag">本頁建議</span>。</li>
+    </ol>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$m=5$ 時，$\delta=0.25$ 保留幾個相同答案的題？</p>
+    <p class="a">2–3 個（$|c/5-0.5|\le0.25$）。</p>
+  </div></details>
+</section>
+
+<!-- S12 -->
+<section class="ch" id="history" data-toc="12" data-tt="研究脈絡">
+  <div class="ch-num">12 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>R-Zero 接在幾條脈絡之後：以可驗證獎勵做 RL（DeepSeekMath 提出的 GRPO、DeepSeek-R1）；不用標籤的獎勵（熵最小化、self-certainty、以多數決當獎勵的 TTRL）；自我對弈與模型自產任務（SPIN、Absolute Zero、Self-Challenging）；以成功率約 50% 的題目最有效率的難度課程。只用自產資料訓練的崩潰風險（model collapse、reward hacking）則是 R-Zero 第 10 章結果的背景。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">哪一篇工作以多數決作為無標籤 RL 的獎勵？</p>
+    <p class="a">TTRL（Zuo et al. 2025，arXiv 2504.16084）。</p>
+  </div></details>
+</section>
+
+<!-- S13 -->
+<section class="ch" id="next" data-toc="13" data-tt="限制與延伸">
+  <div class="ch-num">13 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>作者列出的限制（Sec. 6–7）：R-Zero 依賴可以客觀驗證正確性的領域（數學），難以直接用在創意寫作、對話等主觀任務；目前的標註（多數決）與驗證策略不一定適用所有題型。作者列出的未來方向是提高效率、更穩健的標註方法，以及擴展到新領域。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="rzero-lineage-hub.html">R-Zero 的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="rzero-grpo-rlvr-foundation.html">R-Zero 使用的訓練基礎：GRPO 與 RLVR</a><span>背景</span></div></li>
+    <li><div><a href="r1-grpo-outcome-rewards.html">GRPO 與規則式結果獎勵（DeepSeek-R1-Zero）</a><span>背景（No. 550）</span></div></li>
+    <li><div><a href="rlvr-grpo-credit-assignment.html">RLVR、GRPO 與信用分配瓶頸</a><span>背景</span></div></li>
+    <li><div><a href="rzero-label-free-intrinsic-rewards.html">無標籤 RL：熵、信心與 self-certainty 獎勵</a><span>前作</span></div></li>
+    <li><div><a href="rzero-majority-vote-pseudo-labels.html">多數決偽標籤：TTRL 與 self-consistency 訓練</a><span>前作</span></div></li>
+    <li><div><a href="rzero-self-play-task-generation.html">自我對弈與模型自產任務（SPIN、Absolute Zero、Self-Challenging）</a><span>前作</span></div></li>
+    <li><div><a href="rzero-difficulty-curriculum.html">難度課程：成功率接近 50% 的題目</a><span>前作</span></div></li>
+    <li><div><a href="rzero-challenger-solver-pipeline.html">R-Zero 的 Challenger–Solver 迭代流程</a><span>本論文的方法</span></div></li>
+    <li><div><a href="rzero-self-training-collapse.html">自我訓練的崩壞風險：model collapse 與 reward hacking</a><span>限制</span></div></li>
+    <li><div><a href="test-time-training-for-rl.html">測試時訓練與 test-time RL 與 SDPO 的 test-time self-distillation</a><span>站內相關</span></div></li>
+    <li><div><a href="ppo-grpo-dapo-llm-rl-objectives.html">PPO、GRPO、DAPO 與 LLM 的 RL 目標</a><span>站內相關（No. 129）</span></div></li>
+    <li><div><a href="policy-gradient-baselines-score-function.html">Policy gradient、baseline 與 score function</a><span>站內相關（No. 129）</span></div></li>
+    <li><div><a href="r1-star-self-generated-reasoning.html">STaR：以模型自產的推理軌跡微調</a><span>站內相關（No. 550）</span></div></li>
+  </ol>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">作者列出 R-Zero 的主要限制是什麼？</p>
+    <p class="a">依賴可客觀驗證正確性的領域，難以用在創意寫作、對話等主觀任務（Sec. 6）。</p>
+  </div></details>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Chengsong Huang, Wenhao Yu, Xiaoyang Wang, Hongming Zhang, Zongxia Li, Ruosen Li, Jiaxin Huang, Haitao Mi, Dong Yu. R-Zero: Self-Evolving Reasoning LLM from Zero Data. ICLR 2026. <a href="https://arxiv.org/abs/2508.05004">arXiv:2508.05004</a>（v4）。</p>
+  <p>本頁的方程式與數字取自論文 v4；標示「本頁推導」的內容為本頁自行推導，「示範值」為教學用的數值，「本頁設定」為論文未寫明、本頁自行決定的規則，「本頁建議」為實務建議，皆非論文結論。C1–C3 的讀數在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>

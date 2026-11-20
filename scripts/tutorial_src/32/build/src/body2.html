@@ -1,0 +1,152 @@
+
+<!-- S6 -->
+<section class="ch" id="filter" data-toc="06" data-tt="篩選">
+  <div class="ch-num">06 · 篩選</div>
+  <h2>只保留 3 到 7 個答案相同的題目給 Solver</h2>
+  <div class="prose">
+    <p><b>Solver 資料的篩選。</b>Challenger 更新後，先取樣 $N=8{,}000$ 道候選題；每題向目前的 Solver 取 $m=10$ 個答案，算出偽標籤 $\tilde y_i$ 與 $\hat p_i$，只保留 $|\hat p_i-\frac12|\le\delta$ 的題目，$\delta=0.25$，也就是 10 個答案中有 3–7 個與偽標籤相同（含 3 與 7）（Sec. 2.3、3.1）。保留下來的 $(x_i,\tilde y_i)$ 組成 Solver 的訓練集 $\mathcal S$。作者說明篩選有兩個用途：一是去掉太易（8 個以上相同）與太難（2 個以下相同）的題；二是隱性的品質控制，移除低一致性的題，因為 $\hat p$ 很低常表示題目含糊、無解，或偽標籤不可靠（Sec. 2.3）。</p>
+    <p><b>篩選的盲點。</b>第二個用途有條件。下面的 C3 用一個玩具模型計算：正確答案是最常見的答案時，$c$ 越大偽標籤越可靠，作者的說法成立；某個錯誤答案比正確答案更常見時，$c$ 常落在 3–7 而多數答案是錯的，而且這時 $c$ 越大標籤越不可靠<span class="tag">本頁推導</span>。例如只有一個錯誤答案、每次答對的機率為 0.3 時，約六成（0.616）的題目通過篩選，其中偽標籤正確的只有 0.158。篩選不會移除這類「一致的錯誤」。論文以 GPT-4o 的答案當真值量測篩選後的偽標籤正確率：Table 5 三輪依序 79.0%、69.0%、63.0%，共下降 16 個百分點（Sec. 4.4）。</p>
+  </div>
+
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>偽標籤有多可靠：精確枚舉</h3><span class="tag toy">本頁推導</span></div>
+    <p class="lead-assume">假設 Solver 的 m 個答案彼此獨立，每次答對的機率為 q；答錯時以固定比例落在 K 個錯誤答案上。這是本頁的玩具模型，不是論文的實驗。</p>
+    <p class="plate-lead">參數：q 是每個答案答對的機率；K 是不同錯誤答案的個數；s 是最常見的錯誤答案佔全部錯誤機率的比例（s = 1/K 表示錯誤平均分散，s = 1 表示錯誤全部集中在同一個答案）；m 是每題的答案數。情境鈕只改變錯誤答案的分布（K 與 s）。</p>
+    <div class="pg two">
+      <div class="fig">
+        <p class="c3-plu" id="c3-plu"></p>
+        <div id="c3-hist"><svg role="img" aria-label="c 的分布，分成偽標籤正確與錯誤"></svg></div>
+        <div class="legend"><span class="lg sq">偽標籤正確（實心）</span><span class="lg hatch">偽標籤錯誤（斜線）</span><span class="lg shape">長條上方數字：P(正確∣c)</span></div>
+        <div id="c3-sweep"><svg role="img" aria-label="四個機率對答對機率 q 的曲線"></svg></div>
+        <div class="legend"><span class="lg par">偽標籤正確率（實線）</span><span class="lg tdash">保留率（虛線）</span><span class="lg tdot">保留者正確率（點線）</span><span class="lg tdd">平均不確定性獎勵（長短虛線）</span></div>
+      </div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c3-q">答對機率 q <output id="c3-qo"></output></label><input type="range" id="c3-q" min="0" max="1" step="0.01" value="0.5"></div>
+        <div><div class="lbl">錯誤答案的分布</div><div class="ctl-row" id="c3-scen">
+          <button class="chip" type="button" data-s="spread">錯誤答案分散</button>
+          <button class="chip" type="button" data-s="medium">中等</button>
+          <button class="chip" type="button" data-s="concentrated">集中在一個錯誤答案</button></div></div>
+        <details class="more mini"><summary>進階</summary>
+          <div class="ctl adv">
+            <div><div class="lbl">錯誤答案個數 K</div><div class="seg" id="c3-K" role="radiogroup" aria-label="錯誤答案個數 K"></div></div>
+            <div class="rng"><label class="lbl" for="c3-s">最常見錯誤答案的比例 s <output id="c3-so"></output></label><input type="range" id="c3-s" min="0.34" max="1" step="0.01" value="0.5"><span class="note small" id="c3-smin"></span></div>
+            <div><div class="lbl">答案數 m</div><div class="seg" id="c3-m" role="radiogroup" aria-label="答案數 m"></div></div>
+          </div></details>
+        <dl class="ro" id="c3-read"></dl>
+        <p class="sr" id="c3-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁精確枚舉所有答案計數組合後即時計算（與 verify/c3_enum.py 相同）：最常見的錯誤答案機率 $p_1=(1-q)s$，其餘每個 $p_r=(1-q)(1-s)/(K-1)$（$K=1$ 時 $p_r=0$）；平手時偽標籤以均勻隨機選出<span class="tag">本頁設定</span>。長條上方的「—」表示該 c 在此設定下不可能出現。</p>
+  </div>
+  <div class="prose">
+    <p><b>元件呈現的兩面。</b>預設（中等、$q=0.5$）的偽標籤正確率 0.787，保留率 0.945，$P(\text{正確}\mid c)$ 隨 $c$ 上升。換成「錯誤答案分散」、$q=0.3$，正確答案仍是最常見的答案，$P(\text{正確}\mid c)$ 由 $c=2$ 的 0.201 升到 $c=10$ 的 0.998，這是作者說法成立的情形。換成「中等」、$q=0.3$，最常見的錯誤答案機率 0.35 已高於 0.3，$P(\text{正確}\mid c)$ 先升後降（$c=5$ 為 0.356，$c=10$ 為 0.176）。換成「集中在一個錯誤答案」、$q=0.3$，$c$ 越大越不可靠（$c=6$：0.155，$c=8$：0.006）。把 $q$ 拉到 0（完全不會），偽標籤正確率為 0，平均不確定性獎勵卻有 0.820：不確定性獎勵衡量的是答案分散的程度，與答案對錯無關。$q$ 越低偽標籤越不可靠，是這個模型假設的直接結果，不是論文 Table 5 趨勢的證據。</p>
+  </div>
+  <div class="prose"><p class="note"><b>本節符號</b>：$N$ = 候選題數；$\delta$ = 篩選帶寬；$\mathcal S$ = Solver 訓練集。C3 另有 $q$、$K$、$s$、$m$（見圖版）。</p></div>
+  <p class="read">延伸閱讀：<a href="rzero-majority-vote-pseudo-labels.html">多數決偽標籤：TTRL 與 self-consistency 訓練</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">候選題數、取樣數與保留條件？篩選的兩個用途？什麼情況下題目通過篩選、偽標籤卻是錯的？</p>
+    <p class="a">$N=8{,}000$，$m=10$，保留 3–7 個相同（$\delta=0.25$）；去掉太易與太難、移除低一致性的題。某個錯誤答案比正確答案更常見時，$c$ 常落在 3–7 而多數答案錯誤；Table 5 篩選後偽標籤正確率 79.0%、69.0%、63.0%。</p>
+  </div></details>
+</section>
+
+<!-- S7 -->
+<section class="ch" id="solver" data-toc="07" data-tt="Solver 與一輪">
+  <div class="ch-num">07 · Solver 與一輪</div>
+  <h2>Solver 以偽標籤為獎勵做 GRPO，三個階段組成一輪</h2>
+  <div class="prose">
+    <p><b>Solver 訓練。</b>對訓練集中的每一題，Solver 產生一組答案（每題 5 個 rollout），答案等於偽標籤得 1，否則得 0，再用 GRPO 更新（Sec. 2.4、App. B.1.1）。論文的式子寫成「$x_j$ matches」，應為 $y_j$。這就是 RLVR 的形式（App. I.2），只是「標準答案」換成偽標籤。每一輪 Challenger 訓練 5 步、Solver 訓練 15 步；論文表格中的數字是 Solver 訓練 45 步（3 輪）之後的結果，圖中則每 15 步評估一次（App. B.1、Sec. 3.1.1）。</p>
+    <p>若 Solver 每個 rollout 等於偽標籤的機率為 $\rho$，5 個 rollout 全部相同（優勢全為 0、策略梯度項為零）的機率是 $\rho^5+(1-\rho)^5$<span class="tag">本頁推導</span>：$\rho=0.5$ 時 0.0625，$\rho=0.9$ 時 0.590。去掉 8 個以上相同的題，可以減少不產生梯度的群組。</p>
+  </div>
+  <div class="algo" role="table" aria-label="Alg. 1 逐行對照">
+    <div class="row hd" role="row"><div role="columnheader">虛擬碼（App. G）</div><div class="ex-h" role="columnheader">說明</div></div>
+    <div class="row" role="row"><code>for each self-play iteration do</code><div class="ex">每一輪包含下面三個階段</div></div>
+    <div class="row" role="row"><code>  // Phase 1: Challenger Training (Sec 2.2)</code><div class="ex">階段 1：訓練 Challenger，Solver 固定</div></div>
+    <div class="row" role="row"><code>  for each Challenger training step do</code><div class="ex">每輪 5 步（App. B.1.2）</div></div>
+    <div class="row" role="row"><code>    Sample question group {x_i} ~ Q_θ(·)</code><div class="ex">Challenger 從固定提示產生一組題目</div></div>
+    <div class="row" role="row"><code>    if FormatCheck(x_i) is invalid then r_i ← 0</code><div class="ex">缺 &lt;question&gt; 標籤：獎勵 0，不再計算</div></div>
+    <div class="row" role="row"><code>    else Sample m answers {y_j} ~ S_ϕ(·∣x_i)</code><div class="ex">向目前的 Solver 取 m = 10 個答案</div></div>
+    <div class="row" role="row"><code>      ỹ_i ← MajorityVote({y_j})</code><div class="ex">出現最多次的答案 = 偽標籤</div></div>
+    <div class="row" role="row"><code>      p̂_i ← (1/m) Σ_j 1{y_j = ỹ_i}</code><div class="ex">與偽標籤相同的比例</div></div>
+    <div class="row" role="row"><code>      r_uncertainty ← 1 − 2∣p̂_i − 1/2∣</code><div class="ex">不確定性獎勵</div></div>
+    <div class="row" role="row"><code>      r_rep(x_i) via BLEU clustering</code><div class="ex">重複懲罰（第 05 章）</div></div>
+    <div class="row" role="row"><code>      r_i ← max(0, r_uncertainty − r_rep(x_i))</code><div class="ex">合成獎勵</div></div>
+    <div class="row" role="row"><code>    Update Q_θ via GRPO using {r_i}</code><div class="ex">用 GRPO 更新 Challenger</div></div>
+    <div class="row" role="row"><code>  // Phase 2: Solver Dataset Construction (Sec 2.3)</code><div class="ex">階段 2：建立 Solver 訓練集，兩個模型都固定</div></div>
+    <div class="row" role="row"><code>  S ← ∅; sample N candidates {x_k} ~ Q_θ(·)</code><div class="ex">N = 8,000 道候選題</div></div>
+    <div class="row" role="row"><code>  for each x_k: sample m answers, ỹ_k, p̂_k</code><div class="ex">同上面三行（原文 3 行）</div></div>
+    <div class="row" role="row"><code>    if ∣p̂_k − 1/2∣ ≤ δ then add (x_k, ỹ_k) to S</code><div class="ex">δ = 0.25：保留 3–7 個相同的題</div></div>
+    <div class="row" role="row"><code>  // Phase 3: Solver Training (Sec 2.4)</code><div class="ex">階段 3：訓練 Solver，Challenger 固定</div></div>
+    <div class="row" role="row"><code>  for each minibatch (x, ỹ) ∈ S do</code><div class="ex">每輪 15 步（App. B.1.1）</div></div>
+    <div class="row" role="row"><code>    Sample G answers {y_j} ~ S_ϕ(·∣x)</code><div class="ex">每題 5 個 rollout</div></div>
+    <div class="row" role="row"><code>    r_j ← 1(y_j = ỹ)</code><div class="ex">等於偽標籤得 1，否則 0</div></div>
+    <div class="row" role="row"><code>    Update S_ϕ via GRPO using {r_j}</code><div class="ex">用 GRPO 更新 Solver</div></div>
+  </div>
+  <div class="tscroll"><table class="stack"><caption>主要超參數（App. B.1、Sec. 3.1）</caption>
+    <thead><tr><th>項目</th><th>Solver</th><th>Challenger</th></tr></thead><tbody>
+    <tr><td data-h="項目">全域批次／學習率／weight decay</td><td data-h="Solver">128／10⁻⁶／10⁻²</td><td data-h="Challenger">同左</td></tr>
+    <tr><td data-h="項目">KL 係數</td><td data-h="Solver">10⁻²</td><td data-h="Challenger">10⁻²</td></tr>
+    <tr><td data-h="項目">每輪最多步數</td><td data-h="Solver">15</td><td data-h="Challenger">5</td></tr>
+    <tr><td data-h="項目">rollout 數／溫度／top-p</td><td data-h="Solver">5／1.0／0.99</td><td data-h="Challenger">4／1.0／0.99</td></tr>
+    <tr><td data-h="項目">每輪資料</td><td data-h="Solver">N = 8,000，m = 10，保留 3–7 個相同</td><td data-h="Challenger">m = 10；τ = 0.5，λ = 1</td></tr>
+  </tbody></table></div>
+  <div class="prose"><p class="note">程式以 EasyR1 為基礎，使用 BF16 混合精度與 FlashAttention 2（App. B.1）。<b>本節符號</b>：$\rho$ = 一個 rollout 等於偽標籤的機率（段落內定義）。</p></div>
+  <p class="read">延伸閱讀：<a href="rzero-challenger-solver-pipeline.html">R-Zero 的 Challenger–Solver 迭代流程</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Solver 的獎勵是什麼？每輪兩個角色各訓練幾步？表格數字是第幾步？</p>
+    <p class="a">答案等於偽標籤得 1，否則 0，用 GRPO（每題 5 個 rollout）；每輪 Challenger 5 步、Solver 15 步；表格為 Solver 45 步（3 輪）之後。</p>
+  </div></details>
+</section>
+
+<!-- S8 -->
+<section class="ch" id="setup" data-toc="08" data-tt="實驗設定">
+  <div class="ch-num">08 · 實驗設定</div>
+  <h2>實驗用四個基底模型與十個基準</h2>
+  <div class="prose">
+    <p>基底模型為 Qwen3-4B-Base、Qwen3-8B-Base，以及 OctoThinker-3B、OctoThinker-8B（由 Llama-3.1 繼續訓練而來），用來檢驗方法在不同模型家族上的效果（Sec. 3.1）。</p>
+    <p>數學有 7 個基準（App. C）：AMC（美國數學競賽題）、Minerva（大學程度的量化推理題）、MATH-500（競賽數學的 500 題子集）、GSM8K（小學應用題）、OlympiadBench（奧林匹亞等級題）、AIME-2024 與 AIME-2025（美國數學邀請賽）。AMC 與 AIME 報 mean@32，即每題取樣 32 次的平均正確率；其餘報貪婪解碼的正確率。答案是否等價由 GPT-4o 判定（App. B.3，溫度 0.1）。一般推理有 3 個基準：MMLU-Pro（多學科選擇題的加難版）、SuperGPQA（285 個學科、研究所程度、在網路上查不到答案的題）、BBEH（BIG-Bench Hard 的加難版），報精確比對正確率。</p>
+    <p>比較的方法有三個：Base Model（未訓練）；<b>R-Zero (base challenger)</b>，Solver 用未訓練的 Challenger 出的題目訓練，用來檢驗 Challenger 的 RL 訓練是否必要；Absolute Zero（Zhao et al. 2025a），也是自我出題，但以程式執行器驗證。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">R-Zero (base challenger) 基準檢驗什麼？</p>
+    <p class="a">Solver 用未訓練 Challenger 出的題目訓練，檢驗 Challenger 的 RL 是否必要。</p>
+  </div></details>
+</section>
+
+<!-- S9 -->
+<section class="ch" id="results" data-toc="09" data-tt="結果">
+  <div class="ch-num">09 · 結果</div>
+  <h2>R-Zero 提高數學與一般推理分數</h2>
+  <div class="tscroll"><table class="stack"><caption>Table 1、Table 2 摘錄：數學平均（7 項）與一般推理平均（3 項）</caption>
+    <thead><tr><th>模型</th><th class="num">Base</th><th class="num">Absolute Zero</th><th class="num">base challenger</th><th class="num">R-Zero</th></tr></thead><tbody>
+    <tr><td data-h="模型">Qwen3-4B 數學</td><td class="num" data-h="Base">42.57</td><td class="num" data-h="Absolute Zero">46.42</td><td class="num" data-h="base challenger">45.01</td><td class="num" data-h="R-Zero">49.93</td></tr>
+    <tr><td data-h="模型">Qwen3-4B 一般</td><td class="num" data-h="Base">26.34</td><td class="num" data-h="Absolute Zero">29.33</td><td class="num" data-h="base challenger">28.52</td><td class="num" data-h="R-Zero">31.15</td></tr>
+    <tr><td data-h="模型">Qwen3-8B 數學</td><td class="num" data-h="Base">48.64</td><td class="num" data-h="Absolute Zero">52.68</td><td class="num" data-h="base challenger">52.10</td><td class="num" data-h="R-Zero">53.72</td></tr>
+    <tr><td data-h="模型">Qwen3-8B 一般</td><td class="num" data-h="Base">31.98</td><td class="num" data-h="Absolute Zero">34.40</td><td class="num" data-h="base challenger">31.29</td><td class="num" data-h="R-Zero">34.50</td></tr>
+    <tr><td data-h="模型">OctoThinker-3B 數學</td><td class="num" data-h="Base">26.64</td><td class="num" data-h="Absolute Zero">27.23</td><td class="num" data-h="base challenger">27.51</td><td class="num" data-h="R-Zero">29.32</td></tr>
+    <tr><td data-h="模型">OctoThinker-3B 一般</td><td class="num" data-h="Base">7.47</td><td class="num" data-h="Absolute Zero">16.03</td><td class="num" data-h="base challenger">10.04</td><td class="num" data-h="R-Zero">11.12</td></tr>
+    <tr><td data-h="模型">OctoThinker-8B 數學</td><td class="num" data-h="Base">36.41</td><td class="num" data-h="Absolute Zero">36.60</td><td class="num" data-h="base challenger">36.98</td><td class="num" data-h="R-Zero">38.52</td></tr>
+    <tr><td data-h="模型">OctoThinker-8B 一般</td><td class="num" data-h="Base">11.70</td><td class="num" data-h="Absolute Zero">18.40</td><td class="num" data-h="base challenger">21.30</td><td class="num" data-h="R-Zero">23.00</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <p><b>主要結果與基準。</b>Qwen3-4B-Base 的數學平均由 42.58 升到 49.07（Fig. 3、Table 3；與 Abstract 的 +6.49 吻合；Table 1 同一列記為 42.57 → 49.93）。base challenger 基準是讓 Solver 用未訓練 Challenger 出的題目訓練，Table 1 中 Qwen3-4B 得 45.01，用來檢驗 Challenger 的 RL 是否必要；作者以 base challenger 與 R-Zero 之間的差距說明 Challenger 的 RL 訓練有效。四個模型的 R-Zero 數學平均都高於 Base、base challenger 與 Absolute Zero。例外也照實列出：一般推理上，OctoThinker-3B 的 Absolute Zero（16.03）高於 R-Zero（11.12）；Qwen3-4B 的 AIME25 由 Base 的 10.30 降為 9.60。作者認為數學訓練可以轉移到一般推理（Sec. 3.3）。</p>
+  </div>
+  <div class="callout">
+    <p class="ct">論文文字與表格不一致的數字（原文如此）</p>
+    <p>(a) Abstract 的 +6.49 等於 Fig. 3／Table 3 的 49.07 − 42.58，但 Table 1 為 42.57 → 49.93（+7.36）。(b) Abstract 寫一般推理 +7.54，Table 2 為 31.15 − 26.34 = +4.81。(f) Sec. 4.1 寫去掉篩選後一般平均「掉超過 6 分」，Table 3 為 31.15 − 26.69 = 4.46。(i) Table 4 的 Human 數學平均（本頁計算）為 50.55，Fig. 4 的同一基準為 48.99。本頁以表格與圖中的數字為準。</p>
+  </div>
+  <div class="tscroll"><table class="stack"><caption>Table 3：消融（Qwen3-4B-Base）</caption>
+    <thead><tr><th>設定</th><th class="num">數學平均</th><th class="num">一般平均</th></tr></thead><tbody>
+    <tr><td data-h="設定">R-Zero</td><td class="num" data-h="數學平均">49.07</td><td class="num" data-h="一般平均">31.15</td></tr>
+    <tr><td data-h="設定">去掉重複懲罰</td><td class="num" data-h="數學平均">45.76</td><td class="num" data-h="一般平均">28.73</td></tr>
+    <tr><td data-h="設定">去掉篩選</td><td class="num" data-h="數學平均">47.35</td><td class="num" data-h="一般平均">26.69</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <p><b>消融結果。</b>Table 3 中，R-Zero 的數學／一般平均為 49.07／31.15；去掉重複懲罰為 45.76／28.73；去掉篩選為 47.35／26.69。作者認為重複懲罰讓題目多樣，篩選同時校準難度並移除低一致性的雜訊題（Sec. 4.1）。</p>
+    <p><b>與人類標註資料搭配</b>（Sec. 4.3，Fig. 4，標註資料為 math12k）。每輪 R-Zero 之後再以標註資料做 GRPO。Fig. 4 的兩個系列為「R-Zero Only」與「R-Zero + Human」，橫軸為 Base Model、Step 15、30、45，虛線是 Base 直接以標註資料訓練的基準。4B：R-Zero + Human 依序 48.99（虛線基準）、50.55、51.34、49.62，最高比基準多 2.35 分（Step 30）；8B：依序 53.15（基準）、54.92、55.62、56.84，R-Zero Only 為 48.64、52.39、53.24、53.62，最高多 3.69 分（Step 45）。Table 4 比較把標註資料混入 R-Zero 資料一起訓練：論文文字寫它優於單用任一種，但逐項看並非全勝，數學 7 項中 Human 在 AMC、Minerva、OlympiadBench 較高；本頁算出的數學平均為 Human 50.55、R-Zero 49.93、R-Zero + Human 51.03。作者說混合訓練不如「先 R-Zero、後標註資料」的順序，原因標為待研究。</p>
+    <p><b>不限定數學</b>（App. H，Table 8）。拿掉提示中的數學限定後，8B 的一般推理三項都略升（SuperGPQA 31.38 → 32.29、MMLU-Pro 61.53 → 61.83、BBEH 10.60 → 10.88）；4B 則有升有降。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Qwen3-4B 的數學平均由多少升到多少？去掉重複懲罰與篩選後的數學／一般平均？</p>
+    <p class="a">42.58 → 49.07（Fig. 3、Table 3；Table 1 記 42.57 → 49.93）；R-Zero 49.07／31.15，去重複懲罰 45.76／28.73，去篩選 47.35／26.69。</p>
+  </div></details>
+</section>
