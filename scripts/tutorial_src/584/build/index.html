@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Attention Sink 與原生 MoE</title>
+<meta name="description" content="圖解 Fu 等人的 ICML 2026 論文：attention sink 的權重 1 − A_sink 是隱式門控，讓注意力層成為原生 MoE；以 sink-aware 負載平衡損失處理 head collapse。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+/* page-specific additions (No. 584) */
+details.more{max-width:700px;margin:20px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.more>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.more[open]>summary::before{transform:rotate(45deg)}
+.more-in{padding:0 20px 18px;font-size:15px}
+.plate details.more{max-width:none}
+.prose-w{max-width:700px}
+.hero-row{margin:8px 0 0;max-width:520px}
+.hero-row figcaption{margin:4px 0 0}
+.cols3{display:grid;grid-template-columns:1fr;gap:16px}
+@media (min-width:600px){.cols3{grid-template-columns:repeat(3,1fr)}}
+.cols2{display:grid;grid-template-columns:1fr;gap:16px}
+@media (min-width:560px){.cols2{grid-template-columns:1fr 1fr}}
+.cols3 svg,.cols2 svg{width:100%;height:auto;display:block}
+.c1g{grid-template-columns:minmax(0,1fr)}
+@media (min-width:768px){.c1g{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) minmax(0,.9fr)}}
+.ro-t table td:first-child{color:var(--ink-2)}
+.ro-t{margin:0}
+.bars-grp{outline:none;border-radius:10px}
+.bars-grp:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+svg .hatch-bg{fill:var(--surface)}
+svg .hatch-ln{stroke:var(--ink-2);stroke-width:2}
+svg .bar{fill:var(--c-par)}
+svg .bar-h{fill:url(#hatch);stroke:var(--c-perp);stroke-width:1.5}
+svg .bar-sel{stroke:var(--accent);stroke-width:2.5;fill:none}
+svg .band{fill:var(--c-par);opacity:.18}
+svg .box{fill:var(--surface-2);stroke:var(--line);stroke-width:1}
+svg .box-acc{fill:var(--surface-2);stroke:var(--accent);stroke-width:2}
+svg .boxt{font:500 13px var(--f-body);fill:var(--ink)}
+svg .boxs{font:400 12px var(--f-body);fill:var(--ink-3)}
+svg .ttl{font:600 15px var(--f-body);fill:var(--ink)}
+svg .flow{stroke:var(--ink-2);stroke-width:1.5;fill:none}
+svg .flow-f{fill:var(--ink-2)}
+svg .q-pt{fill:var(--c-par)}
+svg .k-pt{fill:var(--c-perp)}
+svg .ring{fill:none;stroke:var(--line);stroke-width:1}
+.lg.hat::before{width:14px;height:12px;border:1.5px solid var(--c-perp);background:linear-gradient(135deg,transparent 30%,var(--ink-2) 30% 40%,transparent 40% 60%,var(--ink-2) 60% 70%,transparent 70%)}
+.lg.accd::before{border-top:3px dashed var(--accent)}
+.lg.dotc::before{width:10px;height:10px;border:0;border-radius:50%;background:var(--c-par)}
+.lg.sq::before{width:10px;height:10px;border:0;background:var(--c-perp)}
+.lg.star::before{content:"★";width:auto;border:0;color:var(--accent);font-size:14px;line-height:1}
+.blocks{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:4px;margin:4px 0 12px}
+.blocks span{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:52px;border:1px solid var(--line);border-radius:6px;background:var(--surface);font:400 12px/1.3 var(--f-mono);color:var(--ink-2);text-align:center;overflow:hidden}
+.blocks span.done{background:var(--accent-soft);color:var(--ink)}
+.blocks span.cur{border:2px solid var(--accent)}
+.blocks span i{font-style:normal;font-size:11px;color:var(--ink-3)}
+.chain{list-style:none;padding:0;margin:8px 0 24px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;max-width:760px}
+.chain li{padding:12px 16px;border:1px solid var(--line);border-radius:10px;background:var(--surface);font:500 15px/1.3 var(--f-body)}
+.chain li:last-child{border-color:var(--accent);background:var(--accent-soft)}
+.chain li+li::before{content:"→";margin:0 12px 0 -4px;color:var(--ink-3)}
+.chain li+li{display:flex;align-items:center}
+@media (max-width:479px){.chain{flex-direction:column;align-items:stretch}.chain li+li::before{content:"↓";margin:0 10px 0 0}}
+section.ch.sub{border-top:1px dashed var(--line);padding-top:64px}
+.eq-m:focus-visible{outline:2px solid var(--accent)}
+.katex-display{max-width:100%}
+.cols2 svg{max-width:340px;margin:0 auto}
+.cols3 svg{max-width:300px;margin:0 auto}
+@media (max-width:559px){.blocks{grid-template-columns:repeat(6,minmax(0,1fr))}}
+@media (min-width:768px){#c2-tab tbody{display:grid;grid-template-columns:1fr 1fr;column-gap:24px}#c2-tab tr{display:grid;grid-template-columns:1fr auto}}
+.prose code{overflow-wrap:anywhere;word-break:break-all}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 584</span>
+  <span class="ttl">注意力匯聚在注意力層裡形成原生 MoE</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" class="hatch-bg"/><line x1="0" y1="0" x2="0" y2="6" class="hatch-ln"/></pattern>
+</defs></svg>
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 584</b> · 互動教學 · arXiv 2602.01203 · ICML 2026</div>
+  <h1>注意力匯聚在注意力層裡形成原生 <span class="lat">MoE</span></h1>
+  <p class="dek">語言模型的注意力常集中在第一個 token。這篇論文說明，這個現象等於替每個注意力 head 的輸出乘上一個 0 到 1 的係數，並提出讓各 head 係數較平均的訓練損失。以下術語從第 01 節開始定義。</p>
+  <p class="byline">Zizhuo Fu、Wenxuan Zeng、Runsheng Wang、Meng Li（2026）〈Attention Sink Forges Native MoE in Attention Layers: Sink-Aware Training to Address Head Collapse〉</p>
+  <figure class="hero-row">
+    <div class="fig" id="hero-fig"><svg role="img" aria-label="一排 16 根長條，每根是一個 head 的平均係數；少數偏高，多數偏低（示意資料）"></svg></div>
+    <figcaption class="note">每根長條是一個 head 的平均係數，示意資料。</figcaption>
+  </figure>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 第一個 token</span><p>在 Vanilla 注意力的語言模型中（Fig. 2），大部分注意力常放在第一個 token 上，而這個 token 送出的向量長度接近 0，所以這些注意力幾乎不改變輸出。</p></div>
+    <div class="fact"><span class="n">02 · 一個係數</span><p>沒放到第一個 token 的比例是一個 0 到 1 的係數，乘在每個注意力 head 的輸出上，作用像開關；多個 head 各配一個係數，結構與專家混合模型（Mixture-of-Experts）相同。</p></div>
+    <div class="fact"><span class="n">03 · 一個損失</span><p>多數 head 的平均係數偏低，只有少數 head 偏高。作者加入一個懲罰各 head 平均係數差異的損失，在 0.6B 到 8B 的模型上提高平均分數。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2602.01203">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-584">在關聯圖中查看</a>
+    <a class="btn" href="asink-lineage-hub.html">研究筆記總覽</a>
+  </div>
+</section>
+
+<!-- S1 ============================================================ -->
+<section class="ch" id="sink" data-toc="01" data-tt="Attention sink">
+  <div class="ch-num">01 · Attention sink</div>
+  <h2>Softmax 的總和限制產生 attention sink</h2>
+  <div class="prose">
+    <p>先說明注意力（attention）的計算。Transformer 的每一層把每個 token 的表示經過三個線性映射，得到 query 向量 $q$、key 向量 $k$ 與 value 向量 $v$，長度都是 head 維度 $d_h$。token $t$ 對 token $j$ 的匹配程度用 logit 表示：$z_{t,j}=q_t^\top k_j/\sqrt{d_h}$。語言模型使用 causal mask，token $t$ 只能看到位置 $j=0,1,\dots,t$ 的 token。softmax 把這些 logit 轉成非負、總和為 1 的注意力權重 $A_{t,j}$，輸出是 value 的加權和。一層有 $N_h$ 個 head，每個 head 有自己的三個映射，各自算出輸出後經輸出矩陣 $W_O$ 相加。對第 $l$ 層第 $h$ 個 head（Sec. 2.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$A^{l,h}_{t,j}=\mathrm{Softmax}\Big(\frac{q_t^{l,h\top}k_j^{l,h}}{\sqrt{d_h}}\Big),\qquad O_t^{l,h}=\sum_{j=0}^{t}A^{l,h}_{t,j}\,v_j^{l,h}$$</div><span class="eq-n">Sec. 2.1</span></div>
+  <div class="prose">
+    <p>本頁會反覆用到 log-sum-exp（LSE）：$\mathrm{LSE}(\{a_i\})=\log\sum_i e^{a_i}$（App. B.1）。softmax 可以寫成 $A_{t,j}=e^{z_{t,j}-\mathrm{LSE}}$，其中 LSE 對同一個 query 的所有 logit 計算。</p>
+    <p>StreamingLLM（Xiao et al., 2023）發現，大型語言模型常把很高的注意力權重放在第一個 token 上，而且與這個 token 的語意無關。這個現象稱為注意力匯聚（attention sink）。它已被用在 KV cache 最佳化、長脈絡生成、head 剪枝與量化等方向（Sec. 1）。</p>
+    <p>論文說明的成因如下（Sec. 2.1）。softmax 強迫注意力權重總和為 1。當一個 head 只需要分配一部分注意力，或完全不需要注意任何 token 時，剩下的權重仍然必須分到某處；模型把它分到第一個 token（論文用 absorb 一詞）。第一個 token 的語意內容少，它的 value 向量接近 0（Gu et al., 2024；Guo et al., 2024），所以分到它的權重滿足「總和為 1」的限制，卻不影響輸出。簡言之：<b>attention sink 是 LLM 把大量注意力權重放在第一個 token、與語意無關的現象；softmax 強迫權重和為 1，head 不需要完整分配時，剩下的權重分到 value 接近 0 的第一個 token。</b></p>
+    <p>既然問題出在「總和為 1」，解法有兩類：修改 softmax，或在輸出端加上門控。下一節介紹這兩類的代表。</p>
+  </div>
+  <details class="more">
+    <summary>符號表</summary>
+    <div class="more-in"><div class="tscroll"><table>
+      <caption>本頁使用的符號</caption>
+      <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td>$l,h$；$N_L,N_h$</td><td>層、head 的索引；層數、每層 head 數</td></tr>
+      <tr><td>$t$</td><td>目前 token（query）的位置；causal mask 下可看到 $j=0,\dots,t$</td></tr>
+      <tr><td>$q_t,k_j,v_j$</td><td>query、key、value，長度 $d_h$</td></tr>
+      <tr><td>$z_{t,j}$</td><td>softmax 前的 logit $q_t^\top k_j/\sqrt{d_h}$</td></tr>
+      <tr><td>$A_{t,j}$；$A_{t,\text{sink}}$</td><td>注意力權重；sink 成分的權重（Vanilla 為 $A_{t,0}$，Sink Attention 為合成 sink 的權重）</td></tr>
+      <tr><td>$\tilde A_{t,j}$</td><td>只在非 sink token 上重新正規化的權重（總和為 1）</td></tr>
+      <tr><td>$\mathrm{sink}^{l,h}$</td><td>Sink Attention 每個 head 一個可學習純量</td></tr>
+      <tr><td>$G_t^{l,h}$</td><td>門控值：Gated 為 $\sigma(x_tW_\theta)$；Vanilla／Sink 為 $1-A_{t,\text{sink}}$</td></tr>
+      <tr><td>$\sigma(u)$</td><td>sigmoid $1/(1+e^{-u})$</td></tr>
+      <tr><td>$\mathrm{LSE}$；$\mathrm{LSE}_{\neg0}$；$\mathrm{LSE}_{\text{tok}}$</td><td>$\log\sum e^{a}$；不含第一個 token；只含真實 token</td></tr>
+      <tr><td>$\mathrm{Imp}^{l,h}$</td><td>head 重要度，所有 token 上 $G$ 的平均（Eq. 5）</td></tr>
+      <tr><td>$\mathrm{CV}$</td><td>變異係數 std/mean（Eq. 6）</td></tr>
+      <tr><td>$\lambda$、$m$、$\mathcal T_m^l$</td><td>輔助損失強度；shared head 數；第 $l$ 層 top-$m$ head 集合</td></tr>
+      </tbody></table></div></div>
+  </details>
+  <p class="read">延伸閱讀：<a href="asink-softmax-normalization-and-first-token.html">softmax 正規化與第一個 token 的高注意力</a>、<a href="asink-sink-applications-kv-cache-and-streaming.html">Attention sink 在 KV cache 與串流推論的應用</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">attention sink 指什麼？為什麼會出現？</p>
+    <p class="a">LLM 把大量注意力權重放在第一個 token，與語意無關；softmax 強迫權重和為 1，head 不需要完整分配時，剩下的權重分到 value 接近 0 的第一個 token（Sec. 1、2.1）。</p>
+  </div></details>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="fixes" data-toc="02" data-tt="兩種機制">
+  <div class="ch-num">02 · 兩種機制</div>
+  <h2>兩種機制消除 attention sink</h2>
+  <div class="prose">
+    <p><b>Sink Attention</b>（GPT-OSS 採用；Fig. 1 另列 DeepSeek-V4）在 softmax 的分母加上一個可學習的參數 sink（Sec. 2.2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathrm{Softmax}_{\text{sink}}(x)_i=\frac{\exp(x_i)}{\sum_j\exp(x_j)+\exp(\mathrm{sink})}$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="prose">
+    <p>這放寬了「總和為 1」的限制：真實 token 的權重總和可以小於 1，差額落在一個沒有 value 的合成 sink 上，取代 Vanilla Attention 中的第一個 token。</p>
+    <p><b>Gated Attention</b>（Qwen3-Next 採用；Fig. 1 另列 Qwen3.5、3.6）有兩個設計：每個 head 專屬的門控，以及 sigmoid 激活。第 $h$ 個 head 的門控與層輸出為：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{gathered}G_t^{l,h}=\sigma\big(x_t^lW_\theta^{l,h}\big),\quad W_\theta^{l,h}\in\mathbb R^{d_{\text{model}}\times1}\\ O_t^l=\sum_{h=1}^{H}G_t^{l,h}\cdot O_t^{l,h}W_O^{l,h}\end{gathered}$$</div><span class="eq-n">Eq. 2</span></div>
+  <div class="prose">
+    <p>$x_t^l$ 是該層輸入，$W_O^{l,h}$ 是 head $h$ 的輸出投影。總結兩者的改動：<b>Sink Attention 在 softmax 分母加 $\exp(\mathrm{sink})$，sink 為可學習參數、沒有 value（Eq. 1）；Gated Attention 把每個 head 的輸出乘上 $G=\sigma(xW_\theta)$，$W_\theta\in\mathbb R^{d_{\text{model}}\times1}$（Eq. 2）。</b>Sec. 2.2 寫道，這個 head 專屬的門控在注意力層引入 MoE 結構，使 head 稀疏使用並消除 sink。下圖重繪 Fig. 1：論文把 Vanilla 與 Sink Attention 歸為「隱式門控」，把 Gated Attention 歸為「顯式門控」，原因在第 04 節說明。</p>
+  </div>
+  <div class="plate fig1">
+    <div class="plate-h"><span class="id">Fig. 1</span><h3>三種注意力機制（依論文 Fig. 1 重繪）</h3></div>
+    <div class="cols3" id="fig1"></div>
+    <p class="plate-f">由下往上為計算順序。Gated Attention 多一個乘上 σ(x W<sub>θ</sub>) 的步驟。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="asink-eliminating-sink-softmax-modification.html">以修改 softmax 消除 sink：Softpick 與 Sink Attention</a>、<a href="asink-gated-attention-explicit-gating.html">Gated Attention：head-specific 的顯式 gating</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Sink Attention 與 Gated Attention 各改了什麼？</p>
+    <p class="a">Sink：softmax 分母加 $\exp(\mathrm{sink})$，sink 為可學習參數、沒有 value（Eq. 1，GPT-OSS）；Gated：每個 head 輸出乘上 $G=\sigma(xW_\theta)$，$W_\theta\in\mathbb R^{d_{\text{model}}\times1}$（Eq. 2，Qwen3-Next）。</p>
+  </div></details>
+</section>
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="drain" data-toc="03" data-tt="Value drain">
+  <div class="ch-num">03 · Value drain</div>
+  <h2>第一個 token 的 value 接近 0</h2>
+  <div class="prose">
+    <p>Vanilla Attention 能把第一個 token 當成 sink，前提是它的 value 向量接近 0，這個現象稱為 value 歸零現象（value drain；Guo et al., 2024；Gu et al., 2024）。Fig. 2 顯示 Qwen2.5-7B、Qwen3-8B、Qwen3-14B、LLaMA-2-7B、LLaMA-3.1-8B、LLaMA-2-13B 六個模型中，第一個 token 的 value $\ell_2$ 範數都遠小於位置 1 到 16 的 token。</p>
+    <p>作者的解釋是：第一個 token 收到大量權重，把它的 value 設成接近 0，這些權重才不影響輸出。Sink Attention 的 sink 參數沒有 value，貢獻恰為 0。兩者採用同一個原則：把多出來的權重分到 value 為 0（或接近 0）的成分。</p>
+    <p>以下把這種「收到多出來的權重、value 為 0 或接近 0」的成分稱為 <b>sink 成分</b>，它收到的權重記為 $A_{t,\text{sink}}$。Vanilla Attention 中 sink 成分是第一個 token，所以 $A_{t,\text{sink}}=A_{t,0}$；Sink Attention 的合成 sink 在第 04 節介紹。</p>
+    <p>App. A 用介入實驗檢查這個解釋：在 KV cache 生成後把第一個 token 的 value 歸零。設定一是所有 head 都歸零（All）；設定二只對「sink 比例」高的 head 歸零。head 級 sink 比例定義為（Eq. 9，Gu et al., 2024）</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\alpha^{l,h}_{\text{sink}}=\frac1T\sum_{i=0}^{T-1}A^{l,h}_{i,\text{sink}}$$</div><span class="eq-n">Eq. 9</span></div>
+  <div class="prose">
+    <p>選擇性設定只歸零 $\alpha_{\text{sink}}>\tau$ 的 head，$\tau=0.75$。Table 3 的九項基準平均如下。</p>
+  </div>
+  <div class="tscroll prose-w"><table>
+    <caption>Table 3 平均分數：第一個 token 的 value 歸零</caption>
+    <thead><tr><th>模型</th><th class="num">不介入（None）</th><th class="num">全部歸零（All）</th><th class="num">τ = 0.75</th></tr></thead>
+    <tbody><tr><td>Qwen3-8B</td><td class="num">70.36</td><td class="num">64.10</td><td class="num">70.38</td></tr>
+    <tr><td>Qwen3-14B</td><td class="num">66.91</td><td class="num">65.90</td><td class="num">67.09</td></tr></tbody></table></div>
+  <div class="prose">
+    <p>總結：value drain 指第一個 token 的 value 範數接近 0（Fig. 2）。只對 sink 比例大於 0.75 的 head 歸零時，Qwen3-8B 的平均為 70.38，與不介入的 70.36 幾乎相同；Qwen3-14B 為 67.09 對 66.91。作者據此認為 value drain 是模型刻意學到的行為。論文文字另寫「全部歸零只造成可忽略的下降」，但照表中數字，Qwen3-8B 全部歸零的平均是 64.10，比不介入低 6.26（MMLU 由 75.42 降到 50.27、HellaSwag 由 74.97 降到 61.02）。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="asink-mechanism-studies-value-drain-over-mixing.html">Attention sink 的成因研究：value drain、over-mixing、massive activation</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">什麼是 value drain？App. A 歸零實驗的結果？</p>
+    <p class="a">第一個 token 的 value 範數接近 0（Fig. 2）；只對 sink 比例 > 0.75 的 head 歸零時 Qwen3-8B 平均 70.38（不介入 70.36），全部 head 歸零為 64.10（Table 3）。</p>
+  </div></details>
+</section>
+
+<!-- S4a =========================================================== -->
+<section class="ch" id="gate" data-toc="04a" data-tt="隱式門控：Sink">
+  <div class="ch-num">04a · 隱式門控</div>
+  <h2>Sink 的權重是一個隱式門控</h2>
+  <div class="prose">
+    <h3 style="margin-top:0">Sink Attention：恰好成立</h3>
+    <p>在 Sink Attention 中，真實 token $j=0,\dots,t$ 與合成 sink 共用同一個分母（App. B.3）。把只含真實 token 的分母記為 $D_{t,\text{tok}}=\sum_{m=0}^t e^{z_{t,m}}$，含 sink 的分母為 $D_{t,\text{all}}=D_{t,\text{tok}}+e^{\mathrm{sink}}$。合成 sink 的權重是 $A_{t,\text{sink}}=e^{\mathrm{sink}}/D_{t,\text{all}}$，它沒有 value，對輸出的貢獻恰為 0。</p>
+    <p>每個真實 token 的權重可以拆成兩個因子：$A_{t,j}=\dfrac{e^{z_{t,j}}}{D_{t,\text{tok}}}\cdot\dfrac{D_{t,\text{tok}}}{D_{t,\text{all}}}$（Eq. 19–20）。第一個因子是只在真實 token 上正規化的權重 $\tilde A_{t,j}$（總和為 1），第二個因子等於 $1-A_{t,\text{sink}}$。所以輸出為：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$O_t^{l,h}=\sum_{j\ne\text{sink}}A_{t,j}v_j=(1-A_{t,\text{sink}})\cdot\sum_{j\ne\text{sink}}\tilde A_{t,j}v_j,\qquad \tilde A_{t,j}=\frac{A_{t,j}}{1-A_{t,\text{sink}}}$$</div><span class="eq-n">Eq. 3、21</span></div>
+  <div class="prose">
+    <p>右邊是「一個正常的注意力輸出」乘上一個介於 0 與 1 之間的數。這個數就是門控值（Sec. 3.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$G_t^{l,h}=1-A^{l,h}_{t,\text{sink}}$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="prose">
+    <p>它還有 sigmoid 形式。令 $\mathrm{LSE}_{t,\text{tok}}=\log D_{t,\text{tok}}$，則 $1-A_{t,\text{sink}}=\dfrac{D_{t,\text{tok}}}{D_{t,\text{tok}}+e^{\mathrm{sink}}}=\sigma\big(\mathrm{LSE}_{t,\text{tok}}-\mathrm{sink}\big)$（Eq. 22–23）。Sink Attention 沒有任何近似：合成 sink 的 value 恰為 0，所以 Eq. 3 是恆等式。</p>
+  </div>
+</section>
+
+<!-- S4b =========================================================== -->
+<section class="ch sub" id="gate-vanilla" data-toc="04b" data-tt="隱式門控：Vanilla">
+  <div class="ch-num">04b · 隱式門控</div>
+  <h2>Vanilla Attention：在 $v_0\approx0$ 時近似成立</h2>
+  <div class="prose">
+    <p>Vanilla Attention 的 sink 成分是第一個 token（App. B.2）。令 $D_t=\sum_{m=0}^te^{z_{t,m}}$、$D_{t,\neg0}=\sum_{m=1}^te^{z_{t,m}}$。同樣的拆法給出 $A_{t,j}=\tilde A_{t,j}\cdot D_{t,\neg0}/D_t$，而 $D_{t,\neg0}/D_t=1-A_{t,0}$。差別在於第一個 token 有真實的 value $v_0$，必須假設 $v_0\approx0$ 才能丟掉 $A_{t,0}v_0$：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$O_t\approx\sum_{j=1}^tA_{t,j}v_j=(1-A_{t,0})\cdot\sum_{j=1}^t\tilde A_{t,j}v_j$$</div><span class="eq-n">Eq. 10、14</span></div>
+  <div class="prose">
+    <p>這個等式的誤差恰為 $A_{t,0}v_0$，所以 value drain（第 03 節）是 Vanilla 的隱式門控成立的條件。sigmoid 形式為 $1-A_{t,0}=\dfrac{D_{t,\neg0}}{D_{t,\neg0}+e^{z_{t,0}}}=\sigma\big(\mathrm{LSE}_{t,\neg0}-z_{t,0}\big)$，其中 $z_{t,0}=q_t^\top k_0/\sqrt{d_h}$（Eq. 15–16）。</p>
+    <p>整理兩種機制：<b>輸出都寫成 $O=(1-A_{\text{sink}})\sum\tilde A v$，$\tilde A=A/(1-A_{\text{sink}})$，門控 $G=1-A_{\text{sink}}$（Eq. 3–4）；Sink Attention 的 sigmoid 形式為 $G=\sigma(\mathrm{LSE}_{\text{tok}}-\mathrm{sink})$（Eq. 23），Vanilla 為 $G=\sigma(\mathrm{LSE}_{\neg0}-q^\top k_0/\sqrt{d_h})$（Eq. 16）；Vanilla 依賴 $v_0\approx0$，誤差為 $A_0v_0$，Sink 恰好成立。</b></p>
+    <p>由 Eq. 16 取反函數，Vanilla 要讓門控等於 $G$，第一個 token 的 logit 必須比其他 token 的 LSE 高出 $z_{t,0}-\mathrm{LSE}_{t,\neg0}=\ln\frac{1-G}{G}$<span class="tag">本頁推導</span>（例：$G=0.1$ 需要高出 $\ln9\approx2.197$）。這是與第 06 節幾何描述相容的必要條件；Sec. 3.2 的幾何是定性的觀察，不是由此式推出。</p>
+  </div>
+  <details class="more"><summary>App. B.2 逐行推導</summary><div class="more-in prose">
+    <p>由 $A_{t,j}=e^{z_{t,j}}/D_t$，對 $j\ge1$ 在分子分母同乘 $D_{t,\neg0}$：</p>
+    <div class="eq"><div class="eq-m">$$A_{t,j}=\frac{e^{z_{t,j}}}{D_{t,\neg0}}\cdot\frac{D_{t,\neg0}}{D_t}=\tilde A_{t,j}\cdot\frac{D_{t,\neg0}}{D_t}$$</div><span class="eq-n">Eq. 12–13</span></div>
+    <div class="eq"><div class="eq-m">$$\frac{D_{t,\neg0}}{D_t}=1-\frac{e^{z_{t,0}}}{D_t}=1-A_{t,0},\qquad 1-A_{t,0}=\frac{1}{1+\exp\big(z_{t,0}-\log D_{t,\neg0}\big)}=\sigma\big(\mathrm{LSE}_{t,\neg0}-z_{t,0}\big)$$</div><span class="eq-n">Eq. 15–16</span></div>
+  </div></details>
+  <div class="prose">
+    <h3>常見錯誤</h3>
+    <ol><li><b>把 Vanilla 的 Eq. 3 當成恆等式。</b>它依賴 $v_0\approx0$，誤差是 $A_{t,0}v_0$；Sink Attention 才恰好成立。</li></ol>
+  </div>
+
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>一個 head 的隱式門控</h3></div>
+    <p class="plate-lead">示意資料：6 個真實 token（0 號為第一個 token），內容 logit 與二維 value 為本頁自訂。拖動滑桿，比較兩種門控算法與兩種輸出算法。</p>
+    <div class="ctl-row" style="margin-bottom:14px"><div class="seg" id="c1-mode" role="group" aria-label="機制"><button type="button" data-v="vanilla" aria-pressed="true">Vanilla</button><button type="button" data-v="sink" aria-pressed="false">Sink</button></div></div>
+    <div class="pg c1g">
+      <div class="fig" id="c1-bars"><svg role="img" aria-label="注意力權重長條圖"></svg></div>
+      <div class="fig" id="c1-sig"><svg role="img" aria-label="門控值的 sigmoid 曲線"></svg></div>
+      <div class="fig" id="c1-vec"><svg role="img" aria-label="輸出向量"></svg></div>
+    </div>
+    <div class="legend"><span class="lg hat">sink 成分（斜線）</span><span class="lg par">內容 token</span><span class="lg tot">O 直接計算</span><span class="lg accd">O = G·Σ Ã v</span></div>
+    <div class="pg two" style="margin-top:16px">
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1-z0"><span>第一個 token 的 logit z<sub>0</sub></span><output id="c1-z0o">4.0</output></label><input id="c1-z0" type="range" min="-4" max="12" step="0.1" value="4"></div>
+        <div class="rng"><label class="lbl" for="c1-s">內容 logit 平移 s<output id="c1-so">0.0</output></label><input id="c1-s" type="range" min="-4" max="4" step="0.1" value="0"></div>
+        <div class="rng hide" id="c1-sinkrow"><label class="lbl" for="c1-sink">sink 參數<output id="c1-sinko">4.0</output></label><input id="c1-sink" type="range" min="-4" max="12" step="0.1" value="4"></div>
+        <div class="rng"><label class="lbl" for="c1-rho">第一個 token 的 value 長度 ρ<output id="c1-rhoo">0.00</output></label><input id="c1-rho" type="range" min="0" max="1" step="0.05" value="0"></div>
+      </div>
+      <div class="tscroll ro-t"><table id="c1-tab"><caption>讀數</caption><tbody>
+        <tr><td>$A_{\text{sink}}$</td><td class="num" id="c1-As"></td></tr>
+        <tr><td>$1-A_{\text{sink}}$</td><td class="num" id="c1-Gs"></td></tr>
+        <tr><td id="c1-sigl">$\sigma(\mathrm{LSE}_{\neg0}-z_0)$</td><td class="num" id="c1-G"></td></tr>
+        <tr><td id="c1-lsel">$\mathrm{LSE}_{\neg0}$</td><td class="num" id="c1-L"></td></tr>
+        <tr><td>$O$ 直接計算</td><td class="num" id="c1-Od"></td></tr>
+        <tr><td>$O=G\sum\tilde A v$</td><td class="num" id="c1-Og"></td></tr>
+        <tr><td>兩種輸出之差</td><td class="num" id="c1-err"></td></tr>
+      </tbody></table></div>
+    </div>
+    <p class="cap" id="c1-note"></p>
+    <p class="plate-f">示意資料：z<sub>1..5</sub> = (1.0, 0.5, 2.0, −0.5, 0.0) + s；v<sub>1..5</sub> = (1,0)、(0,1)、(−1,0.5)、(0.5,−1)、(0.8,0.8)；v<sub>0</sub> = ρ·(1/√2, 1/√2)。讀數由本頁依 Eq. 3、4、16、23 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c1-live"></p>
+  </div>
+  <div class="prose" style="margin-top:24px">
+    <p>預設值下，Vanilla 的 $A_{\text{sink}}=0.8034$，兩種門控算法都得 $G=0.1966$。把 $\rho$ 拉到 1，兩種輸出相差 0.8034，正好是 $A_0\rho$；切到 Sink，不論 $\rho$ 多大，差都是 0。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Vanilla 與 Sink Attention 的輸出如何寫成門控形式？$G$ 的 sigmoid 形式？</p>
+    <p class="a">$O=(1-A_{\text{sink}})\sum\tilde A v$，$\tilde A=A/(1-A_{\text{sink}})$，$G=1-A_{\text{sink}}$（Eq. 3–4）；Sink：$G=\sigma(\mathrm{LSE}_{\text{tok}}-\mathrm{sink})$，Vanilla：$G=\sigma(\mathrm{LSE}_{\neg0}-q^\top k_0/\sqrt{d_h})$（Eq. 16、23）；Vanilla 依賴 $v_0\approx0$，誤差為 $A_0v_0$；Sink 恰好成立。</p>
+  </div></details>
+</section>
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="moe" data-toc="05" data-tt="原生 MoE">
+  <div class="ch-num">05 · 原生 MoE</div>
+  <h2>多個 head 與門控構成原生 MoE</h2>
+  <div class="prose">
+    <p>專家混合模型（Mixture-of-Experts，MoE）有兩個要素：彼此獨立的專家模組，以及決定各專家貢獻多少的路由機制（Shazeer et al., 2017；Fedus et al., 2021）。注意力層正好具備這兩者：<b>多個 head 是獨立的專家，sink 形成的門控 $G=1-A_{\text{sink}}$ 是路由器。</b>所以論文說 attention sink 在注意力層裡形成原生 MoE（Sec. 3.1）。作者指出，隱式門控與 Gated Attention 的兩個核心設計一致：<b>(1) head 專屬</b>，每個 head 有自己的 sink 權重，門控彼此獨立；<b>(2) 有 sigmoid 形式</b>，而 Qiu et al. (2025b) 的實驗發現 sigmoid 是門控的最佳選擇。差別只在 Gated Attention 的門控由一個獨立的投影 $W_\theta$ 算出（顯式），Vanilla 與 Sink 的門控藏在 softmax 裡（隱式）。</p>
+    <p>Sec. 6.2 討論了這個觀點的限制。標點等 token 也可能成為局部 sink（Yu et al., 2024），但它們常匯集前文資訊，不一定只收權重而不貢獻輸出（原文 pure attention dumps；Chen et al., 2024）；第一個 token 在 causal mask 下語意有限，較可靠（Barbero et al., 2025）。更一般的隱式門控可寫成</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$G_t^{l,h}=1-\sum_{j\in S^{l,h}}A^{l,h}_{t,j}$$</div><span class="eq-n">Sec. 6.2</span></div>
+  <div class="prose">
+    <p>$S^{l,h}$ 是 sink 類成分的集合，Eq. 4 是 $S$ 只含一個成分的特例。DeepSeek-V4 的 sink 參數沒有收下全部多出來的權重，第一個 token 仍有大量權重，這時 $A_{\text{sink}}$ 應同時計入兩者；實務上可用「高注意力權重 + 低 value 範數」找出這類成分。Gated Attention 也可能另外形成隱式門控（若某些 token 收到多出來的權重且 value 小），所以一個 head 的啟用程度可能由多個門控共同決定。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="asink-native-moe-and-head-collapse.html">Sink 即 native MoE、head collapse 與 sink-aware load balancing</a>、<a href="moe-conditional-computation-lineage.html">MoE 與條件式計算的發展</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">注意力層中誰是專家、誰是路由器？隱式門控與 Gated Attention 共有哪兩個設計？</p>
+    <p class="a">head 是專家，sink 形成的門控是路由；head 專屬、有 sigmoid 形式（Sec. 3.1）。</p>
+  </div></details>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="geometry" data-toc="06" data-tt="幾何">
+  <div class="ch-num">06 · Query／key 幾何</div>
+  <h2>第一個 token 當 sink 會限制 query 與 key 的分布</h2>
+  <div class="prose">
+    <p>先前研究已知 attention sink 的負面效應：造成極端的激活離群值，使量化困難；降低模型表達能力；而消除 sink 能提升長脈絡表現（Sec. 3.2 引用）。這些研究沒有解釋為什麼。作者用 Fig. 3 回答：取 LongBench 的 2k 個 token，把 query 與 key 向量做 PCA 投影到二維。PCA（主成分分析）找出資料變異最大的兩個正交方向，把高維向量投影到這兩個方向上畫成平面圖。</p>
+    <p>Vanilla Attention 的模型（Fig. 3(a)(b)，(c) 為示意圖）呈現兩極結構：<b>為了維持第一個 token 的高權重，後續 token 的 query 聚在 $k_0$ 附近，key 被推離 $k_0$。</b>query 只能在很窄的角度範圍內變化，key 的有效維度也受限，<b>點積的相對差異被壓縮，softmax 區分候選 token 的精度下降；在長脈絡中這會產生注意力雜訊</b>（Liu et al., 2023），降低模型取回相關資訊的能力。</p>
+    <p>Sink Attention 與 Gated Attention 的模型（Fig. 3(d)(e)，(f) 為示意圖）中，$k_0$ 不再占據特殊位置，query 與 key 分散分布，沒有明顯的兩極化。softmax 可以用完整的表示能力區分 token，這對長脈絡特別有利。</p>
+  </div>
+  <div class="plate">
+    <div class="plate-h"><span class="id">示意</span><h3>兩種 query／key 分布</h3></div>
+    <p class="plate-lead">示意，非論文數據：點的位置由固定 seed 產生，只呈現 Sec. 3.2 描述的形狀。</p>
+    <div class="cols2" id="geo"></div>
+    <div class="legend"><span class="lg dotc">query（圓點）</span><span class="lg sq">key（方形）</span><span class="lg star"><span>k<sub>0</sub>（星形）</span></span></div>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Vanilla 模型的 query／key 分布有什麼限制？為何影響長脈絡？</p>
+    <p class="a">兩極結構：query 聚在 $k_0$ 附近、key 被推離 $k_0$；點積相對差異被壓縮，softmax 區分 token 的精度下降，長脈絡中產生注意力雜訊（Sec. 3.2、Fig. 3）。</p>
+  </div></details>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="collapse" data-toc="07" data-tt="Head collapse">
+  <div class="ch-num">07 · Head collapse</div>
+  <h2>只有少數 head 有貢獻：head collapse</h2>
+  <div class="prose">
+    <p>先前研究發現只有固定一小部分 head 真正參與生成。DuoAttention（Xiao et al., 2024）顯示重要的 head 在不同資料集間一致；Sandoval-Segura et al. (2025) 與 Sok et al. (2026) 把超過 25% 的 head 歸零，模型準確率仍然維持（Sec. 4.1）。從原生 MoE 的角度看，這就是 MoE 的專家崩塌（expert collapse）：模型反覆依賴少數幾個專家。作者稱之為 head 崩塌（head collapse）。</p>
+    <p>門控值提供了量化每個 head 貢獻的方法。head $h$ 在第 $l$ 層的重要度定義為一個 batch 中所有 token 的平均門控值：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathrm{Imp}^{l,h}=\frac{1}{|\mathcal T|}\sum_{(i,t)\in\mathcal T}G^{l,h}_{i,t}$$</div><span class="eq-n">Eq. 5</span></div>
+  <div class="prose">
+    <p>$\mathcal T$ 是 batch 中所有 token（$i$ 為樣本、$t$ 為位置）。Gated Attention 用 Eq. 2 的門控，Vanilla 與 Sink 用 Eq. 4。每個門控值都在 0 與 1 之間，所以 $\mathrm{Imp}\in[0,1]$<span class="tag">本頁推導</span>；Vanilla 在 $t=0$ 時只有一個 token，$A_{0,0}=1$、$G=0$，論文沒有說明是否排除 $t=0$。各層的不平衡用變異係數（coefficient of variation，CV）衡量，再對層平均：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\text{Head Imbalance}=\frac1{N_L}\sum_{l=1}^{N_L}\mathrm{CV}\big(\{\mathrm{Imp}^{l,h}\}_{h=1}^{N_h}\big),\qquad \mathrm{CV}(\cdot)=\frac{\mathrm{std}(\cdot)}{\mathrm{mean}(\cdot)}$$</div><span class="eq-n">Eq. 6</span></div>
+  <div class="prose">
+    <p>總結兩個定義：<b>$\mathrm{Imp}$ 是所有 token 上門控值 $G$ 的平均（Eq. 5）；Head Imbalance 是各層 CV 的平均，CV = std/mean（Eq. 6）。</b>手算一例：一層有 4 個 head，$\mathrm{Imp}=(0.9,0.1,0.1,0.1)$。平均 mean = 0.3，母體標準差 std $=\sqrt{(0.6^2+3\times0.2^2)/4}=\sqrt{0.12}=0.3464$，所以 <b>CV = 0.3464 / 0.3 = 1.1547（母體 std）</b>。論文沒有說明 std 用母體（除以 $N$）或樣本（除以 $N-1$）版本，本頁一律用母體版本。</p>
+    <p>Fig. 4（LLaMA-3.1-8B、GPT-OSS-20B、Qwen3-Next-80B-A3B）與 App. C（以 GSM8K 的 500 個樣本計算；Fig. 10 的六個 GPT-OSS 與 LLaMA 模型、Fig. 11 的十個 Qwen2.5／Qwen3 模型，共 16 個）都顯示：三種機制都有少數高重要度 head 與許多低重要度 head。App. C 另指出模型越大，崩塌越嚴重。Qwen3-Next 使用逐元素（element-wise）門控，論文先在每個 head 內對維度平均，再套用 Eq. 5。</p>
+    <p>Fig. 5 追蹤從頭訓練時的 Head Imbalance：Sec. 4.1 概括為不平衡在早期上升、最後停在較高水準，Sec. 5.2 再細分（第 11 節）。作者認為某些 head 在早期占優勢後得到較多的更新（原文 attract disproportionate updates）。崩塌有三個後果（Sec. 4.1）：有效參數量低於名目參數量；不平衡妨礙模型學習多樣、專門化的表示；崩塌的 head 在訓練與推論時仍消耗運算。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$\mathrm{Imp}$ 與 Head Imbalance 如何定義？$\mathrm{Imp}=(0.9,0.1,0.1,0.1)$ 的 CV？</p>
+    <p class="a">$\mathrm{Imp}$＝所有 token 上 $G$ 的平均（Eq. 5）；Head Imbalance＝各層 CV 的平均，CV＝std/mean（Eq. 6）；例：mean 0.3、std 0.3464、CV 1.1547（母體 std）。</p>
+  </div></details>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="aux" data-toc="08" data-tt="輔助損失">
+  <div class="ch-num">08 · 輔助損失</div>
+  <h2>輔助損失懲罰各層重要度的變異係數</h2>
+  <div class="prose">
+    <p>從頭訓練的模型，作者借用 MoE 的負載平衡做法（Shazeer et al., 2017；Fedus et al., 2021），直接最小化各層重要度的 CV（Sec. 4.2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathcal L_{\text{aux}}=\lambda\sum_{l=1}^{N_L}N_h\Big[\mathrm{CV}\big(\{\mathrm{Imp}^{l,h}\}_{h=1}^{N_h}\big)\Big]^2,\qquad \mathcal L=\mathcal L_{\text{base}}+\mathcal L_{\text{aux}}$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="prose">
+    <p>$\mathcal L_{\text{base}}$ 是一般的語言模型損失。<b>Eq. 7 即 $\mathcal L_{\text{aux}}=\lambda\sum_lN_h[\mathrm{CV}]^2$，從頭訓練時 $\lambda=10^{-4}$</b>（Sec. 5.1）。CV 不隨所有 head 同乘一個倍數而改變，所以這個損失只要求各 head 相對一致，不規定它們的平均水準。用母體 std 時，$N\cdot\mathrm{CV}^2=\sum_h(x_h/\mu-1)^2$<span class="tag">本頁推導</span>，$x_h$ 是 head $h$ 的重要度、$\mu$ 是平均；第 07 節的例子 $(0.9,0.1,0.1,0.1)$ 得到 <b>$N\cdot\mathrm{CV}^2=2^2+3\times(2/3)^2=5.333$</b>。也就是說，Eq. 7 的 $N_h$ 把每個 head 相對平均的偏差平方加總起來。</p>
+  </div>
+  <details class="more"><summary>推導：恆等式與梯度</summary><div class="more-in prose">
+    <p>記 $S=\sum_i(x_i-\mu)^2$，母體 $\mathrm{std}^2=S/N$，所以 $N\cdot\mathrm{CV}^2=N\cdot\frac{S/N}{\mu^2}=\frac{S}{\mu^2}=\sum_i\big(\frac{x_i}{\mu}-1\big)^2$。對 $x_h$ 微分（$\partial\mu/\partial x_h=1/N$，$\partial S/\partial x_h=2(x_h-\mu)$）：</p>
+    <div class="eq"><div class="eq-m">$$\frac{\partial(N\mathrm{CV}^2)}{\partial x_h}=\frac{2(x_h-\mu)}{\mu^2}-\frac{2S}{N\mu^3}$$</div><span class="eq-n">本頁推導</span></div>
+    <p>第一項把高於平均的 head 往下推、低於平均的往上推；第二項對所有 head 相同且為負，在梯度下降中使所有 head 一起增加。兩項合起來滿足 $\sum_hx_h\,\partial(N\mathrm{CV}^2)/\partial x_h=0$，這是縮放不變的代數形式。</p>
+  </div></details>
+  <div class="prose">
+    <p>第 09 節會說明微調時的另一種版本，C2 先把它一起算出來，所以這裡先定義兩個名詞：每層重要度最高的 $m$ 個 head 稱為共享 head（shared heads），其餘稱為路由 head（routed heads）；微調版的損失只對 routed heads 計算 CV（Eq. 8）：$\mathcal L_{\text{aux}}=\lambda\sum_l(N_h-m)[\mathrm{CV}(\{\mathrm{Imp}^{l,h}:h\notin\mathcal T_m^l\})]^2$，$\mathcal T_m^l$ 是第 $l$ 層 top-$m$ head 的集合。為什麼微調時要這樣分，在第 09 節說明。</p>
+  </div>
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>CV、N·CV² 與兩種輔助損失</h3></div>
+    <p class="plate-lead">示意資料：β 是本頁示意輪廓的參數，β = 0 時所有 head 相同，越大越集中在少數 head；m 由讀者選（論文未給 m 值）。讀數為單層。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div id="c2-fig" class="bars-grp" role="group" aria-label="各 head 重要度，方向鍵切換 head"><svg aria-hidden="true"></svg></div>
+        <div class="legend"><span class="lg hat">shared head（斜線，頂端 S）</span><span class="lg par">routed head</span><span class="lg ref">全部平均 μ</span><span class="lg npar"><span>routed 平均 μ<sub>r</sub></span></span></div>
+        <p class="cap" id="c2-gnote"></p>
+      </div>
+      <div class="ctl">
+        <div class="ctl-row"><span class="lbl"><span>N<sub>h</sub></span></span><div class="seg" id="c2-N" role="group" aria-label="每層 head 數"><button type="button" data-v="10" aria-pressed="false">10</button><button type="button" data-v="13" aria-pressed="false">13</button><button type="button" data-v="16" aria-pressed="true">16</button></div></div>
+        <div class="rng"><label class="lbl" for="c2-b">崩塌程度 β<output id="c2-bo">4.0</output></label><input id="c2-b" type="range" min="0" max="8" step="0.1" value="4"></div>
+        <div class="rng"><label class="lbl" for="c2-m">shared head 數 m<output id="c2-mo">3</output></label><input id="c2-m" type="range" min="0" max="14" step="1" value="3"></div>
+        <label class="chk"><input type="checkbox" id="c2-g">顯示梯度下降方向</label>
+      </div>
+    </div>
+    <div class="tscroll"><table id="c2-tab"><caption>讀數（λ 欄為單層損失）</caption><tbody></tbody></table></div>
+    <details class="more"><summary>各 head 數值表</summary><div class="more-in"><div class="tscroll"><table id="c2-heads"><caption>每個 head 的重要度、類別與 ∂(N·CV²)/∂Imp</caption><thead><tr><th>head</th><th class="num">Imp</th><th>類別</th><th class="num">梯度</th></tr></thead><tbody></tbody></table></div></div></details>
+    <p class="plate-f">輪廓（示意）：Imp<sub>h</sub> = 0.05 + 0.9·exp(−β·r<sub>h</sub>/(N<sub>h</sub>−1))，r<sub>h</sub> = (7h + 3) mod N<sub>h</sub>。讀數由本頁依 Eq. 6–8 即時計算；N·CV² = Σ(x/μ−1)² 與梯度式為本頁推導（母體 std）。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <div class="prose" style="margin-top:24px">
+    <p>預設值（$N_h=16$、β = 4）下 CV = 0.8974、N·CV² = 12.8858，與 Σ(x/μ−1)² 相同。打開梯度方向可以看到：除了最高的三個 head 向下，其餘都向上。</p>
+    <h3>常見錯誤</h3>
+    <ol start="2">
+      <li><b>std 的版本。</b>論文未說明；PyTorch 的 <code>torch.std</code> 預設除以 $N-1$。損失中的 $\mathrm{CV}^2$ 兩版相差 $N/(N-1)$ 倍（std 與 CV 本身相差 $\sqrt{N/(N-1)}$ 倍），會改變 $\lambda$ 的有效大小。</li>
+      <li><b>$\lambda$ 混用。</b>從頭訓練 $10^{-4}$、微調 $10^{-2}$。</li>
+      <li><b>跨機制比較 CV 的絕對值。</b>Fig. 5 中 Vanilla 的縱軸刻度為 1e-3（0.6B）與 1e-4（2B），Sink、Gated 為 1e-1，論文沒有討論這個差異。只比較同一機制有無輔助損失。</li>
+    </ol>
+  </div>
+  <p class="read">延伸閱讀：<a href="asink-expert-collapse-and-load-balancing.html">Expert collapse 與 MoE 的 load balancing</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 7 是什麼？$\lambda$ 取多少？上例的 $N\cdot\mathrm{CV}^2$？</p>
+    <p class="a">$\mathcal L_{\text{aux}}=\lambda\sum_lN_h[\mathrm{CV}]^2$，$\lambda=10^{-4}$；$N\mathrm{CV}^2=\sum_h(x_h/\mu-1)^2=5.333$（本頁推導）。</p>
+  </div></details>
+</section>
+
+<!-- S9 ============================================================ -->
+<section class="ch" id="pinning" data-toc="09" data-tt="Shared／routed">
+  <div class="ch-num">09 · 微調</div>
+  <h2>微調時保留 shared heads，只平衡 routed heads</h2>
+  <div class="prose">
+    <p>直接用 Eq. 7 微調已訓練好的模型，會出現作者稱為 head 釘住效應（head pinning effect）的現象（Sec. 4.2、App. D）。Fig. 12 中圖顯示，Qwen3-8B 用 Eq. 7 微調一個 epoch 後，幾乎所有 head 都有一致的高重要度。CV 確實變小了，但這不是期望的平衡。作者的解釋：預訓練時崩塌出的主導 head 對生成已不可或缺，降低它們會傷害表現，所以它們的門控在微調中幾乎不變（原文 resist change）；損失要求一致時，其餘 head 的門控升高到與主導 head 相近。<b>簡言之，head pinning 是：主導 head 的門控幾乎不變（原文 resist change），其餘 head 的門控升高到與之相近，結果幾乎所有 head 都變高。</b>對策借鑑 DeepSeekMoE 的共享專家與路由專家（Dai et al., 2024）。<b>每層 top-$m$ 個最重要的 head 為 shared heads，不放進損失，保留已學到的行為；只對其餘 routed heads 計算 $(N_h-m)[\mathrm{CV}]^2$，微調時 $\lambda=10^{-2}$</b>（Sec. 5.1）。令 $\mathcal T_m^l=\arg\mathrm{top}_m\{\mathrm{Imp}^{l,h}\}_{h=1}^{N_h}$：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathcal L_{\text{aux}}=\lambda\sum_{l=1}^{N_L}(N_h-m)\Big[\mathrm{CV}\big(\{\mathrm{Imp}^{l,h}:h\notin\mathcal T_m^l\}\big)\Big]^2$$</div><span class="eq-n">Eq. 8</span></div>
+  <div class="prose">
+    <p>Fig. 12 右圖：用 Eq. 8 微調後，routed heads 之間較平均，shared heads 維持高啟用。論文沒有給 $m$ 的值，也沒有說明 $\mathcal T_m^l$ 是在微調前選定，還是每個 batch 重選。</p>
+    <p>下面的玩具模型只示範一件事：固定幾個高重要度 head 時，以 Eq. 7 最小化 CV 的梯度下降會讓其餘 head 一起升高，方向與 App. D 的描述相同。主導 head 的「幾乎不變」在這裡以凍結表示，所以 pinning 的結果直接來自這個設定，玩具模型不證明論文的因果解釋。</p>
+  </div>
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>head pinning 的玩具動態</h3></div>
+    <p class="plate-lead">本頁玩具模型，非論文結果：一層 16 個 head，Imp<sub>h</sub> = σ(θ<sub>h</sub>)，不模擬 token 與注意力，沒有 L<sub>base</sub>；凍結的 top-m 代表「幾乎不變」的主導 head；純梯度下降，學習率 0.05（λ 併入）。</p>
+    <div class="ctl-row" style="margin-bottom:12px">
+      <div class="seg" id="c3-loss" role="group" aria-label="損失"><button type="button" data-v="eq7" aria-pressed="true">Eq. 7</button><button type="button" data-v="eq8" aria-pressed="false">Eq. 8</button></div>
+      <label class="chk"><input type="checkbox" id="c3-pin" checked>凍結 top-m</label>
+      <span class="note" id="c3-pinnote"></span>
+    </div>
+    <div class="ctl-row" style="margin-bottom:12px">
+      <div class="rng" style="min-width:220px;flex:1"><label class="lbl" for="c3-m">shared／凍結 head 數 m<output id="c3-mo">3</output></label><input id="c3-m" type="range" min="1" max="6" step="1" value="3"></div>
+      <button class="small-btn pri" type="button" id="c3-run">執行</button><button class="small-btn" type="button" id="c3-reset">重設</button>
+    </div>
+    <div class="fig" id="c3-row"><svg role="img" aria-label="目前各 head 重要度"></svg></div>
+    <div class="pg two" style="margin-top:12px">
+      <div class="fig" id="c3-imp"><svg role="img" aria-label="重要度對步數"></svg></div>
+      <div class="fig" id="c3-loss-fig"><svg role="img" aria-label="損失對步數"></svg></div>
+    </div>
+    <div class="legend"><span class="lg par">routed 平均（淺色帶為最小–最大）</span><span class="lg perp">shared head</span><span class="lg tot">損失</span></div>
+    <p class="readout" id="c3-ro"></p>
+    <p class="plate-f">初始為 C2 的 β = 4 輪廓；shared／凍結集合由初始 Imp 決定，訓練中不重選。Eq. 7 + 凍結（m = 3）時，使 16 個 head 的 CV 最小的 routed 共同值為 0.786（本頁推導，格點搜尋），3000 步時為 0.7805。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+  <div class="prose" style="margin-top:24px">
+    <p>在這個玩具模型中（皆非論文結果）：Eq. 7 加凍結時，routed heads 一起上升到約 0.78，高於 shared 中的 0.739 與 0.578、低於 0.950；Eq. 7 不凍結時，所有 head 收斂到同一個中間值 0.442；Eq. 8 時，routed heads 收斂到同一個值約 0.161，shared 維持 0.950、0.739、0.578。</p>
+    <h3>常見錯誤</h3>
+    <ol start="5"><li><b>微調時直接用 Eq. 7。</b>會造成 head pinning；改用 Eq. 8。$m$ 值論文未給。</li></ol>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">直接用 Eq. 7 微調會怎樣？Eq. 8 怎麼改？</p>
+    <p class="a">head pinning：主導 head 的門控幾乎不變（原文 resist change），其餘 head 的門控升高到與之相近，幾乎所有 head 都變高（App. D、Fig. 12）；top-$m$ 為 shared heads 不進損失，只對 routed heads 算 $(N_h-m)[\mathrm{CV}]^2$，$\lambda=10^{-2}$（Eq. 8）。</p>
+  </div></details>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="flash" data-toc="10" data-tt="Flash Attention">
+  <div class="ch-num">10 · 實作</div>
+  <h2>門控值可由 Flash Attention 的 LSE 算出</h2>
+  <div class="prose">
+    <p>$G=1-A_{\text{sink}}$ 需要注意力權重，但 <b>Flash Attention 等融合 kernel 不輸出注意力權重；改用 eager 模式取出權重會犧牲效率</b>（Sec. 4.2）。作者改用 kernel 在前向計算中本來就算好的 LSE。</p>
+    <ul>
+      <li><b>Vanilla</b>：$G=\sigma\big(\mathrm{LSE}_{\neg0}-q_t^\top k_0/\sqrt{d_h}\big)$。呼叫 <code>out, lse = torch.ops.aten._scaled_dot_product_flash_attention(q, k, v)</code>，由回傳的 LSE 與第一個 token 的 query-key 乘積算出 $G$，不需實體化完整的權重矩陣。</li>
+      <li><b>Sink</b>：現有做法（Agarwal et al., 2025）用非融合運算，顯著降低效率。作者改為對所有 token 跑標準 Flash Attention，再乘上 $G=\sigma(\mathrm{LSE}-\mathrm{sink})$，LSE 由 kernel 取得；同一個 $G$ 直接供輔助損失使用。</li>
+    </ul>
+    <p>整理：<b>作者用 kernel 回傳的 LSE 得到門控：Sink 為 $\sigma(\mathrm{LSE}-\mathrm{sink})$ 並乘到標準 Flash 輸出，Vanilla 為 $\sigma(\mathrm{LSE}_{\neg0}-q^\top k_0/\sqrt{d_h})$；額外訓練延遲小於 2%</b>（Sec. 5.1）。</p>
+    <p>標準 Flash Attention 對真實 token 正規化，它的輸出就是 $\sum_j\tilde A_{t,j}v_j$；由 Eq. 21，$O_t=\sigma(\mathrm{LSE}_{\text{tok}}-\mathrm{sink})\cdot\text{FlashOut}$ 是 Sink Attention 的精確輸出<span class="tag">本頁推導</span>。Vanilla 的 Flash 輸出本身就是完整輸出，$G$ 只用於重要度與輔助損失，不可再乘到輸出上。</p>
+    <p>數值上要注意一點<span class="tag">本頁推導</span>。<b>kernel 回傳的 LSE 含第一個 token，論文沒有說明 $\mathrm{LSE}_{\neg0}$ 如何取得。</b>只用 kernel 的 LSE，可得 $G=1-e^{z_{t,0}-\mathrm{LSE}}$，寫成 <code>-expm1(z0 - lse)</code>；先推回 $\mathrm{LSE}_{\neg0}=\mathrm{LSE}+\log(-\mathrm{expm1}(z_{t,0}-\mathrm{LSE}))$ 再代入 sigmoid，數學與精度都相同。<b>由含第一個 token 的 LSE 相減，在 $A_0\to1$ 時發生相消</b>：LSE 本身已四捨五入，結果的相對精度流失。若能另外對 $j\ge1$ 計算 $\mathrm{LSE}_{\neg0}$，就沒有這個問題。對 $\mathrm{Imp}$ 而言，這個絕對誤差小於 $10^{-16}$，可以忽略。</p>
+    <p>本節重點：<b>Flash Attention 等融合 kernel 不輸出注意力權重，eager 模式太慢；作者用 kernel 回傳的 LSE 得到門控，Sink 為 $\sigma(\mathrm{LSE}-\mathrm{sink})$ 並乘到標準 Flash 輸出，Vanilla 為 $\sigma(\mathrm{LSE}_{\neg0}-q^\top k_0/\sqrt{d_h})$，額外訓練延遲小於 2%。kernel 的 LSE 含第一個 token，論文未說明 $\mathrm{LSE}_{\neg0}$ 如何取得；由含第一個 token 的 LSE 相減，在 $A_0\to1$ 時相消</b>（本頁推導）。</p>
+    <p>背景（FlashAttention 的標準做法，不是本論文內容）：kernel 把 token 分成區塊依序處理，維護目前的最大值 $m$ 與以 $m$ 縮放的指數和 $\ell$；遇到更大的 logit 時把舊的和乘上 $e^{m-m'}$ 再加上新區塊，最後 $\mathrm{LSE}=m+\ln\ell$。直接加總 $e^{z}$ 在 logit 大於約 709.78 時會超出 float64 的範圍。</p>
+  </div>
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>分塊 LSE 與門控</h3></div>
+    <p class="plate-lead">示意資料：12 個 logit 乘上倍率 c，第一個為第一個 token；sink = 3.0 × c。按「下一塊」逐塊更新 m 與 ℓ。</p>
+    <div class="ctl-row" style="margin-bottom:12px">
+      <span class="lbl">區塊大小 B</span><div class="seg" id="c4-B" role="group" aria-label="區塊大小"></div>
+      <span class="lbl">logit 倍率 c</span><div class="seg" id="c4-c" role="group" aria-label="logit 倍率"><button type="button" data-v="1" aria-pressed="true">1</button><button type="button" data-v="10" aria-pressed="false">10</button><button type="button" data-v="200" aria-pressed="false">200</button></div>
+    </div>
+    <div class="ctl-row" style="margin-bottom:12px">
+      <div class="seg" id="c4-mode" role="group" aria-label="機制"><button type="button" data-v="sink" aria-pressed="true">Sink</button><button type="button" data-v="vanilla" aria-pressed="false">Vanilla</button></div>
+      <button class="small-btn pri" type="button" id="c4-next">下一塊</button><button class="small-btn" type="button" id="c4-all">全部</button><button class="small-btn" type="button" id="c4-reset">重設</button>
+    </div>
+    <div class="blocks" id="c4-blocks" role="img" aria-label="12 個 logit 的處理狀態"></div>
+    <div class="tscroll"><table id="c4-tab"><caption>各區塊處理後的狀態</caption><thead><tr><th>區塊</th><th class="num">m</th><th class="num">ℓ</th><th class="num">m + ln ℓ</th></tr></thead><tbody></tbody></table></div>
+    <div class="tscroll"><table id="c4-res"><caption>結果（全部區塊處理完後顯示）</caption><tbody></tbody></table></div>
+    <p class="plate-f">分塊更新為 FlashAttention 的標準做法（背景）。門控公式依 Eq. 16、23；三種 Vanilla 算法的比較為本頁推導。</p>
+    <p class="sr" aria-live="polite" id="c4-live"></p>
+  </div>
+  <div class="prose" style="margin-top:24px">
+    <p>不論區塊大小，c = 1 時最終 LSE 都是 5.3308。c = 200 時直接加總溢位，分塊法仍得 1000；Vanilla 只用 kernel LSE 的兩種算法得 0，另行計算 $\mathrm{LSE}_{\neg0}$ 則得 $1.915\times10^{-174}$。</p>
+    <h3>常見錯誤</h3>
+    <ol start="6">
+      <li><b>Vanilla 用 Flash 時把 $G$ 乘到輸出。</b>Vanilla 的輸出不變，$G$ 只用於重要度與損失；Sink Attention 才是 FlashOut × $G$。</li>
+      <li><b>用 $1-A_{t,0}$ 直接相減。</b>$A_{t,0}\to1$ 時相消；至少用 <code>-expm1</code>，若能另外取得 $\mathrm{LSE}_{\neg0}$ 則用 $\sigma(\mathrm{LSE}_{\neg0}-z_{t,0})$。</li>
+      <li><b>直接加總 $e^{z}$。</b>logit 大於約 709.78 時 float64 溢位；用減最大值或分塊的 $m+\ln\ell$。</li>
+    </ol>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為何不能直接取注意力權重？作者如何得到 $G$？成本？Vanilla 由 kernel 的 LSE 算 $G$ 有什麼數值問題？</p>
+    <p class="a">Flash 等融合 kernel 不輸出權重，eager 模式太慢；用 kernel 回傳的 LSE：Sink 為 $\sigma(\mathrm{LSE}-\mathrm{sink})$ 並乘到標準 Flash 輸出，Vanilla 為 $\sigma(\mathrm{LSE}_{\neg0}-q^\top k_0/\sqrt{d_h})$；額外訓練延遲 &lt; 2%（Sec. 4.2、5.1）。kernel 的 LSE 含首 token，論文未說明 $\mathrm{LSE}_{\neg0}$ 如何取得；由含首 token 的 LSE 相減在 $A_0\to1$ 時相消（本頁推導）。</p>
+  </div></details>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="results" data-toc="11" data-tt="實驗">
+  <div class="ch-num">11 · 實驗</div>
+  <h2>輔助損失在三種機制與兩種情境都提高平均分數</h2>
+  <div class="prose"><p>實驗分為從頭訓練與微調兩種情境（Sec. 5.1）。</p></div>
+  <div class="tscroll prose-w"><table class="stack">
+    <caption>實驗設定（Sec. 5.1）</caption>
+    <thead><tr><th>項目</th><th>從頭訓練</th><th>微調</th></tr></thead><tbody>
+    <tr><td>模型</td><td data-h="從頭訓練">0.6B：20 層、每層 10 head、hidden 1280；1B：26 層、13 head、1664；2B：32 層、16 head、2048</td><td data-h="微調">Qwen3-4B、Qwen3-8B、LLaMA3.1-8B</td></tr>
+    <tr><td>機制</td><td data-h="從頭訓練">Vanilla、Sink、Gated，各有無輔助損失（六種組合）</td><td data-h="微調">模型原有機制</td></tr>
+    <tr><td>資料</td><td data-h="從頭訓練">FineWeb-Edu；token 數為參數量的 20 倍（Chinchilla）</td><td data-h="微調">AceReason-Nemotron（長序列推理）</td></tr>
+    <tr><td>最佳化</td><td data-h="從頭訓練">學習率 0.02，最後 20% 線性衰減到 0；其他依 AdamW 預設</td><td data-h="微調">LoRA rank 16</td></tr>
+    <tr><td>λ</td><td data-h="從頭訓練">1 × 10⁻⁴</td><td data-h="微調">1 × 10⁻²</td></tr>
+    <tr><td>評測</td><td data-h="從頭訓練">MMLU、GSM8K、HumanEval、ARC-E／C、HellaSwag、PIQA、OpenBookQA、BoolQ、Winogrande；validation BPB</td><td data-h="微調">推理：ARC、MuSR、GSM8K、MATH-500、Comp-Math、ProcessBench；LongBench：HotpotQA、Qasper、TriviaQA、NarrativeQA、2WikiMQA、MultiFieldQA</td></tr>
+    <tr><td>硬體／成本</td><td data-h="從頭訓練">額外訓練延遲小於 2%</td><td data-h="微調">NVIDIA A100</td></tr>
+    </tbody></table></div>
+  <div class="tscroll prose-w"><table>
+    <caption>Table 1 平均分數（base → base+aux）與 2B 的 validation BPB</caption>
+    <thead><tr><th>規模</th><th class="num">Vanilla</th><th class="num">Sink</th><th class="num">Gated</th></tr></thead><tbody>
+    <tr><td>0.6B 平均</td><td class="num">39.54 → 40.82</td><td class="num">40.31 → 41.11</td><td class="num">40.43 → 41.35</td></tr>
+    <tr><td>1B 平均</td><td class="num">42.59 → 43.35</td><td class="num">43.27 → 43.75</td><td class="num">42.69 → 43.98</td></tr>
+    <tr><td>2B 平均</td><td class="num">45.46 → 46.83</td><td class="num">46.35 → 46.50</td><td class="num">46.30 → 47.70</td></tr>
+    <tr><td>2B BPB</td><td class="num">0.7243 → 0.7198</td><td class="num">0.7226 → 0.7202</td><td class="num">0.7232 → 0.7197</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>從頭訓練的 2B 模型，加上輔助損失後的平均分數為：<b>Vanilla 45.46→46.83、Sink 46.35→46.50、Gated 46.30→47.70</b>（Table 1）。0.6B 的增幅為 +1.28、+0.80、+0.92，1B 為 +0.76、+0.48、+1.29。作者的第一個結論是 Sink 與 Gated 在三個規模都優於 Vanilla，只用 base loss 的欄位符合這一點。作者另寫 Gated「在各規模最好」；照數字，這只在 base+aux 欄成立（41.35、43.98、47.70 皆最高），只用 base loss 時 1B、2B 是 Sink 略高（43.27 對 42.69、46.35 對 46.30）。第二個結論是加上輔助損失後，平均分數與 BPB 在所有機制與規模都改善；個別基準不一定，例如 2B Sink 的 BoolQ 由 59.80 降到 57.40。</p>
+    <p>Fig. 5：加上輔助損失後 CV 維持在低值。不加時，Gated 在早期急升後持平；Vanilla 與 Sink 逐步上升（原文 gradual increase），Vanilla 的震盪較大。作者的解釋是：Gated 的顯式門控讓 head 立即專門化；Vanilla 與 Sink 要先建立 sink 的權重分配才有隱式門控；Vanilla 還必須同時學會 value drain。Fig. 6（2B）：不平衡時啟用集中在少數 head，且在不同資料集間一致；平衡後較平均，並隨資料集改變。Fig. 7：訓練全程 Sink 與 Gated 的準確率高於 Vanilla。Fig. 8：早期輔助損失影響很小，後期的訓練損失與 validation BPB 較低。</p>
+  </div>
+  <div class="tscroll prose-w"><table>
+    <caption>Table 2 平均分數（base → base+aux）</caption>
+    <thead><tr><th>模型</th><th class="num">推理</th><th class="num">LongBench</th></tr></thead><tbody>
+    <tr><td>Qwen3-4B</td><td class="num">74.73 → 75.24</td><td class="num">51.46 → 52.75</td></tr>
+    <tr><td>Qwen3-8B</td><td class="num">74.31 → 76.01</td><td class="num">50.67 → 55.38</td></tr>
+    <tr><td>LLaMA3.1-8B</td><td class="num">56.50 → 58.97</td><td class="num">40.51 → 43.98</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>從頭訓練的 2B 模型加上輔助損失後為 Vanilla 45.46→46.83、Sink 46.35→46.50、Gated 46.30→47.70（Table 1）；微調的結果：<b>LLaMA3.1-8B 推理平均 56.50→58.97、LongBench 平均 40.51→43.98</b>（Table 2）。作者觀察到較大的模型受益較多，與 MoE 研究中專家越多越需要負載平衡的現象一致；本頁對照：Qwen3-8B 的增幅（+1.70、+4.71）大於 Qwen3-4B（+0.51、+1.29），論文沒有逐一列出增幅。個別任務有下降，例如 LLaMA3.1-8B 的 TriviaQA 由 46.34 降到 41.82。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">2B 從頭訓練三種機制加上輔助損失後的平均分數？微調 LLaMA3.1-8B 的結果？</p>
+    <p class="a">Vanilla 45.46→46.83、Sink 46.35→46.50、Gated 46.30→47.70（Table 1）；LLaMA3.1-8B 推理 56.50→58.97、LongBench 40.51→43.98（Table 2）。</p>
+  </div></details>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="mechanism" data-toc="12" data-tt="機制假說">
+  <div class="ch-num">12 · 機制假說</div>
+  <h2>有效的門控是 head collapse 的前提</h2>
+  <div class="prose">
+    <p>Sec. 6.1 用 Fig. 9 追蹤三個訓練診斷：value drain（第一個 token value 的 $\ell_2$ 範數除以其他 value 的平均範數）、attention sink（sink 成分的平均權重）、Head Load Imbalance CV。論文據此提出一個假說（hypothesis）：<b>Value Drain → Attention Sink → Implicit Gating → Head Collapse</b>。</p>
+  </div>
+  <ol class="chain" aria-label="Sec. 6.1 的假說鏈">
+    <li>Value Drain</li><li>Attention Sink</li><li>Implicit Gating</li><li>Head Collapse</li>
+  </ol>
+  <div class="prose">
+    <p>這條鏈（Value Drain → Attention Sink → Implicit Gating → Head Collapse）解釋了三種機制不同的崩塌型態。<b>Gated Attention 的門控從訓練一開始就是顯式的，不需要先建立 sink，所以崩塌可以直接發生</b>，與標準 MoE 的專家崩塌相同，這對應 Fig. 5 中最早、最嚴重的不平衡。Sink Attention 的 sink 沒有 value，模型不需要先壓低某個真實 token 的 value；sink 一取得權重，隱式門控 $G=1-A_{\text{sink}}$ 就形成，崩塌隨之出現，介於兩者之間。Vanilla Attention 要走完整條鏈：先發展 value drain，讓第一個 token 可以收下多出來的權重而不改變輸出；由此產生的 attention sink 再形成 Eq. 4 的隱式門控；門控生效之後，崩塌才變得明顯。三者不必嚴格分階段，可以在最佳化中共同演化；論文強調的重點是：有效的門控是崩塌的前提。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Sec. 6.1 的假說鏈為何？為何 Gated Attention 最早崩塌？</p>
+    <p class="a">Value Drain → Attention Sink → Implicit Gating → Head Collapse；Gated 的門控一開始就是顯式的，不需先建立 sink，所以崩塌直接發生（Sec. 6.1、Fig. 5）。</p>
+  </div></details>
+</section>
+
+<!-- S13 =========================================================== -->
+<section class="ch" id="history" data-toc="13" data-tt="研究脈絡">
+  <div class="ch-num">13 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>這條脈絡從 Transformer 的 softmax 注意力開始；StreamingLLM 提出 attention sink 並用於串流推論；後續研究探討 sink 的成因（value drain、over-mixing、massive activation）；另一批研究修改 softmax 或加上門控來消除 sink；MoE 端則有專家崩塌與負載平衡的研究。本論文把兩條線接起來：sink 是隱式門控，head collapse 是專家崩塌。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S14 =========================================================== -->
+<section class="ch" id="next" data-toc="14" data-tt="限制與延伸">
+  <div class="ch-num">14 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>本文以第一個 token（Vanilla）、sink 參數（Sink）與顯式門控（Gated）估計 head 的啟用程度。Sec. 6.2 指出，其他語意少、收到多出來權重的 token 也可能形成隱式門控，Gated Attention 中顯式門控與隱式門控也可能並存。完整刻畫這些隱藏的 sink 集合，以及它們與顯式門控的交互，論文列為未來的研究方向。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="asink-lineage-hub.html">Attention Sink 與 Native MoE 的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="asink-softmax-normalization-and-first-token.html">softmax 正規化與第一個 token 的高注意力</a><span>sink 為何出現的基本前提</span></div></li>
+    <li><div><a href="asink-sink-applications-kv-cache-and-streaming.html">Attention sink 在 KV cache 與串流推論的應用</a><span>StreamingLLM 與其後續</span></div></li>
+    <li><div><a href="asink-mechanism-studies-value-drain-over-mixing.html">Attention sink 的成因研究：value drain、over-mixing、massive activation</a><span>成因</span></div></li>
+    <li><div><a href="asink-eliminating-sink-softmax-modification.html">以修改 softmax 消除 sink：Softpick 與 Sink Attention</a><span>改 softmax</span></div></li>
+    <li><div><a href="asink-gated-attention-explicit-gating.html">Gated Attention：head-specific 的顯式 gating</a><span>門控</span></div></li>
+    <li><div><a href="asink-expert-collapse-and-load-balancing.html">Expert collapse 與 MoE 的 load balancing</a><span>MoE 端的問題與解法</span></div></li>
+    <li><div><a href="asink-native-moe-and-head-collapse.html">Sink 即 native MoE、head collapse 與 sink-aware load balancing</a><span>本論文的內容</span></div></li>
+    <li><div><a href="moe-conditional-computation-lineage.html">MoE 與條件式計算的發展</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="llmmem-moe-as-conditional-memory.html">MoE 作為條件式記憶</a><span>站內既有筆記</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Zizhuo Fu, Wenxuan Zeng, Runsheng Wang, Meng Li. Attention Sink Forges Native MoE in Attention Layers: Sink-Aware Training to Address Head Collapse. ICML 2026. <a href="https://arxiv.org/abs/2602.01203">arXiv:2602.01203</a>.</p>
+  <p>本頁的方程式與數字取自論文 v3；標示「本頁推導」的內容為本頁自行推導，並非論文結論；標示「示意」的資料為本頁自訂。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2017, "title": "Attention Is All You Need", "authors_short": "Vaswani et al.", "arxiv": "1706.03762", "role": "softmax attention 與 Transformer；sink 的前提", "source": "abstract; 2602.01203 §2.1"}, {"year": 2017, "title": "Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer", "authors_short": "Shazeer et al.", "arxiv": "1701.06538", "role": "MoE 與 expert collapse 的來源引用", "source": "abstract; 2602.01203 §1, §4.2"}, {"year": 2021, "title": "Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity", "authors_short": "Fedus et al.", "arxiv": "2101.03961", "role": "MoE load balancing 的來源引用", "source": "abstract; 2602.01203 §1, §4.2"}, {"year": 2023, "title": "Quantizable Transformers: Removing Outliers by Helping Attention Heads Do Nothing", "authors_short": "Bondarenko et al.", "arxiv": "2306.12929", "role": "離群值與讓 head「不作為」；gating 類方法的引用", "source": "abstract; 2602.01203 §1"}, {"year": 2023, "title": "Efficient Streaming Language Models with Attention Sinks", "authors_short": "Xiao et al.", "arxiv": "2309.17453", "role": "提出 attention sink 與 StreamingLLM", "source": "abstract; 2602.01203 §1"}, {"year": 2024, "title": "DeepSeekMoE: Towards Ultimate Expert Specialization in Mixture-of-Experts Language Models", "authors_short": "Dai et al.", "arxiv": "2401.06066", "role": "shared experts；微調時 shared heads 的依據", "source": "abstract; 2602.01203 §4.2"}, {"year": 2024, "title": "When Attention Sink Emerges in Language Models: An Empirical View", "authors_short": "Gu et al.", "arxiv": "2410.10781", "role": "sink 的出現條件與 sink attention ratio", "source": "abstract; 2602.01203 §1, 附錄 A"}, {"year": 2024, "title": "DuoAttention: Efficient Long-Context LLM Inference with Retrieval and Streaming Heads", "authors_short": "Xiao et al.", "arxiv": "2410.10819", "role": "只有部分 head 為 Retrieval Heads", "source": "abstract; 2602.01203 §1"}, {"year": 2024, "title": "Active-Dormant Attention Heads: Mechanistically Demystifying Extreme-Token Phenomena in LLMs", "authors_short": "Guo et al.", "arxiv": "2410.13835", "role": "sink、value drain 與 active-dormant 機制", "source": "abstract; 2602.01203 §1"}, {"year": 2025, "title": "Why do LLMs attend to the first token?", "authors_short": "Barbero et al.", "arxiv": "2504.02732", "role": "sink 讓模型避免 over-mixing", "source": "abstract; 2602.01203 §1"}, {"year": 2025, "title": "Softpick: No Attention Sink, No Massive Activations with Rectified Softmax", "authors_short": "Zuhri et al.", "arxiv": "2504.20966", "role": "以 rectified softmax 消除 sink", "source": "abstract; 2602.01203 §1"}, {"year": 2025, "title": "Gated Attention for Large Language Models: Non-linearity, Sparsity, and Attention-Sink-Free", "authors_short": "Qiu et al.", "arxiv": "2505.06708", "role": "head-specific sigmoid gate；Qwen3-Next 的 Gated Attention", "source": "abstract; 2602.01203 §2.2"}, {"year": 2025, "title": "gpt-oss-120b & gpt-oss-20b Model Card", "authors_short": "OpenAI", "arxiv": "2508.10925", "role": "Sink Attention（softmax 分母加入可學習 sink）", "source": "2602.01203 §2.2 (title and arXiv ID verified)"}, {"year": 2025, "title": "Attention Sinks and Compression Valleys in LLMs are Two Sides of the Same Coin", "authors_short": "Queipo-de-Llano et al.", "arxiv": "2510.06477", "role": "sink 與 massive activation 的關聯", "source": "abstract; 2602.01203 §1"}, {"year": 2026, "title": "Attention Sink Forges Native MoE in Attention Layers: Sink-Aware Training to Address Head Collapse", "authors_short": "Fu et al.", "arxiv": "2602.01203", "role": "本論文：sink 為隱式 gate，head collapse 與 sink-aware load balancing", "source": "paper"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+const lgs=(d0,d1,r0,r1)=>{const a=Math.log(d0),b=Math.log(d1);return v=>r0+(Math.log(v)-a)/(b-a)*(r1-r0)};
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+const f2=v=>(Math.abs(v)<0.005?0:v).toFixed(2),f3=v=>(Math.abs(v)<0.0005?0:v).toFixed(3);
+const fmtNum=x=>x.toLocaleString('zh-TW',{minimumFractionDigits:3,maximumFractionDigits:3});
+function fmtK(k){if(k<=0.999)return k.toFixed(3);const s=k.toFixed(8);let i=s.indexOf('.')+1;while(i<s.length&&s[i]==='9')i++;return s.slice(0,Math.min(i+1,s.indexOf('.')+7))}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function frame(svg,o){
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m=o.m,x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=m.t;
+  const X=(o.xlog?lgs:lin)(o.x[0],o.x[1],x0,x1),Y=lin(o.y[0],o.y[1],y0,y1);
+  const g=el('g',null,svg);
+  (o.yt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.yf?o.yf(v):String(v)),yy=Y(val);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},g);tx(g,x0-8,yy+4,lab,{class:'tk','text-anchor':'end'})});
+  (o.xt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.xf?o.xf(v):String(v)),xx=X(val);el('line',{x1:xx,x2:xx,y1:y0,y2:y0+4,class:'axl'},g);tx(g,xx,y0+18,lab,{class:'tk','text-anchor':'middle'})});
+  el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  if(o.xl)tx(g,(x0+x1)/2,o.H-4,o.xl,{class:'al','text-anchor':'middle'});
+  if(o.yl)tx(g,4,12,o.yl,{class:'al'});
+  return {X,Y,g,x0,x1,y0,y1};
+}
+function arrow(g,x0,y0,x1,y1,cls,dash){const dx=x1-x0,dy=y1-y0,L=Math.hypot(dx,dy);if(L<2)return;const ux=dx/L,uy=dy/L,h=Math.min(10,L*.6);
+  el('line',{x1:x0,y1:y0,x2:x1-ux*h*.7,y2:y1-uy*h*.7,class:cls+(dash?' dash':'')},g);
+  el('path',{d:`M${x1} ${y1}L${x1-ux*h-uy*h*.45} ${y1-uy*h+ux*h*.45}L${x1-ux*h+uy*h*.45} ${y1-uy*h-ux*h*.45}Z`,class:cls+'-f'},g)}
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+const mq=matchMedia('(prefers-reduced-motion: reduce)');let RM=mq.matches;mq.addEventListener&&mq.addEventListener('change',e=>{RM=e.matches});
+const fmt4=v=>Math.abs(v)<1e-4&&v!==0?v.toExponential(2):v.toFixed(4);
+const sci=v=>v===0?'0':(Math.abs(v)<1e-3||Math.abs(v)>=1e5?v.toExponential(3):v.toFixed(6));
+
+/* ---------- shared math ---------- */
+function sig(u){if(u>=0)return 1/(1+Math.exp(-u));const e=Math.exp(u);return e/(1+e)}
+function lse(a){let m=-Infinity;for(const x of a)if(x>m)m=x;if(m===-Infinity)return-Infinity;let s=0;for(const x of a)s+=Math.exp(x-m);return m+Math.log(s)}
+function profile(N,beta){const x=[];for(let h=0;h<N;h++)x.push(.05+.9*Math.exp(-beta*((7*h+3)%N)/(N-1)));return x}
+function cvStats(x){const n=x.length;if(n<=1||x.every(a=>a===x[0]))return{mu:n?x[0]:0,sd:0,cv:0,ncv2:0,S:0};let mu=0;for(const a of x)mu+=a;mu/=n;let S=0;for(const a of x)S+=(a-mu)**2;const sd=Math.sqrt(S/n);return{mu,sd,cv:sd/mu,ncv2:S/(mu*mu),S}}
+function gradNcv2(x){const n=x.length;if(x.every(a=>a===x[0]))return x.map(()=>0);let mu=0;for(const a of x)mu+=a;mu/=n;let S=0;for(const a of x)S+=(a-mu)**2;return x.map(a=>2*(a-mu)/(mu*mu)-2*S/(n*mu**3))}
+function topM(x,m){return new Set(x.map((v,h)=>[v,h]).sort((a,b)=>b[0]-a[0]||a[1]-b[1]).slice(0,m).map(p=>p[1]))}
+function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+
+/* head row: bars with optional shared hatching */
+function headRow(svg,imp,shared,o){o=o||{};const W=o.W,H=o.H||150,m={l:o.axis?34:4,r:4,t:o.top||16,b:22},n=imp.length;
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const x0=m.l,x1=W-m.r,y0=H-m.b,y1=m.t,Y=lin(0,1,y0,y1),bw=(x1-x0)/n,g=el('g',null,svg);
+  if(o.axis){[0,.5,1].forEach(v=>{el('line',{x1:x0,x2:x1,y1:Y(v),y2:Y(v),class:'grid'},g);tx(g,x0-6,Y(v)+4,String(v),{class:'tk','text-anchor':'end'})})}
+  el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  const rects=[];
+  imp.forEach((v,h)=>{const sh=shared&&shared.has(h),x=x0+h*bw+bw*.12,w=bw*.76;
+    if(o.ghost)el('rect',{x,y:Y(o.ghost[h]),width:w,height:y0-Y(o.ghost[h]),class:'ref',style:'stroke-dasharray:3 3'},g);
+    const r=el('rect',{x,y:Y(v),width:w,height:Math.max(0,y0-Y(v)),class:sh?'bar-h':'bar'},g);rects.push(r);
+    if(sh)tx(g,x+w/2,Y(v)-4,'S',{class:'tk','text-anchor':'middle',style:'fill:var(--ink)'});
+    if(o.labels!==false&&(n<=13||h%2===0))tx(g,x+w/2,y0+15,String(h),{class:'tk','text-anchor':'middle'})});
+  return{X:h=>x0+h*bw+bw/2,Y,g,bw,x0,x1,y0,rects};
+}
+
+/* ---------- hero ---------- */
+function renderHero(){const b=$('#hero-fig');headRow($('svg',b),profile(16,4),null,{W:widthOf(b,280,520),H:120,labels:false})}
+
+/* ---------- Fig. 1 ---------- */
+function renderFig1(){const box=$('#fig1');box.textContent='';
+  const cols=[['Vanilla Attention','隱式門控','softmax',null,'Qwen2、3，LLaMA2、3'],['Sink Attention','隱式門控','softmax，分母 + exp(sink)',null,'GPT-OSS、DeepSeek-V4'],['Gated Attention','顯式門控','softmax','× σ(x W_θ)','Qwen3-Next、Qwen3.5、3.6']];
+  cols.forEach(c=>{const svg=el('svg',{viewBox:'0 0 240 350',role:'img','aria-label':`${c[0]}（${c[1]}）：q、k、v 線性映射 → MatMul q·k → ${c[2]} → MatMul × v${c[3]?' → '+c[3]:''}`});box.appendChild(svg);
+    tx(svg,120,22,c[0],{class:'ttl','text-anchor':'middle'});tx(svg,120,42,c[1],{class:'boxs','text-anchor':'middle',style:c[3]?'fill:var(--accent)':''});
+    const boxes=['q、k、v 線性映射','MatMul q·k',c[2],'MatMul × v'];if(c[3])boxes.push(c[3]);
+    const hgt=c[3]?30:36,ys=c[3]?[290,236,182,128,74]:[290,224,158,92];
+    boxes.forEach((t,i)=>{const y=ys[i],acc=i===4;el('rect',{x:20,y:y-hgt/2,width:200,height:hgt,rx:8,class:acc?'box-acc':'box'},svg);
+      const tt=tx(svg,120,y+5,'',{class:'boxt','text-anchor':'middle'});
+      if(t.includes('W_θ')){tt.textContent='× σ(x W';const s=el('tspan',{'baseline-shift':'sub','font-size':'75%'},tt);s.textContent='θ';const e=el('tspan',null,tt);e.textContent=')'}else tt.textContent=t;
+      if(i>0){const yp=ys[i-1]-hgt/2,yc=y+hgt/2;el('line',{x1:120,x2:120,y1:yp,y2:yc+6,class:'flow'},svg);el('path',{d:`M120 ${yc}l-5 7h10z`,class:'flow-f'},svg)}});
+    tx(svg,120,336,c[4],{class:'boxs','text-anchor':'middle'})})}
+
+/* ---------- S6 geometry ---------- */
+function renderGeo(){const box=$('#geo');box.textContent='';const r=mulberry32(584);const U=(a,b)=>a+(b-a)*r();
+  const panels=[['Vanilla：query 聚在 k₀ 旁，key 在對側',100,[-20,20],[150,210],[60,110]],['Sink／Gated：query 與 key 分散',60,[0,360],[0,360],[30,110]]];
+  panels.forEach(([ttl,k0r,qa,ka,rr])=>{const svg=el('svg',{viewBox:'0 0 300 330',role:'img','aria-label':ttl+'（示意）'});box.appendChild(svg);
+    const P=(ang,rad)=>[150+rad*Math.cos(ang*Math.PI/180),170-rad*Math.sin(ang*Math.PI/180)];
+    el('circle',{cx:150,cy:170,r:120,class:'ring'},svg);
+    const tt=tx(svg,150,22,'',{class:'boxt','text-anchor':'middle'});
+    const parts=ttl.split('k₀');tt.textContent=parts[0];if(parts.length>1){const a=el('tspan',null,tt);a.textContent='k';const s=el('tspan',{'baseline-shift':'sub','font-size':'75%'},tt);s.textContent='0';const b=el('tspan',null,tt);b.textContent=parts[1]}
+    for(let i=0;i<40;i++){const[x,y]=P(U(qa[0],qa[1]),U(rr[0],rr[1]));el('circle',{cx:x,cy:y,r:3.5,class:'q-pt'},svg)}
+    for(let i=0;i<40;i++){const[x,y]=P(U(ka[0],ka[1]),U(rr[0],rr[1]));el('rect',{x:x-3,y:y-3,width:6,height:6,class:'k-pt'},svg)}
+    const[sx,sy]=P(0,k0r);tx(svg,sx,sy+6,'★',{'text-anchor':'middle',style:'fill:var(--accent);font-size:18px'})})}
+
+/* ---------- C1 ---------- */
+const C1Z=[1.0,.5,2.0,-.5,0],C1V=[[1,0],[0,1],[-1,.5],[.5,-1],[.8,.8]],V0D=[Math.SQRT1_2,Math.SQRT1_2];
+const c1={mode:'vanilla',z0:4,s:0,sink:4,rho:0};
+function c1calc(st){const z=[st.z0,...C1Z.map(c=>c+st.s)],v=[[st.rho*V0D[0],st.rho*V0D[1]],...C1V];
+  const wsum=(w,off)=>[0,1].map(i=>w.reduce((a,x,j)=>a+x*v[j+off][i],0));
+  if(st.mode==='vanilla'){const L=lse(z),A=z.map(x=>Math.exp(x-L)),Ln=lse(z.slice(1)),G=sig(Ln-st.z0),At=z.slice(1).map(x=>Math.exp(x-Ln));
+    const Od=wsum(A,0),Og=wsum(At,1).map(x=>G*x);return{z,A,As:A[0],G,Gsub:1-A[0],LSE:Ln,ref:Ln,Od,Og,err:Math.hypot(Od[0]-Og[0],Od[1]-Og[1])}}
+  const Lt=lse(z),La=lse([...z,st.sink]),A=z.map(x=>Math.exp(x-La)),As=Math.exp(st.sink-La),G=sig(Lt-st.sink),At=z.map(x=>Math.exp(x-Lt));
+  const Od=wsum(A,0),Og=wsum(At,0).map(x=>G*x);return{z,A,As,G,Gsub:1-As,LSE:Lt,ref:Lt,Od,Og,err:Math.hypot(Od[0]-Og[0],Od[1]-Og[1])}}
+function renderC1(){const st=c1,r=c1calc(st),van=st.mode==='vanilla';
+  $$('#c1-mode button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===st.mode)));
+  $('#c1-sinkrow').classList.toggle('hide',van);
+  [['z0',1],['s',1],['sink',1],['rho',2]].forEach(([k,d])=>{const i=$('#c1-'+k);i.value=st[k];$('#c1-'+k+'o').textContent=st[k].toFixed(d);i.setAttribute('aria-valuetext',`${k} = ${st[k].toFixed(d)}`)});
+  // bars
+  const bb=$('#c1-bars'),W=widthOf(bb,260,420),labs=van?['0（首）','1','2','3','4','5']:['sink','0','1','2','3','4','5'],vals=van?r.A:[r.As,...r.A],hat=van?[0]:[0];
+  const F=frame($('svg',bb),{W,H:230,m:{l:36,r:8,t:24,b:36},x:[0,labs.length],y:[0,1],yt:[0,.5,1],yf:v=>String(v),xl:'token',yl:'注意力權重 A'});
+  const bw=(F.x1-F.x0)/labs.length;
+  vals.forEach((v,i)=>{const x=F.x0+i*bw+bw*.15,w=bw*.7;el('rect',{x,y:F.Y(v),width:w,height:F.y0-F.Y(v),class:hat.includes(i)?'bar-h':'bar'},F.g);
+    tx(F.g,x+w/2,F.Y(v)-5,v.toFixed(2),{class:'tk','text-anchor':'middle',style:'fill:var(--ink)'});tx(F.g,x+w/2,F.y0+15,labs[i],{class:'tk','text-anchor':'middle'})});
+  // sigmoid
+  const sb=$('#c1-sig'),Ws=widthOf(sb,240,340),p=van?st.z0:st.sink;
+  const S=frame($('svg',sb),{W:Ws,H:230,m:{l:36,r:10,t:24,b:36},x:[-4,12],y:[0,1],xt:[-4,0,4,8,12],yt:[0,.5,1],yf:v=>String(v),xl:van?'第一個 token 的 logit':'sink 參數',yl:'門控 G'});
+  const pts=[];for(let i=0;i<=80;i++){const q=-4+16*i/80;pts.push([S.X(q),S.Y(sig(r.ref-q))])}el('path',{d:lp(pts),class:'acc',style:'stroke-width:2.5'},S.g);
+  if(r.ref>=-4&&r.ref<=12){el('line',{x1:S.X(r.ref),x2:S.X(r.ref),y1:S.y0,y2:S.y1,class:'ref'},S.g);tx(S.g,S.X(r.ref)+4,S.y1+10,'G = 0.5',{class:'tk'})}
+  el('circle',{cx:S.X(p),cy:S.Y(r.G),r:5.5,class:'kdot'},S.g);
+  // vectors
+  const vb=$('#c1-vec'),Wv=widthOf(vb,200,260),Hv=Wv,R0=Math.max(.15,1.25*Math.max(...r.Od.map(Math.abs),...r.Og.map(Math.abs))),X=lin(-R0,R0,10,Wv-10),Yv=lin(-R0,R0,Hv-10,24),svg=$('svg',vb);
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${Wv} ${Hv}`);svg.setAttribute('width',Wv);svg.setAttribute('height',Hv);
+  const g=el('g',null,svg);el('line',{x1:X(-R0),x2:X(R0),y1:Yv(0),y2:Yv(0),class:'faint'},g);el('line',{x1:X(0),x2:X(0),y1:Yv(-R0),y2:Yv(R0),class:'faint'},g);tx(g,Wv-10,Yv(0)-6,'±'+R0.toFixed(2),{class:'tk','text-anchor':'end'});
+  arrow(g,X(0),Yv(0),X(r.Od[0]),Yv(r.Od[1]),'ink');arrow(g,X(0),Yv(0),X(r.Og[0]),Yv(r.Og[1]),'acc',true);
+  if(r.err>1e-9)el('line',{x1:X(r.Og[0]),y1:Yv(r.Og[1]),x2:X(r.Od[0]),y2:Yv(r.Od[1]),class:'ink dot',style:'stroke-width:1.5'},g);
+  {const t=tx(g,8,16,r.err<1e-9?'兩種算法相同':'兩者之差 = A',{class:'al'});if(r.err>=1e-9){const s=el('tspan',{'baseline-shift':'sub','font-size':'75%'},t);s.textContent='0';const e=el('tspan',null,t);e.textContent='·ρ'}}
+  // table
+  $('#c1-As').textContent=fmt4(r.As);$('#c1-Gs').textContent=fmt4(r.Gsub);$('#c1-G').textContent=fmt4(r.G);$('#c1-L').textContent=r.LSE.toFixed(4);
+  const vec=o=>`(${o[0].toFixed(4)}, ${o[1].toFixed(4)})`;$('#c1-Od').textContent=vec(r.Od);$('#c1-Og').textContent=vec(r.Og);$('#c1-err').textContent=r.err<1e-12?'0':r.err.toFixed(4);
+  $('#c1-note').innerHTML=!van&&r.A[0]>.2?`第一個 token 也收到 A<sub>0</sub> = ${r.A[0].toFixed(4)} 的權重（Sec. 6.2 的 DeepSeek-V4 情形）。若第一個 token 的 value 小（ρ 接近 0），論文建議 A<sub>sink</sub> 應同時計入它；這裡的 G 只計入合成 sink。`:(van?'Vanilla：sink 成分是第一個 token；ρ &gt; 0 時兩種輸出的差恰為 A<sub>0</sub>·ρ。':'Sink：合成 sink 沒有 value，任何 ρ 下兩種輸出都相同。');
+  $('#c1-bars svg').setAttribute('aria-label',`A_sink = ${r.As.toFixed(2)}，G = ${r.G.toFixed(2)}`);
+  announce('c1',`A_sink = ${r.As.toFixed(4)}，G = ${r.G.toFixed(4)}，兩種輸出之差 ${r.err<1e-12?0:r.err.toFixed(4)}`);
+}
+function c1setLabels(){const van=c1.mode==='vanilla';const L=$('#c1-sigl'),M=$('#c1-lsel');
+  const tex=van?['\\sigma(\\mathrm{LSE}_{\\neg0}-z_0)','\\mathrm{LSE}_{\\neg0}']:['\\sigma(\\mathrm{LSE}_{\\text{tok}}-\\mathrm{sink})','\\mathrm{LSE}_{\\text{tok}}'];
+  if(window.katex){katex.render(tex[0],L,{throwOnError:false});katex.render(tex[1],M,{throwOnError:false})}else{L.textContent='$'+tex[0]+'$';M.textContent='$'+tex[1]+'$'}}
+function initC1(){$$('#c1-mode button').forEach(b=>b.addEventListener('click',()=>{c1.mode=b.dataset.v;Object.assign(c1,c1.mode==='vanilla'?{z0:4,s:0,rho:0}:{z0:.5,s:0,sink:4,rho:0});c1setLabels();renderC1()}));
+  ['z0','s','sink','rho'].forEach(k=>$('#c1-'+k).addEventListener('input',e=>{c1[k]=+e.target.value;renderC1()}));renderC1()}
+
+/* ---------- C2 ---------- */
+const c2={N:16,beta:4,m:3,showGrad:false,sel:0};
+function c2calc(N,beta,m){const x=profile(N,beta),st=cvStats(x),T=topM(x,m),xr=x.filter((_,h)=>!T.has(h)),sr=cvStats(xr),g=gradNcv2(x);
+  return{x,st,T,sr,g,L7:1e-4*st.ncv2,L8:1e-2*(N-m)*sr.cv**2,r8:(N-m)*sr.cv**2,id:x.reduce((a,v)=>a+(v/st.mu-1)**2,0),xg:x.reduce((a,v,i)=>a+v*g[i],0)}}
+function renderC2(){const{N,beta,m}=c2,r=c2calc(N,beta,m);
+  $$('#c2-N button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.v===N)));
+  $('#c2-bo').textContent=beta.toFixed(1);$('#c2-mo').textContent=m;$('#c2-m').max=N-2;$('#c2-m').value=m;
+  $('#c2-b').setAttribute('aria-valuetext','β = '+beta.toFixed(1));$('#c2-m').setAttribute('aria-valuetext','m = '+m);
+  const box=$('#c2-fig'),W=widthOf(box,300,640),H=c2.showGrad?250:200;
+  const R=headRow($('svg',box),r.x,r.T,{W,H:H,axis:true,top:20});
+  if(c2.showGrad){/* shrink plot: arrows drawn under axis */}
+  const mu=r.st.mu,mur=r.sr.mu;
+  el('line',{x1:R.x0,x2:R.x1,y1:R.Y(mu),y2:R.Y(mu),class:'ref'},R.g);tx(R.g,R.x1,R.Y(mu)-4,'μ',{class:'labm','text-anchor':'end'});
+  if(m>0){el('line',{x1:R.x0,x2:R.x1,y1:R.Y(mur),y2:R.Y(mur),class:'par dash',style:'stroke-width:1.5'},R.g);{const t=tx(R.g,R.x1,R.Y(mur)+14,'μ',{class:'labm','text-anchor':'end',style:'fill:var(--c-par)'});const s=el('tspan',{'baseline-shift':'sub','font-size':'75%'},t);s.textContent='r'}}
+  el('rect',{x:R.X(c2.sel)-R.bw/2,y:R.Y(1)-2,width:R.bw,height:R.y0-R.Y(1)+4,class:'bar-sel',id:'c2-selbox',style:document.activeElement===box?'':'display:none'},R.g);
+  const gmax=Math.max(...r.g.map(Math.abs));
+  if(c2.showGrad){if(gmax<1e-12){$('#c2-gnote').textContent='所有 head 相同，梯度為 0。'}else{$('#c2-gnote').textContent='箭頭為梯度下降方向 −∂(N·CV²)/∂Imp，長度依最大值正規化。';
+    r.g.forEach((gv,h)=>{const L=Math.abs(gv)/gmax*26,cx=R.X(h),cy=R.Y(r.x[h]),dir=gv>0?1:-1;if(L<2)return;arrow(R.g,cx,cy,cx,cy+dir*L,'acc')})}}else $('#c2-gnote').textContent='';
+  const rows=[['μ',r.st.mu.toFixed(4)],['std（母體）',r.st.sd.toFixed(4)],['CV',r.st.cv.toFixed(4)],['N·CV²',r.st.ncv2.toFixed(4)],['Σ(x/μ − 1)²',r.id.toFixed(4)],['Eq. 7 損失（λ = 10⁻⁴）',r.L7.toFixed(6)],
+    ['shared head',m?[...r.T].sort((a,b)=>a-b).join('、'):'無'],['μ<sub>r</sub>（routed 平均）',r.sr.mu.toFixed(4)],['CV<sub>r</sub>',r.sr.cv.toFixed(4)],['(N − m)·CV<sub>r</sub>²',r.r8.toFixed(4)],['Eq. 8 損失（λ = 10⁻²）',r.L8.toFixed(6)],['Σ x·梯度',Math.abs(r.xg)<1e-12?'≈ 0':r.xg.toExponential(2)]];
+  $('#c2-tab tbody').innerHTML=rows.map(([a,b])=>`<tr><td>${a}</td><td class="num">${b}</td></tr>`).join('');
+  $('#c2-heads tbody').innerHTML=r.x.map((v,h)=>`<tr><td>${h}</td><td class="num">${v.toFixed(3)}</td><td>${r.T.has(h)?'shared':'routed'}</td><td class="num">${r.g[h].toFixed(3)}</td></tr>`).join('');
+  announce('c2',`N = ${N}，β = ${beta.toFixed(1)}，CV = ${r.st.cv.toFixed(4)}，N·CV² = ${r.st.ncv2.toFixed(4)}`);
+  c2.last=r;
+}
+function initC2(){const box=$('#c2-fig');box.tabIndex=0;
+  $$('#c2-N button').forEach(b=>b.addEventListener('click',()=>{c2.N=+b.dataset.v;c2.m=Math.min(c2.m,c2.N-2);c2.sel=Math.min(c2.sel,c2.N-1);renderC2()}));
+  $('#c2-b').addEventListener('input',e=>{c2.beta=+e.target.value;renderC2()});$('#c2-m').addEventListener('input',e=>{c2.m=+e.target.value;renderC2()});
+  $('#c2-g').addEventListener('change',e=>{c2.showGrad=e.target.checked;renderC2()});
+  const say=()=>{const r=c2.last,h=c2.sel;const n=$('#c2-live');n.textContent=`head ${h}，Imp ${r.x[h].toFixed(2)}，${r.T.has(h)?'shared':'routed'}`};
+  box.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowLeft'){c2.sel=(c2.sel+(e.key==='ArrowRight'?1:-1)+c2.N)%c2.N;renderC2();$('#c2-selbox').style.display='';say();e.preventDefault()}});
+  box.addEventListener('focus',()=>{const s=$('#c2-selbox');if(s)s.style.display='';say()});box.addEventListener('blur',()=>{const s=$('#c2-selbox');if(s)s.style.display='none'});
+  renderC2()}
+
+/* ---------- C3 ---------- */
+const C3N=16,C3STEPS=3000,C3ETA=.05;
+function c3new(mode,pin,m){const x0=profile(C3N,4),T=topM(x0,m);return{mode,pin,m,x0,T,th:x0.map(a=>Math.log(a/(1-a))),step:0,hist:[],running:false}}
+function c3loss(st,x){if(st.mode==='eq7')return cvStats(x).ncv2;const xr=x.filter((_,h)=>!st.T.has(h));return(C3N-st.m)*cvStats(xr).cv**2}
+function c3rec(st){const x=st.th.map(sig),xr=x.filter((_,h)=>!st.T.has(h));let mn=Infinity,mx=-Infinity,s=0;for(const a of xr){mn=Math.min(mn,a);mx=Math.max(mx,a);s+=a}
+  st.hist.push({s:st.step,mn,mx,mean:s/xr.length,sh:[...st.T].sort((a,b)=>a-b).map(h=>x[h]),L:c3loss(st,x),cv:cvStats(x).cv})}
+function stepC3(st){const x=st.th.map(sig);let gi;
+  if(st.mode==='eq7'){const g=gradNcv2(x);gi=g}else{const idx=[];for(let h=0;h<C3N;h++)if(!st.T.has(h))idx.push(h);const g=gradNcv2(idx.map(h=>x[h]));gi=new Array(C3N).fill(0);idx.forEach((h,i)=>gi[h]=g[i])}
+  for(let h=0;h<C3N;h++){if(st.T.has(h)&&(st.pin||st.mode==='eq8'))continue;st.th[h]-=C3ETA*gi[h]*x[h]*(1-x[h])}
+  st.step++;if(st.step%10===0)c3rec(st)}
+function c3runAll(st){while(st.step<C3STEPS)stepC3(st);return st}
+let c3=c3new('eq7',true,3),c3raf=0;c3rec(c3);
+function renderC3(){const st=c3,x=st.th.map(sig),last=st.hist[st.hist.length-1];
+  $$('#c3-loss button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===st.mode)));
+  const pin=$('#c3-pin');pin.disabled=st.mode==='eq8';pin.checked=st.mode==='eq8'?true:st.pin;
+  $('#c3-pinnote').textContent=st.mode==='eq8'?'Eq. 8 中 shared head 不在損失內，梯度本來是 0。':'';
+  $('#c3-mo').textContent=st.m;$('#c3-m').value=st.m;$('#c3-m').setAttribute('aria-valuetext','m = '+st.m);
+  const rb=$('#c3-row');headRow($('svg',rb),x,st.T,{W:widthOf(rb,300,900),H:150,axis:true,ghost:st.x0,top:18});
+  const ib=$('#c3-imp'),W=widthOf(ib,260,460);
+  const F=frame($('svg',ib),{W,H:230,m:{l:40,r:44,t:24,b:36},x:[0,C3STEPS],y:[0,1],xt:[0,1000,2000,3000],xf:v=>v.toLocaleString('en-US'),yt:[0,.5,1],yf:v=>String(v),xl:'梯度下降步數',yl:'Imp'});
+  const H=st.hist;if(H.length){const up=H.map(h=>[F.X(h.s),F.Y(h.mx)]),dn=H.map(h=>[F.X(h.s),F.Y(h.mn)]).reverse();el('path',{d:lp(up.concat(dn))+'Z',class:'band'},F.g);
+    el('path',{d:lp(H.map(h=>[F.X(h.s),F.Y(h.mean)])),class:'par'},F.g);
+    const labs=[[F.Y(last.mean),last.mean,'--c-par']];
+    H[0].sh.forEach((_,k)=>{el('path',{d:lp(H.map(h=>[F.X(h.s),F.Y(h.sh[k])])),class:'perp dash',style:'stroke-width:2'},F.g);labs.push([F.Y(last.sh[k]),last.sh[k],'--c-perp'])});
+    labs.sort((a,b)=>a[0]-b[0]);for(let i=1;i<labs.length;i++)labs[i][0]=Math.max(labs[i][0],labs[i-1][0]+13);
+    labs.forEach(([y,v,c])=>tx(F.g,F.x1+4,y+4,v.toFixed(2),{class:'tk',style:`fill:var(${c})`}))}
+  const lb=$('#c3-loss-fig'),W2=widthOf(lb,260,460),L0=Math.max(H[0].L,1);
+  const G=frame($('svg',lb),{W:W2,H:230,m:{l:48,r:12,t:24,b:36},x:[0,C3STEPS],xlog:false,y:[-6,Math.log10(L0)],xt:[0,1000,2000,3000],xf:v=>v.toLocaleString('en-US'),yt:[[-6,'10⁻⁶'],[-4,'10⁻⁴'],[-2,'10⁻²'],[0,'1']].filter(t=>t[0]<=Math.log10(L0)),xl:'梯度下降步數',yl:'損失（對數）'});
+  el('path',{d:lp(H.map(h=>[G.X(h.s),G.Y(Math.max(-6,Math.log10(Math.max(h.L,1e-300))))])),class:'tot'},G.g);
+  $('#c3-ro').innerHTML=`步數 <b>${st.step}</b>　損失 <b>${last.L<1e-4?last.L.toExponential(2):last.L.toFixed(4)}</b>　routed 平均 <b class="acc">${last.mean.toFixed(4)}</b>　routed 最小／最大 <b>${last.mn.toFixed(4)}</b>／<b>${last.mx.toFixed(4)}</b>　全部 CV <b>${last.cv.toFixed(4)}</b>`;
+  $('#c3-run').textContent=st.running?'暫停':(st.step>=C3STEPS?'已完成':'執行');$('#c3-run').disabled=st.step>=C3STEPS&&!st.running;
+}
+function c3done(){c3.running=false;renderC3();const l=c3.hist[c3.hist.length-1];announce('c3',`第 ${c3.step} 步，routed 平均 ${l.mean.toFixed(2)}`)}
+function runC3(){if(c3.running){c3.running=false;cancelAnimationFrame(c3raf);c3done();return}if(c3.step>=C3STEPS)return;c3.running=true;renderC3();
+  if(RM){const chunk=()=>{if(!c3.running)return;for(let i=0;i<500&&c3.step<C3STEPS;i++)stepC3(c3);if(c3.step<C3STEPS)setTimeout(chunk,0);else c3done()};setTimeout(chunk,0);return}
+  const tick=()=>{if(!c3.running)return;for(let i=0;i<30&&c3.step<C3STEPS;i++)stepC3(c3);renderC3();if(c3.step<C3STEPS)c3raf=requestAnimationFrame(tick);else c3done()};c3raf=requestAnimationFrame(tick)}
+function resetC3(o){c3.running=false;cancelAnimationFrame(c3raf);const n=Object.assign({mode:c3.mode,pin:c3.pin,m:c3.m},o||{});c3=c3new(n.mode,n.pin,n.m);c3rec(c3);renderC3()}
+function initC3(){$$('#c3-loss button').forEach(b=>b.addEventListener('click',()=>resetC3({mode:b.dataset.v})));
+  $('#c3-pin').addEventListener('change',e=>resetC3({pin:e.target.checked}));$('#c3-m').addEventListener('input',e=>resetC3({m:+e.target.value}));
+  $('#c3-run').addEventListener('click',runC3);$('#c3-reset').addEventListener('click',()=>resetC3());renderC3()}
+
+/* ---------- C4 ---------- */
+const Z4=[5.0,1.2,-0.3,2.1,0.7,-1.5,3.0,0.2,1.8,-0.8,2.6,0.9];
+const c4={B:4,c:1,mode:'sink',done:0,m:-Infinity,l:0,trace:[]};
+function c4z(){return Z4.map(a=>a*c4.c)}
+function c4step(st){const z=Z4.map(a=>a*st.c);if(st.done>=z.length)return;const blk=z.slice(st.done,st.done+st.B);let mn=Math.max(st.m,...blk);
+  st.l=(st.m===-Infinity?0:st.l*Math.exp(st.m-mn))+blk.reduce((a,v)=>a+Math.exp(v-mn),0);st.m=mn;st.done+=blk.length;st.trace.push([st.m,st.l,st.m+Math.log(st.l)])}
+function c4result(st){const z=Z4.map(a=>a*st.c),L=st.m+Math.log(st.l),direct=lse(z),mx=Math.max(...z);
+  const naive=mx>709.78?Infinity:Math.log(z.reduce((a,v)=>a+Math.exp(v),0));const sink=3*st.c;
+  const em=-Math.expm1(z[0]-L);return{L,direct,naive,Gs:sig(L-sink),sink,v1:1-Math.exp(z[0]-L),v2:em,v3:sig(lse(z.slice(1))-z[0])}}
+function renderC4(){const z=c4z();
+  $$('#c4-B button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.v===c4.B)));$$('#c4-c button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.v===c4.c)));
+  $$('#c4-mode button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===c4.mode)));
+  const prev=c4.done-(c4.trace.length?Math.min(c4.B,c4.done-(c4.trace.length-1)*c4.B):0);
+  $('#c4-blocks').innerHTML=z.map((v,i)=>`<span class="${i<c4.done?'done':''}${i<c4.done&&i>=prev?' cur':''}">${i<c4.done?'✓ ':''}${v.toFixed(c4.c>=10?0:1)}<i>${i===0?'首':'z'+i}</i></span>`).join('');
+  $('#c4-blocks').setAttribute('aria-label',`已處理 ${c4.done} / 12 個 logit`);
+  $('#c4-tab tbody').innerHTML=c4.trace.map((t,i)=>`<tr><td>${i+1}</td><td class="num">${t[0].toFixed(4)}</td><td class="num">${t[1].toFixed(4)}</td><td class="num">${t[2].toFixed(4)}</td></tr>`).join('')||'<tr><td colspan="4">尚未處理</td></tr>';
+  let rows=[];if(c4.done>=12){const r=c4result(c4);rows=[['分塊 LSE（m + ln ℓ）',r.L.toFixed(6)],['直接 LSE（一次減最大值）',r.direct.toFixed(6)],['直接加總 ln Σ e^z',r.naive===Infinity?'溢位（Infinity）':r.naive.toFixed(6)]];
+    if(c4.mode==='sink')rows.push([`Sink：G = σ(LSE − sink)，sink = ${r.sink}`,r.Gs.toFixed(6)]);
+    else rows.push(['Vanilla：1 − exp(z₀ − LSE)（只用 kernel LSE）',sci(r.v1)],['Vanilla：−expm1(z₀ − LSE)（只用 kernel LSE）',sci(r.v2)],['Vanilla：σ(LSE¬0 − z₀)，需另行取得 LSE¬0（論文未說明）',sci(r.v3)]);
+    c4.res=r}else c4.res=null;
+  $('#c4-res tbody').innerHTML=rows.map(([a,b])=>`<tr><td>${a}</td><td class="num">${b}</td></tr>`).join('')||'<tr><td colspan="2">處理完全部 12 個 logit 後顯示</td></tr>';
+  $('#c4-next').disabled=c4.done>=12;
+}
+function resetC4(o){Object.assign(c4,o||{},{done:0,m:-Infinity,l:0,trace:[]});renderC4()}
+function initC4(){$('#c4-B').innerHTML=[1,2,3,4,6,12].map(b=>`<button type="button" data-v="${b}" aria-pressed="false">${b}</button>`).join('');
+  $$('#c4-B button').forEach(b=>b.addEventListener('click',()=>resetC4({B:+b.dataset.v})));$$('#c4-c button').forEach(b=>b.addEventListener('click',()=>resetC4({c:+b.dataset.v})));
+  $$('#c4-mode button').forEach(b=>b.addEventListener('click',()=>{c4.mode=b.dataset.v;renderC4()}));
+  const say=()=>{const r=c4.res;announce('c4',r?`LSE = ${r.L.toFixed(4)}`:`已處理 ${c4.done} 個 logit`)};
+  $('#c4-next').addEventListener('click',()=>{c4step(c4);renderC4();say()});$('#c4-all').addEventListener('click',()=>{while(c4.done<12)c4step(c4);renderC4();say()});
+  $('#c4-reset').addEventListener('click',()=>resetC4());renderC4()}
+
+/* ---------- timeline ---------- */
+const TL_GROUP={'1706.03762':['base','asink-softmax-normalization-and-first-token'],'2309.17453':['app','asink-sink-applications-kv-cache-and-streaming'],'2410.10819':['app','asink-sink-applications-kv-cache-and-streaming'],
+ '2410.10781':['cause','asink-mechanism-studies-value-drain-over-mixing'],'2410.13835':['cause','asink-mechanism-studies-value-drain-over-mixing'],'2504.02732':['cause','asink-mechanism-studies-value-drain-over-mixing'],'2510.06477':['cause','asink-mechanism-studies-value-drain-over-mixing'],
+ '2504.20966':['soft','asink-eliminating-sink-softmax-modification'],'2508.10925':['soft','asink-eliminating-sink-softmax-modification'],'2306.12929':['gate','asink-gated-attention-explicit-gating'],'2505.06708':['gate','asink-gated-attention-explicit-gating'],
+ '1701.06538':['moe','asink-expert-collapse-and-load-balancing'],'2101.03961':['moe','asink-expert-collapse-and-load-balancing'],'2401.06066':['moe','asink-expert-collapse-and-load-balancing'],'2602.01203':['me','asink-native-moe-and-head-collapse']};
+const TL_NAME={base:'基礎：softmax 注意力',app:'sink 現象與應用',cause:'sink 成因',soft:'改 softmax',gate:'門控',moe:'MoE 負載平衡',me:'本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  data=data.map((e,i)=>({e,i})).sort((a,b)=>(+a.e.year||0)-(+b.e.year||0)||a.i-b.i).map(o=>o.e);
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${g[1]?`<a href="${g[1]}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+
+/* ---------- toc, theme, appbar ---------- */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));
+  addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+function initEqScroll(){$$('.eq-m').forEach(e=>{if(e.scrollWidth>e.clientWidth+1){e.tabIndex=0;e.setAttribute('role','region');e.setAttribute('aria-label','公式，可橫向捲動')}})}
+
+/* ---------- self test ---------- */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t)=>Math.abs(a-b)<=t;const rel=(a,b,t)=>Math.abs(a-b)<=t*Math.abs(b);
+  // C1
+  const C1T=[[{mode:'vanilla',z0:4,s:0,rho:0},.8034,.1966,2.5925,[-.0525,.0815],0],[{mode:'vanilla',z0:4,s:0,rho:1},.8034,.1966,2.5925,[.5156,.6495],.8034],
+    [{mode:'vanilla',z0:8,s:0,rho:0},.9955,.0045,2.5925,[-.0012,.0018],0],[{mode:'vanilla',z0:-2,s:0,rho:0},.0100,.9900,2.5925,[-.2643,.4102],0],[{mode:'vanilla',z0:4,s:2,rho:0},.3561,.6439,4.5925,[-.1719,.2668],0],
+    [{mode:'sink',z0:.5,s:0,sink:4,rho:0},.7843,.2157,2.7088,[-.0513,.0795],0],[{mode:'sink',z0:.5,s:0,sink:4,rho:1},.7843,.2157,2.7088,[-.0345,.0963],0],
+    [{mode:'sink',z0:.5,s:0,sink:-4,rho:0},.0012,.9988,2.7088,[-.2374,.3684],0],[{mode:'sink',z0:4,s:0,sink:4,rho:0},.4455,.5545,4.2189,[-.0291,.0452],0]];
+  C1T.forEach(([st,As,G,L,Od,err],i)=>{const r=c1calc(st);ok(near(r.As,As,1e-4)&&near(r.G,G,1e-4)&&near(r.LSE,L,1e-4)&&near(r.Od[0],Od[0],1e-4)&&near(r.Od[1],Od[1],1e-4)&&(err?near(r.err,err,1e-4):r.err<1e-12)&&Math.abs(r.G-r.Gsub)<1e-12,`C1 row ${i}`)});
+  {const r=c1calc({mode:'vanilla',z0:4,s:0,rho:1});ok(Math.abs(r.err-r.As)<1e-9,'C1 err = A0·rho')}
+  {const r=c1calc({mode:'vanilla',z0:12,s:-4,rho:0});ok(rel(r.G,1.504e-6,1e-3),'C1 z0=12 s=-4: '+r.G)}
+  // C2
+  {const r=cvStats([.9,.1,.1,.1]);ok(near(r.cv,1.1547005,1e-6)&&near(r.ncv2,5.333333,1e-6),'cvStats example')}
+  const C2T=[[16,4,3,.2869,.2575,.8974,12.8858,'2,9,11',.1787,.6579,5.6261,.001289,.056261],[16,0,3,.95,0,0,0,'0,1,2',.95,0,0,0,0],[16,8,3,.1861,.2422,1.3020,27.1220,'2,9,11',.0838,.6238,5.0585,.002712,.050585],
+    [10,4,2,.2979,.2758,.9260,8.5749,'1,4',.1752,.6596,3.4807,.000857,.034807],[13,4,3,.2910,.2645,.9087,10.7350,'7,9,11',.1626,.6091,3.7104,.001074,.037104]];
+  C2T.forEach(([N,b,m,mu,sd,cv,nc,sh,mur,cvr,r8,L7,L8])=>{const r=c2calc(N,b,m);const z=(a,e)=>e===0?Math.abs(a)<1e-12:(Math.abs(e)<.01?rel(a,e,1e-3):near(a,e,1e-4));
+    ok(z(r.st.mu,mu)&&z(r.st.sd,sd)&&z(r.st.cv,cv)&&z(r.st.ncv2,nc)&&[...r.T].sort((a,c)=>a-c).join(',')===sh&&z(r.sr.mu,mur)&&z(r.sr.cv,cvr)&&z(r.r8,r8)&&z(r.L7,L7)&&z(r.L8,L8)&&Math.abs(r.xg)<1e-12,`C2 N=${N} β=${b} m=${m}`)});
+  {const r=c2calc(16,0,3);ok(r.st.cv===0,'C2 β=0 CV exactly 0')}
+  // C3
+  const C3T=[['eq7',true,3,[.5033,.6460,.7424,.7805],.1181],['eq7',false,3,[.4287,.4415,.4416,.4416],0],['eq8',true,3,[.1614,.1614,.1614,.1614],0],['eq8',true,1,[.2337,.2337,.2337,.2337],0],['eq7',true,1,[.4835,.6233,.7520,.8366],.0169]];
+  C3T.forEach(([mode,pin,m,means,L])=>{const st=c3new(mode,pin,m);c3rec(st);c3runAll(st);const at=s=>st.hist.find(h=>h.s===s);
+    ok([100,300,1000,3000].every((s,i)=>near(at(s).mean,means[i],5e-4))&&near(at(3000).L,L,5e-4),`C3 ${mode} pin=${pin} m=${m}: ${[100,300,1000,3000].map(s=>at(s).mean.toFixed(4))}`)});
+  {const st=c3new('eq7',true,3);c3runAll(st);const x=st.th.map(sig);ok(near(x[2],.739,5e-4)&&near(x[9],.578,5e-4)&&near(x[11],.95,5e-4),'C3 shared unchanged')}
+  // C4
+  const run4=(B,c)=>{const st={B,c,done:0,m:-Infinity,l:0,trace:[]};while(st.done<12)c4step(st);return st};
+  {const st=run4(4,1);ok(st.trace.map(t=>t[2].toFixed(4)).join()==='5.0792,5.2159,5.3308','C4 B=4 trace');ok(near(c4result(st).L,5.330816,1e-6),'C4 LSE c=1 B=4')}
+  {const st=run4(1,1);ok(near(st.trace[11][2],5.330816,1e-6)&&st.trace.map(t=>t[2].toFixed(4)).slice(0,4).join()==='5.0000,5.0221,5.0270,5.0792','C4 B=1')}
+  {const st=run4(12,1);ok(near(c4result(st).L,5.330816,1e-6),'C4 B=12');const r=c4result(st);ok(near(r.Gs,.911397,1e-6)&&rel(r.v1,.28166,1e-3)&&rel(r.v2,.28166,1e-3)&&rel(r.v3,.28166,1e-3),'C4 gates c=1')}
+  {const r=c4result(run4(4,10));ok(rel(r.v2,2.0992e-9,1e-3)&&rel(r.v3,2.0992e-9,1e-3),'C4 c=10 vanilla')}
+  {const r=c4result(run4(4,200));ok(r.naive===Infinity&&near(r.L,1000,1e-9)&&r.v1===0&&r.v2===0&&r.v3>0&&Math.abs(Math.log10(r.v3)-Math.log10(1.9152e-174))<=1e-3&&near(r.Gs,1,1e-6),'C4 c=200')}
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ---------- boot ---------- */
+initTheme();initToc();renderHero();renderFig1();renderGeo();initC1();initC2();initC3();initC4();renderTimeline();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{renderHero();renderC1();renderC2();renderC3();renderC4();initEqScroll()})});
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false});initEqScroll()}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath()});
+if(/[?&]test\b/.test(location.search))addEventListener('load',()=>setTimeout(()=>{renderMath();selfTest()},0));
+})();
+</script>
+</body>
+</html>

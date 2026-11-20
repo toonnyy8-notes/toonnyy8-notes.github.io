@@ -1,0 +1,626 @@
+Attention Sink 與原生 MoE
+
+跳到內容
+
+ No. 584
+ 注意力匯聚在注意力層裡形成原生 MoE
+
+00 摘要01 Attention sink02 兩種機制03 Value drain04a 隱式門控：Sink04b 隱式門控：Vanilla05 原生 MoE06 幾何07 Head collapse08 輔助損失09 Shared／routed10 Flash Attention11 實驗12 機制假說13 研究脈絡14 限制與延伸
+
+00摘要
+01Attention sink
+02兩種機制
+03Value drain
+04a隱式門控：Sink
+04b隱式門控：Vanilla
+05原生 MoE
+06幾何
+07Head collapse
+08輔助損失
+09Shared／routed
+10Flash Attention
+11實驗
+12機制假說
+13研究脈絡
+14限制與延伸
+
+ No. 584 · 互動教學 · arXiv 2602.01203 · ICML 2026
+
+ 注意力匯聚在注意力層裡形成原生 MoE
+
+ 語言模型的注意力常集中在第一個 token。這篇論文說明，這個現象等於替每個注意力 head 的輸出乘上一個 0 到 1 的係數，並提出讓各 head 係數較平均的訓練損失。以下術語從第 01 節開始定義。
+
+ Zizhuo Fu、Wenxuan Zeng、Runsheng Wang、Meng Li（2026）〈Attention Sink Forges Native MoE in Attention Layers: Sink-Aware Training to Address Head Collapse〉
+
+ 每根長條是一個 head 的平均係數，示意資料。
+
+ 01 · 第一個 token在 Vanilla 注意力的語言模型中（Fig. 2），大部分注意力常放在第一個 token 上，而這個 token 送出的向量長度接近 0，所以這些注意力幾乎不改變輸出。
+
+ 02 · 一個係數沒放到第一個 token 的比例是一個 0 到 1 的係數，乘在每個注意力 head 的輸出上，作用像開關；多個 head 各配一個係數，結構與專家混合模型（Mixture-of-Experts）相同。
+
+ 03 · 一個損失多數 head 的平均係數偏低，只有少數 head 偏高。作者加入一個懲罰各 head 平均係數差異的損失，在 0.6B 到 8B 的模型上提高平均分數。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · Attention sink
+
+ Softmax 的總和限制產生 attention sink
+
+ 先說明注意力（attention）的計算。Transformer 的每一層把每個 token 的表示經過三個線性映射，得到 query 向量 q $q$ 、key 向量 k $k$ 與 value 向量 v $v$ ，長度都是 head 維度 dh $d_h$ ​。token t $t$ 對 token j $j$ 的匹配程度用 logit 表示：zt,j=qt⊤kj/dh $z_{t,j}=q_t^\top k_j/\sqrt{d_h}$ ​=qt⊤​kj​/dh​​。語言模型使用 causal mask，token t $t$ 只能看到位置 j=0,1,…,t $j=0,1,\dots,t$ 的 token。softmax 把這些 logit 轉成非負、總和為 1 的注意力權重 At,j $A_{t,j}$ ​，輸出是 value 的加權和。一層有 Nh $N_h$ ​ 個 head，每個 head 有自己的三個映射，各自算出輸出後經輸出矩陣 WO $W_O$ ​ 相加。對第 l $l$ 層第 h $h$ 個 head（Sec. 2.1）：
+
+ At,jl,h=Softmax(qtl,h⊤kjl,hdh),Otl,h=∑j=0tAt,jl,h vjl,h $A^{l,h}_{t,j}=\mathrm{Softmax}\Big(\frac{q_t^{l,h\top}k_j^{l,h}}{\sqrt{d_h}}\Big),\qquad O_t^{l,h}=\sum_{j=0}^{t}A^{l,h}_{t,j}\,v_j^{l,h}$ l,h​=Softmax(dh​​qtl,h⊤​kjl,h​​),Otl,h​=j=0∑t​At,jl,h​vjl,h​
+Sec. 2.1
+
+ 本頁會反覆用到 log-sum-exp（LSE）：LSE({ai})=log⁡∑ieai $\mathrm{LSE}(\{a_i\})=\log\sum_i e^{a_i}$ ​})=log∑i​eai​（App. B.1）。softmax 可以寫成 At,j=ezt,j−LSE $A_{t,j}=e^{z_{t,j}-\mathrm{LSE}}$ ​=ezt,j​−LSE，其中 LSE 對同一個 query 的所有 logit 計算。
+
+ StreamingLLM（Xiao et al., 2023）發現，大型語言模型常把很高的注意力權重放在第一個 token 上，而且與這個 token 的語意無關。這個現象稱為注意力匯聚（attention sink）。它已被用在 KV cache 最佳化、長脈絡生成、head 剪枝與量化等方向（Sec. 1）。
+
+ 論文說明的成因如下（Sec. 2.1）。softmax 強迫注意力權重總和為 1。當一個 head 只需要分配一部分注意力，或完全不需要注意任何 token 時，剩下的權重仍然必須分到某處；模型把它分到第一個 token（論文用 absorb 一詞）。第一個 token 的語意內容少，它的 value 向量接近 0（Gu et al., 2024；Guo et al., 2024），所以分到它的權重滿足「總和為 1」的限制，卻不影響輸出。簡言之：attention sink 是 LLM 把大量注意力權重放在第一個 token、與語意無關的現象；softmax 強迫權重和為 1，head 不需要完整分配時，剩下的權重分到 value 接近 0 的第一個 token。
+
+ 既然問題出在「總和為 1」，解法有兩類：修改 softmax，或在輸出端加上門控。下一節介紹這兩類的代表。
+
+ 符號表
+
+ 本頁使用的符號
+ 符號意義
+
+ l,h $l,h$ ；NL,Nh $N_L,N_h$ ​,Nh​層、head 的索引；層數、每層 head 數
+
+ t $t$ 目前 token（query）的位置；causal mask 下可看到 j=0,…,t $j=0,\dots,t$ 
+
+ qt,kj,vj $q_t,k_j,v_j$ ​,kj​,vj​query、key、value，長度 dh $d_h$ ​
+
+ zt,j $z_{t,j}$ ​softmax 前的 logit qt⊤kj/dh $q_t^\top k_j/\sqrt{d_h}$ ⊤​kj​/dh​​
+
+ At,j $A_{t,j}$ ​；At,sink $A_{t,\text{sink}}$ ​注意力權重；sink 成分的權重（Vanilla 為 At,0 $A_{t,0}$ ​，Sink Attention 為合成 sink 的權重）
+
+ A~t,j $\tilde A_{t,j}$ t,j​只在非 sink token 上重新正規化的權重（總和為 1）
+
+ sinkl,h $\mathrm{sink}^{l,h}$ Sink Attention 每個 head 一個可學習純量
+
+ Gtl,h $G_t^{l,h}$ l,h​門控值：Gated 為 σ(xtWθ) $\sigma(x_tW_\theta)$ ​Wθ​)；Vanilla／Sink 為 1−At,sink $1-A_{t,\text{sink}}$ ​
+
+ σ(u) $\sigma(u)$ sigmoid 1/(1+e−u) $1/(1+e^{-u})$ )
+
+ LSE $\mathrm{LSE}$ ；LSE¬0 $\mathrm{LSE}_{\neg0}$ ​；LSEtok $\mathrm{LSE}_{\text{tok}}$ ​log⁡∑ea $\log\sum e^{a}$ ；不含第一個 token；只含真實 token
+
+ Impl,h $\mathrm{Imp}^{l,h}$ head 重要度，所有 token 上 G $G$ 的平均（Eq. 5）
+
+ CV $\mathrm{CV}$ 變異係數 std/mean（Eq. 6）
+
+ λ $\lambda$ 、m $m$ 、Tml $\mathcal T_m^l$ l​輔助損失強度；shared head 數；第 l $l$ 層 top-m $m$ head 集合
+
+ 延伸閱讀：softmax 正規化與第一個 token 的高注意力、Attention sink 在 KV cache 與串流推論的應用
+
+ 02 · 兩種機制
+
+ 兩種機制消除 attention sink
+
+ Sink Attention（GPT-OSS 採用；Fig. 1 另列 DeepSeek-V4）在 softmax 的分母加上一個可學習的參數 sink（Sec. 2.2）：
+
+ Softmaxsink(x)i=exp⁡(xi)∑jexp⁡(xj)+exp⁡(sink) $\mathrm{Softmax}_{\text{sink}}(x)_i=\frac{\exp(x_i)}{\sum_j\exp(x_j)+\exp(\mathrm{sink})}$ ​(x)i​=∑j​exp(xj​)+exp(sink)exp(xi​)​
+Eq. 1
+
+ 這放寬了「總和為 1」的限制：真實 token 的權重總和可以小於 1，差額落在一個沒有 value 的合成 sink 上，取代 Vanilla Attention 中的第一個 token。
+
+ Gated Attention（Qwen3-Next 採用；Fig. 1 另列 Qwen3.5、3.6）有兩個設計：每個 head 專屬的門控，以及 sigmoid 激活。第 h $h$ 個 head 的門控與層輸出為：
+
+ Gtl,h=σ(xtlWθl,h),Wθl,h∈Rdmodel×1Otl=∑h=1HGtl,h⋅Otl,hWOl,h $\begin{gathered}G_t^{l,h}=\sigma\big(x_t^lW_\theta^{l,h}\big),\quad W_\theta^{l,h}\in\mathbb R^{d_{\text{model}}\times1}\\ O_t^l=\sum_{h=1}^{H}G_t^{l,h}\cdot O_t^{l,h}W_O^{l,h}\end{gathered}$ l,h​=σ(xtl​Wθl,h​),Wθl,h​∈Rdmodel​×1Otl​=h=1∑H​Gtl,h​⋅Otl,h​WOl,h​​
+Eq. 2
+
+ xtl $x_t^l$ l​ 是該層輸入，WOl,h $W_O^{l,h}$ l,h​ 是 head h $h$ 的輸出投影。總結兩者的改動：Sink Attention 在 softmax 分母加 exp⁡(sink) $\exp(\mathrm{sink})$ ，sink 為可學習參數、沒有 value（Eq. 1）；Gated Attention 把每個 head 的輸出乘上 G=σ(xWθ) $G=\sigma(xW_\theta)$ ​)，Wθ∈Rdmodel×1 $W_\theta\in\mathbb R^{d_{\text{model}}\times1}$ ​∈Rdmodel​×1（Eq. 2）。Sec. 2.2 寫道，這個 head 專屬的門控在注意力層引入 MoE 結構，使 head 稀疏使用並消除 sink。下圖重繪 Fig. 1：論文把 Vanilla 與 Sink Attention 歸為「隱式門控」，把 Gated Attention 歸為「顯式門控」，原因在第 04 節說明。
+
+ Fig. 1三種注意力機制（依論文 Fig. 1 重繪）
+
+ 由下往上為計算順序。Gated Attention 多一個乘上 σ(x Wθ) 的步驟。
+
+ 延伸閱讀：以修改 softmax 消除 sink：Softpick 與 Sink Attention、Gated Attention：head-specific 的顯式 gating
+
+ 03 · Value drain
+
+ 第一個 token 的 value 接近 0
+
+ Vanilla Attention 能把第一個 token 當成 sink，前提是它的 value 向量接近 0，這個現象稱為 value 歸零現象（value drain；Guo et al., 2024；Gu et al., 2024）。Fig. 2 顯示 Qwen2.5-7B、Qwen3-8B、Qwen3-14B、LLaMA-2-7B、LLaMA-3.1-8B、LLaMA-2-13B 六個模型中，第一個 token 的 value ℓ2 $\ell_2$ ​ 範數都遠小於位置 1 到 16 的 token。
+
+ 作者的解釋是：第一個 token 收到大量權重，把它的 value 設成接近 0，這些權重才不影響輸出。Sink Attention 的 sink 參數沒有 value，貢獻恰為 0。兩者採用同一個原則：把多出來的權重分到 value 為 0（或接近 0）的成分。
+
+ 以下把這種「收到多出來的權重、value 為 0 或接近 0」的成分稱為 sink 成分，它收到的權重記為 At,sink $A_{t,\text{sink}}$ ​。Vanilla Attention 中 sink 成分是第一個 token，所以 At,sink=At,0 $A_{t,\text{sink}}=A_{t,0}$ ​=At,0​；Sink Attention 的合成 sink 在第 04 節介紹。
+
+ App. A 用介入實驗檢查這個解釋：在 KV cache 生成後把第一個 token 的 value 歸零。設定一是所有 head 都歸零（All）；設定二只對「sink 比例」高的 head 歸零。head 級 sink 比例定義為（Eq. 9，Gu et al., 2024）
+
+ αsinkl,h=1T∑i=0T−1Ai,sinkl,h $\alpha^{l,h}_{\text{sink}}=\frac1T\sum_{i=0}^{T-1}A^{l,h}_{i,\text{sink}}$ l,h​=T1​i=0∑T−1​Ai,sinkl,h​
+Eq. 9
+
+ 選擇性設定只歸零 αsink>τ $\alpha_{\text{sink}}>\tau$ ​>τ 的 head，τ=0.75 $\tau=0.75$ 。Table 3 的九項基準平均如下。
+
+ Table 3 平均分數：第一個 token 的 value 歸零
+ 模型不介入（None）全部歸零（All）τ = 0.75
+
+ Qwen3-8B70.3664.1070.38
+
+ Qwen3-14B66.9165.9067.09
+
+ 總結：value drain 指第一個 token 的 value 範數接近 0（Fig. 2）。只對 sink 比例大於 0.75 的 head 歸零時，Qwen3-8B 的平均為 70.38，與不介入的 70.36 幾乎相同；Qwen3-14B 為 67.09 對 66.91。作者據此認為 value drain 是模型刻意學到的行為。論文文字另寫「全部歸零只造成可忽略的下降」，但照表中數字，Qwen3-8B 全部歸零的平均是 64.10，比不介入低 6.26（MMLU 由 75.42 降到 50.27、HellaSwag 由 74.97 降到 61.02）。
+
+ 延伸閱讀：Attention sink 的成因研究：value drain、over-mixing、massive activation
+
+ 04a · 隱式門控
+
+ Sink 的權重是一個隱式門控
+
+ Sink Attention：恰好成立
+
+ 在 Sink Attention 中，真實 token j=0,…,t $j=0,\dots,t$ 與合成 sink 共用同一個分母（App. B.3）。把只含真實 token 的分母記為 Dt,tok=∑m=0tezt,m $D_{t,\text{tok}}=\sum_{m=0}^t e^{z_{t,m}}$ ​=∑m=0t​ezt,m​，含 sink 的分母為 Dt,all=Dt,tok+esink $D_{t,\text{all}}=D_{t,\text{tok}}+e^{\mathrm{sink}}$ ​=Dt,tok​+esink。合成 sink 的權重是 At,sink=esink/Dt,all $A_{t,\text{sink}}=e^{\mathrm{sink}}/D_{t,\text{all}}$ ​=esink/Dt,all​，它沒有 value，對輸出的貢獻恰為 0。
+
+ 每個真實 token 的權重可以拆成兩個因子：At,j=ezt,jDt,tok⋅Dt,tokDt,all $A_{t,j}=\dfrac{e^{z_{t,j}}}{D_{t,\text{tok}}}\cdot\dfrac{D_{t,\text{tok}}}{D_{t,\text{all}}}$ ​=Dt,tok​ezt,j​​⋅Dt,all​Dt,tok​​（Eq. 19–20）。第一個因子是只在真實 token 上正規化的權重 A~t,j $\tilde A_{t,j}$ t,j​（總和為 1），第二個因子等於 1−At,sink $1-A_{t,\text{sink}}$ ​。所以輸出為：
+
+ Otl,h=∑j≠sinkAt,jvj=(1−At,sink)⋅∑j≠sinkA~t,jvj,A~t,j=At,j1−At,sink $O_t^{l,h}=\sum_{j\ne\text{sink}}A_{t,j}v_j=(1-A_{t,\text{sink}})\cdot\sum_{j\ne\text{sink}}\tilde A_{t,j}v_j,\qquad \tilde A_{t,j}=\frac{A_{t,j}}{1-A_{t,\text{sink}}}$ l,h​=j=sink∑​At,j​vj​=(1−At,sink​)⋅j=sink∑​A~t,j​vj​,A~t,j​=1−At,sink​At,j​​
+Eq. 3、21
+
+ 右邊是「一個正常的注意力輸出」乘上一個介於 0 與 1 之間的數。這個數就是門控值（Sec. 3.1）：
+
+ Gtl,h=1−At,sinkl,h $G_t^{l,h}=1-A^{l,h}_{t,\text{sink}}$ l,h​=1−At,sinkl,h​
+Eq. 4
+
+ 它還有 sigmoid 形式。令 LSEt,tok=log⁡Dt,tok $\mathrm{LSE}_{t,\text{tok}}=\log D_{t,\text{tok}}$ ​=logDt,tok​，則 1−At,sink=Dt,tokDt,tok+esink=σ(LSEt,tok−sink) $1-A_{t,\text{sink}}=\dfrac{D_{t,\text{tok}}}{D_{t,\text{tok}}+e^{\mathrm{sink}}}=\sigma\big(\mathrm{LSE}_{t,\text{tok}}-\mathrm{sink}\big)$ ​=Dt,tok​+esinkDt,tok​​=σ(LSEt,tok​−sink)（Eq. 22–23）。Sink Attention 沒有任何近似：合成 sink 的 value 恰為 0，所以 Eq. 3 是恆等式。
+
+ 04b · 隱式門控
+
+ Vanilla Attention：在 v0≈0 $v_0\approx0$ ​≈0 時近似成立
+
+ Vanilla Attention 的 sink 成分是第一個 token（App. B.2）。令 Dt=∑m=0tezt,m $D_t=\sum_{m=0}^te^{z_{t,m}}$ ​=∑m=0t​ezt,m​、Dt,¬0=∑m=1tezt,m $D_{t,\neg0}=\sum_{m=1}^te^{z_{t,m}}$ ​=∑m=1t​ezt,m​。同樣的拆法給出 At,j=A~t,j⋅Dt,¬0/Dt $A_{t,j}=\tilde A_{t,j}\cdot D_{t,\neg0}/D_t$ ​=A~t,j​⋅Dt,¬0​/Dt​，而 Dt,¬0/Dt=1−At,0 $D_{t,\neg0}/D_t=1-A_{t,0}$ ​/Dt​=1−At,0​。差別在於第一個 token 有真實的 value v0 $v_0$ ​，必須假設 v0≈0 $v_0\approx0$ ​≈0 才能丟掉 At,0v0 $A_{t,0}v_0$ ​v0​：
+
+ Ot≈∑j=1tAt,jvj=(1−At,0)⋅∑j=1tA~t,jvj $O_t\approx\sum_{j=1}^tA_{t,j}v_j=(1-A_{t,0})\cdot\sum_{j=1}^t\tilde A_{t,j}v_j$ ​≈j=1∑t​At,j​vj​=(1−At,0​)⋅j=1∑t​A~t,j​vj​
+Eq. 10、14
+
+ 這個等式的誤差恰為 At,0v0 $A_{t,0}v_0$ ​v0​，所以 value drain（第 03 節）是 Vanilla 的隱式門控成立的條件。sigmoid 形式為 1−At,0=Dt,¬0Dt,¬0+ezt,0=σ(LSEt,¬0−zt,0) $1-A_{t,0}=\dfrac{D_{t,\neg0}}{D_{t,\neg0}+e^{z_{t,0}}}=\sigma\big(\mathrm{LSE}_{t,\neg0}-z_{t,0}\big)$ ​=Dt,¬0​+ezt,0​Dt,¬0​​=σ(LSEt,¬0​−zt,0​)，其中 zt,0=qt⊤k0/dh $z_{t,0}=q_t^\top k_0/\sqrt{d_h}$ ​=qt⊤​k0​/dh​​（Eq. 15–16）。
+
+ 整理兩種機制：輸出都寫成 O=(1−Asink)∑A~v $O=(1-A_{\text{sink}})\sum\tilde A v$ ​)∑A~v，A~=A/(1−Asink) $\tilde A=A/(1-A_{\text{sink}})$ =A/(1−Asink​)，門控 G=1−Asink $G=1-A_{\text{sink}}$ ​（Eq. 3–4）；Sink Attention 的 sigmoid 形式為 G=σ(LSEtok−sink) $G=\sigma(\mathrm{LSE}_{\text{tok}}-\mathrm{sink})$ ​−sink)（Eq. 23），Vanilla 為 G=σ(LSE¬0−q⊤k0/dh) $G=\sigma(\mathrm{LSE}_{\neg0}-q^\top k_0/\sqrt{d_h})$ ​−q⊤k0​/dh​​)（Eq. 16）；Vanilla 依賴 v0≈0 $v_0\approx0$ ​≈0，誤差為 A0v0 $A_0v_0$ ​v0​，Sink 恰好成立。
+
+ 由 Eq. 16 取反函數，Vanilla 要讓門控等於 G $G$ ，第一個 token 的 logit 必須比其他 token 的 LSE 高出 zt,0−LSEt,¬0=ln⁡1−GG $z_{t,0}-\mathrm{LSE}_{t,\neg0}=\ln\frac{1-G}{G}$ ​−LSEt,¬0​=lnG1−G​本頁推導（例：G=0.1 $G=0.1$ 需要高出 ln⁡9≈2.197 $\ln9\approx2.197$ ）。這是與第 06 節幾何描述相容的必要條件；Sec. 3.2 的幾何是定性的觀察，不是由此式推出。
+
+ App. B.2 逐行推導
+
+ 由 At,j=ezt,j/Dt $A_{t,j}=e^{z_{t,j}}/D_t$ ​=ezt,j​/Dt​，對 j≥1 $j\ge1$ 在分子分母同乘 Dt,¬0 $D_{t,\neg0}$ ​：
+
+ At,j=ezt,jDt,¬0⋅Dt,¬0Dt=A~t,j⋅Dt,¬0Dt $A_{t,j}=\frac{e^{z_{t,j}}}{D_{t,\neg0}}\cdot\frac{D_{t,\neg0}}{D_t}=\tilde A_{t,j}\cdot\frac{D_{t,\neg0}}{D_t}$ ​=Dt,¬0​ezt,j​​⋅Dt​Dt,¬0​​=A~t,j​⋅Dt​Dt,¬0​​
+Eq. 12–13
+
+ Dt,¬0Dt=1−ezt,0Dt=1−At,0,1−At,0=11+exp⁡(zt,0−log⁡Dt,¬0)=σ(LSEt,¬0−zt,0) $\frac{D_{t,\neg0}}{D_t}=1-\frac{e^{z_{t,0}}}{D_t}=1-A_{t,0},\qquad 1-A_{t,0}=\frac{1}{1+\exp\big(z_{t,0}-\log D_{t,\neg0}\big)}=\sigma\big(\mathrm{LSE}_{t,\neg0}-z_{t,0}\big)$ ​Dt,¬0​​=1−Dt​ezt,0​​=1−At,0​,1−At,0​=1+exp(zt,0​−logDt,¬0​)1​=σ(LSEt,¬0​−zt,0​)
+Eq. 15–16
+
+ 常見錯誤
+
+ 把 Vanilla 的 Eq. 3 當成恆等式。它依賴 v0≈0 $v_0\approx0$ ​≈0，誤差是 At,0v0 $A_{t,0}v_0$ ​v0​；Sink Attention 才恰好成立。
+
+ C1一個 head 的隱式門控
+
+ 示意資料：6 個真實 token（0 號為第一個 token），內容 logit 與二維 value 為本頁自訂。拖動滑桿，比較兩種門控算法與兩種輸出算法。
+
+ VanillaSink
+
+ sink 成分（斜線）內容 tokenO 直接計算O = G·Σ Ã v
+
+ 第一個 token 的 logit z04.0
+
+ 內容 logit 平移 s0.0
+
+ sink 參數4.0
+
+ 第一個 token 的 value 長度 ρ0.00
+
+ 讀數
+ Asink $A_{\text{sink}}$ ​0.8034
+
+ 1−Asink $1-A_{\text{sink}}$ ​0.1966
+
+ σ(LSE¬0−z0) $\sigma(\mathrm{LSE}_{\neg0}-z_0)$ ​−z0​)0.1966
+
+ LSE¬0 $\mathrm{LSE}_{\neg0}$ ​2.5925
+
+ O $O$ 直接計算(-0.0525, 0.0815)
+
+ O=G∑A~v $O=G\sum\tilde A v$ v(-0.0525, 0.0815)
+
+ 兩種輸出之差0
+
+ Vanilla：sink 成分是第一個 token；ρ > 0 時兩種輸出的差恰為 A0·ρ。
+
+ 示意資料：z1..5 = (1.0, 0.5, 2.0, −0.5, 0.0) + s；v1..5 = (1,0)、(0,1)、(−1,0.5)、(0.5,−1)、(0.8,0.8)；v0 = ρ·(1/√2, 1/√2)。讀數由本頁依 Eq. 3、4、16、23 即時計算。
+
+ A_sink = 0.8034，G = 0.1966，兩種輸出之差 0
+
+ 預設值下，Vanilla 的 Asink=0.8034 $A_{\text{sink}}=0.8034$ ​=0.8034，兩種門控算法都得 G=0.1966 $G=0.1966$ 。把 ρ $\rho$ 拉到 1，兩種輸出相差 0.8034，正好是 A0ρ $A_0\rho$ ​ρ；切到 Sink，不論 ρ $\rho$ 多大，差都是 0。
+
+ 05 · 原生 MoE
+
+ 多個 head 與門控構成原生 MoE
+
+ 專家混合模型（Mixture-of-Experts，MoE）有兩個要素：彼此獨立的專家模組，以及決定各專家貢獻多少的路由機制（Shazeer et al., 2017；Fedus et al., 2021）。注意力層正好具備這兩者：多個 head 是獨立的專家，sink 形成的門控 G=1−Asink $G=1-A_{\text{sink}}$ ​ 是路由器。所以論文說 attention sink 在注意力層裡形成原生 MoE（Sec. 3.1）。作者指出，隱式門控與 Gated Attention 的兩個核心設計一致：(1) head 專屬，每個 head 有自己的 sink 權重，門控彼此獨立；(2) 有 sigmoid 形式，而 Qiu et al. (2025b) 的實驗發現 sigmoid 是門控的最佳選擇。差別只在 Gated Attention 的門控由一個獨立的投影 Wθ $W_\theta$ ​ 算出（顯式），Vanilla 與 Sink 的門控藏在 softmax 裡（隱式）。
+
+ Sec. 6.2 討論了這個觀點的限制。標點等 token 也可能成為局部 sink（Yu et al., 2024），但它們常匯集前文資訊，不一定只收權重而不貢獻輸出（原文 pure attention dumps；Chen et al., 2024）；第一個 token 在 causal mask 下語意有限，較可靠（Barbero et al., 2025）。更一般的隱式門控可寫成
+
+ Gtl,h=1−∑j∈Sl,hAt,jl,h $G_t^{l,h}=1-\sum_{j\in S^{l,h}}A^{l,h}_{t,j}$ l,h​=1−j∈Sl,h∑​At,jl,h​
+Sec. 6.2
+
+ Sl,h $S^{l,h}$ 是 sink 類成分的集合，Eq. 4 是 S $S$ 只含一個成分的特例。DeepSeek-V4 的 sink 參數沒有收下全部多出來的權重，第一個 token 仍有大量權重，這時 Asink $A_{\text{sink}}$ ​ 應同時計入兩者；實務上可用「高注意力權重 + 低 value 範數」找出這類成分。Gated Attention 也可能另外形成隱式門控（若某些 token 收到多出來的權重且 value 小），所以一個 head 的啟用程度可能由多個門控共同決定。
+
+ 延伸閱讀：Sink 即 native MoE、head collapse 與 sink-aware load balancing、MoE 與條件式計算的發展
+
+ 06 · Query／key 幾何
+
+ 第一個 token 當 sink 會限制 query 與 key 的分布
+
+ 先前研究已知 attention sink 的負面效應：造成極端的激活離群值，使量化困難；降低模型表達能力；而消除 sink 能提升長脈絡表現（Sec. 3.2 引用）。這些研究沒有解釋為什麼。作者用 Fig. 3 回答：取 LongBench 的 2k 個 token，把 query 與 key 向量做 PCA 投影到二維。PCA（主成分分析）找出資料變異最大的兩個正交方向，把高維向量投影到這兩個方向上畫成平面圖。
+
+ Vanilla Attention 的模型（Fig. 3(a)(b)，(c) 為示意圖）呈現兩極結構：為了維持第一個 token 的高權重，後續 token 的 query 聚在 k0 $k_0$ ​ 附近，key 被推離 k0 $k_0$ ​。query 只能在很窄的角度範圍內變化，key 的有效維度也受限，點積的相對差異被壓縮，softmax 區分候選 token 的精度下降；在長脈絡中這會產生注意力雜訊（Liu et al., 2023），降低模型取回相關資訊的能力。
+
+ Sink Attention 與 Gated Attention 的模型（Fig. 3(d)(e)，(f) 為示意圖）中，k0 $k_0$ ​ 不再占據特殊位置，query 與 key 分散分布，沒有明顯的兩極化。softmax 可以用完整的表示能力區分 token，這對長脈絡特別有利。
+
+ 示意兩種 query／key 分布
+
+ 示意，非論文數據：點的位置由固定 seed 產生，只呈現 Sec. 3.2 描述的形狀。
+
+ query（圓點）key（方形）k0（星形）
+
+ 07 · Head collapse
+
+ 只有少數 head 有貢獻：head collapse
+
+ 先前研究發現只有固定一小部分 head 真正參與生成。DuoAttention（Xiao et al., 2024）顯示重要的 head 在不同資料集間一致；Sandoval-Segura et al. (2025) 與 Sok et al. (2026) 把超過 25% 的 head 歸零，模型準確率仍然維持（Sec. 4.1）。從原生 MoE 的角度看，這就是 MoE 的專家崩塌（expert collapse）：模型反覆依賴少數幾個專家。作者稱之為 head 崩塌（head collapse）。
+
+ 門控值提供了量化每個 head 貢獻的方法。head h $h$ 在第 l $l$ 層的重要度定義為一個 batch 中所有 token 的平均門控值：
+
+ Impl,h=1∣T∣∑(i,t)∈TGi,tl,h $\mathrm{Imp}^{l,h}=\frac{1}{|\mathcal T|}\sum_{(i,t)\in\mathcal T}G^{l,h}_{i,t}$ =∣T∣1​(i,t)∈T∑​Gi,tl,h​
+Eq. 5
+
+ T $\mathcal T$ 是 batch 中所有 token（i $i$ 為樣本、t $t$ 為位置）。Gated Attention 用 Eq. 2 的門控，Vanilla 與 Sink 用 Eq. 4。每個門控值都在 0 與 1 之間，所以 Imp∈[0,1] $\mathrm{Imp}\in[0,1]$ 本頁推導；Vanilla 在 t=0 $t=0$ 時只有一個 token，A0,0=1 $A_{0,0}=1$ ​=1、G=0 $G=0$ ，論文沒有說明是否排除 t=0 $t=0$ 。各層的不平衡用變異係數（coefficient of variation，CV）衡量，再對層平均：
+
+ Head Imbalance=1NL∑l=1NLCV({Impl,h}h=1Nh),CV(⋅)=std(⋅)mean(⋅) $\text{Head Imbalance}=\frac1{N_L}\sum_{l=1}^{N_L}\mathrm{CV}\big(\{\mathrm{Imp}^{l,h}\}_{h=1}^{N_h}\big),\qquad \mathrm{CV}(\cdot)=\frac{\mathrm{std}(\cdot)}{\mathrm{mean}(\cdot)}$ ​1​l=1∑NL​​CV({Impl,h}h=1Nh​​),CV(⋅)=mean(⋅)std(⋅)​
+Eq. 6
+
+ 總結兩個定義：Imp $\mathrm{Imp}$ 是所有 token 上門控值 G $G$ 的平均（Eq. 5）；Head Imbalance 是各層 CV 的平均，CV = std/mean（Eq. 6）。手算一例：一層有 4 個 head，Imp=(0.9,0.1,0.1,0.1) $\mathrm{Imp}=(0.9,0.1,0.1,0.1)$ 。平均 mean = 0.3，母體標準差 std =(0.62+3×0.22)/4=0.12=0.3464 $=\sqrt{(0.6^2+3\times0.2^2)/4}=\sqrt{0.12}=0.3464$ +3×0.22)/4​=0.12​=0.3464，所以 CV = 0.3464 / 0.3 = 1.1547（母體 std）。論文沒有說明 std 用母體（除以 N $N$ ）或樣本（除以 N−1 $N-1$ ）版本，本頁一律用母體版本。
+
+ Fig. 4（LLaMA-3.1-8B、GPT-OSS-20B、Qwen3-Next-80B-A3B）與 App. C（以 GSM8K 的 500 個樣本計算；Fig. 10 的六個 GPT-OSS 與 LLaMA 模型、Fig. 11 的十個 Qwen2.5／Qwen3 模型，共 16 個）都顯示：三種機制都有少數高重要度 head 與許多低重要度 head。App. C 另指出模型越大，崩塌越嚴重。Qwen3-Next 使用逐元素（element-wise）門控，論文先在每個 head 內對維度平均，再套用 Eq. 5。
+
+ Fig. 5 追蹤從頭訓練時的 Head Imbalance：Sec. 4.1 概括為不平衡在早期上升、最後停在較高水準，Sec. 5.2 再細分（第 11 節）。作者認為某些 head 在早期占優勢後得到較多的更新（原文 attract disproportionate updates）。崩塌有三個後果（Sec. 4.1）：有效參數量低於名目參數量；不平衡妨礙模型學習多樣、專門化的表示；崩塌的 head 在訓練與推論時仍消耗運算。
+
+ 08 · 輔助損失
+
+ 輔助損失懲罰各層重要度的變異係數
+
+ 從頭訓練的模型，作者借用 MoE 的負載平衡做法（Shazeer et al., 2017；Fedus et al., 2021），直接最小化各層重要度的 CV（Sec. 4.2）：
+
+ Laux=λ∑l=1NLNh[CV({Impl,h}h=1Nh)]2,L=Lbase+Laux $\mathcal L_{\text{aux}}=\lambda\sum_{l=1}^{N_L}N_h\Big[\mathrm{CV}\big(\{\mathrm{Imp}^{l,h}\}_{h=1}^{N_h}\big)\Big]^2,\qquad \mathcal L=\mathcal L_{\text{base}}+\mathcal L_{\text{aux}}$ ​=λl=1∑NL​​Nh​[CV({Impl,h}h=1Nh​​)]2,L=Lbase​+Laux​
+Eq. 7
+
+ Lbase $\mathcal L_{\text{base}}$ ​ 是一般的語言模型損失。Eq. 7 即 Laux=λ∑lNh[CV]2 $\mathcal L_{\text{aux}}=\lambda\sum_lN_h[\mathrm{CV}]^2$ ​=λ∑l​Nh​[CV]2，從頭訓練時 λ=10−4 $\lambda=10^{-4}$ （Sec. 5.1）。CV 不隨所有 head 同乘一個倍數而改變，所以這個損失只要求各 head 相對一致，不規定它們的平均水準。用母體 std 時，N⋅CV2=∑h(xh/μ−1)2 $N\cdot\mathrm{CV}^2=\sum_h(x_h/\mu-1)^2$ =∑h​(xh​/μ−1)2本頁推導，xh $x_h$ ​ 是 head h $h$ 的重要度、μ $\mu$ 是平均；第 07 節的例子 (0.9,0.1,0.1,0.1) $(0.9,0.1,0.1,0.1)$ 得到 N⋅CV2=22+3×(2/3)2=5.333 $N\cdot\mathrm{CV}^2=2^2+3\times(2/3)^2=5.333$ =22+3×(2/3)2=5.333。也就是說，Eq. 7 的 Nh $N_h$ ​ 把每個 head 相對平均的偏差平方加總起來。
+
+ 推導：恆等式與梯度
+
+ 記 S=∑i(xi−μ)2 $S=\sum_i(x_i-\mu)^2$ ​(xi​−μ)2，母體 std2=S/N $\mathrm{std}^2=S/N$ =S/N，所以 N⋅CV2=N⋅S/Nμ2=Sμ2=∑i(xiμ−1)2 $N\cdot\mathrm{CV}^2=N\cdot\frac{S/N}{\mu^2}=\frac{S}{\mu^2}=\sum_i\big(\frac{x_i}{\mu}-1\big)^2$ =N⋅μ2S/N​=μ2S​=∑i​(μxi​​−1)2。對 xh $x_h$ ​ 微分（∂μ/∂xh=1/N $\partial\mu/\partial x_h=1/N$ ​=1/N，∂S/∂xh=2(xh−μ) $\partial S/\partial x_h=2(x_h-\mu)$ ​=2(xh​−μ)）：
+
+ ∂(NCV2)∂xh=2(xh−μ)μ2−2SNμ3 $\frac{\partial(N\mathrm{CV}^2)}{\partial x_h}=\frac{2(x_h-\mu)}{\mu^2}-\frac{2S}{N\mu^3}$ ​∂(NCV2)​=μ22(xh​−μ)​−Nμ32S​
+本頁推導
+
+ 第一項把高於平均的 head 往下推、低於平均的往上推；第二項對所有 head 相同且為負，在梯度下降中使所有 head 一起增加。兩項合起來滿足 ∑hxh ∂(NCV2)/∂xh=0 $\sum_hx_h\,\partial(N\mathrm{CV}^2)/\partial x_h=0$ ​xh​∂(NCV2)/∂xh​=0，這是縮放不變的代數形式。
+
+ 第 09 節會說明微調時的另一種版本，C2 先把它一起算出來，所以這裡先定義兩個名詞：每層重要度最高的 m $m$ 個 head 稱為共享 head（shared heads），其餘稱為路由 head（routed heads）；微調版的損失只對 routed heads 計算 CV（Eq. 8）：Laux=λ∑l(Nh−m)[CV({Impl,h:h∉Tml})]2 $\mathcal L_{\text{aux}}=\lambda\sum_l(N_h-m)[\mathrm{CV}(\{\mathrm{Imp}^{l,h}:h\notin\mathcal T_m^l\})]^2$ ​=λ∑l​(Nh​−m)[CV({Impl,h:h∈/Tml​})]2，Tml $\mathcal T_m^l$ l​ 是第 l $l$ 層 top-m $m$ head 的集合。為什麼微調時要這樣分，在第 09 節說明。
+
+ C2CV、N·CV² 與兩種輔助損失
+
+ 示意資料：β 是本頁示意輪廓的參數，β = 0 時所有 head 相同，越大越集中在少數 head；m 由讀者選（論文未給 m 值）。讀數為單層。
+
+ shared head（斜線，頂端 S）routed head全部平均 μrouted 平均 μr
+
+ Nh101316
+
+ 崩塌程度 β4.0
+
+ shared head 數 m3
+
+ 顯示梯度下降方向
+
+ 讀數（λ 欄為單層損失）μ0.2869
+std（母體）0.2575
+CV0.8974
+N·CV²12.8858
+Σ(x/μ − 1)²12.8858
+Eq. 7 損失（λ = 10⁻⁴）0.001289
+shared head2、9、11
+μr（routed 平均）0.1787
+CVr0.6579
+(N − m)·CVr²5.6261
+Eq. 8 損失（λ = 10⁻²）0.056261
+Σ x·梯度≈ 0
+
+ 各 head 數值表
+每個 head 的重要度、類別與 ∂(N·CV²)/∂ImpheadImp類別梯度
+00.454routed-1.546
+10.113routed-9.850
+20.739shared5.376
+30.157routed-8.780
+40.066routed-10.969
+50.232routed-6.955
+60.078routed-10.686
+70.360routed-3.845
+80.098routed-10.206
+90.578shared1.456
+100.132routed-9.386
+110.950shared10.493
+120.189routed-7.988
+130.072routed-10.846
+140.287routed-5.606
+150.087routed-10.478
+
+ 輪廓（示意）：Imph = 0.05 + 0.9·exp(−β·rh/(Nh−1))，rh = (7h + 3) mod Nh。讀數由本頁依 Eq. 6–8 即時計算；N·CV² = Σ(x/μ−1)² 與梯度式為本頁推導（母體 std）。
+
+ N = 16，β = 4.0，CV = 0.8974，N·CV² = 12.8858
+
+ 預設值（Nh=16 $N_h=16$ ​=16、β = 4）下 CV = 0.8974、N·CV² = 12.8858，與 Σ(x/μ−1)² 相同。打開梯度方向可以看到：除了最高的三個 head 向下，其餘都向上。
+
+ 常見錯誤
+
+ std 的版本。論文未說明；PyTorch 的 torch.std 預設除以 N−1 $N-1$ 。損失中的 CV2 $\mathrm{CV}^2$ 兩版相差 N/(N−1) $N/(N-1)$ 倍（std 與 CV 本身相差 N/(N−1) $\sqrt{N/(N-1)}$ ​ 倍），會改變 λ $\lambda$ 的有效大小。
+
+ λ $\lambda$ 混用。從頭訓練 10−4 $10^{-4}$ 、微調 10−2 $10^{-2}$ 。
+
+ 跨機制比較 CV 的絕對值。Fig. 5 中 Vanilla 的縱軸刻度為 1e-3（0.6B）與 1e-4（2B），Sink、Gated 為 1e-1，論文沒有討論這個差異。只比較同一機制有無輔助損失。
+
+ 延伸閱讀：Expert collapse 與 MoE 的 load balancing
+
+ 09 · 微調
+
+ 微調時保留 shared heads，只平衡 routed heads
+
+ 直接用 Eq. 7 微調已訓練好的模型，會出現作者稱為 head 釘住效應（head pinning effect）的現象（Sec. 4.2、App. D）。Fig. 12 中圖顯示，Qwen3-8B 用 Eq. 7 微調一個 epoch 後，幾乎所有 head 都有一致的高重要度。CV 確實變小了，但這不是期望的平衡。作者的解釋：預訓練時崩塌出的主導 head 對生成已不可或缺，降低它們會傷害表現，所以它們的門控在微調中幾乎不變（原文 resist change）；損失要求一致時，其餘 head 的門控升高到與主導 head 相近。簡言之，head pinning 是：主導 head 的門控幾乎不變（原文 resist change），其餘 head 的門控升高到與之相近，結果幾乎所有 head 都變高。對策借鑑 DeepSeekMoE 的共享專家與路由專家（Dai et al., 2024）。每層 top-m $m$ 個最重要的 head 為 shared heads，不放進損失，保留已學到的行為；只對其餘 routed heads 計算 (Nh−m)[CV]2 $(N_h-m)[\mathrm{CV}]^2$ ​−m)[CV]2，微調時 λ=10−2 $\lambda=10^{-2}$ （Sec. 5.1）。令 Tml=arg⁡topm{Impl,h}h=1Nh $\mathcal T_m^l=\arg\mathrm{top}_m\{\mathrm{Imp}^{l,h}\}_{h=1}^{N_h}$ l​=argtopm​{Impl,h}h=1Nh​​：
+
+ Laux=λ∑l=1NL(Nh−m)[CV({Impl,h:h∉Tml})]2 $\mathcal L_{\text{aux}}=\lambda\sum_{l=1}^{N_L}(N_h-m)\Big[\mathrm{CV}\big(\{\mathrm{Imp}^{l,h}:h\notin\mathcal T_m^l\}\big)\Big]^2$ ​=λl=1∑NL​​(Nh​−m)[CV({Impl,h:h∈/Tml​})]2
+Eq. 8
+
+ Fig. 12 右圖：用 Eq. 8 微調後，routed heads 之間較平均，shared heads 維持高啟用。論文沒有給 m $m$ 的值，也沒有說明 Tml $\mathcal T_m^l$ l​ 是在微調前選定，還是每個 batch 重選。
+
+ 下面的玩具模型只示範一件事：固定幾個高重要度 head 時，以 Eq. 7 最小化 CV 的梯度下降會讓其餘 head 一起升高，方向與 App. D 的描述相同。主導 head 的「幾乎不變」在這裡以凍結表示，所以 pinning 的結果直接來自這個設定，玩具模型不證明論文的因果解釋。
+
+ C3head pinning 的玩具動態
+
+ 本頁玩具模型，非論文結果：一層 16 個 head，Imph = σ(θh)，不模擬 token 與注意力，沒有 Lbase；凍結的 top-m 代表「幾乎不變」的主導 head；純梯度下降，學習率 0.05（λ 併入）。
+
+ Eq. 7Eq. 8
+
+ 凍結 top-m
+
+ shared／凍結 head 數 m3
+
+ 執行重設
+
+ routed 平均（淺色帶為最小–最大）shared head損失
+
+ 步數 0　損失 12.8858　routed 平均 0.1787　routed 最小／最大 0.0665／0.4544　全部 CV 0.8974
+
+ 初始為 C2 的 β = 4 輪廓；shared／凍結集合由初始 Imp 決定，訓練中不重選。Eq. 7 + 凍結（m = 3）時，使 16 個 head 的 CV 最小的 routed 共同值為 0.786（本頁推導，格點搜尋），3000 步時為 0.7805。
+
+ 在這個玩具模型中（皆非論文結果）：Eq. 7 加凍結時，routed heads 一起上升到約 0.78，高於 shared 中的 0.739 與 0.578、低於 0.950；Eq. 7 不凍結時，所有 head 收斂到同一個中間值 0.442；Eq. 8 時，routed heads 收斂到同一個值約 0.161，shared 維持 0.950、0.739、0.578。
+
+ 常見錯誤
+
+ 微調時直接用 Eq. 7。會造成 head pinning；改用 Eq. 8。m $m$ 值論文未給。
+
+ 10 · 實作
+
+ 門控值可由 Flash Attention 的 LSE 算出
+
+ G=1−Asink $G=1-A_{\text{sink}}$ ​ 需要注意力權重，但 Flash Attention 等融合 kernel 不輸出注意力權重；改用 eager 模式取出權重會犧牲效率（Sec. 4.2）。作者改用 kernel 在前向計算中本來就算好的 LSE。
+
+ Vanilla：G=σ(LSE¬0−qt⊤k0/dh) $G=\sigma\big(\mathrm{LSE}_{\neg0}-q_t^\top k_0/\sqrt{d_h}\big)$ ​−qt⊤​k0​/dh​​)。呼叫 out, lse = torch.ops.aten._scaled_dot_product_flash_attention(q, k, v)，由回傳的 LSE 與第一個 token 的 query-key 乘積算出 G $G$ ，不需實體化完整的權重矩陣。
+
+ Sink：現有做法（Agarwal et al., 2025）用非融合運算，顯著降低效率。作者改為對所有 token 跑標準 Flash Attention，再乘上 G=σ(LSE−sink) $G=\sigma(\mathrm{LSE}-\mathrm{sink})$ ，LSE 由 kernel 取得；同一個 G $G$ 直接供輔助損失使用。
+
+ 整理：作者用 kernel 回傳的 LSE 得到門控：Sink 為 σ(LSE−sink) $\sigma(\mathrm{LSE}-\mathrm{sink})$ 並乘到標準 Flash 輸出，Vanilla 為 σ(LSE¬0−q⊤k0/dh) $\sigma(\mathrm{LSE}_{\neg0}-q^\top k_0/\sqrt{d_h})$ ​−q⊤k0​/dh​​)；額外訓練延遲小於 2%（Sec. 5.1）。
+
+ 標準 Flash Attention 對真實 token 正規化，它的輸出就是 ∑jA~t,jvj $\sum_j\tilde A_{t,j}v_j$ ​A~t,j​vj​；由 Eq. 21，Ot=σ(LSEtok−sink)⋅FlashOut $O_t=\sigma(\mathrm{LSE}_{\text{tok}}-\mathrm{sink})\cdot\text{FlashOut}$ ​=σ(LSEtok​−sink)⋅FlashOut 是 Sink Attention 的精確輸出本頁推導。Vanilla 的 Flash 輸出本身就是完整輸出，G $G$ 只用於重要度與輔助損失，不可再乘到輸出上。
+
+ 數值上要注意一點本頁推導。kernel 回傳的 LSE 含第一個 token，論文沒有說明 LSE¬0 $\mathrm{LSE}_{\neg0}$ ​ 如何取得。只用 kernel 的 LSE，可得 G=1−ezt,0−LSE $G=1-e^{z_{t,0}-\mathrm{LSE}}$ ​−LSE，寫成 -expm1(z0 - lse)；先推回 LSE¬0=LSE+log⁡(−expm1(zt,0−LSE)) $\mathrm{LSE}_{\neg0}=\mathrm{LSE}+\log(-\mathrm{expm1}(z_{t,0}-\mathrm{LSE}))$ ​=LSE+log(−expm1(zt,0​−LSE)) 再代入 sigmoid，數學與精度都相同。由含第一個 token 的 LSE 相減，在 A0→1 $A_0\to1$ ​→1 時發生相消：LSE 本身已四捨五入，結果的相對精度流失。若能另外對 j≥1 $j\ge1$ 計算 LSE¬0 $\mathrm{LSE}_{\neg0}$ ​，就沒有這個問題。對 Imp $\mathrm{Imp}$ 而言，這個絕對誤差小於 10−16 $10^{-16}$ ，可以忽略。
+
+ 本節重點：Flash Attention 等融合 kernel 不輸出注意力權重，eager 模式太慢；作者用 kernel 回傳的 LSE 得到門控，Sink 為 σ(LSE−sink) $\sigma(\mathrm{LSE}-\mathrm{sink})$ 並乘到標準 Flash 輸出，Vanilla 為 σ(LSE¬0−q⊤k0/dh) $\sigma(\mathrm{LSE}_{\neg0}-q^\top k_0/\sqrt{d_h})$ ​−q⊤k0​/dh​​)，額外訓練延遲小於 2%。kernel 的 LSE 含第一個 token，論文未說明 LSE¬0 $\mathrm{LSE}_{\neg0}$ ​ 如何取得；由含第一個 token 的 LSE 相減，在 A0→1 $A_0\to1$ ​→1 時相消（本頁推導）。
+
+ 背景（FlashAttention 的標準做法，不是本論文內容）：kernel 把 token 分成區塊依序處理，維護目前的最大值 m $m$ 與以 m $m$ 縮放的指數和 ℓ $\ell$ ；遇到更大的 logit 時把舊的和乘上 em−m′ $e^{m-m'}$ 再加上新區塊，最後 LSE=m+ln⁡ℓ $\mathrm{LSE}=m+\ln\ell$ 。直接加總 ez $e^{z}$ 在 logit 大於約 709.78 時會超出 float64 的範圍。
+
+ C4分塊 LSE 與門控
+
+ 示意資料：12 個 logit 乘上倍率 c，第一個為第一個 token；sink = 3.0 × c。按「下一塊」逐塊更新 m 與 ℓ。
+
+ 區塊大小 B1234612
+
+ logit 倍率 c110200
+
+ SinkVanilla
+
+ 下一塊全部重設
+
+ 5.0首1.2z1-0.3z22.1z30.7z4-1.5z53.0z60.2z71.8z8-0.8z92.6z100.9z11
+
+ 各區塊處理後的狀態區塊mℓm + ln ℓ
+尚未處理
+
+ 結果（全部區塊處理完後顯示）處理完全部 12 個 logit 後顯示
+
+ 分塊更新為 FlashAttention 的標準做法（背景）。門控公式依 Eq. 16、23；三種 Vanilla 算法的比較為本頁推導。
+
+ 不論區塊大小，c = 1 時最終 LSE 都是 5.3308。c = 200 時直接加總溢位，分塊法仍得 1000；Vanilla 只用 kernel LSE 的兩種算法得 0，另行計算 LSE¬0 $\mathrm{LSE}_{\neg0}$ ​ 則得 1.915×10−174 $1.915\times10^{-174}$ 。
+
+ 常見錯誤
+
+ Vanilla 用 Flash 時把 G $G$ 乘到輸出。Vanilla 的輸出不變，G $G$ 只用於重要度與損失；Sink Attention 才是 FlashOut × G $G$ 。
+
+ 用 1−At,0 $1-A_{t,0}$ ​ 直接相減。At,0→1 $A_{t,0}\to1$ ​→1 時相消；至少用 -expm1，若能另外取得 LSE¬0 $\mathrm{LSE}_{\neg0}$ ​ 則用 σ(LSE¬0−zt,0) $\sigma(\mathrm{LSE}_{\neg0}-z_{t,0})$ ​−zt,0​)。
+
+ 直接加總 ez $e^{z}$ 。logit 大於約 709.78 時 float64 溢位；用減最大值或分塊的 m+ln⁡ℓ $m+\ln\ell$ 。
+
+ 11 · 實驗
+
+ 輔助損失在三種機制與兩種情境都提高平均分數
+
+ 實驗分為從頭訓練與微調兩種情境（Sec. 5.1）。
+
+ 實驗設定（Sec. 5.1）
+ 項目從頭訓練微調
+
+ 模型0.6B：20 層、每層 10 head、hidden 1280；1B：26 層、13 head、1664；2B：32 層、16 head、2048Qwen3-4B、Qwen3-8B、LLaMA3.1-8B
+
+ 機制Vanilla、Sink、Gated，各有無輔助損失（六種組合）模型原有機制
+
+ 資料FineWeb-Edu；token 數為參數量的 20 倍（Chinchilla）AceReason-Nemotron（長序列推理）
+
+ 最佳化學習率 0.02，最後 20% 線性衰減到 0；其他依 AdamW 預設LoRA rank 16
+
+ λ1 × 10⁻⁴1 × 10⁻²
+
+ 評測MMLU、GSM8K、HumanEval、ARC-E／C、HellaSwag、PIQA、OpenBookQA、BoolQ、Winogrande；validation BPB推理：ARC、MuSR、GSM8K、MATH-500、Comp-Math、ProcessBench；LongBench：HotpotQA、Qasper、TriviaQA、NarrativeQA、2WikiMQA、MultiFieldQA
+
+ 硬體／成本額外訓練延遲小於 2%NVIDIA A100
+
+ Table 1 平均分數（base → base+aux）與 2B 的 validation BPB
+ 規模VanillaSinkGated
+
+ 0.6B 平均39.54 → 40.8240.31 → 41.1140.43 → 41.35
+
+ 1B 平均42.59 → 43.3543.27 → 43.7542.69 → 43.98
+
+ 2B 平均45.46 → 46.8346.35 → 46.5046.30 → 47.70
+
+ 2B BPB0.7243 → 0.71980.7226 → 0.72020.7232 → 0.7197
+
+ 從頭訓練的 2B 模型，加上輔助損失後的平均分數為：Vanilla 45.46→46.83、Sink 46.35→46.50、Gated 46.30→47.70（Table 1）。0.6B 的增幅為 +1.28、+0.80、+0.92，1B 為 +0.76、+0.48、+1.29。作者的第一個結論是 Sink 與 Gated 在三個規模都優於 Vanilla，只用 base loss 的欄位符合這一點。作者另寫 Gated「在各規模最好」；照數字，這只在 base+aux 欄成立（41.35、43.98、47.70 皆最高），只用 base loss 時 1B、2B 是 Sink 略高（43.27 對 42.69、46.35 對 46.30）。第二個結論是加上輔助損失後，平均分數與 BPB 在所有機制與規模都改善；個別基準不一定，例如 2B Sink 的 BoolQ 由 59.80 降到 57.40。
+
+ Fig. 5：加上輔助損失後 CV 維持在低值。不加時，Gated 在早期急升後持平；Vanilla 與 Sink 逐步上升（原文 gradual increase），Vanilla 的震盪較大。作者的解釋是：Gated 的顯式門控讓 head 立即專門化；Vanilla 與 Sink 要先建立 sink 的權重分配才有隱式門控；Vanilla 還必須同時學會 value drain。Fig. 6（2B）：不平衡時啟用集中在少數 head，且在不同資料集間一致；平衡後較平均，並隨資料集改變。Fig. 7：訓練全程 Sink 與 Gated 的準確率高於 Vanilla。Fig. 8：早期輔助損失影響很小，後期的訓練損失與 validation BPB 較低。
+
+ Table 2 平均分數（base → base+aux）
+ 模型推理LongBench
+
+ Qwen3-4B74.73 → 75.2451.46 → 52.75
+
+ Qwen3-8B74.31 → 76.0150.67 → 55.38
+
+ LLaMA3.1-8B56.50 → 58.9740.51 → 43.98
+
+ 從頭訓練的 2B 模型加上輔助損失後為 Vanilla 45.46→46.83、Sink 46.35→46.50、Gated 46.30→47.70（Table 1）；微調的結果：LLaMA3.1-8B 推理平均 56.50→58.97、LongBench 平均 40.51→43.98（Table 2）。作者觀察到較大的模型受益較多，與 MoE 研究中專家越多越需要負載平衡的現象一致；本頁對照：Qwen3-8B 的增幅（+1.70、+4.71）大於 Qwen3-4B（+0.51、+1.29），論文沒有逐一列出增幅。個別任務有下降，例如 LLaMA3.1-8B 的 TriviaQA 由 46.34 降到 41.82。
+
+ 12 · 機制假說
+
+ 有效的門控是 head collapse 的前提
+
+ Sec. 6.1 用 Fig. 9 追蹤三個訓練診斷：value drain（第一個 token value 的 ℓ2 $\ell_2$ ​ 範數除以其他 value 的平均範數）、attention sink（sink 成分的平均權重）、Head Load Imbalance CV。論文據此提出一個假說（hypothesis）：Value Drain → Attention Sink → Implicit Gating → Head Collapse。
+
+ Value Drain
+Attention Sink
+Implicit Gating
+Head Collapse
+
+ 這條鏈（Value Drain → Attention Sink → Implicit Gating → Head Collapse）解釋了三種機制不同的崩塌型態。Gated Attention 的門控從訓練一開始就是顯式的，不需要先建立 sink，所以崩塌可以直接發生，與標準 MoE 的專家崩塌相同，這對應 Fig. 5 中最早、最嚴重的不平衡。Sink Attention 的 sink 沒有 value，模型不需要先壓低某個真實 token 的 value；sink 一取得權重，隱式門控 G=1−Asink $G=1-A_{\text{sink}}$ ​ 就形成，崩塌隨之出現，介於兩者之間。Vanilla Attention 要走完整條鏈：先發展 value drain，讓第一個 token 可以收下多出來的權重而不改變輸出；由此產生的 attention sink 再形成 Eq. 4 的隱式門控；門控生效之後，崩塌才變得明顯。三者不必嚴格分階段，可以在最佳化中共同演化；論文強調的重點是：有效的門控是崩塌的前提。
+
+ 13 · 研究脈絡
+
+ 研究脈絡
+
+ 這條脈絡從 Transformer 的 softmax 注意力開始；StreamingLLM 提出 attention sink 並用於串流推論；後續研究探討 sink 的成因（value drain、over-mixing、massive activation）；另一批研究修改 softmax 或加上門控來消除 sink；MoE 端則有專家崩塌與負載平衡的研究。本論文把兩條線接起來：sink 是隱式門控，head collapse 是專家崩塌。每張卡片連到對應的研究筆記。
+
+ 基礎：softmax 注意力sink 現象與應用sink 成因改 softmax門控MoE 負載平衡本文
+
+ 2017基礎：softmax 注意力Attention Is All You Need
+Vaswani et al.
+softmax attention 與 Transformer；sink 的前提
+arXiv ↗筆記
+2017MoE 負載平衡Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer
+Shazeer et al.
+MoE 與 expert collapse 的來源引用
+arXiv ↗筆記
+2021MoE 負載平衡Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity
+Fedus et al.
+MoE load balancing 的來源引用
+arXiv ↗筆記
+2023門控Quantizable Transformers: Removing Outliers by Helping Attention Heads Do Nothing
+Bondarenko et al.
+離群值與讓 head「不作為」；gating 類方法的引用
+arXiv ↗筆記
+2023sink 現象與應用Efficient Streaming Language Models with Attention Sinks
+Xiao et al.
+提出 attention sink 與 StreamingLLM
+arXiv ↗筆記
+2024MoE 負載平衡DeepSeekMoE: Towards Ultimate Expert Specialization in Mixture-of-Experts Language Models
+Dai et al.
+shared experts；微調時 shared heads 的依據
+arXiv ↗筆記
+2024sink 成因When Attention Sink Emerges in Language Models: An Empirical View
+Gu et al.
+sink 的出現條件與 sink attention ratio
+arXiv ↗筆記
+2024sink 現象與應用DuoAttention: Efficient Long-Context LLM Inference with Retrieval and Streaming Heads
+Xiao et al.
+只有部分 head 為 Retrieval Heads
+arXiv ↗筆記
+2024sink 成因Active-Dormant Attention Heads: Mechanistically Demystifying Extreme-Token Phenomena in LLMs
+Guo et al.
+sink、value drain 與 active-dormant 機制
+arXiv ↗筆記
+2025sink 成因Why do LLMs attend to the first token?
+Barbero et al.
+sink 讓模型避免 over-mixing
+arXiv ↗筆記
+2025改 softmaxSoftpick: No Attention Sink, No Massive Activations with Rectified Softmax
+Zuhri et al.
+以 rectified softmax 消除 sink
+arXiv ↗筆記
+2025門控Gated Attention for Large Language Models: Non-linearity, Sparsity, and Attention-Sink-Free
+Qiu et al.
+head-specific sigmoid gate；Qwen3-Next 的 Gated Attention
+arXiv ↗筆記
+2025改 softmaxgpt-oss-120b & gpt-oss-20b Model Card
+OpenAI
+Sink Attention（softmax 分母加入可學習 sink）
+arXiv ↗筆記
+2025sink 成因Attention Sinks and Compression Valleys in LLMs are Two Sides of the Same Coin
+Queipo-de-Llano et al.
+sink 與 massive activation 的關聯
+arXiv ↗筆記
+2026本文Attention Sink Forges Native MoE in Attention Layers: Sink-Aware Training to Address Head Collapse
+Fu et al.
+本論文：sink 為隱式 gate，head collapse 與 sink-aware load balancing
+arXiv ↗筆記
+
+ 14 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 本文以第一個 token（Vanilla）、sink 參數（Sink）與顯式門控（Gated）估計 head 的啟用程度。Sec. 6.2 指出，其他語意少、收到多出來權重的 token 也可能形成隱式門控，Gated Attention 中顯式門控與隱式門控也可能並存。完整刻畫這些隱藏的 sink 集合，以及它們與顯式門控的交互，論文列為未來的研究方向。
+
+ 研究筆記（依閱讀順序）
+
+ Attention Sink 與 Native MoE 的研究脈絡總覽總覽
+
+ softmax 正規化與第一個 token 的高注意力sink 為何出現的基本前提
+
+ Attention sink 在 KV cache 與串流推論的應用StreamingLLM 與其後續
+
+ Attention sink 的成因研究：value drain、over-mixing、massive activation成因
+
+ 以修改 softmax 消除 sink：Softpick 與 Sink Attention改 softmax
+
+ Gated Attention：head-specific 的顯式 gating門控
+
+ Expert collapse 與 MoE 的 load balancingMoE 端的問題與解法
+
+ Sink 即 native MoE、head collapse 與 sink-aware load balancing本論文的內容
+
+ MoE 與條件式計算的發展站內既有筆記
+
+ MoE 作為條件式記憶站內既有筆記
+
+ Zizhuo Fu, Wenxuan Zeng, Runsheng Wang, Meng Li. Attention Sink Forges Native MoE in Attention Layers: Sink-Aware Training to Address Head Collapse. ICML 2026. arXiv:2602.01203.
+
+ 本頁的方程式與數字取自論文 v3；標示「本頁推導」的內容為本頁自行推導，並非論文結論；標示「示意」的資料為本頁自訂。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記
