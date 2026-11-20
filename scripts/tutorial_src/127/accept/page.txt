@@ -1,0 +1,655 @@
+SOAR 互動教學：讓模型為自己出題
+
+跳到內容
+
+ No. 127
+ 讓模型為自己出題（SOAR）
+
+00 摘要01 全錯的題目02 RLOO03 研究問題04 雙層最佳化05 老師的獎勵06 學生晉升07 選讀：Prop. 108 評估方式09 主要結果10 獎勵比較11 適切與正確12 消融與實作13 研究脈絡14 限制與延伸
+
+00摘要
+01全錯的題目
+02RLOO
+03研究問題
+04雙層最佳化
+05老師的獎勵
+06學生晉升
+07選讀：Prop. 1
+08評估方式
+09主要結果
+10獎勵比較
+11適切與正確
+12消融與實作
+13研究脈絡
+14限制與延伸
+
+ No. 127 · 互動教學 · arXiv 2601.18778 · 2026
+
+ 讓模型為自己出題：在可學習性的邊界上訓練推理
+
+ 同一個模型分成老師與學生。老師出練習題，獎勵是學生之後在真難題上的進步。
+
+ Shobhita Sundaram、John Quan、Ariel Kwiatkowski、Kartik Ahuja、Yann Ollivier、Julia Kempe（MIT、Meta FAIR、NYU）〈Teaching Models to Teach Themselves: Reasoning at the Edge of Learnability〉
+
+ 01 · 問題模型對一道題取樣 128 次全錯，就無法從答對的經驗中學習；本文研究的就是這種題目。
+
+ 02 · 方法同一個模型複製成老師與學生：老師出練習題，學生練習後在難題上答對越多，老師的獎勵越高。老師從沒看過難題。
+
+ 03 · 結果在 MATH 的這類難題上，取樣 32 次至少答對一次的比例由 9.6% 提高到 18.9%（加入老師累積的題目後重新訓練，Table 4）。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · 全錯的題目
+
+ 模型全部答錯的題目無法提供訓練訊號
+
+ 本節符號 p $p$ ：模型單次取樣答對某道難題的機率（本頁使用）；pass@k $k$ ：取樣 k $k$ 次至少答對一次的比例。
+
+ 以可驗證獎勵做強化學習（RLVR，reinforcement learning with verifiable rewards）的做法是：讓語言模型對一道數學題產生完整的解答，由程式檢查最後的答案是否與標準答案相同，答對就給獎勵，再依獎勵調整模型參數，使得到獎勵的解答更常出現。模型每次產生解答都帶有隨機性（溫度 1.0 的取樣），所以同一題可以取樣多次。pass@k $k$ 是「每題取樣 k $k$ 次、至少有一次答對」的題目比例。
+
+ 這種方法只能從模型「偶爾答對」的題目學到東西。作者用 Llama-3.2-3B-Instruct 對 MATH、HARP、OlympiadBench 三個數學題庫的每一題取樣 128 次（token 上限 1024、溫度 1.0），只保留 128 次全錯的題目，稱為 fail@128 子集，再隨機對半切成訓練集 Dtrain $D_{train}$ ​ 與測試集 Dtest $D_{test}$ ​（Sec. 4.1、App. B.5）。題數因此大幅減少：MATH 的 5000 題中只有 359 + 360 = 719 題留下，HARP 4768 題留下 714 + 714 題，OlympiadBench 674 題留下 158 + 158 題（Table 2）。MATH 只從官方的 5000 題測試集取題，因為模型在官方訓練集與測試集上的零樣本正確率是 60% 對 37%，作者懷疑模型看過訓練題。作者說 128 是「實用但嚴格」的門檻：在這個門檻下，直接訓練只有邊際改善。
+
+ 0/128 不等於「永遠答不對」本頁推導。如果某題單次答對的機率是 p $p$ 、各次取樣獨立，128 次全錯的機率是 (1−p)128 $(1-p)^{128}$ 。取 p=0.002 $p=0.002$ （依 Table 4 基礎模型 pass@1 = 0.3% 選的示範值）示範值，通過 0/128 篩選的機率是 (1−p)128=0.774 $(1-p)^{128}=0.774$ =0.774，而這題的 pass@32 是 1−(1−p)32=0.062 $1-(1-p)^{32}=0.062$ =0.062。所以 0/128 的題目仍可能偶爾答對；篩選留下的不一定是 p=0 $p=0$ 的題目。論文對「基礎模型在 fail@128 測試集上 pass@32 仍有 7.5%（MATH）」的解釋是：推論時用的隨機種子和篩選時不同（Sec. 5.1）。本頁的單題模型只是另一種描述方式，不是論文的主張。
+
+ 延伸閱讀：RLVR 在低成功率資料上的停滯
+
+ 02 · RLOO
+
+ RLOO 以群組內比較產生優勢
+
+ 本節符號 全頁三個容易混淆的數：G $G$ ＝每題取樣的解答數，g $g$ ＝老師每步產生的資料集數，r $r$ ＝每個資料集訓練的學生數。G $G$ ：同一題取樣的解答數（學生群組大小）；R(zi) $R(z_i)$ ​)：第 i $i$ 個解答的獎勵；A(zi) $A(z_i)$ ​)：優勢。
+
+ 策略梯度方法的基本元件是：每個解答 z $z$ 的 log 機率梯度 ∇ln⁡π(z) $\nabla\ln\pi(z)$ 指出「怎麼調參數才能讓這個解答更常出現」。把它乘上一個稱為優勢（advantage）的數，比平均好的解答（優勢為正）會變得更常出現，比平均差的（優勢為負）會變得更少出現。
+
+ RLOO（REINFORCE Leave-One-Out，Ahmadian et al., 2024）對同一題取樣 G $G$ 個解答，用「其他 G−1 $G-1$ 個解答的平均獎勵」當比較基準：
+
+ A(zi)=R(zi)−1G−1∑j≠iR(zj),更新方向=∑i=1GA(zi) ∇ln⁡π(zi) $A(z_i)=R(z_i)-\frac1{G-1}\sum_{j\ne i}R(z_j),\qquad \text{更新方向}=\sum_{i=1}^{G}A(z_i)\,\nabla\ln\pi(z_i)$ ​)=R(zi​)−G−11​j=i∑​R(zj​),更新方向=i=1∑G​A(zi​)∇lnπ(zi​)
+Eq. 4（群組大小記為 G）
+
+ 同一式可以改寫成 A(zi)=GG−1(R(zi)−Rˉ) $A(z_i)=\frac{G}{G-1}\big(R(z_i)-\bar R\big)$ ​)=G−1G​(R(zi​)−Rˉ)，Rˉ $\bar R$ 是群組平均 本頁推導，因此一個群組的優勢總和永遠是 0。學生的群組大小是 G=32 $G=32$ （Table 3）。
+
+ 二元獎勵下，全錯的群組沒有梯度 本頁推導。論文把這個情形稱為「稀疏的二元獎勵」（Sec. 1、Sec. 4.1）。如果獎勵只有答對（1）與答錯（0）兩種，一組解答全部答錯時獎勵全為 0，代入 Eq. 4 得到每個 A(zi)=0 $A(z_i)=0$ ​)=0，更新方向是 0，模型完全沒有被推動。群組內同時有對有錯的機率是 1−(1−p)G−pG $1-(1-p)^G-p^G$ −pG；G=32 $G=32$ 、p=0.002 $p=0.002$ 時是 0.062，也就是約 94% 的題目在一次取樣中不提供「往答對方向」的梯度（這個 94% 是二元獎勵模型下的數字）。
+
+ 論文實際使用的學生獎勵不是二元的（App. B.3，用 Math-Verify 套件比對答案，數字照原文印刷）：有 \boxed{} 且答案正確給 120.0；有 boxed、答案錯但標準答案出現在答案字串中給 20.0；有 boxed、答案錯且不含標準答案給 10.0；其他給 0.0。所以實際上全錯的群組，獎勵通常仍有 0、10、20 的差別，梯度不為 0；但這些差別只教「用 boxed 寫出答案」的格式，不教如何答對。
+
+ C1成功率 p 決定訓練訊號
+本頁推導示範值
+
+ 本圖假設同一題每次答對的機率固定為 p、每次取樣獨立，且獎勵只有對與錯兩種（論文的實際獎勵另有格式分數）。論文沒有估計個別題目的 p；預設 p = 0.002 是依 pass@1 = 0.3% 選的示範值。
+
+ 通過 0/128 篩選（圓）pass@k（方）群組有梯度，二元獎勵（三角）
+
+ log₁₀ p −2.70（p = 0.002000）
+
+ 學生群組大小 G
+32128
+
+ k
+1481632
+
+ p0.002000通過 0/128 篩選0.7739pass@80.0159群組有梯度（G = 32）0.0621每 100 題全錯93.8 題
+ p = 0.00200，pass@8 = 0.0159，群組有梯度 0.0621
+
+ 讀數由本頁依 (1 − p)^128、1 − (1 − p)^k、1 − (1 − p)^G − p^G 即時計算（用 log1p／expm1 避免小 p 的相消）。參照線 7.5% 是 Table 4 基礎模型在 MATH fail@128 測試集上的平均 pass@32，不是單題的 p。
+
+ 預設值下（p = 0.002、G = 32、k = 8），通過篩選的機率是 0.7739，pass@8 是 0.0159，群組有梯度的機率是 0.0621，每 100 題約有 93.8 題的群組全錯。把 G 從 32 改成 128（Hard-Only 的加量版本），有梯度的比例變成 0.2261。
+
+ 全頁符號表
+
+ 符號意義
+
+ πϕT $\pi_\phi^T$ T​、πθS $\pi_\theta^S$ S​老師、學生；初始化時兩者都是同一個預訓練模型
+
+ Dtrain $D_{train}$ ​、Dtest $D_{test}$ ​fail@128 題目對半切分出的訓練集與測試集
+
+ G $G$ 學生 RLOO 的群組大小（32；Hard-Only 另有 128）
+
+ g $g$ 、n $n$ 老師每步產生的資料集數（4）、每個資料集的題數（64）
+
+ d $d$ 、Xd $\mathcal X_d$ ​資料集索引與第 d $d$ 個合成資料集
+
+ r $r$ 、j $j$ 每個資料集平行訓練的學生數（4）、學生索引
+
+ QR $Q_R$ ​每個外層步從 Dtrain $D_{train}$ ​ 抽出的 64 道獎勵題
+
+ Rd,j $R_{d,j}$ ​、Rd $R_d$ ​第 j $j$ 個學生的獎勵；r $r$ 個學生的平均
+
+ τ $\tau$ 晉升門檻 0.01
+
+ Dbest $D_{best}$ ​觸發晉升的資料集聯集；第 08 章起稱為 PQ
+
+ π0 $\pi_0$ ​、Sacc $S_{acc}$ ​、πc $\pi_c$ ​Prop. 1 的提議分布、接受集合、限制在 Sacc $S_{acc}$ ​ 上的分布（第 07 章）
+
+ sˉi $\bar s_i$ i​、ui $u_i$ ​學生在合成題 i $i$ 上的平均成功率；可學習性獎勵（論文記為 ri $r_i$ ​）
+
+ 延伸閱讀：RLVR、GRPO 與信用分配瓶頸
+
+ 03 · 研究問題
+
+ 研究問題是模型能否為自己產生合成練習題
+
+ 由易到難排序題目來訓練的課程學習（curriculum learning）有效，但需要人工設計與整理好的中間資料集（Sec. 1）。另一條路是非對稱自我對弈（asymmetric self-play）：一方出題、一方解題，例如 Sukhbaatar et al.（2018）的 Alice–Bob 架構。近期「不用資料」的 LLM 自我對弈系統（Absolute Zero、R-Zero、LSP、SeRL、SQLM）用內在或代理獎勵訓練出題者，例如多數決、可學習性、獎勵模型偏好或梯度大小（App. A.2）。作者引用文獻指出，這類目標容易漂移到退化或學不會的題目，容易發生獎勵駭客（reward hacking：模型提高訓練獎勵，卻沒有完成真正的任務），長時間訓練還可能突然崩潰（Sec. 2）。
+
+ 本文問：模型能不能為自己做不出的題目，產生一批合成練習題，讓自己之後能在原本的難題上進步？作者稱這類題目為「墊腳石」（stepping stones）；本頁的字面定義是：難度介於學生目前會解的題目與目標難題之間的合成題，以下稱為合成題目。作者的假設是：預訓練模型看過大量簡單題，即使解不出一題微積分，也可能寫得出相關的連鎖律練習題（Sec. 1）。
+
+ 作者提出 SOAR（Self-Optimization via Asymmetric RL）。老師與學生都從同一個預訓練模型初始化。老師寫題目與答案，看不到難題；學生用這些題目訓練。老師的獎勵是學生訓練後，在一批從 Dtrain $D_{train}$ ​ 抽出的真實難題 QR $Q_R$ ​ 上的正確率進步（Sec. 3）。也就是說，老師只透過「學生有沒有進步」這個數字得知題目好不好。
+
+ 論文列出四項貢獻（Sec. 1）：(1) 教與解分離：產生有效合成題目的能力，和解題能力是兩回事；基礎模型本來就能偶爾產生好題目，meta-RL 讓它更常產生。作者稱這為「銳化」（sharpening），本頁的字面定義是：提高原本機率很低的有效輸出的機率。(2) SOAR 的概念驗證：摘要寫 MATH 上 pass@1 為 4 倍（與 Table 4 算出的 3.40 倍不同，本頁以表格為準，見下段）、pass@32 為 2 倍，HARP 上 pass@1 為 2 倍、pass@32 為 1.5 倍；合成題目也能轉移到沒有拿來最佳化的資料集。(3) 以真實表現為依據的獎勵（grounded reward）比內在獎勵穩定，也不會讓題目多樣性崩塌。(4) 題目結構與難度校準比答案正確更重要。實驗超過 600 次執行。
+
+ 倍數的對照 本頁推導：用 Table 4–5 的 PQ 列（第 08 章定義）相對 Hard-Only 計算，MATH pass@1 為 1.7 ± 1.0 對 0.5 ± 0.1，倍數 3.40 ± 2.11（以一階誤差傳遞估計標準差），pass@32 為 1.97；HARP pass@1 為 0.7 ± 0.3 對 0.4 ± 0.1，倍數 1.75 ± 0.87，pass@32 為 1.50。摘要的「4×」無法由 PQ 列得出（表格算得 3.40 倍），本頁以表格為準；pass@1 的倍數主要受雜訊影響。
+
+ 延伸閱讀：非對稱 self-play 的來源、課程學習與非監督環境設計、LLM 資料自由 self-play 與自我獎勵的崩潰
+
+ 04 · 雙層最佳化
+
+ 出題可以寫成雙層最佳化
+
+ 作者把出題寫成兩層的最佳化問題（Sec. 3.1）：內層是學生在合成資料集 X $\mathcal X$ 上做 RL，得到更新後的參數 θ′(X)=RL-update(θ,X) $\theta'(\mathcal X)=\text{RL-update}(\theta,\mathcal X)$ (X)=RL-update(θ,X)；外層是老師要讓更新後的學生在 Dtrain $D_{train}$ ​ 上的表現 R $R$ 最大：
+
+ max⁡ϕ EX∼πϕT[R(πθ′(X)S, Dtrain)] $\max_\phi\ \mathbb E_{\mathcal X\sim\pi_\phi^T}\Big[R\big(\pi^S_{\theta'(\mathcal X)},\,D_{train}\big)\Big]$ max​ EX∼πϕT​​[R(πθ′(X)S​,Dtrain​)]
+ s.t.θ′(X)=RL-update(θ,X) $\text{s.t.}\quad\theta'(\mathcal X)=\text{RL-update}(\theta,\mathcal X)$ (X)=RL-update(θ,X)
+Eq. 1
+
+ 這類目標有先例：meta-learning（MAML、Reptile）、超參數學習，以及資料集蒸餾（dataset distillation：外層最佳化一個小資料集，讓內層訓練在目標上表現好；作者說這部分啟發了本文）。一般做法要把內層的多步訓練展開，做「穿過梯度下降的反向傳播」（BPTT），內層步數多時算不動（Sec. 2、App. A.3）。
+
+ SOAR 把 Eq. 1 實作成巢狀 meta-RL：外層用 RLOO 訓練老師，內層用 RLVR（同樣是 RLOO）訓練學生，學生在 Dtrain $D_{train}$ ​ 上的進步量是給老師的黑箱獎勵。策略梯度只需要獎勵的數值，不需要對內層求導，所以外層用 RLOO、學生進步只當黑箱獎勵，就避開了穿過內層的反向傳播（App. A.3 稱這是 LLM 自我對弈中第一個「double meta-RL loop」）。作者不假設能自動驗證題目或答案。作者認為，只獎勵「讓學生在真題上進步」的題目，可以把出題綁在真實的學習進度上，也隱含地懲罰退化題目與獎勵駭客（Sec. 3.1）。
+
+ 延伸閱讀：雙層最佳化：meta-learning 與 dataset distillation
+
+ 05 · 老師的獎勵
+
+ 老師的獎勵是學生在難題上的正確率進步
+
+ 本節符號 g $g$ ：每步的資料集數（4）；n $n$ ：每個資料集的題數（64）；d $d$ ：資料集索引；r $r$ ：每個資料集的學生數（4）；QR $Q_R$ ​：64 道獎勵題。
+
+ 每個外層步，老師取樣 g⋅n=256 $g\cdot n=256$ 個輸出，依序分成 g=4 $g=4$ 個資料集 X1,…,X4 $\mathcal X_1,\dots,\mathcal X_4$ ​,…,X4​，每個 64 題。每個輸出要解析成一組題目與答案，格式不符就重抽（App. B.2）。重抽讓老師的輸出分布從 π0 $\pi_0$ ​ 變成截斷後的 π $\pi$ ，多出的梯度項正比於優勢總和；RLOO 的優勢總和為 0，所以更新不偏（細節見選讀的第 07 章）。接著從 Dtrain $D_{train}$ ​ 抽 64 道獎勵題 QR $Q_R$ ​，對每個資料集訓練學生固定步數，資料集獎勵是（Sec. 3.2）：
+
+ R(Xd)=Acc(πθd′S(QR))−Acc(πθS(QR)) $R(\mathcal X_d)=\mathrm{Acc}\big(\pi^S_{\theta'_d}(Q_R)\big)-\mathrm{Acc}\big(\pi^S_\theta(Q_R)\big)$ ​)=Acc(πθd′​S​(QR​))−Acc(πθS​(QR​))
+Sec. 3.2
+
+ 這裡的 Acc 是貪婪解碼（每一步取機率最高的 token）的正確率，作者用它來降低學生獎勵的雜訊（App. B.7）；πθS $\pi^S_\theta$ S​ 是內層開始時的基準學生。在 64 題上，單一學生的正確率差一定是 1/64 ≈ 0.0156 的整數倍，比後面的門檻 τ = 0.01 還大 本頁推導。
+
+ 減去基準正確率，是為了讓不同外層步的獎勵可以互相比較；下一章的晉升機制需要這一點（Sec. 3.2）。為了降低變異，每個資料集平行訓練 r=4 $r=4$ 個學生，取平均 Rd=1r∑jRd,j $R_d=\frac1r\sum_jR_{d,j}$ ​=r1​∑j​Rd,j​，資料集 Xd $\mathcal X_d$ ​ 裡的每個輸出都拿到這個 Rd $R_d$ ​ 作為獎勵（Sec. 3.2、App. B.3）。總結：老師的獎勵是 R(Xd)=Acc(πθd′S(QR))−Acc(πθS(QR)) $R(\mathcal X_d)=\mathrm{Acc}(\pi^S_{\theta'_d}(Q_R))-\mathrm{Acc}(\pi^S_\theta(Q_R))$ ​)=Acc(πθd′​S​(QR​))−Acc(πθS​(QR​))，用貪婪解碼在 64 道 QR $Q_R$ ​ 上計算，減基準讓不同步的獎勵可比，平均 r=4 $r=4$ 個學生降低變異。
+
+ 老師的提示詞每一步都相同（App. B.1）：列出允許的主題（Algebra、Counting and Probability、Geometry、Intermediate Algebra、Number Theory、Prealgebra、Precalculus）與輸出格式，要求原創、至少 2–3 步推理、只出一題。提示詞不給範例題：作者在初步實驗中觀察到，給範例題時題目多樣性大幅下降，老師常直接照抄範例。
+
+ 老師提示詞原文（App. B.1）
+
+You are generating a new math problem for a math assistant.
+Allowed topics: Algebra, Counting and Probability, Geometry, Intermediate Algebra,
+Number Theory, Prealgebra, or Precalculus.
+Output rules (follow EXACTLY):
+ - Provide the final formatted problem in this structure:
+ <question>[full math question]<question><answer>\\boxed{[answer]}</answer>
+ - Any explanations, steps, or reasoning about the problem goes OUTSIDE the
+ <question> and <answer> tags.
+Constraints:
+ - The problem must be original, challenging, and require at least 2--3 steps of reasoning.
+ - Output exactly ONE problem. You MUST follow the specified format EXACTLY.
+Begin now:
+
+ 06 · 學生晉升
+
+ 晉升把進步累積到新的基準學生
+
+ 本節符號 步平均：g $g$ 個資料集獎勵 Rd $R_d$ ​ 的平均；移動平均：最近 3 個步平均的平均；τ=0.01 $\tau=0.01$ ：晉升門檻；Dbest $D_{best}$ ​：累積題庫。
+
+ 內層：學生在 Xd $\mathcal X_d$ ​ 上用 RLOO 訓練 10 步（batch size 8），作者說這樣足以產生可測量的變化，計算量又小。每次內層結束，學生回到基準策略，下一個外層步重新從基準出發（Sec. 3.3）。App. B.7 寫：基準學生被更新之後，內層訓練稍微延長，多 5 步；論文沒有說明是每次晉升都再加 5 步，還是只由 10 步改為 15 步。
+
+ 只靠「每次都回到基準」，學生的進步無法累積，老師也無法跟著變強的學生調整。因此作者加入晉升（promotion，字面意思是「更換基準學生」）：追蹤老師獎勵的移動平均，3 步移動平均超過 τ=0.01 $\tau=0.01$ 時，先選獎勵最高的資料集 Xd∗ $\mathcal X_{d^*}$ ​，再從這個資料集的 r $r$ 個學生中選獎勵為中位數的那一個，把它設成新的基準學生；之後的獎勵都相對新基準計算（Sec. 3.3、Sec. 4.2）。觸發晉升的資料集加入累積題庫 Dbest $D_{best}$ ​，所以 Dbest $D_{best}$ ​ 是所有觸發晉升的資料集的聯集。沒有晉升時，基準不變，這一步訓練出的學生全部丟棄，學生每次內層後回到基準。論文只寫了「選中位數學生」的做法，沒寫理由。實際最多觀察到 4 次晉升（Sec. 4.3）。
+
+ 下表是 Alg. 1 的全文與逐行說明（符號 k $k$ 改記為 d $d$ ）。
+
+ Alg. 1 原文
+說明
+
+ 0 Input: π_φ^T, π_θ^S, τ, g, n, r, MA window m輸入：初始老師與學生、晉升門檻、資料集數、每資料集題數、每資料集學生數、移動平均窗口。
+
+ 1 t ← 0, R̄_0 ← 0, D_best ← ∅初始化步數、移動平均與累積題庫。
+
+ 2 while t < T do外層迴圈，論文 T = 200。
+
+ 3 // 1. Teacher generation第 1 部分：老師出題。
+
+ 4 Sample g·n QA pairs {(q_i, a_i)} ~ π_φ^T取樣 g·n 組題目與答案；格式不符就重抽。
+
+ 5 Partition into g datasets X_d = {(q_j, a_j)}, j = n(d−1)+1 … nd依序切成 g 個資料集，每個 n 題。
+
+ 6 Sample reward questions Q_R = {(q_j, a_j)}, j = 1…M ~ D_train從難題訓練集抽獎勵題（M = 64）。
+
+ 7 // 2. Inner Loop第 2 部分：內層。
+
+ 8 for d = 1 to g do對每個資料集。
+
+ 9 for j = 1 to r do平行訓練 r 個學生。
+
+ 10 θ'_{d,j} ← RLOO-Update(θ, X_d)從目前的基準學生出發，用 RLOO 訓練 10 步。
+
+ 11 R_{d,j} ← Acc(θ'_{d,j}, Q_R) − Acc(θ, Q_R)這個學生在獎勵題上的貪婪正確率進步。
+
+ 12 end for
+
+ 13 R_d ← (1/r) Σ_j R_{d,j}資料集獎勵是 r 個學生的平均。
+
+ 14 end for
+
+ 15 // 3. Check for student promotion第 3 部分：檢查是否晉升。
+
+ 16 R̂_t ← (1/g) Σ_d R_d步平均。
+
+ 17 R̄_t ← MA(R̂_{t−m}, …, R̂_t)移動平均（本頁約定：最近 3 項）。
+
+ 18 if R̄_t > τ then超過門檻才晉升。
+
+ 19 d* ← argmax_d R_d選獎勵最高的資料集。
+
+ 20 find j* s.t. R_{d*,j*} is the median of {R_{d*,j}}在該資料集的 r 個學生中，選獎勵為中位數者。
+
+ 21 θ ← θ'_{d*,j*}更換基準學生。
+
+ 22 D_best ← D_best ∪ X_{d*}把這個資料集加入累積題庫。
+
+ 23 end if沒有晉升時，基準學生不變，所有 θ' 丟棄。
+
+ 24 // 4. Teacher Policy Update (Outer-loop)第 4 部分：外層更新老師。
+
+ 25 φ ← RLOO-Update(φ, {(X_d, R_d)})每個輸出以所屬資料集的 R_d 為獎勵，用 RLOO 更新老師。
+
+ 26 t ← t + 1
+
+ 27 end while
+
+ 28 return D_best, π_θ^S輸出累積題庫與最後的基準學生。
+
+ 三個論文沒有說清楚的地方，本頁用自己的約定處理 本頁約定，可能和論文的實作不同：(1) 第 17 行字面上有 m+1 $m+1$ 項，但 Sec. 4.2 寫「3-step moving average」，本頁取最近 3 項，前兩步取現有項的平均；(2) r=4 $r=4$ 時中位數不唯一，本頁取排序後第 2 小的值；(3) 晉升後是否重設移動平均沒有說明，本頁不重設。第 25 行中 RLOO 的比較基準取自哪一組，論文也沒有寫；下方 C3a 用「其他 3 個資料集的平均」，同樣是本頁約定。
+
+ 訓練動態（App. E，Fig. 19，HARP 上的一條代表性曲線）：獎勵先上下震盪，在第 18–27 步穩定上升並觸發第一次晉升；晉升後因為基準學生變強，獎勵下降、再度震盪，之後在第 80–86 步上升並觸發第二次晉升。作者把這個循環稱為「搜尋與利用」（search and exploitation），字面上是：老師的獎勵先在低點波動，然後連續數步上升到門檻以上。超參數在初步實驗中掃描過：學習率 {1e-6, 5e-6, 1e-5, 5e-5}、n $n$ {8, 16, 32, 64}、τ $\tau$ {0.01, 0.015, 0.02}、移動平均窗口 {1, 3}（App. B.7）。
+
+ C3晉升判斷
+示範值本頁約定
+
+ 單步計算
+ 雜訊與門檻
+
+ 每格輸入一個學生在 64 道獎勵題上的淨增答對題數 c（獎勵 R = c/64）。數值是示範值；論文沒有提供單步數據。老師優勢的分組方式是本頁約定。
+
+ 淨增答對題數 c（列：資料集 d；欄：學生 j）d學生 1學生 2學生 3學生 4R_d
+10.015625
+2−0.003906
+30.000000
+40.023438
+
+ 第 13 行：R_d = (0.015625, −0.003906, 0.000000, 0.023438)
+第 16 行：步平均 = 0.008789
+第 17 行：移動平均 = (0.010 + 0.014 + 0.008789) / 3 = 0.010930
+第 18 行：0.010930 > τ = 0.01；第 19–20 行：d* = 4，j* = 2（c = 1）
+第 25 行：老師優勢 A_d = (0.009115, −0.016927, −0.011719, 0.019531)，ΣA = 0.000000
+
+ 前第 2 步的步平均 0.010
+
+ 前一步的步平均 0.014
+
+ 還原示範值
+
+ 步平均0.008789移動平均0.010930τ0.01
+ ✓ 晉升：資料集 4、學生 2；D_best 增加 64 題。
+
+ ✓ 晉升：資料集 4、學生 2；D_best 增加 64 題。 移動平均 0.010930。
+
+ 假設每個學生的獎勵 = 真實進步 μ + 本步共同雜訊（標準差 σ_c，因為同一步的學生共用 64 道獎勵題與同一個基準）+ 個別雜訊（標準差 σ），各步之間獨立。實際獎勵是 1/64 的整數倍，這裡以常態近似。論文沒有報告 σ、σ_c；預設值是示範值。σ_c = 0 時算出的機率是下界。
+
+ 每步誤晉升機率（τ = 0.01，g = 4）rmP（目前 σ_c）P（σ_c = 0，下界）
+110.1860.159
+410.07860.0228
+130.06070.0416
+430.007152.66e−4
+
+ 真實進步 μ 0.000
+
+ 個別雜訊 σ 0.020
+
+ 共同雜訊 σ_c 0.005
+
+ 每個資料集的學生數 r
+1248
+
+ 移動平均窗口 m
+13
+
+ 移動平均標準差0.00408每步誤晉升機率0.007153200 步中期望次數1.416
+ 每步誤晉升機率 0.00715，200 步期望 1.42 次
+
+ 讀數由本頁依 Alg. 1 第 13–25 行（單步計算）與常態近似 P = ½·erfc((τ − μ)/(σ_MA·√2))、σ_MA = √((σ_c² + σ²/(g·r))/m)（雜訊與門檻）即時計算 本頁推導。198 步是第 3 到第 200 步。
+
+ 預設的單步計算中，四個資料集的獎勵是 (0.015625, −0.003906, 0, 0.023438)，本步平均 0.008789 本身低於 τ，但加上前兩步（0.010、0.014）後移動平均是 0.010930，超過 0.01，所以晉升：選資料集 4，再選它的中位數學生 2。把前兩步改成 0.002、0.006，移動平均變成 0.005596，不晉升。
+
+ 雜訊與門檻分頁 本頁推導：在上述常態假設下，增加 r $r$ 只能壓低個別雜訊，共同雜訊只能靠窗口 m $m$ 平均。σ = 0.02、σ_c = 0 時，論文設定（r = 4、m = 3）的每步誤晉升機率是 2.66e-4，r = 1、m = 1 時是 0.159；但 σ_c = 0.005 時論文設定也有 7.15e-3（200 步中期望約 1.4 次），σ_c = 0.01 時是 0.061。所以論文設定的誤晉升機率取決於 σ_c，而論文沒有報告這個量。論文自己的說法只是「平均多個學生以降低獎勵變異」（Sec. 3.2）。
+
+ 延伸閱讀：SOAR：以 RLOO 訓練的 teacher–student 迴圈
+
+ 07 · 選讀：Prop. 1 選讀
+
+ 重抽格式錯誤的輸出不影響 RLOO 更新
+
+ 本節符號 π0 $\pi_0$ ​：模型本身的輸出分布；Sacc $S_{acc}$ ​：格式正確（被接受）的輸出集合；πc $\pi_c$ ​：限制在 Sacc $S_{acc}$ ​ 上並重新正規化的分布。
+
+ 這一章不影響前後文的理解，可以跳過。老師的輸出要通過三個檢查（App. B.2）：題目與答案的開閉標籤都有；有 boxed；boxed 的內容能被符號數學驗證器解析。不符合就重抽，直到湊滿 g⋅n $g\cdot n$ 題。問題是：重抽等於從截斷分布 π(z)=π0(z)1z∈Sacc/π0(Sacc) $\pi(z)=\pi_0(z)\mathbb 1_{z\in S_{acc}}/\pi_0(S_{acc})$ ​(z)1z∈Sacc​​/π0​(Sacc​)（Eq. 2）取樣，但能求梯度的只有 π0 $\pi_0$ ​。
+
+ Prop. 1 的前提是 π0(Sacc)>0 $\pi_0(S_{acc})>0$ ​(Sacc​)>0，且 R(z) $R(z)$ 是輸出 z $z$ 的獎勵函數。結論是：對 π $\pi$ 取樣得到的任意 g $g$ 元組，
+
+ ∑i=1gA(zi)∇ln⁡π(zi)=∑i=1gA(zi)∇ln⁡π0(zi) $\sum_{i=1}^gA(z_i)\nabla\ln\pi(z_i)=\sum_{i=1}^gA(z_i)\nabla\ln\pi_0(z_i)$ ∑g​A(zi​)∇lnπ(zi​)=i=1∑g​A(zi​)∇lnπ0​(zi​)
+Eq. 3
+
+ 證明：z∈Sacc $z\in S_{acc}$ ​ 時 ln⁡π(z)=ln⁡π0(z)−ln⁡π0(Sacc) $\ln\pi(z)=\ln\pi_0(z)-\ln\pi_0(S_{acc})$ ​(z)−lnπ0​(Sacc​)，所以左式比右式多出 −(∑iA(zi))∇ln⁡π0(Sacc) $-\big(\sum_iA(z_i)\big)\nabla\ln\pi_0(S_{acc})$ ​A(zi​))∇lnπ0​(Sacc​)（Eq. 5–6）。RLOO 的優勢總和為 0，這一項就消失（Eq. 7）。論文明寫：這對單純的 REINFORCE 不成立，因為 REINFORCE 的優勢總和不為 0，這一項會留下。在 SOAR 中，同一資料集的輸出共用 Rd $R_d$ ​；證明只需要群組內優勢總和為 0，所以仍然成立。實證上，拒絕取樣比「格式獎勵」與「先抽題目再抽答案」都好（App. B.2），多輪出題的消融也比較差（App. D.3）。
+
+ 顯式的形式 本頁推導：令 π0=softmax(θ) $\pi_0=\mathrm{softmax}(\theta)$ ​=softmax(θ)，則 ∇θln⁡π0(z)=ez−π0 $\nabla_\theta\ln\pi_0(z)=e_z-\pi_0$ ​lnπ0​(z)=ez​−π0​（ez $e_z$ ​ 是第 z $z$ 個分量為 1 的單位向量；這是交叉熵損失梯度的負號），而 ∇θln⁡π0(Sacc)=πc−π0 $\nabla_\theta\ln\pi_0(S_{acc})=\pi_c-\pi_0$ ​lnπ0​(Sacc​)=πc​−π0​。因此左式減右式等於 (∑iAi)(π0−πc) $\big(\sum_iA_i\big)(\pi_0-\pi_c)$ ​Ai​)(π0​−πc​)。在被拒絕的輸出 j∉Sacc $j\notin S_{acc}$ Sacc​ 上 πc(j)=0 $\pi_c(j)=0$ ​(j)=0，左式為 0，右式是 −(∑iAi)π0(j) $-\big(\sum_iA_i\big)\pi_0(j)$ ​Ai​)π0​(j)：∑A>0 $\sum A>0$ 時這些輸出被壓低，∑A<0 $\sum A\lt 0$ 時被抬高。
+
+ C2RLOO 優勢與拒絕取樣
+本頁推導示範值
+
+ 玩具：老師只有 6 種可能的輸出 z = 1…6，π₀ = softmax(θ)；θ、獎勵與樣本都是示範值。下方長條是更新方向對 θ₁…θ₆ 各分量的梯度（e_z − π，也就是交叉熵梯度的負號）。
+
+ RLOOREINFORCE（A = R）
+
+ 全部獎勵設為 0獎勵全部變號
+
+ 自訂接受集合與樣本
+
+ 勾選的輸出構成接受集合 S_acc；未勾選的輸出格式錯誤，會被重抽。
+
+ 輸出 1 格式正確輸出 2 格式正確輸出 3 格式正確輸出 4 格式正確輸出 5 格式正確輸出 6 格式正確
+
+ 樣本 1z = 1z = 2z = 3z = 4獎勵 R 0.020
+
+樣本 2z = 1z = 2z = 3z = 4獎勵 R −0.010
+
+樣本 3z = 1z = 2z = 3z = 4獎勵 R 0.000
+
+樣本 4z = 1z = 2z = 3z = 4獎勵 R 0.030
+
+ π_c（限制在 S_acc）π₀（淺色）L：對 π 的梯度Q：對 π₀ 的梯度
+
+ π₀0.2886, 0.1750, 0.1062, 0.0644, 0.2362, 0.1297接受率 π₀(S)0.6341平均抽幾次1.577優勢 A0.01333, −0.02667, −0.01333, 0.02667ΣA0.00000L（對 π）0.01333, −0.04000, 0.00000, 0.02667, 0.00000, 0.00000Q（對 π₀）0.01333, −0.04000, 0.00000, 0.02667, 0.00000, 0.00000
+ 兩式相同。被拒絕的輸出 5、6 在 Q 中的分量是 −(ΣA)π₀(j)；ΣA = 0，沒有偏差。
+
+ 兩式相同。被拒絕的輸出 5、6 在 Q 中的分量是 −(ΣA)π₀(j)；ΣA = 0，沒有偏差。
+
+ 讀數由本頁依 Eq. 3–4 與 softmax 梯度 e_z − π 即時計算；「L − Q = (ΣA)(π₀ − π_c)」本頁推導。
+
+ 預設值下 π₀(S_acc) = 0.6341，平均要抽 1.577 次才得到一個格式正確的輸出。RLOO 的優勢是 (0.01333, −0.02667, −0.01333, 0.02667)，總和 0，兩式相同。切換成 REINFORCE（優勢直接取獎勵）後 ΣA = +0.04，右式在被拒絕的輸出 5、6 上是 −0.00945 與 −0.00519，被壓低；把獎勵全部變號後，這兩個分量變成 +0.00945、+0.00519，被抬高。獎勵全部為 0 時，兩種方法的更新都是 0。
+
+ 08 · 評估方式
+
+ 評估把題目的價值與學生的軌跡分開
+
+ SOAR 在 MATH 與 HARP 上各訓練 200 個外層步，OlympiadBench 不參與訓練。評估時間點是老師獎勵開始趨平的位置：MATH 取第 200 步、HARP 取第 170 步（Sec. 4.3）。從第 06 章的累積題庫 Dbest $D_{best}$ ​ 起，本頁改稱為 PQ（Promotion Questions，晉升題目）。作者用兩種方式評估（Sec. 4.3）：
+
+ PS（Promoted Student）：在有多次晉升的執行中，取驗證表現最好的晉升學生（以 Dtrain $D_{train}$ ​ 貪婪正確率判斷），直接在測試集上推論。最多 4 次晉升，所以 PS 訓練過 128、192 或 256 題。
+
+ PQ：用標準 RLOO 從頭訓練一個新的基礎學生，資料是 PQ＋fail@128 訓練集。目的是把「題目的價值」與「某一條幸運的學生訓練軌跡」分開。
+
+ 合成題與真題的混合方式（App. B.6）：MATH 用課程訓練，先用合成題訓練 64 步再換成真題；HARP 與 OlympiadBench 用混合訓練，全程混在一起（課程訓練在這兩者出現早期突升後驟降，Fig. 8）。選擇依據是基準方法 Base-T 的表現。
+
+ 比較的基準（Sec. 4.3）：Hard-Only 直接用 fail@128 訓練集訓練，群組大小 G=32 $G=32$ ；MATH 另外跑 G=128 $G=128$ （論文在這裡把學生群組大小寫成 g = 128，與本頁的 g $g$ ＝資料集數衝突，所以本頁寫 G $G$ ），取樣量是 4 倍，用來檢查收益是否只是多用了計算。Intrinsic-T 流程與超參數相同，只把老師獎勵換成可學習性（第 10 章），取樣 128 題訓練新學生。SeRL 是以 fail@128 訓練集為種子、自我演化課程的方法。MATH train (Full) 用完整的 MATH 訓練集 6750 題加 fail@128 訓練集，論文稱為上界參考。指標是 fail@128 測試集上的 pass@k，k∈{1,4,8,16,32} $k\in\{1,4,8,16,32\}$ ，每題 32 個樣本，報告 6–12 個種子的平均與標準差。總結：PS 直接用晉升學生推論；PQ 用 PQ＋fail@128 訓練集從頭訓練新學生，以分開題目的價值與幸運的訓練軌跡；G=128 $G=128$ 用 4 倍取樣量檢查收益是否只是多用了計算。
+
+ 早停與種子的細節（App. B.6、B.8）
+
+ 新學生最多訓練 1500 步。把平均訓練獎勵做 25 步置中移動平均，計算正規化斜率，取斜率首次低於最大值 15% 的步數，測試表現取之後 200 步的平均（門檻在 10%–20% 之間結果幾乎不變）；OlympiadBench 固定取第 50 步。種子：MATH、HARP 各訓練 4 個老師；Intrinsic-T 與無晉升版各 3 個；Hard-Only 至少 6 個學生種子；PQ 至少 6 個；PS 3 個推論種子；老師取樣實驗至少 8 個。
+
+ 09 · 主要結果
+
+ 用合成題目訓練的學生在 fail@128 測試集上表現較好
+
+ MATH 上（Table 4，pass@32），Hard-Only 是 9.6 ± 2.6%，PQ 是 18.9 ± 5.3%，PS 18.1 ± 2.4%，從 SOAR 老師取樣的 Grounded-T 19.1 ± 3.7%，Intrinsic-T 14.1 ± 7.5%，SeRL（step 100）12.4 ± 1.0%，Hard-Only（G=128 $G=128$ ）12.4 ± 7.4%，MATH train (Full) 22.0 ± 2.4%。論文內文寫 PQ 比 Hard-Only 高「+9.3%」（Sec. 5.1）；這是百分點，也就是 18.9 − 9.6 = 9.3，而不是相對增加 9.3%。同樣地，PS 高 +8.5（MATH）與 +3.6（HARP）個百分點；PQ 在 HARP 上內文寫 +4.2，由 Table 5 算是 12.3 − 8.2 = 4.1 本頁推導。G=128 $G=128$ 的 Hard-Only 只高 2.8 個百分點，Hard-Only 從 1500 步延長到 6500 步（HARP）也沒有進步（Fig. 10），作者以此說明多出的計算量不能取代 meta-RL。百分點差距隨 k 變大；倍數反而隨 k 變小（MATH PQ 由 pass@1 的 3.40 倍降到 pass@32 的 1.97 倍）。
+
+ 與真實題目比較：PQ-MATH 回收了 MATH train (Full) 收益的 75%，PQ-HARP 回收 50%（Sec. 5.1）。回收比例 本頁推導 是 (PQ − Hard-Only)/(MATH train (Full) − Hard-Only)，分母兩者都用 MATH train (Full)：MATH 為 (18.9 − 9.6)/(22.0 − 9.6) = 0.75；HARP 為 (12.3 − 8.2)/(16.2 − 8.2) = 0.51。MATH train (Full) 並不是最大值：Table 4 中 128 題真實 HARP 題是 23.0，Table 6 中 128 題真實 MATH 題是 14.6，高於 Full 的 13.1。HARP 上 PQ（12.3）高於 128 題真實 HARP（8.7），與 128 題真實 MATH（11.9）相近（Table 5）。MATH 上，PQ 在合成題階段（64 步）結束、換成真題後仍持續進步（Fig. 9），作者解讀為合成題讓真難題變得可學。轉移到 OlympiadBench（Table 6，pass@32）：Hard-Only 6.9，PQ (MATH) 10.6，PQ (HARP) 12.0，Intrinsic-T 9.1；作者推測 HARP 與 Olympiad 有較多共同結構。
+
+ 教與解分離：用訓練後的老師直接解 fail@128 測試題，MATH pass@32 是 8.3%，基礎模型是 7.5%；HARP 是 6.8% 對 6.4%（Table 4–5）。沒有改善，作者據此認為出題能力與解題能力大致獨立。
+
+ C4結果瀏覽器：Table 4–6
+
+ 點選任一列看它與 Hard-Only 的差。數字照錄 Table 4–6；差、倍數、回收比例由本頁計算。
+
+ MATHHARPOlympiadBench
+
+ k=1k=4k=8k=16k=32
+
+ 絕對值相對 Hard-Only
+
+ 推論與直接訓練
+Hard-Only (g = 128)：論文在這裡用 g 表示學生群組大小，與本頁的 g（資料集數）衝突，所以本頁寫 G。
+Base Model Inference7.5 ± 1.3Hard-Only9.6 ± 2.6Hard-Only（G = 128；原文 g = 128）12.4 ± 7.4SeRL (step 50)12.2 ± 0.7SeRL (step 100)12.4 ± 1.0SOAR 與老師取樣
+SOAR-PQ (Ours)18.9 ± 5.3SOAR-PS (Ours)18.1 ± 2.4Grounded-T (Ours)19.1 ± 3.7Intrinsic-T14.1 ± 7.5Inference with Grounded-T8.3 ± 1.1真實題目參照
+論文稱 MATH train (Full) 為上界參考，但它不是最大值：MATH 上 HARP train (128) 23.0 > 22.0；OlympiadBench 上 MATH train (128) 14.6 > 13.1。
+HARP train (128)23.0 ± 3.9MATH train (128)21.8 ± 0.9MATH train (Full)22.0 ± 2.4
+
+ SOAR（實心圓）其他方法（空心圓）真實題目參照（菱形）Hard-Only 參考線
+
+ 以表格顯示
+MATH pass@k（%）方法k=1k=4k=8k=16k=32
+Base Model Inference0.3 ± 0.11.0 ± 0.22.0 ± 0.43.9 ± 0.87.5 ± 1.3
+Hard-Only0.5 ± 0.11.7 ± 0.43.2 ± 0.85.7 ± 1.59.6 ± 2.6
+Hard-Only（G = 128；原文 g = 128）1.4 ± 1.03.9 ± 2.66.1 ± 3.98.9 ± 5.512.4 ± 7.4
+SeRL (step 50)0.5 ± 0.11.9 ± 0.33.7 ± 0.46.9 ± 0.712.2 ± 0.7
+SeRL (step 100)0.5 ± 0.02.1 ± 0.04.0 ± 0.07.3 ± 0.212.4 ± 1.0
+SOAR-PQ (Ours)1.7 ± 1.05.3 ± 2.68.5 ± 3.713.0 ± 4.818.9 ± 5.3
+SOAR-PS (Ours)1.0 ± 0.23.8 ± 0.66.8 ± 1.111.5 ± 1.618.1 ± 2.4
+Grounded-T (Ours)1.6 ± 0.55.1 ± 1.48.4 ± 2.113.1 ± 2.919.1 ± 3.7
+Intrinsic-T1.0 ± 0.63.3 ± 2.15.7 ± 3.59.2 ± 5.314.1 ± 7.5
+Inference with Grounded-T0.3 ± 0.01.1 ± 0.22.2 ± 0.34.4 ± 0.68.3 ± 1.1
+HARP train (128)2.4 ± 1.07.2 ± 2.411.3 ± 3.116.5 ± 3.623.0 ± 3.9
+MATH train (128)2.1 ± 0.06.6 ± 0.110.5 ± 0.315.7 ± 0.521.8 ± 0.9
+MATH train (Full)2.7 ± 0.27.6 ± 0.711.5 ± 1.216.4 ± 1.822.0 ± 2.4
+
+ SOAR-PQ (Ours)｜MATH｜pass@32
+平均 ± SD18.9 ± 5.3Hard-Only9.6 ± 2.6差（百分點）+9.3倍數1.97×回收比例0.75± SD 區間重疊否回收比例 = (方法 − Hard-Only) / (MATH train (Full) − Hard-Only)。區間重疊只是描述，不是顯著性檢定。
+SOAR-PQ (Ours)，pass@32：差 +9.3 百分點，倍數 1.97×，回收比例 0.75
+
+ 論文文字中的「+9.3%」是百分點。回收比例的分母是 MATH train (Full)，論文稱為上界參考，但它不是最大值；OlympiadBench 的回收比例是本頁延伸 本頁推導。「區間是否重疊」只描述 ± SD 區間，不是顯著性檢定。
+
+ 延伸閱讀：課程學習與非監督環境設計
+
+ 10 · 獎勵比較
+
+ 以真實進步為獎勵的老師較穩定且保持多樣性
+
+ 本節符號 sˉi $\bar s_i$ i​：學生在合成題 i $i$ 上 32 次取樣的平均成功率；ui $u_i$ ​：可學習性獎勵（論文記為 ri $r_i$ ​）；s $s$ ：本頁用的單次成功率。
+
+ 作者比較三種老師（Sec. 5.2）：Grounded-T（SOAR 訓練的老師）、Intrinsic-T（以可學習性為獎勵訓練）、Base-T（未訓練的基礎模型）。各取樣 128 題，訓練 2–3 個新學生；Grounded-T 每個資料集 4 個種子，Intrinsic-T 3 個種子。
+
+ 可學習性獎勵（App. B.4）對 Xd $\mathcal X_d$ ​ 的每一題取 32 個學生解答，得到平均成功率 sˉi $\bar s_i$ i​；若 sˉi=0 $\bar s_i=0$ i​=0 則 ui=0 $u_i=0$ ​=0，否則 ui=1−sˉi $u_i=1-\bar s_i$ ​=1−sˉi​；資料集獎勵是 Rd=1n∑iui $R_d=\frac1n\sum_iu_i$ ​=n1​∑i​ui​。sˉi>0 $\bar s_i>0$ i​>0 時，ui $u_i$ ​ 隨 sˉi $\bar s_i$ i​ 單調下降；只有「0 次答對」被截成 0。這個獎勵只看題目對學生的難度，與難題訓練集 Dtrain $D_{train}$ ​ 無關。
+
+ ui={0,sˉi=01−sˉi,otherwise $u_i=\begin{cases}0,&\bar s_i=0\\1-\bar s_i,&\text{otherwise}\end{cases}$ ​={0,1−sˉi​,​sˉi​=0otherwise​
+Eq. 8（論文記為 r_i）
+
+ 期望值 本頁推導：若學生對某道合成題的單次成功率為 s $s$ 、32 次取樣獨立，E[u]=(1−s)−(1−s)32 $\mathbb E[u]=(1-s)-(1-s)^{32}$ ，在 s∗=1−32−1/31≈0.106 $s^*=1-32^{-1/31}\approx0.106$ =1−32−1/31≈0.106 時最大（0.866）。這裡的 s $s$ 是合成題的成功率，與第 01 章難題的 p $p$ 不是同一個量。峰值完全來自 32 次取樣與「0 次答對給 0」的截斷。
+
+ 本頁推導：假設 32 次取樣獨立、成功率固定為 s。橫軸是合成題的成功率 s，不是第 01 章難題的 p。
+
+ 銳化：Grounded-T 的學生曲線落在 Base-T 各次執行的上緣，MATH 上變異較小（Fig. 5 左）。作者的解讀是：Base-T 也有成功的執行，所以好題目本來就潛藏在基礎模型中，meta-RL 提高了產生這些題目的機率。OlympiadBench 上兩者重疊較多。內在獎勵的脆弱：不同種子的 Grounded-T 訓練出的學生軌跡很接近；Intrinsic-T 平均較差、變異較大，三個種子中有一個在所有資料集上崩潰，學生幾乎沒有進步（Fig. 5 右、Fig. 14）。
+
+ 多樣性（Table 1）用 Vendi Score 衡量（Qwen3-8B 的嵌入，以 bootstrap 標準化到 128 題、重複 100 次）：Base-T 34.91，Grounded-T (HARP) 34.66，Grounded-T (MATH) 31.99，PQ 28.33，Intrinsic-T 10.82。論文說 Vendi Score 代表「有效的獨特語意概念數」。Sec. 5.2 內文寫 PQ 為 31.75，與 Table 1 的 28.33 不同，本頁以表格為準。Vendi Score 的定義來自 Friedman & Dieng（2023）外部定義：相似度矩陣 K/n $K/n$ 的特徵值 λi $\lambda_i$ ​ 的 exp⁡(−∑iλiln⁡λi) $\exp(-\sum_i\lambda_i\ln\lambda_i)$ ​λi​lnλi​)；n $n$ 題完全相同時為 1，兩兩正交時為 n $n$ 本頁推導。App. E（Fig. 20）顯示 Intrinsic-T 的獎勵平滑上升，同時老師輸出的多樣性下降；Grounded-T 全程保持原模型的多樣性。
+
+ 總結：可學習性獎勵 ui $u_i$ ​ 在 sˉi=0 $\bar s_i=0$ i​=0 時為 0、否則為 1−sˉi $1-\bar s_i$ i​（32 個樣本）；Intrinsic-T 的 Vendi Score 是 10.82，Base-T 是 34.91（Grounded-T 為 31.99 與 34.66）；Intrinsic-T 三個種子中有一個在所有資料集上崩潰。
+
+ Table 1　合成資料集的語意多樣性（Vendi Score，128 題）老師Vendi Scoreσ
+
+ Base-T34.911.74
+Grounded-T (HARP)34.661.74
+Grounded-T (MATH)31.991.54
+PQ28.331.55
+Intrinsic-T10.821.01
+
+ 延伸閱讀：內在獎勵與接地獎勵
+
+ 11 · 適切與正確
+
+ 題目是否適切比答案是否正確更重要
+
+ 作者用 Claude-4.5-Sonnet 當判定者，把合成題分類（Sec. 5.3、App. C.4）：題目是否適切（well-posed：數學上完整、可解）、答案是否正確、錯誤類型（算術、邏輯謬誤、不可能、模糊）。PQ 只有 32.8% 的題目答案完全正確，適切的比例是 64.6%（Table 7；內文寫 63%）。Intrinsic-T 的正確率較高（55.5%），表現卻較差；作者推測原因是多樣性不足（Table 7 說明文字用「potentially」）。meta-RL 主要減少「模糊」錯誤（Base 42.4% → Grounded 21.3%），算術錯誤持平或略增。App. C.4 有一句把 Grounded 與 PQ 的正確率寫成「32.8% and 36.5% respectively」，順序與 Table 7 相反，本頁以表格為準。
+
+ 受控實驗（App. C.5，Fig. 15）：從 PQ-HARP 中取答案正確的子集 Correct-only（82 題），對比題目適切的子集 Well-posed（144 題，包含 Correct-only 與「題目適切但答案錯」的題目）。在 Correct-only（82 題）對 Well-posed（144 題）的比較中，加入答案錯但題目適切的題目後表現提高；各組學生的格式符合率都在約 50 步內達到 100%，所以格式不是主要原因。這個實驗有限制：Well-posed 多了 62 題（1.75 倍），題數與正確性混在一起；只在 HARP 上做，3 個種子。
+
+ Table 7　合成題的正確性與錯誤類型（類別可能不互斥，各欄加總不等於 100%）類別BaseIntrinsicGroundedPQ
+
+ 適切53.6%63.5%70.0%64.6%
+
+ 正確23.2%55.5%36.5%32.8%
+
+ 算術錯誤23.7%5.7%29.0%25.0%
+
+ 邏輯錯誤5.7%2.3%6.9%6.5%
+
+ 不可能4.7%2.9%8.2%4.7%
+
+ 模糊42.4%33.6%21.3%31.3%
+
+ 樣本數384384375384
+
+ Fig. 6 列出 HARP 上一次 SOAR 執行在兩個晉升階段的老師題目（英文照錄）。第 1 階段是文字應用題，例如「What is the area of the path that is added around a rectangular garden with dimensions 15 meters by 8 meters when a 1-meter-wide garden path is built?」（老師的答案 50）；第 2 階段是簡短的方程式題，例如「Given the polynomial f(x) = x³ − 6x² + 11x − 6, factorize and solve for its roots.」（老師的答案 (2, 3, 1)）。作者指出許多有效的題目附的是錯誤答案。
+
+ 12 · 消融與實作
+
+ 消融、實作設定與常見錯誤
+
+ 消融：不做晉升的 Grounded-T 較差（App. C.3）。從 MATH 老師取 32、64、128 題，表現隨題數增加，128 題的平均與 64 題相近但誤差明顯較小；在所有題數下，真實 MATH 題都相近或更好（App. D.1）。τ∈{0.01,0.015} $\tau\in\{0.01,0.015\}$ 、n∈{32,64} $n\in\{32,64\}$ 中，預設的 n=64,τ=0.01 $n=64,\tau=0.01$ 最好（App. D.2）。多輪出題（先抽題目、再抽答案，兩者的 log 機率相加）的老師獎勵很快停滯、最多晉升一次，所有設定都比單輪差（App. D.3、Table 8）。Llama-3.1-8B-Instruct 沿用 3B 的超參數時沒有晉升，但 Grounded-T 的 pass@32 13.7 ± 2.7 仍高於 Hard-Only 9.1 ± 3.2（App. D.4、Table 9）。
+
+ 計算量（App. B.9）：每次 SOAR 訓練用 4 個節點（每個節點 8 張 H200 或 H100），約 48–60 小時；每次評估（訓練一個新學生）用 1 個節點約 12 小時。
+
+ Table 3　超參數項目老師學生
+
+ 最佳化器／KL 係數／排程AdamW／0.001／cosine decay同左
+
+ 學習率／溫度1e-5／1.0同左
+
+ warmup 步數200/20
+
+ batch size／group size2／48／32
+
+ 最大生成 token5121024
+
+ τ／移動平均窗口／n／r0.01／3／64／4—
+
+ 評估最大步數／課程訓練合成暖身步數—1500／64
+
+ 常見錯誤
+
+ 重抽格式錯誤的輸出，卻用 REINFORCE 而不是 RLOO：因為 REINFORCE 的優勢總和不為 0，重抽造成的額外項會留下來，Prop. 1 不成立（第 07 章）。
+
+ 給老師範例題：作者觀察到多樣性下降、老師抄題（App. B.1）。
+
+ 老師獎勵不減基準正確率：不同步的獎勵不可比，晉升門檻失去意義（Sec. 3.2）。
+
+ 內層學生沒有回到基準：只有晉升時才更新基準（Sec. 3.3）。
+
+ 用取樣解碼評估 QR $Q_R$ ​：論文用貪婪解碼降低雜訊（App. B.7）。
+
+ 只用 r = 1 與窗口 1 判斷晉升：雜訊容易造成誤晉升（C3 的推導 本頁推導）。
+
+ 評估 PQ 時用錯混合方式：MATH 用課程訓練，HARP／Olympiad 用混合訓練（App. B.6）。
+
+ 13 · 研究脈絡
+
+ 研究脈絡
+
+ SOAR 結合了五條脈絡：課程學習（依難度安排題目）；非對稱自我對弈（Alice–Bob 架構與其在機器人上的延伸）；雙層最佳化（MAML、資料集蒸餾，啟發了以學生進步為獎勵的設計）；RLVR 與 RLOO（問題背景與兩層迴圈使用的演算法）；以及近期以代理獎勵訓練出題者的 LLM 自我對弈（Absolute Zero、R-Zero）與其崩潰問題。每張卡片連到對應的研究筆記。
+
+ 課程學習雙層最佳化非對稱自我對弈RLVR 與 RLOOLLM 自我對弈本文
+
+ 2009課程學習Curriculum learning
+Bengio et al.
+課程學習的起點
+筆記
+2015雙層最佳化Gradient-based Hyperparameter Optimization through Reversible Learning
+Maclaurin et al.
+對訓練過程反向傳播的雙層先例
+arXiv ↗筆記
+2016雙層最佳化RL²: Fast Reinforcement Learning via Slow Reinforcement Learning
+Duan et al.
+meta-RL 較早研究
+arXiv ↗筆記
+2017雙層最佳化Model-Agnostic Meta-Learning for Fast Adaptation of Deep Networks
+Finn et al.
+內外層 meta-learning
+arXiv ↗筆記
+2017非對稱自我對弈Intrinsic Motivation and Automatic Curricula via Asymmetric Self-Play
+Sukhbaatar et al.
+Alice–Bob 非對稱 self-play
+arXiv ↗筆記
+2017非對稱自我對弈Mastering Chess and Shogi by Self-Play with a General Reinforcement Learning Algorithm
+Silver et al.
+self-play 範例（Science 2018 版為本文所引）
+arXiv ↗筆記
+2018雙層最佳化Dataset Distillation
+Wang et al.
+雙層資料集最佳化，啟發 SOAR
+arXiv ↗筆記
+2020課程學習Emergent Complexity and Zero-shot Transfer via Unsupervised Environment Design
+Dennis et al.
+非監督環境設計；minimax 退化
+arXiv ↗筆記
+2021非對稱自我對弈Asymmetric self-play for automatic goal discovery in robotic manipulation
+OpenAI et al.
+機器人上的非對稱 self-play
+arXiv ↗筆記
+2024RLVR 與 RLOOBack to Basics: Revisiting REINFORCE Style Optimization for Learning from Human Feedback in LLMs
+Ahmadian et al.
+RLOO，SOAR 內外層使用
+arXiv ↗筆記
+2025RLVR 與 RLOODeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning
+DeepSeek-AI
+RLVR 推理能力，問題背景
+arXiv ↗筆記
+2025LLM 自我對弈Absolute Zero: Reinforced Self-play Reasoning with Zero Data
+Zhao et al.
+資料自由 self-play，代理獎勵
+arXiv ↗筆記
+2025LLM 自我對弈R-Zero: Self-Evolving Reasoning LLM from Zero Data
+Huang et al.
+資料自由 challenger–solver
+arXiv ↗筆記
+2025LLM 自我對弈Can Large Reasoning Models Self-Train?
+Shafayat et al.
+自我獎勵的崩潰
+arXiv ↗筆記
+2026本文Teaching Models to Teach Themselves: Reasoning at the Edge of Learnability
+Sundaram et al.
+本文：以 student 進步量為獎勵的 meta-RL teacher
+arXiv ↗筆記
+
+ 14 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 作者寫出的主要限制是雙層 RL 的計算成本：內層雖然只有 10–20 步，但需要平行訓練多個學生來穩定獎勵。Table 4 與 Fig. 10 顯示，把多出的計算量用在直接訓練難題上，回收不了 meta-RL 的收益。作者稱本文是概念驗證，更有效率的獎勵代理與 3–8B 以上的規模留待未來（Sec. 6）。Sec. 6 的「North Star」段落是作者的思想實驗：Riemann 猜想的證明可能潛藏在預訓練資料中，能否學會取決於能否找回正確的中間引理序列；這是展望，不是結果。本頁另外整理的限制 本頁推導：標準差很大（MATH PQ 18.9 ± 5.3）；論文內文與表格有數處數字不一致（倍數、+4.2、Vendi 31.75、適切 63%）；Alg. 1 有幾處未說明的細節（移動平均項數、中位數、是否重設）。
+
+ 研究筆記（依閱讀順序）
+
+ SOAR 的研究脈絡總覽總覽
+
+ RLVR 在低成功率資料上的停滯問題設定
+
+ 非對稱 self-play 的來源背景
+
+ 課程學習與非監督環境設計背景
+
+ LLM 資料自由 self-play 與自我獎勵的崩潰比較對象
+
+ 雙層最佳化：meta-learning 與 dataset distillation方法來源
+
+ 內在獎勵與接地獎勵獎勵設計
+
+ SOAR：以 RLOO 訓練的 teacher–student 迴圈本論文
+
+ RLVR、GRPO 與信用分配瓶頸站內既有
+
+ DeepSeek-R1 的研究脈絡總覽站內既有
+
+ Shobhita Sundaram, John Quan, Ariel Kwiatkowski, Kartik Ahuja, Yann Ollivier, Julia Kempe. Teaching Models to Teach Themselves: Reasoning at the Edge of Learnability. 2026. arXiv:2601.18778.
+
+ 本頁的方程式與數字取自論文 v3；標示「本頁推導」的內容為本頁自行推導，「示範值」為本頁為了示範而選的數值，「本頁約定」為論文未規定、本頁自行選定的做法，皆非論文結論。元件讀數在瀏覽器中即時計算，不重現論文的實驗。
+
+ ← Paper Master
+ 教學與筆記

@@ -1,0 +1,164 @@
+
+<!-- §5 -->
+<section class="ch" id="promotion" data-toc="06" data-tt="學生晉升">
+  <div class="ch-num">06 · 學生晉升</div>
+  <h2>晉升把進步累積到新的基準學生</h2>
+  <aside class="symbols"><b>本節符號</b> 步平均：$g$ 個資料集獎勵 $R_d$ 的平均；移動平均：最近 3 個步平均的平均；$\tau=0.01$：晉升門檻；$D_{best}$：累積題庫。</aside>
+  <div class="prose">
+    <p>內層：學生在 $\mathcal X_d$ 上用 RLOO 訓練 10 步（batch size 8），作者說這樣足以產生可測量的變化，計算量又小。每次內層結束，學生<b>回到基準策略</b>，下一個外層步重新從基準出發（Sec. 3.3）。App. B.7 寫：基準學生被更新之後，內層訓練稍微延長，多 5 步；論文沒有說明是每次晉升都再加 5 步，還是只由 10 步改為 15 步。</p>
+    <p>只靠「每次都回到基準」，學生的進步無法累積，老師也無法跟著變強的學生調整。因此作者加入<b>晉升</b>（promotion，字面意思是「更換基準學生」）：追蹤老師獎勵的移動平均，3 步移動平均超過 $\tau=0.01$ 時，先選獎勵最高的資料集 $\mathcal X_{d^*}$，再從這個資料集的 $r$ 個學生中選獎勵為中位數的那一個，把它設成新的基準學生；之後的獎勵都相對新基準計算（Sec. 3.3、Sec. 4.2）。觸發晉升的資料集加入累積題庫 $D_{best}$，所以 $D_{best}$ 是所有觸發晉升的資料集的聯集。沒有晉升時，基準不變，這一步訓練出的學生全部丟棄，學生每次內層後回到基準。論文只寫了「選中位數學生」的做法，沒寫理由。實際最多觀察到 4 次晉升（Sec. 4.3）。</p>
+    <p>下表是 Alg. 1 的全文與逐行說明（符號 $k$ 改記為 $d$）。</p>
+  </div>
+  <div class="algo" role="table" aria-label="Alg. 1 逐行對照">
+    <div class="row hd" role="row"><div role="columnheader">Alg. 1 原文</div><div class="ex-h" role="columnheader">說明</div></div>
+    <div class="row" role="row"><code role="cell">0  Input: π_φ^T, π_θ^S, τ, g, n, r, MA window m</code><div class="ex" role="cell">輸入：初始老師與學生、晉升門檻、資料集數、每資料集題數、每資料集學生數、移動平均窗口。</div></div>
+    <div class="row" role="row"><code role="cell">1  t ← 0, R̄_0 ← 0, D_best ← ∅</code><div class="ex" role="cell">初始化步數、移動平均與累積題庫。</div></div>
+    <div class="row" role="row"><code role="cell">2  while t &lt; T do</code><div class="ex" role="cell">外層迴圈，論文 T = 200。</div></div>
+    <div class="row" role="row"><code role="cell">3    // 1. Teacher generation</code><div class="ex" role="cell">第 1 部分：老師出題。</div></div>
+    <div class="row" role="row"><code role="cell">4    Sample g·n QA pairs {(q_i, a_i)} ~ π_φ^T</code><div class="ex" role="cell">取樣 g·n 組題目與答案；格式不符就重抽。</div></div>
+    <div class="row" role="row"><code role="cell">5    Partition into g datasets X_d = {(q_j, a_j)}, j = n(d−1)+1 … nd</code><div class="ex" role="cell">依序切成 g 個資料集，每個 n 題。</div></div>
+    <div class="row" role="row"><code role="cell">6    Sample reward questions Q_R = {(q_j, a_j)}, j = 1…M ~ D_train</code><div class="ex" role="cell">從難題訓練集抽獎勵題（M = 64）。</div></div>
+    <div class="row" role="row"><code role="cell">7    // 2. Inner Loop</code><div class="ex" role="cell">第 2 部分：內層。</div></div>
+    <div class="row" role="row"><code role="cell">8    for d = 1 to g do</code><div class="ex" role="cell">對每個資料集。</div></div>
+    <div class="row" role="row"><code role="cell">9      for j = 1 to r do</code><div class="ex" role="cell">平行訓練 r 個學生。</div></div>
+    <div class="row" role="row"><code role="cell">10       θ'_{d,j} ← RLOO-Update(θ, X_d)</code><div class="ex" role="cell">從目前的基準學生出發，用 RLOO 訓練 10 步。</div></div>
+    <div class="row" role="row"><code role="cell">11       R_{d,j} ← Acc(θ'_{d,j}, Q_R) − Acc(θ, Q_R)</code><div class="ex" role="cell">這個學生在獎勵題上的貪婪正確率進步。</div></div>
+    <div class="row" role="row"><code role="cell">12     end for</code><div class="ex" role="cell"></div></div>
+    <div class="row" role="row"><code role="cell">13     R_d ← (1/r) Σ_j R_{d,j}</code><div class="ex" role="cell">資料集獎勵是 r 個學生的平均。</div></div>
+    <div class="row" role="row"><code role="cell">14   end for</code><div class="ex" role="cell"></div></div>
+    <div class="row" role="row"><code role="cell">15   // 3. Check for student promotion</code><div class="ex" role="cell">第 3 部分：檢查是否晉升。</div></div>
+    <div class="row" role="row"><code role="cell">16   R̂_t ← (1/g) Σ_d R_d</code><div class="ex" role="cell">步平均。</div></div>
+    <div class="row" role="row"><code role="cell">17   R̄_t ← MA(R̂_{t−m}, …, R̂_t)</code><div class="ex" role="cell">移動平均（本頁約定：最近 3 項）。</div></div>
+    <div class="row" role="row"><code role="cell">18   if R̄_t &gt; τ then</code><div class="ex" role="cell">超過門檻才晉升。</div></div>
+    <div class="row" role="row"><code role="cell">19     d* ← argmax_d R_d</code><div class="ex" role="cell">選獎勵最高的資料集。</div></div>
+    <div class="row" role="row"><code role="cell">20     find j* s.t. R_{d*,j*} is the median of {R_{d*,j}}</code><div class="ex" role="cell">在該資料集的 r 個學生中，選獎勵為中位數者。</div></div>
+    <div class="row" role="row"><code role="cell">21     θ ← θ'_{d*,j*}</code><div class="ex" role="cell">更換基準學生。</div></div>
+    <div class="row" role="row"><code role="cell">22     D_best ← D_best ∪ X_{d*}</code><div class="ex" role="cell">把這個資料集加入累積題庫。</div></div>
+    <div class="row" role="row"><code role="cell">23   end if</code><div class="ex" role="cell">沒有晉升時，基準學生不變，所有 θ' 丟棄。</div></div>
+    <div class="row" role="row"><code role="cell">24   // 4. Teacher Policy Update (Outer-loop)</code><div class="ex" role="cell">第 4 部分：外層更新老師。</div></div>
+    <div class="row" role="row"><code role="cell">25   φ ← RLOO-Update(φ, {(X_d, R_d)})</code><div class="ex" role="cell">每個輸出以所屬資料集的 R_d 為獎勵，用 RLOO 更新老師。</div></div>
+    <div class="row" role="row"><code role="cell">26   t ← t + 1</code><div class="ex" role="cell"></div></div>
+    <div class="row" role="row"><code role="cell">27 end while</code><div class="ex" role="cell"></div></div>
+    <div class="row" role="row"><code role="cell">28 return D_best, π_θ^S</code><div class="ex" role="cell">輸出累積題庫與最後的基準學生。</div></div>
+  </div>
+  <div class="prose">
+    <p>三個論文沒有說清楚的地方，本頁用自己的約定處理 <span class="tag">本頁約定</span>，可能和論文的實作不同：(1) 第 17 行字面上有 $m+1$ 項，但 Sec. 4.2 寫「3-step moving average」，本頁取最近 3 項，前兩步取現有項的平均；(2) $r=4$ 時中位數不唯一，本頁取排序後第 2 小的值；(3) 晉升後是否重設移動平均沒有說明，本頁不重設。第 25 行中 RLOO 的比較基準取自哪一組，論文也沒有寫；下方 C3a 用「其他 3 個資料集的平均」，同樣是本頁約定。</p>
+    <p>訓練動態（App. E，Fig. 19，HARP 上的一條代表性曲線）：獎勵先上下震盪，在第 18–27 步穩定上升並觸發第一次晉升；晉升後因為基準學生變強，獎勵下降、再度震盪，之後在第 80–86 步上升並觸發第二次晉升。作者把這個循環稱為「搜尋與利用」（search and exploitation），字面上是：老師的獎勵先在低點波動，然後連續數步上升到門檻以上。超參數在初步實驗中掃描過：學習率 {1e-6, 5e-6, 1e-5, 5e-5}、$n$ {8, 16, 32, 64}、$\tau$ {0.01, 0.015, 0.02}、移動平均窗口 {1, 3}（App. B.7）。</p>
+  </div>
+
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>晉升判斷</h3><span class="tag">示範值</span><span class="tag">本頁約定</span></div>
+    <div class="tabs" role="tablist" aria-label="C3 分頁">
+      <button type="button" role="tab" id="c3-tab-a" aria-controls="c3a" aria-selected="true">單步計算</button>
+      <button type="button" role="tab" id="c3-tab-b" aria-controls="c3b" aria-selected="false" tabindex="-1">雜訊與門檻</button>
+    </div>
+    <div role="tabpanel" id="c3a" aria-labelledby="c3-tab-a">
+      <p class="plate-lead">每格輸入一個學生在 64 道獎勵題上的淨增答對題數 c（獎勵 R = c/64）。數值是示範值；論文沒有提供單步數據。老師優勢的分組方式是本頁約定。</p>
+      <div class="pg side">
+        <div class="fig">
+          <div class="tscroll" tabindex="0" role="region" aria-label="學生獎勵輸入格"><table class="grid4" id="c3-grid"><caption>淨增答對題數 c（列：資料集 d；欄：學生 j）</caption></table></div>
+          <p class="err" id="c3-err" role="alert"></p>
+          <ol class="c3-steps" id="c3-steps"></ol>
+          <div id="c3-adv"><svg role="img" aria-label="老師的 RLOO 優勢"></svg></div>
+        </div>
+        <div class="ctl">
+          <div class="rng"><label class="lbl" for="c3-p1">前第 2 步的步平均 <output id="c3-p1o"></output></label><input type="range" id="c3-p1" min="-0.02" max="0.03" step="0.001" value="0.010"></div>
+          <div class="rng"><label class="lbl" for="c3-p2">前一步的步平均 <output id="c3-p2o"></output></label><input type="range" id="c3-p2" min="-0.02" max="0.03" step="0.001" value="0.014"></div>
+          <div class="ctl-row"><button class="small-btn" type="button" id="c3-reset">還原示範值</button></div>
+          <dl class="ro" id="c3-read"></dl>
+          <p class="verdict" id="c3-verdict"></p>
+          <p class="sr" id="c3-live" aria-live="polite"></p>
+        </div>
+      </div>
+    </div>
+    <div role="tabpanel" id="c3b" aria-labelledby="c3-tab-b" hidden>
+      <p class="plate-lead">假設每個學生的獎勵 = 真實進步 μ + 本步共同雜訊（標準差 σ_c，因為同一步的學生共用 64 道獎勵題與同一個基準）+ 個別雜訊（標準差 σ），各步之間獨立。實際獎勵是 1/64 的整數倍，這裡以常態近似。論文沒有報告 σ、σ_c；預設值是示範值。σ_c = 0 時算出的機率是下界。</p>
+      <div class="pg side">
+        <div class="fig"><div id="c3b-fig"><svg role="img" aria-label="移動平均的常態分布與門檻"></svg></div>
+          <div class="tscroll" tabindex="0" role="region" aria-label="四種組合的誤晉升機率"><table class="mini" id="c3b-tab"><caption>每步誤晉升機率（τ = 0.01，g = 4）</caption></table></div></div>
+        <div class="ctl">
+          <div class="rng"><label class="lbl" for="c3-mu">真實進步 μ <output id="c3-muo"></output></label><input type="range" id="c3-mu" min="-0.01" max="0.02" step="0.001" value="0"></div>
+          <div class="rng"><label class="lbl" for="c3-sd">個別雜訊 σ <output id="c3-sdo"></output></label><input type="range" id="c3-sd" min="0.005" max="0.06" step="0.001" value="0.02"></div>
+          <div class="rng"><label class="lbl" for="c3-sc">共同雜訊 σ_c <output id="c3-sco"></output></label><input type="range" id="c3-sc" min="0" max="0.02" step="0.001" value="0.005"></div>
+          <div><div class="lbl">每個資料集的學生數 r</div><div class="seg" id="c3-r" role="radiogroup" aria-label="學生數 r"></div></div>
+          <div><div class="lbl">移動平均窗口 m</div><div class="seg" id="c3-m" role="radiogroup" aria-label="窗口 m"></div></div>
+          <dl class="ro" id="c3b-read"></dl>
+          <p class="sr" id="c3b-live" aria-live="polite"></p>
+        </div>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依 Alg. 1 第 13–25 行（單步計算）與常態近似 P = ½·erfc((τ − μ)/(σ_MA·√2))、σ_MA = √((σ_c² + σ²/(g·r))/m)（雜訊與門檻）即時計算 <span class="tag">本頁推導</span>。198 步是第 3 到第 200 步。</p>
+  </div>
+  <div class="prose">
+    <p>預設的單步計算中，四個資料集的獎勵是 (0.015625, −0.003906, 0, 0.023438)，本步平均 0.008789 本身低於 τ，但加上前兩步（0.010、0.014）後移動平均是 0.010930，超過 0.01，所以晉升：選資料集 4，再選它的中位數學生 2。把前兩步改成 0.002、0.006，移動平均變成 0.005596，不晉升。</p>
+    <p>雜訊與門檻分頁 <span class="tag">本頁推導</span>：在上述常態假設下，增加 $r$ 只能壓低個別雜訊，共同雜訊只能靠窗口 $m$ 平均。σ = 0.02、σ_c = 0 時，論文設定（r = 4、m = 3）的每步誤晉升機率是 2.66e-4，r = 1、m = 1 時是 0.159；但 σ_c = 0.005 時論文設定也有 7.15e-3（200 步中期望約 1.4 次），σ_c = 0.01 時是 0.061。所以論文設定的誤晉升機率取決於 σ_c，而論文沒有報告這個量。論文自己的說法只是「平均多個學生以降低獎勵變異」（Sec. 3.2）。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="soar-teacher-student-rloo-method.html">SOAR：以 RLOO 訓練的 teacher–student 迴圈</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">何時晉升？選哪個學生？$D_{best}$ 是什麼？沒有晉升時怎麼辦？</p>
+    <p class="a">3 步移動平均超過 $\tau=0.01$ 時；選獎勵最高的資料集，再選該資料集 $r$ 個學生中獎勵為中位數者；$D_{best}$ 是觸發晉升的資料集聯集；沒有晉升時，學生每次內層後回到基準（Sec. 3.3、Alg. 1）。</p>
+  </div></details>
+</section>
+
+<!-- §6 -->
+<section class="ch" id="prop1" data-toc="07" data-tt="選讀：Prop. 1">
+  <div class="ch-num">07 · 選讀：Prop. 1 <span class="tag">選讀</span></div>
+  <h2>重抽格式錯誤的輸出不影響 RLOO 更新</h2>
+  <aside class="symbols"><b>本節符號</b> $\pi_0$：模型本身的輸出分布；$S_{acc}$：格式正確（被接受）的輸出集合；$\pi_c$：限制在 $S_{acc}$ 上並重新正規化的分布。</aside>
+  <div class="prose">
+    <p>這一章不影響前後文的理解，可以跳過。老師的輸出要通過三個檢查（App. B.2）：題目與答案的開閉標籤都有；有 boxed；boxed 的內容能被符號數學驗證器解析。不符合就重抽，直到湊滿 $g\cdot n$ 題。問題是：重抽等於從截斷分布 $\pi(z)=\pi_0(z)\mathbb 1_{z\in S_{acc}}/\pi_0(S_{acc})$（Eq. 2）取樣，但能求梯度的只有 $\pi_0$。</p>
+    <p>Prop. 1 的前提是 $\pi_0(S_{acc})>0$，且 $R(z)$ 是輸出 $z$ 的獎勵函數。結論是：對 $\pi$ 取樣得到的任意 $g$ 元組，</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\sum_{i=1}^gA(z_i)\nabla\ln\pi(z_i)=\sum_{i=1}^gA(z_i)\nabla\ln\pi_0(z_i)$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="prose">
+    <p>證明：$z\in S_{acc}$ 時 $\ln\pi(z)=\ln\pi_0(z)-\ln\pi_0(S_{acc})$，所以左式比右式多出 $-\big(\sum_iA(z_i)\big)\nabla\ln\pi_0(S_{acc})$（Eq. 5–6）。RLOO 的優勢總和為 0，這一項就消失（Eq. 7）。論文明寫：這對單純的 REINFORCE 不成立，因為 REINFORCE 的優勢總和不為 0，這一項會留下。在 SOAR 中，同一資料集的輸出共用 $R_d$；證明只需要群組內優勢總和為 0，所以仍然成立。實證上，拒絕取樣比「格式獎勵」與「先抽題目再抽答案」都好（App. B.2），多輪出題的消融也比較差（App. D.3）。</p>
+    <p>顯式的形式 <span class="tag">本頁推導</span>：令 $\pi_0=\mathrm{softmax}(\theta)$，則 $\nabla_\theta\ln\pi_0(z)=e_z-\pi_0$（$e_z$ 是第 $z$ 個分量為 1 的單位向量；這是交叉熵損失梯度的負號），而 $\nabla_\theta\ln\pi_0(S_{acc})=\pi_c-\pi_0$。因此左式減右式等於 $\big(\sum_iA_i\big)(\pi_0-\pi_c)$。在被拒絕的輸出 $j\notin S_{acc}$ 上 $\pi_c(j)=0$，左式為 0，右式是 $-\big(\sum_iA_i\big)\pi_0(j)$：$\sum A>0$ 時這些輸出被壓低，$\sum A\lt 0$ 時被抬高。</p>
+  </div>
+
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>RLOO 優勢與拒絕取樣</h3><span class="tag">本頁推導</span><span class="tag">示範值</span></div>
+    <p class="plate-lead">玩具：老師只有 6 種可能的輸出 z = 1…6，π₀ = softmax(θ)；θ、獎勵與樣本都是示範值。下方長條是更新方向對 θ₁…θ₆ 各分量的梯度（e_z − π，也就是交叉熵梯度的負號）。</p>
+    <div class="ctl-row"><div class="seg" id="c2-est" role="radiogroup" aria-label="優勢的算法"></div>
+      <button class="small-btn" type="button" id="c2-zero">全部獎勵設為 0</button><button class="small-btn" type="button" id="c2-flip">獎勵全部變號</button></div>
+    <details class="more" id="c2-custom"><summary>自訂接受集合與樣本</summary>
+      <p class="note small">勾選的輸出構成接受集合 S_acc；未勾選的輸出格式錯誤，會被重抽。</p>
+      <div class="ctl-row" id="c2-S" role="group" aria-label="接受集合 S_acc"></div>
+      <div id="c2-rows"></div>
+    </details>
+    <div class="fig"><div id="c2-fig"><svg role="img" aria-label="π₀ 與 π_c、以及兩種梯度的長條圖"></svg></div>
+      <div class="legend"><span class="lg box solid1">π_c（限制在 S_acc）</span><span class="lg box light1">π₀（淺色）</span><span class="lg box solid2">L：對 π 的梯度</span><span class="lg hollow">Q：對 π₀ 的梯度</span></div></div>
+    <dl class="ro two" id="c2-read"></dl>
+    <p class="verdict" id="c2-verdict"></p>
+    <p class="sr" id="c2-live" aria-live="polite"></p>
+    <p class="plate-f">讀數由本頁依 Eq. 3–4 與 softmax 梯度 e_z − π 即時計算；「L − Q = (ΣA)(π₀ − π_c)」<span class="tag">本頁推導</span>。</p>
+  </div>
+  <div class="prose">
+    <p>預設值下 π₀(S_acc) = 0.6341，平均要抽 1.577 次才得到一個格式正確的輸出。RLOO 的優勢是 (0.01333, −0.02667, −0.01333, 0.02667)，總和 0，兩式相同。切換成 REINFORCE（優勢直接取獎勵）後 ΣA = +0.04，右式在被拒絕的輸出 5、6 上是 −0.00945 與 −0.00519，被壓低；把獎勵全部變號後，這兩個分量變成 +0.00945、+0.00519，被抬高。獎勵全部為 0 時，兩種方法的更新都是 0。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼重抽格式錯誤的輸出不會使 RLOO 更新有偏？前提是什麼？REINFORCE 為何不行？</p>
+    <p class="a">前提 $\pi_0(S_{acc})>0$；$\ln\pi(z)=\ln\pi_0(z)-\ln\pi_0(S_{acc})$，多出的項乘上 $\sum_iA(z_i)$，RLOO 的優勢總和為 0 所以消失；REINFORCE 的總和不為 0，這一項留下（Prop. 1、Eq. 5–7）。</p>
+  </div></details>
+</section>
+
+<!-- §7 -->
+<section class="ch" id="eval" data-toc="08" data-tt="評估方式">
+  <div class="ch-num">08 · 評估方式</div>
+  <h2>評估把題目的價值與學生的軌跡分開</h2>
+  <div class="prose">
+    <p>SOAR 在 MATH 與 HARP 上各訓練 200 個外層步，OlympiadBench 不參與訓練。評估時間點是老師獎勵開始趨平的位置：MATH 取第 200 步、HARP 取第 170 步（Sec. 4.3）。從第 06 章的累積題庫 $D_{best}$ 起，本頁改稱為 <b>PQ</b>（Promotion Questions，晉升題目）。作者用兩種方式評估（Sec. 4.3）：</p>
+    <ul>
+      <li><b>PS</b>（Promoted Student）：在有多次晉升的執行中，取驗證表現最好的晉升學生（以 $D_{train}$ 貪婪正確率判斷），直接在測試集上推論。最多 4 次晉升，所以 PS 訓練過 128、192 或 256 題。</li>
+      <li><b>PQ</b>：用標準 RLOO 從頭訓練一個新的基礎學生，資料是 PQ＋fail@128 訓練集。目的是把「題目的價值」與「某一條幸運的學生訓練軌跡」分開。</li>
+    </ul>
+    <p>合成題與真題的混合方式（App. B.6）：MATH 用<b>課程訓練</b>，先用合成題訓練 64 步再換成真題；HARP 與 OlympiadBench 用<b>混合訓練</b>，全程混在一起（課程訓練在這兩者出現早期突升後驟降，Fig. 8）。選擇依據是基準方法 Base-T 的表現。</p>
+    <p>比較的基準（Sec. 4.3）：<b>Hard-Only</b> 直接用 fail@128 訓練集訓練，群組大小 $G=32$；MATH 另外跑 $G=128$（論文在這裡把學生群組大小寫成 g = 128，與本頁的 $g$＝資料集數衝突，所以本頁寫 $G$），取樣量是 4 倍，用來檢查收益是否只是多用了計算。<b>Intrinsic-T</b> 流程與超參數相同，只把老師獎勵換成可學習性（第 10 章），取樣 128 題訓練新學生。<b>SeRL</b> 是以 fail@128 訓練集為種子、自我演化課程的方法。<b>MATH train (Full)</b> 用完整的 MATH 訓練集 6750 題加 fail@128 訓練集，論文稱為上界參考。指標是 fail@128 測試集上的 pass@k，$k\in\{1,4,8,16,32\}$，每題 32 個樣本，報告 6–12 個種子的平均與標準差。總結：PS 直接用晉升學生推論；PQ 用 PQ＋fail@128 訓練集從頭訓練新學生，以分開題目的價值與幸運的訓練軌跡；$G=128$ 用 4 倍取樣量檢查收益是否只是多用了計算。</p>
+  </div>
+  <div class="fig" id="f2" style="max-width:860px"><svg role="img" aria-label="四條評估路徑：PS 直接推論；PQ 加 fail@128 訓練集從頭訓練新學生；Hard-Only 只用 fail@128 訓練集；老師取樣 128 題加 fail@128 訓練集訓練新學生；最後都在 fail@128 測試集上測 pass@k。"></svg></div>
+  <details class="more"><summary>早停與種子的細節（App. B.6、B.8）</summary><div class="prose">
+    <p>新學生最多訓練 1500 步。把平均訓練獎勵做 25 步置中移動平均，計算正規化斜率，取斜率首次低於最大值 15% 的步數，測試表現取之後 200 步的平均（門檻在 10%–20% 之間結果幾乎不變）；OlympiadBench 固定取第 50 步。種子：MATH、HARP 各訓練 4 個老師；Intrinsic-T 與無晉升版各 3 個；Hard-Only 至少 6 個學生種子；PQ 至少 6 個；PS 3 個推論種子；老師取樣實驗至少 8 個。</p></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">PQ 與 PS 的評估差在哪？Hard-Only（$G=128$）要排除什麼解釋？</p>
+    <p class="a">PS 直接用晉升學生推論；PQ 用 PQ＋fail@128 訓練集從頭訓練新學生，以分開題目的價值與幸運的訓練軌跡；$G=128$ 用 4 倍取樣量，檢查收益是否只是多用了計算（Sec. 4.3）。</p>
+  </div></details>
+</section>
