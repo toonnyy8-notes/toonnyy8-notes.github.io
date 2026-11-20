@@ -1,0 +1,642 @@
+AnisoFlow 各向異性目標
+
+跳到內容
+
+ No. 239
+ AnisoFlow：可學習的各向異性預測目標
+
+00 摘要01 路徑與目標02 目標族03 速度還原04 損失05 凍結誤差06 時間抵銷07 頻譜律08 學習基底09 實驗10 實作11 研究脈絡12 限制與延伸
+
+00摘要
+01路徑與目標
+02目標族
+03速度還原
+04損失
+05凍結誤差
+06時間抵銷
+07頻譜律
+08學習基底
+09實驗
+10實作
+11研究脈絡
+12限制與延伸
+
+ No. 239 · 互動教學 · arXiv 2611.17767 · 2026
+
+ AnisoFlow：每個方向各學一個雜訊權重
+
+ 這篇論文讓 flow model 的預測目標在每個方向各有一個可學習的雜訊權重，並分析學到的權重為什麼大約與資料變異數成正比。
+
+ Rayhan Zirvi、Hansheng Chen、Gordon Wetzstein、Leonidas Guibas（2026）〈Learning Anisotropic Prediction Targets for Flow Models〉
+
+0 x 預測10⁻³1 速度10²∞ ε 預測
+
+ w 軸：每個方向的雜訊權重。像素空間學到的權重約為該方向資料變異數 λ 的 0.15 倍（Fig. 3a）。
+
+ 01 · 一個目標網路不一定要直接預測速度。AnisoFlow 讓網路預測 Wε − x：x 是乾淨影像，ε 是加入的雜訊，W 在每個方向給雜訊一個可學習的非負權重。
+
+ 02 · 一條公式網路輸出可以用一條精確公式換回速度。因此不論權重取多少，可能達到的最小損失都一樣；權重只改變網路要擬合的函數有多難。
+
+ 03 · 一個結果在像素空間，學到的權重大約是該方向資料變異數的 0.15 倍。ImageNet 256×256 的 FID（越低代表生成影像的統計越接近真實影像）由 1.90 降到 1.55。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · 路徑與目標
+
+ Flow matching 讓網路回歸速度
+
+ Flow matching 從一條連接資料與雜訊的直線路徑開始。令 x $x$ 為一筆乾淨資料，ϵ∼N(0,I) $\epsilon\sim\mathcal N(0,I)$ 為標準高斯雜訊，時間 t∈[0,1] $t\in[0,1]$ 。本論文採用線性路徑（§3）：
+
+ zt=αtx+σtϵ,αt=1−t,σt=t $z_t=\alpha_tx+\sigma_t\epsilon,\qquad\alpha_t=1-t,\quad\sigma_t=t$ ​=αt​x+σt​ϵ,αt​=1−t,σt​=t
+Eq. 1
+
+ 本論文的路徑是 zt=(1−t)x+tϵ $z_t=(1-t)x+t\epsilon$ ​=(1−t)x+tϵ：t=0 $t=0$ 時 z0=x $z_0=x$ ​=x 是資料，t=1 $t=1$ 時 z1=ϵ $z_1=\epsilon$ ​=ϵ 是雜訊。沿路徑對 t $t$ 微分得到樣本速度 u=∂tzt=ϵ−x $u=\partial_tz_t=\epsilon-x$ ​zt​=ϵ−x。時間方向與站內 No. 238 相反：No. 238 寫 z=tx+(1−t)n $z=tx+(1-t)n$ ，t=1 $t=1$ 才是資料。以下 αt,σt $\alpha_t,\sigma_t$ ​,σt​ 常省略下標寫成 α,σ $\alpha,\sigma$ ，並且 α+σ=1 $\alpha+\sigma=1$ 。
+
+ 兩篇論文的時間方向相反
+
+ 本論文（No. 239）zt=(1−t)x+tϵ $z_t=(1-t)x+t\epsilon$ ​=(1−t)x+tϵ；t=0 $t=0$ 為資料，t=1 $t=1$ 為雜訊；取樣由 t=1 $t=1$ 積分到 t=0 $t=0$ 。
+
+ No. 238 k-Diffz=tx+(1−t)n $z=tx+(1-t)n$ ；t=1 $t=1$ 為資料，t=0 $t=0$ 為雜訊；取樣由 t=0 $t=0$ 走到 t=1 $t=1$ 。
+
+ 兩頁的雜訊 n $n$ 與 ϵ $\epsilon$ 是同一個量。閱讀時先確認哪一端是資料。
+
+ 網路 uθ(zt,t) $u_\theta(z_t,t)$ ​(zt​,t) 以平方誤差回歸這個速度：
+
+ LFM=Et,x,ϵ[∥uθ(zt,t)−u∥2] $\mathcal L_{FM}=\mathbb E_{t,x,\epsilon}\big[\|u_\theta(z_t,t)-u\|^2\big]$ ​=Et,x,ϵ​[∥uθ​(zt​,t)−u∥2]
+Eq. 2
+
+ 平方誤差下的最佳預測是條件均值 E[u∣zt,t] $\mathbb E[u\mid z_t,t]$ ​,t]，它定義一個 ODE 速度場。生成時從 z1∼N(0,I) $z_1\sim\mathcal N(0,I)$ ​∼N(0,I) 出發，沿這個速度場由 t=1 $t=1$ 積分到 t=0 $t=0$ 。
+
+ 網路不一定要直接輸出速度。它也可以預測雜訊 ϵ $\epsilon$ （ε 預測）或乾淨資料 x $x$ （x 預測），再用 zt $z_t$ ​ 換回速度（§3，用到 α+σ=1 $\alpha+\sigma=1$ ）：ε 預測得到 u^=(ϵ^−zt)/αt $\hat u=(\hat\epsilon-z_t)/\alpha_t$ =(ϵ^−zt​)/αt​，x 預測得到 u^=(zt−x^)/σt $\hat u=(z_t-\hat x)/\sigma_t$ =(zt​−x^)/σt​。給定 (zt,t) $(z_t,t)$ ​,t) 時三種目標資訊等價，但網路要解的回歸問題不同。x 預測的換算除以 σt=t $\sigma_t=t$ ​=t，所以 x^ $\hat x$ 的誤差在低雜訊（t→0 $t\to0$ ）時被放大 1/t $1/t$ 倍；論文稱這種換算在低雜訊時「病態」（ill-conditioned）。
+
+ No. 238 的 k-Diff 用 u=kx−(1−k)n $u=kx-(1-k)n$ 在三種目標之間做純量內插。把它除以 −k $-k$ 得到 1−kkn−x $\frac{1-k}{k}n-x$ 1−k​n−x，正是下一節的 AnisoFlow 目標在「所有方向同一個權重」時的形式，權重 w=(1−k)/k $w=(1-k)/k$ 本頁推導：k=0.5 $k=0.5$ 對應 w=1 $w=1$ ，k=1 $k=1$ 對應 w=0 $w=0$ ，k→0 $k\to0$ 對應 w→∞ $w\to\infty$ 。這個換算不含 t $t$ ，所以不受時間方向影響。
+
+ 符號表
+
+ 符號意義
+
+ x $x$ 、ϵ $\epsilon$ 乾淨資料、標準高斯雜訊
+
+ t $t$ 時間；t=0 $t=0$ 為資料、t=1 $t=1$ 為雜訊（與 No. 238 相反）
+
+ αt=1−t $\alpha_t=1-t$ ​=1−t、σt=t $\sigma_t=t$ ​=t路徑係數，αt+σt=1 $\alpha_t+\sigma_t=1$ ​+σt​=1
+
+ u $u$ 、u∗ $u^*$ 速度 ϵ−x $\epsilon-x$ 、條件均值 E[u∣zt,t] $\mathbb E[u\mid z_t,t]$ ​,t]
+
+ D $D$ 資料維度；patchify 模型中為一個 patch 的維度（JiT：768）
+
+ W $W$ 、B $B$ 、wi $w_i$ ​、bi $b_i$ ​目標算子、其正交基底、方向 i $i$ 的雜訊權重、第 i $i$ 個基底向量
+
+ uW $u_W$ ​、u^W $\hat u_W$ W​AnisoFlow 目標 Wϵ−x $W\epsilon-x$ 、網路對它的預測
+
+ λi $\lambda_i$ ​方向 i $i$ 的資料變異數 E[xi2] $\mathbb E[x_i^2]$ 2​]
+
+ Ai,Ci,Γi $A_i,C_i,\Gamma_i$ ​,Ci​,Γi​雜訊估計誤差、資料估計誤差的二階矩與交叉矩（S05）
+
+ Aˉi,Cˉi,qi(t) $\bar A_i,\bar C_i,q_i(t)$ i​,Cˉi​,qi​(t)可分離形式的方向尺度與共同時間函數（S06）
+
+ G $G$ 、at $a_t$ ​、bt $b_t$ ​spectral update 的動差矩陣與兩個純量（S08）
+
+ σmin⁡ $\sigma_{\min}$ ​推論時還原分母的下限 0.04 $0.04$ 
+
+ 延伸閱讀：預測目標與 k-Diff（No. 238 互動教學）、預測目標演進總覽、Flow matching 的速度目標
+
+ 02 · 目標族
+
+ 目標族只需要雜訊權重
+
+ 先定義兩個後文常用的詞。對一組正交方向 b1,…,bD $b_1,\dots,b_D$ ​,…,bD​，資料在方向 i $i$ 的座標是 xi=bi⊤x $x_i=b_i^\top x$ ​=bi⊤​x，方向 i $i$ 的資料變異數是 λi=E[xi2] $\lambda_i=\mathbb E[x_i^2]$ ​=E[xi2​]。PCA 基底是資料共變異數矩陣的正交特徵向量，依變異數由大到小排列；在這組基底下各座標互不相關。雜訊 ϵ $\epsilon$ 在任何正交基底下仍是各向同性的 N(0,I) $\mathcal N(0,I)$ 。
+
+ 作者先問：一個線性目標究竟有幾個自由度？在單一方向上，線性目標寫成 y=φx+ψϵ $y=\varphi x+\psi\epsilon$ 。把係數同乘一個非零常數 c $c$ ，只等於把網路輸出乘上 c $c$ ，網路能表示的函數集合不變，平方誤差下的最佳預測也同樣乘上 c $c$ （E[cy∣zt,t]=c E[y∣zt,t] $\mathbb E[cy\mid z_t,t]=c\,\mathbb E[y\mid z_t,t]$ ​,t]=cE[y∣zt​,t]）。所以整體尺度可被網路吸收，作者固定資料係數 φ=−1 $\varphi=-1$ ，每個方向只剩一個參數 w=−ψ/φ $w=-\psi/\varphi$ （App. A.1）。純 ε 預測（φ=0 $\varphi=0$ ）只能當成 w→∞ $w\to\infty$ 的極限。作者也註明：這種正規化不改變可表示的預測器，但可能改變損失幾何與最佳化。
+
+ 矩陣版的論證相同：目標 y=Kx+Lϵ $y=Kx+L\epsilon$ 在 K $K$ 可逆時乘上 T=−K−1 $T=-K^{-1}$ ，得到正規形 Wϵ−x $W\epsilon-x$ ，W=−K−1L $W=-K^{-1}L$ L。AnisoFlow 把 W $W$ 限制為半正定矩陣（理由見 S03）：
+
+ uW:=Wϵ−x,W=B diag(w1,…,wD) B⊤,wi≥0 $u_W:=W\epsilon-x,\qquad W=B\,\mathrm{diag}(w_1,\dots,w_D)\,B^\top,\quad w_i\ge0$ ​:=Wϵ−x,W=Bdiag(w1​,…,wD​)B⊤,wi​≥0
+Eq. 3, 4
+
+ 在基底 B $B$ 的座標下，目標是 uW,i=wiϵi−xi $u_{W,i}=w_i\epsilon_i-x_i$ ​=wi​ϵi​−xi​：資料分量保持完整，雜訊分量在每個方向有自己的權重。論文把權重定義為「非負」；實作上用 wi=exp⁡(ηi) $w_i=\exp(\eta_i)$ ​=exp(ηi​) 參數化，所以學到的權重嚴格為正（App. B.1）。
+
+ 這個目標族包含常見的目標（差符號與整體尺度，§4）：wi=0 $w_i=0$ ​=0 是 x 預測；wi=1 $w_i=1$ ​=1 是速度 ϵi−xi $\epsilon_i-x_i$ ​−xi​；wi→∞ $w_i\to\infty$ ​→∞ 是 ε 預測；所有方向共用同一個 wi≡w $w_i\equiv w$ ​≡w 是純量內插，等同 k-Diff（No. 238：所有方向共用一個可學純量）；在 PCA 基底下取 wi∈{0,1} $w_i\in\{0,1\}$ ​∈{0,1} 是 AsymFlow 的二元低秩遮罩（AsymFlow：PCA 前幾個方向用速度、其餘方向用 x 預測）。AnisoFlow 則讓每個方向的 wi $w_i$ ​ 與基底 B $B$ 都在訓練中學出來。
+
+ 在 patchify 的像素模型中，W $W$ 作用在一個 patch 上、所有位置共用，所以 D $D$ 是 patch 維度；JiT 為 16×16×3=768 $16\times16\times3=768$ （App. B.2）。一張有 N $N$ 個 patch 的影像，對應的算子是 IN⊗W $I_N\otimes W$ ​⊗W。
+
+ 圖目標族：五種權重配置
+
+ 示意圖。每格 24 根長條代表 24 個方向，依資料變異數 λ 由大到小排列；長條高度是 w（以 1 為上限繪製）。λ 為合成值 λᵢ = 50·0.75ⁱ，論文沒有提供數值。
+
+ 延伸閱讀：內插目標的前驅：EDM、k-Diff 與 AsymFlow、Pixel 空間的 patchify 設定
+
+ 03 · 速度還原
+
+ 閉式還原把預測換回速度
+
+ 網路預測 uW $u_W$ ​，但損失與取樣器都用速度，所以需要從 u^W $\hat u_W$ W​ 換回 u^ $\hat u$ 。在單一方向上，把 zt=αx+σϵ $z_t=\alpha x+\sigma\epsilon$ ​=αx+σϵ 與 uW=wϵ−x $u_W=w\epsilon-x$ ​=wϵ−x 代入 (1−w)zt+uW $(1-w)z_t+u_W$ ​+uW​，逐項整理係數（用 α−1=−σ $\alpha-1=-\sigma$ ）：x $x$ 的係數是 (1−w)α−1=−(αw+σ) $(1-w)\alpha-1=-(\alpha w+\sigma)$ ，ϵ $\epsilon$ 的係數是 (1−w)σ+w=σ+αw $(1-w)\sigma+w=\sigma+\alpha w$ 。因此
+
+ (1−w)zt+uW=(αtw+σt)(ϵ−x)=(αtw+σt) u $(1-w)z_t+u_W=(\alpha_tw+\sigma_t)(\epsilon-x)=(\alpha_tw+\sigma_t)\,u$ ​+uW​=(αt​w+σt​)(ϵ−x)=(αt​w+σt​)u
+Eq. 9
+
+ 把恆等式兩邊除以 αtw+σt $\alpha_tw+\sigma_t$ ​w+σt​，再把真實目標換成網路預測，就得到還原公式：由 u^W,i $\hat u_{W,i}$ W,i​ 得到 u^i=((1−wi)zt,i+u^W,i)/(αtwi+σt) $\hat u_i=((1-w_i)z_{t,i}+\hat u_{W,i})/(\alpha_tw_i+\sigma_t)$ i​=((1−wi​)zt,i​+u^W,i​)/(αt​wi​+σt​)。推導的關鍵恆等式是 (1−w)zt+uW=(αtw+σt)(ϵ−x) $(1-w)z_t+u_W=(\alpha_tw+\sigma_t)(\epsilon-x)$ ​+uW​=(αt​w+σt​)(ϵ−x)，它用到 αt+σt=1 $\alpha_t+\sigma_t=1$ ​+σt​=1，所以只對這條線性路徑成立。矩陣形式是 u^=(αtW+σtI)−1((I−W)zt+u^W) $\hat u=(\alpha_tW+\sigma_tI)^{-1}((I-W)z_t+\hat u_W)$ =(αt​W+σt​I)−1((I−W)zt​+u^W​)（Eq. 10），只要 αtW+σtI $\alpha_tW+\sigma_tI$ ​W+σt​I 可逆即成立，不需要 W $W$ 對稱。
+
+ u^i=(1−wi) zt,i+u^W,iαtwi+σt $\hat u_i=\frac{(1-w_i)\,z_{t,i}+\hat u_{W,i}}{\alpha_tw_i+\sigma_t}$ i​=αt​wi​+σt​(1−wi​)zt,i​+u^W,i​​
+Eq. 5
+
+ 三個代入檢查：w=0 $w=0$ 時 u^W=−x^ $\hat u_W=-\hat x$ W​=−x^，公式變成 (zt−x^)/σ $(z_t-\hat x)/\sigma$ ​−x^)/σ，即 x 預測的換算；w=1 $w=1$ 時 u^=u^W $\hat u=\hat u_W$ =u^W​；w→∞ $w\to\infty$ 時 u^→(ϵ^−zt)/α $\hat u\to(\hat\epsilon-z_t)/\alpha$ →(ϵ^−zt​)/α，即 ε 預測的換算。
+
+ 還原公式也決定誤差如何傳遞。zt $z_t$ ​ 的項在相減時抵銷，所以 u^i−ui=(u^W,i−uW,i)/(αtwi+σt) $\hat u_i-u_i=(\hat u_{W,i}-u_{W,i})/(\alpha_tw_i+\sigma_t)$ i​−ui​=(u^W,i​−uW,i​)/(αt​wi​+σt​)：目標誤差換到速度時被放大 1/(αtwi+σt) $1/(\alpha_tw_i+\sigma_t)$ ​wi​+σt​) 倍。wi=0 $w_i=0$ ​=0 時放大倍率是 1/t $1/t$ ，在低雜訊時發散；wi=1 $w_i=1$ ​=1 時放大倍率恆為 1；wi>1 $w_i>1$ ​>1 時倍率小於 1。推論時論文把分母下限設為 σmin⁡=0.04 $\sigma_{\min}=0.04$ ​=0.04，基線與 AnisoFlow 都使用（App. B.1），所以誤差倍率最多 25 倍本頁推導：1/0.04。但截斷改的是分母本身：分母被抬高後，即使網路的預測完全準確，還原出來的速度也會偏離真實值，產生偏差。
+
+ 若把網路的預測想成 u^W,i=wiϵ^i−x^i $\hat u_{W,i}=w_i\hat\epsilon_i-\hat x_i$ W,i​=wi​ϵ^i​−x^i​，還原公式可以改寫成兩個速度估計的加權平均本頁推導：由 Eq. 5 整理：u^i=πϵϵ^i−zt,iα+πxzt,i−x^iσ $\hat u_i=\pi_\epsilon\frac{\hat\epsilon_i-z_{t,i}}{\alpha}+\pi_x\frac{z_{t,i}-\hat x_i}{\sigma}$ i​=πϵ​αϵ^i​−zt,i​​+πx​σzt,i​−x^i​​，其中 πϵ=αwiαwi+σ $\pi_\epsilon=\frac{\alpha w_i}{\alpha w_i+\sigma}$ ​=αwi​+σαwi​​、πx=σαwi+σ $\pi_x=\frac{\sigma}{\alpha w_i+\sigma}$ ​=αwi​+σσ​，兩者和為 1。權重 wi $w_i$ ​ 調的是「ε 路線」與「x 路線」兩個速度估計的混合比例。
+
+ C1目標、還原與誤差放大
+
+ 純量示範：抽一組 x、ε ~ N(0, 1)，給網路的目標預測加上一個固定誤差 δ，看還原後的速度誤差。這裡不訓練網路。
+
+ x 預測 w = 0（圓）速度 w = 1（方）目前 w（三角）
+
+ 時間 t0.30
+
+ 雜訊權重 w1
+
+ x 預測 w = 0速度 w = 1w = 10
+
+ 目標誤差 δ0.10
+
+ 推論截斷 σmin = 0.04
+ 重新抽樣
+
+ α0.7000
+σ0.3000
+x-0.3305
+ε-0.9203
+z-0.5074
+uW = wε − x-0.5899
+ûW = uW + δ-0.4899
+還原 û-0.4899
+真實 u-0.5899
+使用的分母1.0000
+速度誤差 û − u0.1000
+誤差倍率1.0000
+πε0.7000
+πx0.3000
+
+ 速度誤差 = δ / den = 0.1000 / 1.0000 = 0.1000
+
+ 讀數由本頁依 Eq. 5 即時計算；π_ε、π_x 與截斷偏差的拆分為本頁推導。x、ε 由 seed 固定的 mulberry32 產生（起始 seed 239）。
+
+ t = 0.30，w = 1，速度誤差 0.1000
+
+ 03.2 為什麼限制為半正定
+
+ 矩陣形式的還原需要 αtW+σtI $\alpha_tW+\sigma_tI$ ​W+σt​I 可逆。它在時刻 t $t$ 不可逆，若且唯若 −σt/αt=−t/(1−t) $-\sigma_t/\alpha_t=-t/(1-t)$ ​/αt​=−t/(1−t) 是 W $W$ 的特徵值；而 t $t$ 掃過 (0,1) $(0,1)$ 時，−t/(1−t) $-t/(1-t)$ 掃過整條負實軸（App. A.1）。例如 W=−I $W=-I$ 時分母是 αt(−1)+σt=2t−1 $\alpha_t(-1)+\sigma_t=2t-1$ ​(−1)+σt​=2t−1，在 t=1/2 $t=1/2$ 為 0，還原失效。一般的實矩陣可能有複數特徵值，非正規時條件數也可能很差，而且沒有逐方向的正交還原。限制為對稱矩陣後特徵值全為實數；在對稱族中，保證所有 t $t$ 都非奇異的條件是特徵值非負，也就是 W⪰0 $W\succeq0$ 。這是論文的實用選擇，論文明說一般族「代數上可行但不實用」。wi=0 $w_i=0$ ​=0 只在資料端點 t=0 $t=0$ 奇異，取樣器不會計算 t=0 $t=0$ 。這一小節只由文字說明，沒有對應的互動元件。
+
+ 延伸閱讀：AnisoFlow 目標的標準形式與速度還原
+
+ 04 · 損失
+
+ 權重不改變最小損失，只改變擬合難度
+
+ 網路參數 θ $\theta$ 與權重 w=(w1,…,wD) $w=(w_1,\dots,w_D)$ ​,…,wD​) 一起訓練，損失是還原後速度的平方誤差 L(θ,w)=Et,x,ϵ∥u^(zt,t)−u∥2 $\mathcal L(\theta,w)=\mathbb E_{t,x,\epsilon}\|\hat u(z_t,t)-u\|^2$ ​∥u^(zt​,t)−u∥2，不是目標空間的 ∥u^W−uW∥2 $\|\hat u_W-u_W\|^2$ W​−uW​∥2（§4）。由 S03 的誤差傳遞，方向 i $i$ 、時刻 t $t$ 的損失是
+
+ Ei(wi;t)=E[(u^W,i−uW,i)2∣t](αtwi+σt)2 $E_i(w_i;t)=\frac{\mathbb E\big[(\hat u_{W,i}-u_{W,i})^2\mid t\big]}{(\alpha_tw_i+\sigma_t)^2}$ ​(wi​;t)=(αt​wi​+σt​)2E[(u^W,i​−uW,i​)2∣t]​
+Eq. 6
+
+ 增加 wi $w_i$ ​ 會加大分母，目標誤差被放大得較少；但 wi $w_i$ ​ 越大，目標裡要預測的雜訊也越多。學到的權重在這兩者之間權衡。
+
+ uW,i∗=(αtwi+σt) ui∗−(1−wi) zt,i $u^*_{W,i}=(\alpha_tw_i+\sigma_t)\,u^*_i-(1-w_i)\,z_{t,i}$ ∗​=(αt​wi​+σt​)ui∗​−(1−wi​)zt,i​
+Eq. 11
+
+ Ei(wi;t)=E[(u^W,i−uW,i∗)2∣t](αtwi+σt)2⏟超額預測誤差+E[(ui−ui∗)2∣t]⏟不可約誤差 $E_i(w_i;t)=\underbrace{\frac{\mathbb E[(\hat u_{W,i}-u^*_{W,i})^2\mid t]}{(\alpha_tw_i+\sigma_t)^2}}_{\text{超額預測誤差}}+\underbrace{\mathbb E[(u_i-u^*_i)^2\mid t]}_{\text{不可約誤差}}$ ​(wi​;t)=超額預測誤差(αt​wi​+σt​)2E[(u^W,i​−uW,i∗​)2∣t]​​​+不可約誤差E[(ui​−ui∗​)2∣t]​​
+Eq. 12
+
+ 選不同 wi $w_i$ ​ 的最小可達損失相同，原因是還原可逆：對 uW=(αw+σ)u−(1−w)zt $u_W=(\alpha w+\sigma)u-(1-w)z_t$ ​=(αw+σ)u−(1−w)zt​ 取條件期望（zt $z_t$ ​ 是已知量），最佳目標預測是 uW,i∗=(αwi+σ)ui∗−(1−wi)zt,i $u^*_{W,i}=(\alpha w_i+\sigma)u^*_i-(1-w_i)z_{t,i}$ ∗​=(αwi​+σ)ui∗​−(1−wi​)zt,i​（Eq. 11），把它代入還原公式恆得到 ui∗ $u^*_i$ ∗​。把誤差拆開（交叉項因條件均值的正交性為 0），只有超額預測誤差除以 (αwi+σ)2 $(\alpha w_i+\sigma)^2$ ​+σ)2 這一項與 wi $w_i$ ​ 有關（Eq. 12），所以 wi $w_i$ ​ 的梯度完全來自網路的不完美。若網路換成最佳的時間條件線性預測器，論文算出 Φt∗(W)=(σtW−αtΣ)Σz,t−1 $\Phi^*_t(W)=(\sigma_tW-\alpha_t\Sigma)\Sigma_{z,t}^{-1}$ ∗​(W)=(σt​W−αt​Σ)Σz,t−1​（Eq. 43，Σ $\Sigma$ 為資料共變異數，Σz,t=αt2Σ+σt2I $\Sigma_{z,t}=\alpha_t^2\Sigma+\sigma_t^2I$ ​=αt2​Σ+σt2​I），還原後的速度預測 (σtI−αtΣ)Σz,t−1 $(\sigma_tI-\alpha_t\Sigma)\Sigma_{z,t}^{-1}$ ​I−αt​Σ)Σz,t−1​ 與 W $W$ 無關（Eq. 44）：線性模型不識別權重，也不識別基底。
+
+ 這一點限制了瀏覽器玩具能示範的內容：在最佳線性預測器下，還原後的損失與 W $W$ 無關，所以這類玩具無法學出任何特定的 w $w$ 。容量受限、有限樣本或非最佳的模型不在 Eq. 44 的範圍內，本頁也不模擬。下面的 C2 只示範這個不變性；之後的 C3、C4 是「給定假設，最佳值在哪」的計算。
+
+ 純量版的結果本頁推導：由 Var(u) = 1 + λ、Cov(u, z) = σ − αλ、Var(z) = α²λ + σ² 化簡：若 x∼N(0,λ) $x\sim\mathcal N(0,\lambda)$ ，最佳線性目標預測係數為 Φ∗=σw−αλα2λ+σ2 $\Phi^*=\frac{\sigma w-\alpha\lambda}{\alpha^2\lambda+\sigma^2}$ =α2λ+σ2σw−αλ​，還原後的係數為 σ−αλα2λ+σ2 $\frac{\sigma-\alpha\lambda}{\alpha^2\lambda+\sigma^2}$ λ+σ2σ−αλ​，最小速度誤差為 λα2λ+σ2 $\frac{\lambda}{\alpha^2\lambda+\sigma^2}$ λ+σ2λ​；目標空間的最小誤差是它乘上 (αw+σ)2 $(\alpha w+\sigma)^2$ ，會隨 w $w$ 改變。
+
+ C2線性模型：權重改變目標，不改變還原後的速度
+
+ 假設：x ~ N(0, λ)，網路是最佳線性預測器。這時還原後的損失與 w 無關（論文 Eq. 44），所以這個玩具學不出任何 w，也不能用來說明 w ∝ λ。
+
+ 目標 uW 與 z（圓點）
+
+ 速度 u 與 z（方點）
+
+ 資料變異數 λ4
+
+ 時間 t0.50
+
+ 雜訊權重 w1
+
+ 重新抽樣
+
+ Φ*（目標預測係數）-1.2000
+還原係數（經 Eq. 5）-1.2000
+還原係數（閉式）-1.2000
+|差|0.0e+0
+最小速度誤差3.2000
+目標空間最小誤差3.2000
+
+目標空間的最小誤差為 3.2000，換回速度後為 3.2000；後者在任何 w 下都相同。
+
+ 讀數由本頁依 Eq. 5 與純量版 Eq. 43–44（本頁推導）即時計算。200 個點由 mulberry32 產生（起始 seed 239）。
+
+ λ = 4，t = 0.50，w = 1，還原係數 -1.2000
+
+ 05 · 凍結誤差
+
+ 凍結誤差模型給出單一時刻的偏好權重
+
+ S04 說明 wi $w_i$ ​ 只透過超額預測誤差影響損失。超額預測誤差是網路誤差的二階矩；要看它如何隨 wi $w_i$ ​ 變化，作者把網路的預測想成由一個雜訊估計 ϵ^i $\hat\epsilon_i$ i​ 與一個資料估計 x^i $\hat x_i$ i​ 組成：u^W,i≈wiϵ^i−x^i $\hat u_{W,i}\approx w_i\hat\epsilon_i-\hat x_i$ W,i​≈wi​ϵ^i​−x^i​，與目標 uW,i=wiϵi−xi $u_{W,i}=w_i\epsilon_i-x_i$ ​=wi​ϵi​−xi​ 對應（§5、App. A.2）。即使最佳的網路也無法從 zt $z_t$ ​ 準確還原 ϵi $\epsilon_i$ ​ 與 xi $x_i$ ​，最好的估計是條件均值 ϵi∗=E[ϵi∣zt,t] $\epsilon_i^*=\mathbb E[\epsilon_i\mid z_t,t]$ ∗​=E[ϵi​∣zt​,t]、xi∗=E[xi∣zt,t] $x_i^*=\mathbb E[x_i\mid z_t,t]$ ∗​=E[xi​∣zt​,t]，所以誤差以它們為基準量：en,i=ϵ^i−ϵi∗ $e_{n,i}=\hat\epsilon_i-\epsilon_i^*$ ​=ϵ^i​−ϵi∗​、ex,i=x^i−xi∗ $e_{x,i}=\hat x_i-x_i^*$ ​=x^i​−xi∗​。剩下的不確定性無法避免，也與 wi $w_i$ ​ 無關。
+
+ 第二個假設是凍結誤差模型（frozen-error model）：在收斂附近，wi $w_i$ ​ 的小變化不改變網路估計雜訊與資料的準確度，所以誤差的二階統計量可視為固定。於是超額誤差寫成
+
+ E[(u^W,i−uW,i∗)2∣t]=Aiwi2−2Γiwi+Ci,Ai=E[en,i2∣t], Γi=E[en,iex,i∣t], Ci=E[ex,i2∣t] $\mathbb E[(\hat u_{W,i}-u^*_{W,i})^2\mid t]=A_iw_i^2-2\Gamma_iw_i+C_i,\quad A_i=\mathbb E[e_{n,i}^2\mid t],\ \Gamma_i=\mathbb E[e_{n,i}e_{x,i}\mid t],\ C_i=\mathbb E[e_{x,i}^2\mid t]$ W,i​−uW,i∗​)2∣t]=Ai​wi2​−2Γi​wi​+Ci​,Ai​=E[en,i2​∣t], Γi​=E[en,i​ex,i​∣t], Ci​=E[ex,i2​∣t]
+Eq. 13, 14
+
+ Ai $A_i$ ​ 是雜訊估計誤差，Ci $C_i$ ​ 是資料估計誤差，Γi $\Gamma_i$ ​ 是兩者的交叉矩；相關係數記為 ρ=Γ/AC $\rho=\Gamma/\sqrt{AC}$ ​。先看交叉項可忽略（Γ=0 $\Gamma=0$ ）的情形。凍結誤差模型下，單一時刻的偏好權重是 wi∗(t)=αtCi/(σtAi) $w_i^*(t)=\alpha_tC_i/(\sigma_tA_i)$ ∗​(t)=αt​Ci​/(σt​Ai​)（Eq. 7，即 Eq. 19）；Γ=0 $\Gamma=0$ 、A,C>0 $A,C>0$ 、t∈(0,1) $t\in(0,1)$ 時它是 w≥0 $w\ge0$ 上唯一的最小點。作者的解讀：資料較難估（C $C$ 大）的方向偏好較大的雜訊權重；雜訊較難估（A $A$ 大）的方向偏好較小的權重。
+
+ wi∗(t)≈αt Ci(t)σt Ai(t) $w_i^*(t)\approx\frac{\alpha_t\,C_i(t)}{\sigma_t\,A_i(t)}$ ∗​(t)≈σt​Ai​(t)αt​Ci​(t)​
+Eq. 7 = Eq. 19
+
+ 這個結果可以讀成逆變異數加權本頁推導：ε 路線的速度誤差變異數是 A/α2 $A/\alpha^2$ ，x 路線是 C/σ2 $C/\sigma^2$ ；兩個不相關估計的最佳混合比例是 (α2/A):(σ2/C) $(\alpha^2/A):(\sigma^2/C)$ /A):(σ2/C)，令它等於 S03 的 αw:σ $\alpha w:\sigma$ ，解出的就是 Eq. 19。最小值是 f∗=ACα2C+σ2A $f^*=\frac{AC}{\alpha^2C+\sigma^2A}$ =α2C+σ2AAC​，即 1/f∗=α2/A+σ2/C $1/f^*=\alpha^2/A+\sigma^2/C$ =α2/A+σ2/C；純 x 預測的 f(0)=C/σ2 $f(0)=C/\sigma^2$ 與純 ε 預測的 f(∞)=A/α2 $f(\infty)=A/\alpha^2$ 都不小於它。
+
+ C3凍結誤差模型：單一時刻的偏好權重
+
+ 假設：凍結誤差模型（Eq. 13），A、C、ρ 由你指定，不是從網路量到的。圖只顯示「給定這些誤差，哪個 w 最好」，不能說明網路實際的誤差為何如此。真實網路的 A、C 會隨 t 變化（論文 §5：A 隨 t 下降、C 隨 t 上升），兩者的抵銷見 S06；此處固定 A、C 只為看公式。
+
+ f(w)w → ∞ 的極限 A/α²w*
+
+ 時間 t0.50
+
+ 雜訊估計誤差 A1
+
+ 資料估計誤差 C0.1
+
+ 進階：交叉項 Γ
+ 相關係數 ρ0.0
+
+ w*（Eq. 18）0.1000
+Eq. 19 近似 αC/(σA)0.1000
+f(w*)0.3636
+f(0) = C/σ²0.4000
+f(1)（速度）1.1000
+A/α²（w → ∞）4.0000
+f* = 1/(α²/A + σ²/C)0.3636
+
+ 內部最小：w* = 0.1000，損失比速度目標（w = 1）低 66.9%。
+
+ 讀數由本頁依 Eq. 17–19 即時計算；邊界情形判斷與 f* 的逆變異數式為本頁推導。
+
+ t = 0.50，A = 1，C = 0.1，內部最小，w* = 0.1000
+
+ 交叉項不為零時，對 f(w)=(Aw2−2Γw+C)/(αw+σ)2 $f(w)=(Aw^2-2\Gamma w+C)/(\alpha w+\sigma)^2$ −2Γw+C)/(αw+σ)2 微分，Aw2 $Aw^2$ 的項相消（Eq. 17）：
+
+ f′(w)=2[w(Aσ+αΓ)−(Γσ+αC)](αw+σ)3,wi∗(t)=Γiσt+αtCiAiσt+αtΓi $f'(w)=\frac{2\big[w(A\sigma+\alpha\Gamma)-(\Gamma\sigma+\alpha C)\big]}{(\alpha w+\sigma)^3},\qquad w_i^*(t)=\frac{\Gamma_i\sigma_t+\alpha_tC_i}{A_i\sigma_t+\alpha_t\Gamma_i}$ (w)=(αw+σ)32[w(Aσ+αΓ)−(Γσ+αC)]​,wi∗​(t)=Ai​σt​+αt​Γi​Γi​σt​+αt​Ci​​
+Eq. 17, 18
+
+ 凍結誤差模型下的單一時刻偏好權重完整寫成 wi∗(t)=(Γiσt+αtCi)/(Aiσt+αtΓi) $w_i^*(t)=(\Gamma_i\sigma_t+\alpha_tC_i)/(A_i\sigma_t+\alpha_t\Gamma_i)$ ∗​(t)=(Γi​σt​+αt​Ci​)/(Ai​σt​+αt​Γi​)（Eq. 18）；當 Aσ+αΓ>0 $A\sigma+\alpha\Gamma>0$ 且 Γσ+αC>0 $\Gamma\sigma+\alpha C>0$ 時它是 w≥0 $w\ge0$ 上的內部最小，交叉項可忽略時化為 Eq. 7 的 αtCi/(σtAi) $\alpha_tC_i/(\sigma_tA_i)$ ​Ci​/(σt​Ai​)。其他情形本頁推導：記 P=Aσ+αΓ $P=A\sigma+\alpha\Gamma$ 、Q=Γσ+αC $Q=\Gamma\sigma+\alpha C$ ，f′∝wP−Q $f'\propto wP-Q$ ∝wP−Q。P>0,Q≤0 $P>0,Q\le0$ 時 f $f$ 在 w≥0 $w\ge0$ 遞增，最小在 w=0 $w=0$ ；P≤0,Q>0 $P\le0,Q>0$ 時 f $f$ 遞減，下確界是 w→∞ $w\to\infty$ 的 A/α2 $A/\alpha^2$ ；∣ρ∣<1 $|\rho|\lt1$ 時兩者不會同時非正。在 C3 勾選「進階」可以看到這些情形。
+
+ 06 · 時間抵銷
+
+ 在可分離誤差假設下，最佳權重與 t 無關
+
+ 訓練時，每個樣本的 t $t$ 依一個時間分佈 p(t) $p(t)$ 抽樣，而 AnisoFlow 的 wi $w_i$ ​ 跨時間共用。所以訓練最小化的是時間平均損失 Eˉi(wi)=Et∼p[Ei(wi;t)] $\bar E_i(w_i)=\mathbb E_{t\sim p}[E_i(w_i;t)]$ i​(wi​)=Et∼p​[Ei​(wi​;t)]（Eq. 16）。常見的 p(t) $p(t)$ 有均勻分佈，以及 logit-normal：ln⁡t1−t $\ln\frac{t}{1-t}$ t​ 服從常態分佈，取樣集中在中段。若各時刻偏好的 w $w$ 不同，平均後的最佳值會依 p(t) $p(t)$ 看重哪些時刻而改變；若各時刻偏好相同，p(t) $p(t)$ 就不影響結果。
+
+ Eq. 7 裡的 αt/σt $\alpha_t/\sigma_t$ ​/σt​ 從 ∞ $\infty$ 變到 0，看似不同時刻偏好非常不同的權重。但兩種估計誤差的變化方向相反：t $t$ 小時 zt $z_t$ ​ 以資料為主，xi $x_i$ ​ 好估、ϵi $\epsilon_i$ ​ 難估；t $t$ 大時相反（§5）。作者提出一個充分條件（是假設，不是推導出的結果）：
+
+ Ai(t)=αt qi(t) Aˉi,Ci(t)=σt qi(t) Cˉi,Γi=0 $A_i(t)=\alpha_t\,q_i(t)\,\bar A_i,\qquad C_i(t)=\sigma_t\,q_i(t)\,\bar C_i,\qquad\Gamma_i=0$ ​(t)=αt​qi​(t)Aˉi​,Ci​(t)=σt​qi​(t)Cˉi​,Γi​=0
+Eq. 20
+
+ ∂∂wAiw2+Ci(αtw+σt)2=2αtσtqi(t)Aˉi(αtw+σt)3(w−CˉiAˉi)⇒wi∗=CˉiAˉi $\frac{\partial}{\partial w}\frac{A_iw^2+C_i}{(\alpha_tw+\sigma_t)^2}=\frac{2\alpha_t\sigma_tq_i(t)\bar A_i}{(\alpha_tw+\sigma_t)^3}\Big(w-\frac{\bar C_i}{\bar A_i}\Big)\quad\Rightarrow\quad w_i^*=\frac{\bar C_i}{\bar A_i}$ ∂​(αt​w+σt​)2Ai​w2+Ci​​=(αt​w+σt​)32αt​σt​qi​(t)Aˉi​​(w−Aˉi​Cˉi​​)⇒wi∗​=Aˉi​Cˉi​​
+Eq. 21–23
+
+ 訓練最小化的是時間平均 Et[Ei(wi;t)] $\mathbb E_t[E_i(w_i;t)]$ ​[Ei​(wi​;t)]，因為 t $t$ 依 p(t) $p(t)$ 抽樣且 wi $w_i$ ​ 跨時間共用。在 Ai=αtqiAˉi $A_i=\alpha_tq_i\bar A_i$ ​=αt​qi​Aˉi​、Ci=σtqiCˉi $C_i=\sigma_tq_i\bar C_i$ ​=σt​qi​Cˉi​、Γi=0 $\Gamma_i=0$ ​=0 這個充分條件（Eq. 20）下，導數的正負只由 w−Cˉi/Aˉi $w-\bar C_i/\bar A_i$ i​/Aˉi​ 決定，所以每個 qi(t)>0 $q_i(t)>0$ ​(t)>0 的時刻都在 wi∗=Cˉi/Aˉi $w_i^*=\bar C_i/\bar A_i$ ∗​=Cˉi​/Aˉi​ 最小（Eq. 23），時間平均的最小點也是它，因此與 p(t) $p(t)$ 無關（需期望損失有限）。對照的無資訊極限（論文稱 zero-skill limit，App. A.2）假設網路對方向 i $i$ 沒有 t $t$ 以外的資訊、目標預測恆為 0，損失是 Et[wi2+λi(αtwi+σt)2] $\mathbb E_t\big[\frac{w_i^2+\lambda_i}{(\alpha_tw_i+\sigma_t)^2}\big]$ ​[(αt​wi​+σt​)2wi2​+λi​​]（Eq. 25）；分子 wi2+λi $w_i^2+\lambda_i$ 2​+λi​ 不隨 t $t$ 變，沒有抵銷，逐時刻最佳是 wi∗(t)=(αt/σt)λi $w_i^*(t)=(\alpha_t/\sigma_t)\lambda_i$ ∗​(t)=(αt​/σt​)λi​（Eq. 26），隨時間改變，最佳常數權重就依 p(t) $p(t)$ 而定。
+
+ 均勻 p(t) $p(t)$ 下可以算出無資訊極限的最佳常數本頁推導：∫₀¹ dt/(w + t(1 − w))² = 1/w：Eq. 25 等於 w+λ/w $w+\lambda/w$ ，最佳值是 λ $\sqrt\lambda$ ​。這不是論文的結論，只說明無資訊時最佳常數依時間分佈而定，而且不與 λ $\lambda$ 成正比。兩個「與 λ $\lambda$ 有關」的結果不要混淆：無資訊極限是 w∗(t)=(α/σ)λ $w^*(t)=(\alpha/\sigma)\lambda$ (t)=(α/σ)λ，隨時間變、係數已知；S07 的 w∗=Cˉ/Aˉ≈cλ $w^*=\bar C/\bar A\approx c\lambda$ =Cˉ/Aˉ≈cλ 不隨時間變、c $c$ 未知。
+
+ 無資訊極限的逐點解與 EDM 的前置條件一致（Eq. 27–30）。t<1 $t\lt1$ 時令 z~t,i=xi+stϵi $\tilde z_{t,i}=x_i+s_t\epsilon_i$ t,i​=xi​+st​ϵi​，st=σt/αt $s_t=\sigma_t/\alpha_t$ ​=σt​/αt​；把 EDM 的純量資料變異數換成每個方向的 λi $\lambda_i$ ​，cskip,i=λi/(λi+st2) $c_{\mathrm{skip},i}=\lambda_i/(\lambda_i+s_t^2)$ ​=λi​/(λi​+st2​)，殘差 xi−cskip,iz~t,i=(1−cskip,i)(xi−wiϵi) $x_i-c_{\mathrm{skip},i}\tilde z_{t,i}=(1-c_{\mathrm{skip},i})(x_i-w_i\epsilon_i)$ ​−cskip,i​z~t,i​=(1−cskip,i​)(xi​−wi​ϵi​)，其中 wi=cskip,ist1−cskip,i=αtσtλi $w_i=\frac{c_{\mathrm{skip},i}s_t}{1-c_{\mathrm{skip},i}}=\frac{\alpha_t}{\sigma_t}\lambda_i$ ​=1−cskip,i​cskip,i​st​​=σt​αt​​λi​。這是 EDM 的逐方向延伸，不是 EDM 原式。
+
+ 證據方面，作者在訓練時間分佈的四分位數處切出四個時間區間，各學一組權重：四條曲線幾乎重合，共用權重的 FID 4.92 對隨時間權重的 4.96（160 epochs，Fig. 5 標明 JiT-B/16；§6.1.2）。App. A.3 另外估計：在 t≈0.25 $t\approx0.25$ 到 0.80 $0.80$ 的五個可靠區間內，αt/σt $\alpha_t/\sigma_t$ ​/σt​ 變化 11.7 倍，估計出的偏好權重中位數只變 1.19 倍（Fig. 8c）。
+
+ C4時間抵銷與無資訊極限
+計算中…
+
+ 假設：Eq. 20 的可分離誤差，取 Ā = 1、q(t) ≡ 1、Γ = 0。這是論文的充分條件，不是從網路推得；玩具只算「若成立，最小點在哪」，不能學出 w ∝ λ。
+
+ ● t = 0.1■ t = 0.3▲ t = 0.5◆ t = 0.7✕ t = 0.9時間平均最佳 ŵ
+
+ 可分離誤差（Eq. 20）無資訊極限（Eq. 25）
+
+ C̄/Ā0.1
+
+ 均勻logit-normal
+
+ logit-normal 的 μ0.0
+
+ 此分佈只是示範用的選項，未含 flow shift；論文 A.3 只說訓練用 logit-normal，Table 6 的文字生成影像為 LogitNormal(0, 1) 再加 flow shift，RAEv2 為均勻取樣再 shift，所以這裡的 μ 不能與論文設定直接比較。μ > 0 偏向雜訊端。
+
+ t = 0.1 的最小點0.1
+t = 0.3 的最小點0.1
+t = 0.5 的最小點0.1
+t = 0.7 的最小點0.1
+t = 0.9 的最小點0.1
+時間平均最佳 ŵ0.1
+C̄/Ā0.1
+
+ 五個時刻的最小點都是 0.1；時間平均最佳 ŵ = 0.1。
+
+ 讀數由本頁依 Eq. 20–30 計算：逐時刻最小點用解析式；時間平均以 1024 點中點法積分，在 log₁₀ w ∈ [−4, 4]（步長 0.002）上搜尋並做拋物線修正。均勻分佈下 ŵ = √λ 為本頁推導。
+
+ 可分離，參數 0.1，時間平均最佳 ŵ = 0.1
+
+ 07 · 頻譜律
+
+ 再加兩個假設得到 w 與變異數近似成正比
+
+ 共用權重 wi∗=Cˉi/Aˉi $w_i^*=\bar C_i/\bar A_i$ ∗​=Cˉi​/Aˉi​ 是資料與雜訊估計誤差尺度的比值。作者再加兩個假設，把它連到資料變異數（Eq. 24）：雜訊是各向同性的，所以假設雜訊估計誤差在各方向差不多，Aˉi≈Aˉ $\bar A_i\approx\bar A$ i​≈Aˉ；網路對每個資料座標的相對誤差相近，所以資料估計誤差與資料能量成正比，Cˉi∝λi $\bar C_i\propto\lambda_i$ i​∝λi​。合起來 wi∗∝λi $w_i^*\propto\lambda_i$ ∗​∝λi​。理論不給出比例常數 c $c$ ：它取決於網路的誤差結構、時間取樣器與最佳化，論文的限制段也承認這一點。換句話說，線性律是由這兩個假設放進來的；支持它的是事後的觀測。JiT-H/16 實際學到 wi≈0.15λi $w_i\approx0.15\lambda_i$ ​≈0.15λi​（Fig. 3a）。
+
+ wi∗=CˉiAˉi∝λi $w_i^*=\frac{\bar C_i}{\bar A_i}\propto\lambda_i$ ∗​=Aˉi​Cˉi​​∝λi​
+Eq. 24
+
+ 觀測：JiT-H/16 的權重沿 w=0.15λ $w=0.15\lambda$ 分佈（Fig. 3a 只畫變異數 ≥ 0.015 的方向）；Fig. 4b（JiT-B/16）圖中畫了參考線 w=0.2λ $w=0.2\lambda$ ，那是參考線，不是論文報告的擬合斜率。未裁切的 Fig. 9 顯示，大約在第 256 個方向之後權重明顯偏離線性；JiT 的 patch embedding 把 768 維 patch 投影到 256 維，作者認為學到的目標對這個輸入瓶頸敏感（App. C）。
+
+ App. A.3 是一個一致性檢查，不是直接量測。單一輸出頭無法拆成 ϵ^ $\hat\epsilon$ 與 x^ $\hat x$ ，所以作者在 600-epoch、凍結 PCA 基底的 AnisoFlow-H/16 上，對凍結網路的中間特徵擬合兩個輔助線性讀出頭（加權 ridge，30K 張訓練圖擬合、另 30K 張評估），從 60 個 PCA 方向中依重建準確度保留 18 個（重建差異 < 5%、還原速度 MSE 增加 < 1%），λi $\lambda_i$ ​ 範圍 0.205 到 171。因為條件均值無法取得，作者用樣本殘差的二階矩組成有效誤差 Aieff=Ai+ασΓi $A^{\rm eff}_i=A_i+\frac{\alpha}{\sigma}\Gamma_i$ eff​=Ai​+σα​Γi​、Cieff=Ci+σαΓi $C^{\rm eff}_i=C_i+\frac{\sigma}{\alpha}\Gamma_i$ eff​=Ci​+ασ​Γi​（Eq. 35，不可約項在組合中精確相消），使 Eq. 18 寫成 wi∗(t)=αCieffσAieff $w_i^*(t)=\frac{\alpha C^{\rm eff}_i}{\sigma A^{\rm eff}_i}$ ∗​(t)=σAieff​αCieff​​（Eq. 36），再取時間平均 Aˉieff=Et[Aieff/αt] $\bar A^{\rm eff}_i=\mathbb E_t[A^{\rm eff}_i/\alpha_t]$ ieff​=Et​[Aieff​/αt​]、Cˉieff=Et[Cieff/σt] $\bar C^{\rm eff}_i=\mathbb E_t[C^{\rm eff}_i/\sigma_t]$ ieff​=Et​[Cieff​/σt​]（Eq. 37）。
+
+ 近線性律用了兩個額外假設 Aˉi≈Aˉ $\bar A_i\approx\bar A$ i​≈Aˉ 與 Cˉi∝λi $\bar C_i\propto\lambda_i$ i​∝λi​（Eq. 24），理論不給常數 c $c$ 。實測證據是：JiT-H/16 學到 wi≈0.15λi $w_i\approx0.15\lambda_i$ ​≈0.15λi​；A.3 以凍結網路上的輔助線性讀出估計（一致性檢查、非直接量測，60 個方向中依重建準確度保留 18 個）得到 Cˉeff∝λ1.00 $\bar C^{\rm eff}\propto\lambda^{1.00}$ eff∝λ1.00、Aˉeff∝λ−0.09 $\bar A^{\rm eff}\propto\lambda^{-0.09}$ eff∝λ−0.09，比值 ∝λ1.09 $\propto\lambda^{1.09}$ ，學到的權重指數 1.07。比值與學到權重的中位數比約 0.97；把門檻放寬到 10–20%，方向數增為 45–51，比值指數仍約 1.09。
+
+ 逐方向的分析是近似：App. C 的 Fig. 10（JiT-B/16、固定 PCA 基底、32 個自由方向）顯示，高變異方向的權重不受其他方向的設定影響，最低變異方向則較敏感。
+
+ App. A.3 的估計（18 個方向）
+ 項目值
+
+ 有效雜訊誤差 Aˉeff $\bar A^{\rm eff}$ eff 的指數λ^−0.09
+
+ 有效資料誤差 Cˉeff $\bar C^{\rm eff}$ eff 的指數λ^1.00
+
+ 比值 Cˉeff/Aˉeff $\bar C^{\rm eff}/\bar A^{\rm eff}$ eff/Aˉeff 的指數λ^1.09
+
+ 學到權重的指數λ^1.07
+
+ 比值 ÷ 學到權重（中位數）0.97
+
+ t ≈ 0.25–0.80 內 α/σ 的變化11.7×
+
+ 同範圍偏好權重的變化（中位數）1.19×
+
+ 延伸閱讀：學到的權重分析：誤差放大、PCA 基底與 w ∝ 資料方差
+
+ 08 · 學習基底
+
+ 基底由一個動差矩陣的特徵向量更新
+
+ 權重 wi $w_i$ ​ 用梯度下降學；基底 B $B$ 預設用 spectral update 更新（§4、App. A.4.2）。令 r:=sg(u^W)+x $r:=\mathrm{sg}(\hat u_W)+x$ W​)+x，sg $\mathrm{sg}$ 表示停止梯度：更新基底時網路輸出視為固定。作者把所有方向的基底損失取均勻平均，得到一個動差矩陣：
+
+ G=E[at rr⊤−bt (rϵ⊤+ϵr⊤)],at=1D∑j1(αtwj+σt)2,bt=1D∑jwj(αtwj+σt)2 $G=\mathbb E\big[a_t\,rr^\top-b_t\,(r\epsilon^\top+\epsilon r^\top)\big],\quad a_t=\frac1D\sum_j\frac{1}{(\alpha_tw_j+\sigma_t)^2},\quad b_t=\frac1D\sum_j\frac{w_j}{(\alpha_tw_j+\sigma_t)^2}$ ​rr⊤−bt​(rϵ⊤+ϵr⊤)],at​=D1​j∑​(αt​wj​+σt​)21​,bt​=D1​j∑​(αt​wj​+σt​)2wj​​
+Eq. 40, 41
+
+ 基底的更新是 B← $B\leftarrow$ G=E[atrr⊤−bt(rϵ⊤+ϵr⊤)] $G=\mathbb E[a_trr^\top-b_t(r\epsilon^\top+\epsilon r^\top)]$ ​rr⊤−bt​(rϵ⊤+ϵr⊤)] 的特徵向量（Eq. 40–41），特徵向量依特徵值升冪排列，wi $w_i$ ​ 綁在 rank i $i$ 上（Remark 3；這是啟發式配對）。訓練中 G $G$ 由 minibatch 估計（所有圖的所有 patch，Eq. 42），以 EMA 追蹤：G←(1−β)G+βG^ $G\leftarrow(1-\beta)G+\beta\hat G$ ，β=10−5 $\beta=10^{-5}$ ，每一步都做特徵分解（App. B.1）。交叉項 rϵ⊤+ϵr⊤ $r\epsilon^\top+\epsilon r^\top$ +ϵr⊤ 不能省略，省略會改變基底的目標。網路輸出為零時（論文說這在初始化時常見，但不保證）r=x $r=x$ ，又 E[xϵ⊤]=0 $\mathbb E[x\epsilon^\top]=0$ ]=0，所以 G∝E[xx⊤] $G\propto\mathbb E[xx^\top]$ ]，對置中資料就是共變異數，其特徵向量是 PCA 方向。因為 G $G$ 初始為 I $I$ ，而加上單位矩陣的倍數不改變特徵向量，第一次更新得到的是單一 minibatch（所有圖的所有 patch）估計的帶雜訊 PCA 基底（App. A.4.2）。具體地說，G $G$ 初始化為 I $I$ ，經過一次 EMA 後 G=(1−β)I+βG^ $G=(1-\beta)I+\beta\hat G$ ；加上單位矩陣的倍數不改變特徵向量，所以即使 β=10−5 $\beta=10^{-5}$ 很小，此時的 B $B$ 已經等於 G^ $\hat G$ 的特徵向量，在網路輸出為 0 時即近似該 batch 的 PCA 基底。從 W=I $W=I$ 出發時 at=bt=1 $a_t=b_t=1$ ​=bt​=1，與 t $t$ 無關本頁推導，C5 用的就是這個情形。
+
+ 初始化（§4）：預設 B=I $B=I$ 、wi=1 $w_i=1$ ​=1，也就是 W=I $W=I$ 、從速度預測開始。可選的 PCA 初始化把 B $B$ 設為 PCA 基底、wi=0.15λi $w_i=0.15\lambda_i$ ​=0.15λi​（c=0.15 $c=0.15$ 取自收斂的 JiT-H/16）。論文說 PCA 初始化不是必要的：即使從 W=I $W=I$ 出發，學到的基底也會接近 PCA（Fig. 3b）。
+
+ 進階：其他基底最佳化器與理論
+
+ Stiefel Adam（App. A.4.1）把 B $B$ 當成正交矩陣流形上的參數，用切空間投影、一個矩陣一階動量與每個基底一個純量二階動量做 Adam，每步以 QR 回到流形；這是歐氏度量下的投影–搬運法，不是平行搬運。
+
+ 基底損失的精確式是 LB=∑ibi⊤Mibi+const $L_B=\sum_ib_i^\top M_ib_i+\text{const}$ ​=∑i​bi⊤​Mi​bi​+const，Mi=Et[(St−2wiHt)/(αtwi+σt)2] $M_i=\mathbb E_t[(S_t-2w_iH_t)/(\alpha_tw_i+\sigma_t)^2]$ ​=Et​[(St​−2wi​Ht​)/(αt​wi​+σt​)2]（Eq. 39）。每個 bi $b_i$ ​ 由不同的 Mi $M_i$ ​ 計分，所以一般不是特徵值問題。假設 Mi $M_i$ ​ 兩兩可交換（假設 1）時，命題 2 用雙隨機矩陣與 Birkhoff–von Neumann 定理證明最佳基底是共同特徵向量（差排列與符號），G $G$ 即它們的均勻平均。
+
+ App. A.5 在線性模型下證明：W $W$ 與資料共變異數可交換時，PCA 基底是 spectral update 的不動點；局部穩定條件是 ∣ρjk∣<1 $|\rho_{jk}|\lt1$ ​∣<1（Eq. 48–49）。論文不證明全域收斂，也不證明網路、權重與 EMA 聯合動態的穩定性。
+
+ C5Spectral update 的第一步是帶雜訊的 PCA
+計算中…
+
+ 設定：D = 2 的高斯資料，W = I，網路輸出為 0（論文說這在初始化時常見，並非保證）。只示範第一次 spectral update，不示範之後的訓練。實際訓練的 n = 圖數 × 每張圖的 patch 數（Eq. 42，量級在數萬以上），這裡的小 n 只為看趨勢。
+
+ 本次 batch 的資料點與兩個方向
+
+ PCA 主軸第一次更新的主方向
+
+ 200 個 batch 的角度誤差分佈
+
+ 第二個方向的變異數 λ2（λ1 = 1）0.050.10.250.50.80.95
+
+ 主軸角度 θ30°
+
+ batch 大小 n8321285122048
+
+ 重新抽樣
+
+ 本次角度誤差12.49°
+200 次中位數 |誤差|11.16°
+Ĝ 特徵值（rank 1、2，升冪）0.1135、1.8323
+
+n = 32、λ₂ = 0.25 時，第一次更新的主方向與 PCA 主軸的角度誤差中位數為 11.16°；主軸對應升冪排列的 rank 2。
+
+ 讀數由本頁依 Eq. 40 在 W = I、網路輸出為 0 時計算（a_t = b_t = 1）。樣本由 mulberry32 產生（起始 seed 239）。
+
+ n = 32，λ2 = 0.25，中位數角度誤差 11.16 度
+
+ 09 · 實驗
+
+ 實驗：像素空間 FID 由 1.90 降到 1.55
+
+ 主要實驗在 ImageNet 256×256 的像素空間，以 JiT-H/16 為骨幹，只改預測目標（§6）。FID 依 ADM 評估協定計算。Table 1 分開比較學權重、學基底與初始化的效果；JiT-H/16 基線 1.90 降到 1.55（Spectral update、無 PCA 初始化、600 epochs）。同骨幹的對照中，凍結 PCA 基底只學權重已達 1.63，AsymFlow 的重跑結果為 1.76；作者據此認為收益主要來自學連續的權重。
+
+ Table 1：JiT-H/16，ImageNet 256×256
+ 方法 · 權重 · 基底 · 初始化FID @160epFID @600ep訓練 s/iter推論 s/step
+
+ JiT · 凍結（0）· – · –2.681.900.8030.179
+
+ AsymFlow · 凍結（二值）· 凍結 PCA · PCA2.341.760.8030.179
+
+ AnisoFlow · Adam · 凍結 PCA · PCA2.251.630.8050.180
+
+ AnisoFlow · Adam · Stiefel Adam · PCA2.321.680.8180.180
+
+ AnisoFlow · Adam · Spectral · PCA2.281.630.8190.180
+
+ AnisoFlow · Adam · Stiefel Adam · –2.281.600.8180.180
+
+ AnisoFlow · Adam · Spectral · –2.301.550.8190.180
+
+ 實驗結果整理如下。ImageNet 256 主結果：JiT-H/16 由 1.90 降到 1.55（Spectral update、無 PCA 初始化、600 epochs）。同骨幹對照中，凍結 PCA 基底為 1.63，AsymFlow 重跑為 1.76；Table 2 裡 AsymFlow 的 1.57 是使用預訓練表徵編碼器的 † 已發表數字，設定不同，AnisoFlow 沒有使用這類編碼器。時間區間消融中，共用權重 4.92 對隨時間權重 4.96（JiT-B/16，160 epochs）。Latent 模型與預設目標持平：SiT-XL/2-REPA 1.44 對 1.44，RAEv2 1.05 對 1.05。文字生成影像除 GenEval（0.820→0.814）外各指標皆改善。開銷方面，推論增加 0.6%、訓練至多增加 2.0%（Table 1）。
+
+ Table 2 摘錄：ImageNet 256×256 像素擴散（* 為 JiT 協定，可比 ADM 協定低至多 0.08；† 使用預訓練表徵編碼器或自監督預訓練）
+ 方法（類別）FID
+
+ SiD2, UViT/1（U-ViT-like）1.38
+
+ HyperDiT-H†（DDT-like）1.56*
+
+ AsymFlow-H/16†（plain DiT-like）1.57
+
+ JiT-H/16（plain DiT-like）1.86*
+
+ AnisoFlow-H/16（plain DiT-like，953M，365 GFLOPs）1.55
+
+ 讀這些數字時要注意
+
+ AsymFlow 的 1.76 是同骨幹重跑，1.57 是 † 類的已發表數字。Table 1 的 1.90 用 ADM 協定，Table 2 的 1.86* 用 JiT 協定，兩者不是同一個數。論文說 AnisoFlow 在 plain DiT-like 類別中 FID 最佳（best in-class），U-ViT-like 的 SiD2 UViT/1 為 1.38。Table 1 每個模型與訓練長度各自 grid search CFG 與 guidance interval（Table 5，例如 Spectral 無初始化在 600 epochs 為 2.1 / [0, 0.86]），沒有多 seed 或誤差棒；160 epochs 時 PCA 初始化的效果也不一致（Spectral 2.28 對 2.30，Stiefel 2.32 對 2.28）。
+
+ 文字生成影像與低精度推論
+
+ 文字生成影像在 512×512 比較 JiT-L/16-T2I（917M，x 預測）與 AnisoFlow-L/16-T2I（918M，PCA 初始化＋spectral update；512 階段凍結基底只學權重）（Table 3、App. B.3）。低精度推論把 transformer 線性層的權重與 activation 量化成 8 位元（W8A8），固定 prompt 與 seed：在 INT8、FP8、blockwise FP8 下，x 預測基線出現 patch 接縫或強雜訊，AnisoFlow 保持穩定（Fig. 1b、6b）。這部分只有定性圖，沒有量化指標。Fig. 1a 的百萬像素樣本來自額外的 1MP 與 SFT 階段，沒有定量評估。
+
+ Table 3：文字生成影像 512×512（* 使用 i1 改寫的 prompt）
+ 指標JiT-L/16-T2IAnisoFlow
+
+ OneIG ↑0.5120.516
+
+ LongText* ↑0.8620.864
+
+ GenEval* ↑0.8200.814
+
+ DPG* ↑85.785.8
+
+ HPSv3 ↑7.718.03
+
+ COCO-10k FID ↓22.020.1
+
+ COCO-10k pFID ↓24.422.7
+
+ Latent 模型
+
+ 在 latent 模型上 AnisoFlow 與預設目標持平，學到的權重接近各自的預設：SiT-XL/2-REPA 接近速度預測，RAEv2 接近 x 預測（Fig. 7）。latent 的權重曲線平坦得多，作者說近線性假設不直接適用（§6.3）。RAEv2 的基線與 AnisoFlow 都改成均勻時間取樣與 σmin⁡=0.25 $\sigma_{\min}=0.25$ ​=0.25（基線 JiT FID 1.06→0.98），AnisoFlow 另調 EMA 係數 10−4 $10^{-4}$ 與 10 倍權重學習率（App. B.4）。
+
+ Table 4：Latent 模型（FID / 以 JiT 參考統計量計算的 FID*）
+ 方法FIDJiT FID*
+
+ SiT-XL/2-REPA（速度）1.441.41
+
+ Aniso-SiT-XL/2-REPA1.441.40
+
+ RAEv2（x 預測）1.050.98
+
+ Aniso-RAEv21.050.96
+
+ 延伸閱讀：低精度推論與旋轉量化、Latent 模型上的對照
+
+ 10 · 實作
+
+ 實作設定與常見錯誤
+
+ 實作要點：權重以 wi=exp⁡(ηi) $w_i=\exp(\eta_i)$ ​=exp(ηi​) 參數化，與模型同學習率、從訓練開始就學、跨時間共用；預設初始化 B=I $B=I$ 、wi=1 $w_i=1$ ​=1，可選 PCA 初始化 wi=0.15λi $w_i=0.15\lambda_i$ ​=0.15λi​。損失算在還原後的速度上。推論時還原分母的下限是 0.04。低精度推論的穩定性只有 W8A8 的定性圖（Fig. 1b、6b，見 S09），沒有量化指標（App. B.1、B.3）。常見錯誤如下：
+
+ 時間方向：本論文 t=0 $t=0$ 是資料、t=1 $t=1$ 是雜訊，取樣由 t=1 $t=1$ 積分到 0，與 No. 238 相反。
+
+ 損失空間：損失算在還原後的速度 ∥u^−u∥2 $\|\hat u-u\|^2$ −u∥2，不是 ∥u^W−uW∥2 $\|\hat u_W-u_W\|^2$ W​−uW​∥2（§4）。
+
+ 權重參數化：wi=exp⁡(ηi) $w_i=\exp(\eta_i)$ ​=exp(ηi​) 嚴格為正（App. B.1）。正文寫「非負」，但可學的 wi $w_i$ ​ 取不到 0；Table 1 中凍結的 w=0 $w=0$ 是 JiT 基線的設定，不經 exp 參數化。
+
+ 分母下限：推論時 σmin⁡=4×10−2 $\sigma_{\min}=4\times10^{-2}$ ​=4×10−2，基線與 AnisoFlow 都用（沿用 AsymFlow）；RAEv2 用 0.25。截斷改變分母本身，會造成偏差。
+
+ Spectral update：G $G$ 由停止梯度的預測計算、初始化為 I $I$ 、EMA β=10−5 $\beta=10^{-5}$ 、跨裝置平均、每步特徵分解、特徵向量升冪排列並以 rank 綁權重；交叉項要保留。Stiefel 變體在每次 EMA 後以 QR 把 EMA 模型的基底重新正交化。
+
+ PCA：用 100,000 張訓練圖、去均值的 patch、在網路看到的正規化像素空間算共變異數（App. B.2）；W=I $W=I$ 變體不需要 PCA。
+
+ 常數 c：不要把 c=0.15 $c=0.15$ 當成普適常數；它取自 JiT-H/16，理論不預測 c $c$ 。
+
+ FID 協定：1.90 是 ADM 協定（Table 1），1.86* 是 JiT 協定（Table 2）。
+
+ 額外的狀態與運算（Table 7）：D $D$ 個權重、一個 D×D $D\times D$ 正交基底（訓練與推論都用）、一個 D×D $D\times D$ 動差矩陣（只在訓練）；每次模型計算前後各乘一次 B $B$ 與 B⊤ $B^\top$ ，並做逐元素的還原；訓練時每步做一次 D×D $D\times D$ 特徵分解。
+
+ 11 · 研究脈絡
+
+ 研究脈絡（由 notes/timeline.json 提供）
+
+ 沿著 w 軸看，flow matching 與 rectified flow 以速度（w=1 $w=1$ ）為標準目標；Progressive Distillation 與 EDM 顯示目標的選擇影響訓練；JiT 在像素空間改用乾淨資料（w=0 $w=0$ ）；k-Diff 在標準目標間學一個純量，AsymFlow 用二元遮罩在不同方向放 0 或 1；本論文讓每個方向各學一個權重。每張卡片連到對應的研究筆記。
+
+ 擴散基礎速度回歸目標選擇像素骨幹內插前驅條件數逐方向 w
+
+ 2020擴散基礎Denoising Diffusion Probabilistic Models
+Ho, Jain, Abbeel
+本論文引言列為擴散目標的起點之一（noise 預測路線）。
+arXiv ↗筆記
+2020擴散基礎Score-Based Generative Modeling through Stochastic Differential Equations
+Song et al.
+與 DDPM 同列為擴散/flow 目標的基礎引用。
+arXiv ↗筆記
+2022速度回歸 · w = 1Flow Matching for Generative Modeling
+Lipman et al.
+本論文的訓練目標（速度回歸）與取樣方式所依據的框架。
+arXiv ↗筆記
+2022速度回歸 · w = 1Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow
+Liu, Gong, Liu
+與 flow matching 並列的線性路徑速度回歸框架。
+arXiv ↗筆記
+2022目標選擇Progressive Distillation for Fast Sampling of Diffusion Models
+Salimans, Ho
+本論文引為「目標選擇影響訓練與樣本品質」的依據之一。
+arXiv ↗筆記
+2022目標選擇Elucidating the Design Space of Diffusion-Based Generative Models
+Karras et al.
+各向同性內插目標；其 skip 係數的逐方向推廣對應本論文的零技能解。
+arXiv ↗筆記
+2022像素骨幹 · w = 0Scalable Diffusion Models with Transformers
+Peebles, Xie
+擴散模型的 transformer 去噪網路，pixel 模型的骨幹來源。
+arXiv ↗筆記
+2024條件數QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs
+Ashkboos et al.
+旋轉量化；本論文將其類比為 AnisoFlow 的旋轉後縮放形式。
+arXiv ↗筆記
+2025像素骨幹 · w = 0Back to Basics: Let Denoising Generative Models Denoise
+Li, He
+JiT：pixel 空間資料預測，本論文的主要基準模型。
+arXiv ↗筆記
+2026內插前驅Understanding and Learning Prediction Targets in Diffusion Models
+Jin, Wang
+k-Diff：學習單一純量內插，為本目標族的共用權重特例。
+arXiv ↗筆記教學
+2026內插前驅Asymmetric Flow Models
+Chen et al.
+二元各向異性目標（低秩速度、補空間資料預測），為本目標族的二元特例。
+arXiv ↗筆記
+2026條件數Preconditioned Flow Matching
+Ahamed et al.
+以共變異數條件數解釋 flow matching 的優化瓶頸，為本論文所列相關研究。
+arXiv ↗筆記
+2026逐方向 w · 本文Learning Anisotropic Prediction Targets for Flow Models
+Zirvi, Chen et al.
+本論文：每個方向學習獨立的非負噪聲權重與基底，FID 由 1.90 降到 1.55。
+arXiv ↗筆記
+
+ 12 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 作者列出的限制（§7）：分析使用局部的預測誤差模型，不描述完整的訓練動態，也不決定頻譜縮放的常數；實驗收益在像素空間最大，latent 空間學到的目標接近既有預設。基底的理論（App. A.5）只涵蓋理想化的線性迭代，不證明全域收斂，也不證明網路、權重與動差 EMA 聯合動態的穩定性。作者在 AI 使用聲明中表示，曾用 LLM 協助驗證與修飾 §5 與 App. A 的推導。
+
+ 研究筆記（依閱讀順序）
+
+ AnisoFlow 的研究脈絡總覽：從固定預測目標到可學習的各向異性目標總覽
+
+ 擴散模型預測目標的演進總覽：從 ε 到 v 到 x共同背景
+
+ Flow matching 的速度目標與 rectified flow 的大規模使用共同背景
+
+ 預測目標與 k-Diff（No. 238 互動教學）純量內插；時間方向與本頁相反
+
+ Pixel 空間的 patchify 設定：JiT、PixelFlow 與 DiT為什麼問題在像素空間最明顯
+
+ 內插目標的前驅：EDM、k-Diff 與 AsymFlow直接的前驅
+
+ AnisoFlow 目標的標準形式與速度還原Eq. 3–5 與特例
+
+ 學到的權重分析：誤差放大、PCA 基底與 w ∝ 資料方差§5 的理論與相關研究
+
+ 低精度推論與旋轉量化：x-prediction 的 1/σ_t 放大低精度推論
+
+ Latent 模型上的對照：SiT-XL/2-REPA 與 RAEv2latent 實驗
+
+ Pixel-space diffusion：latent 層是否必要的第三路線站內既有筆記
+
+ x-prediction 與流形觀點：JiT 與 pixel-space 的近期結果站內既有筆記
+
+ Rayhan Zirvi, Hansheng Chen, Gordon Wetzstein, Leonidas Guibas. Learning Anisotropic Prediction Targets for Flow Models. 2026. arXiv:2611.17767.
+
+ 本頁的方程式與數字取自論文 v1；標示「本頁推導」的內容為本頁自行推導，並非論文結論。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記
