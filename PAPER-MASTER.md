@@ -21,6 +21,7 @@
 - Tags：以關鍵字規則從標題、原分類（與摘要）擷取並標準化成 37 個標籤
 - Clusters：12 個研究群集，依原始分類（人工整理的討論串／頻道）對應決定
 - Keywords：每篇 3–6 個英文關鍵詞（`scripts/keywords.json`），同一概念用同一字串，供搜尋與計算相似度
+- 縮寫：論文提出或主要討論的模型／方法縮寫（`scripts/abbrevs.json`，保留原大小寫，只收標題或摘要中出現的），建置時以小寫併入關鍵詞、以原字串併入 Tags；Tag 篩選選單只列主題 tag，縮寫 tag 顯示在詳情卡並可搜尋
 - 引用關係：`scripts/fetch_refs.py` 從 Semantic Scholar 取得每篇的 references，只保留資料庫內論文之間的引用（`scripts/citations.json`，[引用者, 被引用者]）；詳情卡顯示「引用的論文（前置）」與「被引用」
 - Related Paper IDs：引用關係（任一方向）＋共同關鍵詞（依稀有度 idf 加權）＋少量 tag 與同原分類加分，取前 6 篇；圖上實線表示兩篇間有引用，虛線表示只有主題相近
 

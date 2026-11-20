@@ -78,6 +78,9 @@ for p in P:
 # ponytail: O(n^2) over ~600 papers; swap for embeddings if the list grows past a few thousand.
 import math
 KW={int(k):v for k,v in json.load(open('keywords.json')).items()}
+# Model/method abbreviations (abbrevs.json, exact casing): added to keywords (lowercase) and, after scoring, to tags.
+ABBR={int(k):v for k,v in json.load(open('abbrevs.json')).items()} if os.path.exists('abbrevs.json') else {}
+for i,ab in ABBR.items(): KW[i]=KW.get(i,[])+[a.lower() for a in ab if a.lower() not in KW.get(i,[])]
 CITE=[tuple(e) for e in json.load(open('citations.json'))] if os.path.exists('citations.json') else []
 ids={p['id'] for p in P}
 refs=collections.defaultdict(set); cited=collections.defaultdict(set)
@@ -102,10 +105,11 @@ for p in P:
   p['related']=[i for s,i in sorted(sc,reverse=True)[:6]]
 deg=collections.Counter(i for p in P for i in p['related'])
 for p in P: p['degree']=deg[p['id']]
+for p in P: p['abbr']=ABBR.get(p['id'],[]); p['tags']+=[a for a in p['abbr'] if a not in p['tags']]
 with open('../papers.csv','w',newline='',encoding='utf-8-sig') as f:
   w=csv.writer(f);w.writerow(['Paper ID','Title','Authors','Year','URL','Source File & Branch','Source Category','Cluster','Core Topic / Summary','Tags','Keywords','Cites (Paper IDs)','Cited By (Paper IDs)','Related Paper IDs'])
   for p in P: w.writerow([p['id'],p['title'],', '.join(p['authors'][:6])+(' et al.' if len(p['authors'])>6 else ''),p['year'],p['url'],'; '.join(p['sources']),'; '.join(p['cats']),p['cluster'],p['summary'],'; '.join(p['tags']),'; '.join(p['keywords']),', '.join(map(str,p['refs'])),', '.join(map(str,p['cited_by'])),', '.join(map(str,p['related']))])
-keep=['id','title','url','authors','year','sources','branch','cats','cluster','tags','keywords','summary','refs','cited_by','related','degree']
+keep=['id','title','url','authors','year','sources','branch','cats','cluster','tags','abbr','keywords','summary','refs','cited_by','related','degree']
 data=[{k:p[k] for k in keep} for p in P]
 for d in data: d['authors']=d['authors'][:8]
 with open('../papers.jsonl','w') as f:  # one paper per line, so git diffs show only the papers that changed
