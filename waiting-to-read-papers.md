@@ -43,6 +43,7 @@
    - [Deep Researcher with Test-Time Diffusion](https://research.google/blog/deep-researcher-with-test-time-diffusion/)（Google Research）
    - [Diversity Has Always Been There in Your Visual Autoregressive Models](https://arxiv.org/abs/2511.17074)
    - [Why Diffusion Models Don't Memorize: The Role of Implicit...](https://openreview.net/forum?id=BSZqpqgqM0)（標題依頻道內預覽，原文截斷）
+   - [Do Diffusion Models Learn to Generalize Basic Visual Skills?（Visual Generative Lab）](https://amishsethi.github.io/visual-generative-lab/)（NeurIPS 2026；以規則生成的合成資料測 diffusion 對大小、位置、旋轉、數量、顏色、形狀的外插與組合泛化；[arXiv 2611.22427](https://arxiv.org/abs/2611.22427)、[code](https://github.com/AmishSethi/visual-generative-lab)）
    - [LeapAlign: Post-Training Flow Matching Models at Any Generation Step by Building Two-Step Trajectories](https://arxiv.org/abs/2604.15311)
    - [AnyFlow: Any-Step Video Diffusion Model with On-Policy Flow Map Distillation](https://arxiv.org/abs/2605.13724)
    - [Concurrent Image Understanding and Generation: Self-Correcting Coupled Markov Jump Processes](https://arxiv.org/abs/2607.13188)
