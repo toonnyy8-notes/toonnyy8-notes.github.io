@@ -115,6 +115,7 @@
    - [MegaTrain: Full Precision Training of 100B+ Parameter Large Language Models on a Single GPU](https://arxiv.org/abs/2604.05091)
    - [Reducing Doom Loops with Final Token Preference Optimization](https://www.liquid.ai/blog/antidoom)（Liquid AI）
    - [A Few Gaussians Is All You Need: SSOG-Attention That Steers Instead of Scores](https://pisoni.ai/posts/ssog/)
+   - [Attention Sink Forges Native MoE in Attention Layers: Sink-Aware Training to Address Head Collapse](https://arxiv.org/abs/2602.01203)（ICML 2026；attention sink 讓 attention 層形成原生 MoE，head collapse 的成因，並以 head 負載平衡輔助損失訓練）
 
 10. Agent、Context Engineering 與 LLM 應用
     - [A Systematic Survey of Prompt Engineering in Large Language Models: Techniques and Applications](https://arxiv.org/abs/2402.07927)
