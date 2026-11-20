@@ -1,0 +1,1331 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ψ-Samplers 互動教學</title>
+<meta name="description" content="圖解 The Diffusion Duality, Chapter II（arXiv 2602.21185）：Ψ-posterior 的邊際保持、Ψ-sampler 的預測步與校正步、與 ReMDM 的對應、實驗結果，以及以 order statistics 實作的省記憶體課程學習。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+
+/* ---- No. 447 additions ---- */
+:root{--c-ref:var(--c-par)}
+details.more{max-width:760px;margin:16px 0 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.more>summary{cursor:pointer;list-style:none;padding:12px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px;color:var(--ink-2)}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.more[open]>summary::before{transform:rotate(45deg)}
+details.more>.tscroll{margin:0 12px 12px}
+details.more.mini{margin:0;border-radius:10px}
+details.more.mini>summary{font-size:13px;padding:8px 14px}
+details.more.mini .readout{margin:0 8px 8px}
+.lg.sq::before{width:9px;height:9px;border:2px solid var(--ink);border-radius:1px}
+.lg.ring::before{width:12px;height:12px;border:2px solid var(--accent);border-radius:50%}
+.lg.dia::before{width:9px;height:9px;border:2px solid var(--ink);transform:rotate(45deg)}
+.lg.cref::before{border-top:3px dashed var(--c-ref)}
+.lg.samp::before{border-top:1.5px solid var(--ink-2)}
+.quote{padding:10px 16px;border:1px solid var(--line);background:var(--surface);border-radius:10px}
+.note.small{font-size:13px;margin:-6px 0 0;line-height:1.55}
+.hero-strip{max-width:520px;margin:8px 0 0}
+.hero-strip .cap{font-size:13px;color:var(--ink-3)}
+svg .samp{stroke:var(--ink-2);stroke-width:1.2;fill:none;opacity:.7}
+svg .cref{stroke:var(--c-ref);stroke-width:3;fill:none;stroke-dasharray:7 5}
+svg .plan{stroke:var(--accent);stroke-width:3;fill:none}
+svg .plan0{stroke:var(--ink-2);stroke-width:1.6;fill:none}
+svg .mk{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .mk-acc{fill:none;stroke:var(--accent);stroke-width:2.5}
+svg .cell{stroke:var(--line);stroke-width:.5}
+svg .cur-col{fill:none;stroke:var(--ink);stroke-width:2}
+svg .frame{fill:none;stroke:var(--line)}
+svg .warn{font:500 14px var(--f-body);fill:var(--accent)}
+.warm{max-width:760px;margin:12px 0 24px;display:flex;flex-direction:column;gap:12px;padding:18px 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+.lane{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lane-h{font:500 12px/1 var(--f-mono);color:var(--ink-3);width:4.5em}
+.nd{padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);font-size:14px;line-height:1.3}
+.nd.acc{border-color:var(--accent);background:var(--accent-soft)}
+.ar{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-2)}
+.ar::before{content:"";width:22px;border-top:2px solid var(--ink-2)}
+.ar::after{content:"";width:0;height:0;border-left:6px solid var(--ink-2);border-top:4px solid transparent;border-bottom:4px solid transparent;margin-left:-6px}
+.ar.dash::before{border-top-style:dashed}
+.plate .readout{white-space:pre-line}
+@media (max-width:599px){.lane-h{width:100%}}
+/* ---- shared additions (from No. 255) ---- */
+:root{--c-pow:var(--c-par);--c-temp:var(--c-perp)}
+svg .pow{stroke:var(--c-pow);stroke-width:2.5;fill:none}
+svg .temp{stroke:var(--c-temp);stroke-width:2.5;fill:none}
+svg .dash{stroke-dasharray:7 4}svg .dashp{stroke-dasharray:3 3}
+svg .pow-f{fill:var(--c-pow)}svg .op{opacity:.35}
+svg .hatch-ln{stroke:var(--c-pow);stroke-width:2}
+svg .axis0{stroke:var(--ink-3);stroke-width:1}
+svg .refl{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:4 4}
+svg .acc-s{stroke:var(--accent);stroke-width:2.5;fill:none}
+svg .dot-c{fill:var(--accent)}
+svg .mk-o{fill:var(--surface);stroke:var(--ink-2);stroke-width:2}
+svg .mk-t{fill:var(--c-temp)}
+svg .mk-cur{fill:none;stroke:var(--accent);stroke-width:2}
+svg .band{fill:var(--accent-soft)}
+svg .brk{stroke:var(--accent);stroke-width:2;fill:none}
+svg .halo{paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round}
+svg .mono-t{font:400 13px var(--f-mono);fill:var(--ink)}
+.lg.pow::before{border-top:2.5px solid var(--c-pow)}
+.lg.temp::before{border-top:2.5px dashed var(--c-temp)}
+.lg.acc::before{border-top:2.5px solid var(--accent)}
+.lg.mk::before{display:none}
+.lg .sym{font:500 14px/1 var(--f-mono)}
+.lg .sym.o{color:var(--ink-2)}.lg .sym.t{color:var(--c-temp)}.lg .sym.b{color:var(--c-pow)}.lg .sym.d{color:var(--accent)}
+dl.ro{display:grid;grid-template-columns:auto auto;gap:4px 14px;margin:0;font:400 13px/1.6 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px}
+dl.ro dt{color:var(--ink-3)}dl.ro dd{margin:0;color:var(--ink);text-align:right;font-variant-numeric:tabular-nums}
+dl.ro .acc{color:var(--accent);font-weight:600}
+dl.sym{display:grid;grid-template-columns:minmax(0,1fr);gap:2px 16px;margin:8px 0 16px;font-size:15px;line-height:1.6}
+@media (min-width:600px){dl.sym{grid-template-columns:9em minmax(0,1fr)}}
+dl.sym dt{font-weight:600}dl.sym dd{margin:0 0 8px;color:var(--ink-2)}
+.okline{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);margin:8px 0 0}
+.okline b{color:var(--ink);font-weight:500}
+.erratum{max-width:760px;margin:20px 0 24px;padding:16px 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+.erratum .et{margin:0 0 6px;font:600 15px/1.4 var(--f-body);color:var(--ink)}
+.erratum .et::before{content:"⚠ ";color:var(--accent)}
+.erratum p{margin:0;font-size:15px;line-height:1.75}
+.claim{border-left:0;padding:0}
+.claim>b:first-child{font-weight:600;color:var(--ink-2)}
+.crow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px}
+.crow .k{color:var(--ink-2)}.crow .v{font:500 14px var(--f-mono);text-align:right}
+.crow .mbar{grid-column:1/-1;height:8px;border-radius:999px;background:var(--surface-2);overflow:hidden}
+.crow .mbar span{display:block;height:100%;background:var(--c-pow)}
+.crow .w{grid-column:1/-1;font-size:13px;color:var(--ink-3)}
+.cells{display:flex;flex-wrap:wrap;gap:6px}
+.cell{width:44px;height:44px;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:10px;background:var(--surface);font:500 17px/1 var(--f-mono)}
+.cell small{font:400 11px/1 var(--f-mono);color:var(--ink-3);margin-top:3px}
+.cell.rs{border:2px solid var(--ink)}
+.cand .cell.rs{border-color:var(--accent);background:var(--accent-soft)}
+@media (max-width:479px){.cells{display:grid;grid-template-columns:repeat(3,44px)}}
+.c3a-row{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;margin:0 0 12px}
+.c3a-row .k{font-size:13px;color:var(--ink-3)}
+#c3.busy .fig{opacity:.5}
+.cbar{display:grid;grid-template-columns:minmax(0,1fr) 5.5em;gap:4px 12px;align-items:center;padding:6px 0}
+.cbar .k{grid-column:1/-1;font-size:14px;color:var(--ink-2)}
+.cbar .track{height:14px;border-radius:999px;background:var(--surface-2);overflow:hidden}
+.cbar .pb{display:block;height:100%;background:transparent;border:2px solid var(--ink);border-radius:999px;box-sizing:border-box}
+.cbar .db{display:block;height:100%;background:var(--accent);border-radius:999px}
+.cbar .v{font:500 14px var(--f-mono);text-align:right}
+.chips-row{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px}
+.num-in{width:6em;min-height:44px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);color:var(--ink);font:400 15px var(--f-mono)}
+table.mini td,table.mini th{font-size:14px}
+.katex-display{overflow-x:auto;overflow-y:hidden;
+  background:linear-gradient(to right,var(--bg) 30%,transparent) left/24px 100% no-repeat local,linear-gradient(to left,var(--bg) 30%,transparent) right/24px 100% no-repeat local,
+  radial-gradient(farthest-side at 0 50%,rgba(0,0,0,.18),transparent) left/10px 100% no-repeat scroll,radial-gradient(farthest-side at 100% 50%,rgba(0,0,0,.18),transparent) right/10px 100% no-repeat scroll}
+.tscroll{background:linear-gradient(to left,var(--surface) 30%,transparent) right/24px 100% no-repeat local,radial-gradient(farthest-side at 100% 50%,rgba(0,0,0,.16),transparent) right/10px 100% no-repeat scroll,var(--surface)}
+td .lbl-v{color:var(--ink-3);font-size:12px;margin-right:4px}
+.mono-sm{font:400 13px/1.6 var(--f-mono);color:var(--ink-2);margin:6px 0 0}
+.ch-num,.plate-h .id{letter-spacing:.04em}
+
+/* ---- No. 394 additions ---- */
+.tk-ok,.tk-bad,.tk-mask{display:inline-block;width:13px;height:13px;border-radius:2px;vertical-align:-2px;box-sizing:border-box}
+.tk-ok{background:var(--ink)}
+.tk-bad{border:1.5px solid var(--ink);background:repeating-linear-gradient(45deg,var(--ink) 0 1.5px,var(--surface) 1.5px 4px)}
+.tk-mask{border:1.5px dashed var(--ink-2);background:transparent}
+svg .t-ok{fill:var(--ink)}
+svg .t-bad{fill:url(#hatch);stroke:var(--ink);stroke-width:1.2}
+svg .t-mask{fill:none;stroke:var(--ink-2);stroke-width:1.2;stroke-dasharray:2 2}
+svg .hatch-l{stroke:var(--ink);stroke-width:1.3}
+svg .hatch-bg{fill:var(--surface)}
+.heat-wrap{display:grid;gap:3px;margin:6px 0 0;font:400 12px/1 var(--f-mono)}
+.heat-wrap .hc{min-height:34px;display:flex;align-items:center;justify-content:center;border-radius:4px;font-variant-numeric:tabular-nums}
+.heat-wrap .hh{color:var(--ink-3);display:flex;align-items:center;justify-content:center;min-height:24px}
+.heat-wrap .hr{color:var(--ink-3);display:flex;align-items:center;justify-content:flex-end;padding-right:6px;white-space:nowrap}
+.heat-wrap .off{background:var(--surface-2);color:var(--ink-3);font-family:var(--f-body);font-size:12px;grid-column:span var(--n)}
+.heat-wrap .hi{outline:2px solid var(--accent);outline-offset:-2px}
+.trace-wrap{max-width:100%;overflow:hidden;border-radius:8px;outline-offset:2px}
+.trace-wrap canvas{display:block;max-width:100%;height:auto;cursor:pointer}
+.kx-mini{max-width:760px;margin:4px 0 20px}
+.kx-mini svg{display:block;width:100%;height:auto}
+#w3.busy .fig{opacity:.6}
+#w3 .stale{color:var(--accent)}
+table.mini caption{text-align:left}
+.okline:empty,.mono-sm:empty{display:none}
+[hidden]{display:none!important}
+.lg.bx::before{width:11px;height:11px;border:0;border-radius:2px}
+.lg.bx.par::before{background:var(--c-par)}.lg.bx.perp::before{background:var(--c-perp)}.lg.bx.acc::before{background:var(--accent)}
+dl.ro:empty{display:none}
+#w4a-hist.off{display:none}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 394</span>
+  <span class="ttl">Ψ-Samplers</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 394</b> · 互動教學 · arXiv 2602.21185 · ICLR 2026</div>
+  <h1>Ψ-Samplers：讓離散擴散在取樣時重新抽樣已產生的 token</h1>
+  <p class="dek">這篇論文提出一種取樣方法：每一步以可調的小機率重新抽樣已產生的 token，不需重新訓練模型。</p>
+  <p class="byline">Justin Deschenaux、Caglar Gulcehre、Subham Sekhar Sahoo（2026）〈The Diffusion Duality, Chapter II: Ψ-Samplers〉</p>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 一次寫定的 token</span><p>離散擴散模型把一段文字的每個 token 逐步換成雜訊，再由神經網路一步步還原。若雜訊是一個特殊的「遮罩」符號，模型還原出某個 token 後就不再改動它。</p></div>
+    <div class="fact"><span class="n">02 · 重新抽樣</span><p>本文的取樣方法在每一步，以一個可調的小機率重新抽樣已經還原的 token，讓後續步驟有機會改正錯誤；這個方法不需要重新訓練模型。</p></div>
+    <div class="fact"><span class="n">03 · 影像結果</span><p>在 CIFAR-10 影像生成上，以 FID（一種越低越好的影像品質分數）衡量，作者把 token 換成隨機 token 的模型 Duo 由 25.63 降到 15.05；每個步數各自挑選最佳設定。</p></div>
+  </div>
+  <div class="hero-strip">
+    <div id="hero-fig"><svg role="img" aria-label="示意：上列不重新抽樣，錯誤的格子保留到最後；下列重新抽樣，錯誤格子先變回遮罩再變成正確"></svg></div>
+    <p class="cap">示意（不是實驗結果）：實心＝正確 token，斜線＝錯誤 token，虛線空格＝遮罩。</p>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2602.21185">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-394">在關聯圖中查看</a>
+    <a class="btn" href="psi-samplers-lineage-hub.html">研究筆記總覽</a>
+  </div>
+</section>
+
+<!-- S1 -->
+<section class="ch" id="basics" data-toc="01" data-tt="離散擴散">
+  <div class="ch-num">01 · 離散擴散</div>
+  <h2>離散擴散把 token 換成 [MASK] 或隨機 token</h2>
+  <div class="prose">
+    <p>文字由 token 組成，詞彙表有 $K$ 個類別。一個 token 寫成 one-hot 向量 $x\in\{0,1\}^K$：只有該類別那一格是 1。所有長度 $K$、非負、總和為 1 的向量構成 simplex；simplex 上的向量 $v$ 決定一個類別分佈 $\mathrm{Cat}(\cdot;v)$，抽到第 $i$ 類的機率是 $v_i$。本頁還會用到兩個運算：$a\odot b$ 是逐元素乘積，$\langle a,b\rangle$ 是內積。一段文字有 $L$ 個位置，位置索引寫成 $\ell$；每個位置獨立處理，所以下文多半只寫一個位置。</p>
+    <p>離散擴散的前向過程把乾淨 token $x$ 逐步換成雜訊。時間 $t$ 從 0（乾淨）走到 1（純雜訊），時刻 $t$ 的狀態 $z_t$ 也是 one-hot。論文採用的前向邊際是 $z_t\sim q_t(\cdot|x)=\mathrm{Cat}(\cdot;\alpha_t x+(1-\alpha_t)\pi)$（式 1），其中 noise schedule $\alpha_t$ 在 $[0,1]$ 內隨 $t$ 遞減、$\alpha_1=0$，$\pi$ 是先驗分佈。字面意義是：以機率 $\alpha_t$ 保留原 token，否則從 $\pi$ 抽一個。兩種常用先驗：masked diffusion（MDM）用 $\pi=m$，$m$ 是特殊 [MASK] 符號的 one-hot，[MASK] 也算詞彙中的一類；uniform-state diffusion（USDM）用 $\pi=\mathbf 1/K$，即換成均勻隨機的 token。本頁把較早時刻 $s\lt t$ 的邊際寫成 $q_s(\cdot|x)$。</p>
+    <p>式 (1) 只規定每個時刻各自的分佈（邊際），沒有規定不同時刻之間如何相關（聯合分佈）。論文 §3 的出發點是：同一組邊際可以對應許多種聯合分佈。後面的 Ψ-posterior 就是在這個自由度裡選了一種。</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$z_t\sim q_t(\cdot|x)=\mathrm{Cat}\big(\cdot;\ \alpha_t x+(1-\alpha_t)\pi\big),\qquad \pi=m\ (\text{MDM}),\quad \pi=\mathbf 1/K\ (\text{USDM})$$</div><span class="eq-n">式 (1)</span></div>
+  <div class="plate" id="s1">
+    <div class="plate-h"><span class="id">圖</span><h3>同一段 8 個 token 在 t = 0、0.5、1 的樣子</h3><span class="tag">示意</span></div>
+    <p class="plate-lead">每列是一次前向抽樣的結果；格子記號全頁通用。</p>
+    <div id="s1-fig"><svg role="img" aria-label="MDM 與 USDM 的前向過程示意：t 增加時，MDM 的格子變成遮罩，USDM 的格子變成隨機 token"></svg></div>
+    <div class="legend"><span class="lg mk"><span class="tk-ok"></span> 原 token</span><span class="lg mk"><span class="tk-bad"></span> 換成別的 token</span><span class="lg mk"><span class="tk-mask"></span> [MASK]</span></div>
+  </div>
+  <details class="more"><summary>符號表</summary>
+    <dl class="sym">
+      <dt>$K$、$L$、$\ell$</dt><dd>類別數（MDM 時含 [MASK]）、序列長度、位置索引。</dd>
+      <dt>$x$、$z_t$</dt><dd>乾淨 token、時刻 $t$ 的 latent，皆為 one-hot。</dd>
+      <dt>$\mathrm{Cat}(\cdot;v)$、$\odot$、$\langle\cdot,\cdot\rangle$</dt><dd>類別分佈、逐元素乘積、內積。</dd>
+      <dt>$\pi$、$m$</dt><dd>先驗；[MASK] 的 one-hot。</dd>
+      <dt>$\alpha_t$</dt><dd>noise schedule，遞減，$\alpha_1=0$。</dd>
+      <dt>$q_t$、$q_s$</dt><dd>時刻 $t$、$s\lt t$ 的前向邊際（式 1）。</dd>
+      <dt>$q_{s|t}$、$q_{0|t}$</dt><dd>反向 posterior（02 節）；$q_{0|t}$ 是 $s=0$ 的情形。</dd>
+      <dt>$\alpha_{t|s}$</dt><dd>$\alpha_t/\alpha_s$，從 $s$ 到 $t$ 保留原 token 的機率。</dd>
+      <dt>$x_\theta$</dt><dd>去噪器輸出，simplex 上的機率向量（02 節）。</dd>
+      <dt>$\kappa_t$</dt><dd>Ψ-posterior 的混合係數（03 節）。</dd>
+      <dt>$\sigma_t$、$\eta$</dt><dd>ReMDM 的 remask 機率與 schedule 參數（05 節）。</dd>
+      <dt>NFE</dt><dd>去噪器呼叫次數（02 節）。</dd>
+      <dt>$\tilde\alpha_t$、$\tilde\sigma_t$、$w_t$、$\tau$、$k$</dt><dd>課程學習部分的符號（09 節起）。</dd>
+    </dl>
+  </details>
+  <div class="read">延伸閱讀：<a href="psi-discrete-diffusion-interpolating-process.html">離散擴散的 interpolating 前向過程</a>、<a href="discrete-diffusion-foundations-d3pm.html">離散擴散的基礎（D3PM）</a>、<a href="diffusion-duality.html">The Diffusion Duality（Duo）</a></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">式 (1) 怎麼寫？MDM 與 USDM 的 $\pi$？</p>
+    <p class="a">$z_t\sim\mathrm{Cat}(\alpha_t x+(1-\alpha_t)\pi)$，$\alpha_t$ 遞減、$\alpha_1=0$；MDM $\pi=m$，USDM $\pi=\mathbf 1/K$。</p>
+  </div></details>
+</section>
+
+<!-- S2 -->
+<section class="ch" id="posterior" data-toc="02" data-tt="Ancestral sampler">
+  <div class="ch-num">02 · Ancestral sampler</div>
+  <h2>Ancestral sampler 依 posterior 逐步還原</h2>
+  <div class="prose">
+    <p>生成時要從 $z_1\sim\pi$ 往回走到 $z_0$。把 $[0,1]$ 切成 $T$ 步，$t(i)=i/T$，每一步從時刻 $t$ 走到較早的 $s=t-1/T$。如果知道乾淨 token $x$，這一步該用的分佈是反向 posterior $q_{s|t}(\cdot|z_t,x)$：已知 $z_t$ 與 $x$ 時 $z_s$ 的分佈。它由 Bayes 公式得到。本頁把兩種先驗寫成同一個式子 <span class="tag">本頁推導</span>：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$q_{s|t}(\cdot|z_t,x)\ \propto\ \big(\alpha_{t|s}\,z_t+(1-\alpha_{t|s})\langle\pi,z_t\rangle\mathbf 1\big)\odot\big(\alpha_s x+(1-\alpha_s)\pi\big),\qquad \alpha_{t|s}=\alpha_t/\alpha_s$$</div><span class="eq-n">由式 (2)(3)</span></div>
+  <div class="prose">
+    <p>第一個括號是「從每一個可能的 $z_s$ 走到觀察到的 $z_t$ 的機率」，第二個括號是 $q_s(\cdot|x)$；兩者逐元素相乘再正規化。依據：本頁以 $K=3,4,6$ 數值比對，這個式子與論文的式 (2)、(3) 相差小於 $10^{-12}$；$\alpha_{t|s}=\alpha_t/\alpha_s$ 論文沒有定義，依 Duo 的慣例。</p>
+    <p>MDM 的情形（式 2）：$z_t=m$ 時，$z_s$ 以機率 $\frac{\alpha_s-\alpha_t}{1-\alpha_t}$ 解開成 $x$，否則留在 [MASK]；$z_t\ne m$ 時 $z_s$ 的分佈是 $\mathrm{Cat}(x)$，也就是已解開的 token 不再更新。USDM 的情形（式 3，原式在下方）允許 token 改成任何值，因此可以修正先前的錯誤，這是 USDM 在少步生成表現好的原因之一（§2.1.2）。</p>
+    <p>ancestral sampler 如何由 posterior 得到：生成時沒有 $x$，於是訓練一個去噪器 $x_\theta(z_t,t)$，輸出 simplex 上的機率向量，代表對乾淨 token 的猜測；把 $q_{s|t}$ 裡的 $x$ 換成 $x_\theta(z_t,t)$ 就得到 ancestral sampler $p^\theta_{s|t}=\prod_\ell q_{s|t}(\cdot|z_t^\ell,x^\ell=x_\theta^\ell(z_t,t))$（§2.1.1）。每一步呼叫一次去噪器，所以去噪器呼叫次數 NFE 等於步數。在 MDM 下，式 (2) 中 $z_t\ne m$ 時為 $\mathrm{Cat}(x)$，已解開的 token 不再更新：一旦解錯就無法回頭；USDM 的式 (3) 則允許 token 改成任何值。上面的式子對 $x$ 是線性的，所以 $x$ 換成機率向量 $x_\theta$ 仍是合法的 Bayes 更新。</p>
+  </div>
+  <details class="more"><summary>式 (3) 原式（USDM）</summary>
+    <div class="eq"><div class="eq-m">$$q_{s|t}=\mathrm{Cat}\Big(\tfrac{K\alpha_t z_t\odot x+(\alpha_{t|s}-\alpha_t)z_t+(\alpha_s-\alpha_t)x+(1-\alpha_{t|s})(1-\alpha_s)\mathbf 1/K}{K\alpha_t\langle z_t,x\rangle+1-\alpha_t}\Big)$$</div><span class="eq-n">式 (3)</span></div>
+  </details>
+  <div class="read">延伸閱讀：<a href="mdlm-masked-diffusion-objective.html">MDLM</a>、<a href="psi-uniform-state-guidance-and-self-correction.html">Uniform-state 擴散、guidance 與自我修正</a></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">ancestral sampler 如何由 posterior 得到？式 (2) 中 $z_t\ne m$ 時 $z_s$ 的分佈？</p>
+    <p class="a">把 $q_{s|t}$ 的 $x$ 換成 $x_\theta(z_t,t)$，每步呼叫一次去噪器（NFE＝步數）；$z_t\ne m$ 時為 $\mathrm{Cat}(x)$，已解開的 token 不再更新；USDM 的 (3) 允許改成任何值。</p>
+  </div></details>
+</section>
+
+<!-- S3 -->
+<section class="ch" id="psi" data-toc="03" data-tt="Ψ-posterior">
+  <div class="ch-num">03 · Ψ-posterior</div>
+  <h2>Ψ-posterior 是兩個分佈的凸組合，邊際不變</h2>
+  <div class="prose">
+    <p>Ψ-posterior（式 11）把反向 posterior 與前向邊際以係數 $\kappa_t\in[0,1]$ 混合：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\Psi_{s|t}(\cdot|x,z_t)=\kappa_t\,q_{s|t}(\cdot|z_t,x)+(1-\kappa_t)\,q_s(\cdot|x),\qquad \Psi_1=\mathrm{Cat}(\pi)$$</div><span class="eq-n">式 (11)</span></div>
+  <div class="prose">
+    <p>式 (11) 由兩項組成：第一項 $\kappa_t q_{s|t}(\cdot|z_t,x)$ 依賴目前狀態 $z_t$，第二項 $(1-\kappa_t)q_s(\cdot|x)$ 不依賴 $z_t$。$\kappa_t=1$ 時就是標準 posterior；$\kappa_t=0$ 時每一步丟棄 $z_t$，直接從 $q_s(\cdot|x)$ 重抽。$\kappa_t$ 越小，$z_s=z_t$（token 沒有被改動）的機率越低：均勻先驗、$K=4$、$\alpha_t=0.3$、$\alpha_s=0.6$ 時，$\kappa$ 為 1、0.5、0 的保留率依序是 0.625、0.505、0.385，而 $z_s$ 的邊際始終不變（下方 W1 的「保留率」讀數）。作者稱這種組合為 superposition posterior。</p>
+    <p>為何任何 $\kappa_t$ 都保持 $q_s$：論文以對 $t$ 向下的歸納證明（Suppl. A.2）。基底 $\Psi_1=\mathrm{Cat}(\pi)=q_1$。假設 $z_t$ 的邊際已經是 $q_t(\cdot|x)$，則 $z_s$ 的邊際是</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}\Psi_s(z_s|x)&=\sum_{\tilde z_t}q_t(\tilde z_t|x)\big[\kappa_t q_{s|t}(z_s|x,\tilde z_t)+(1-\kappa_t)q_s(z_s|x)\big]\\&=\kappa_t\,q_s(z_s|x)+(1-\kappa_t)\,q_s(z_s|x)\sum_{\tilde z_t}q_t(\tilde z_t|x)=q_s(z_s|x)\end{aligned}$$</div><span class="eq-n">式 (16)</span></div>
+  <div class="prose">
+    <p>第一項加總後等於 $q_s$，因為 $q_{s|t}$ 是真 posterior；第二項不依賴 $\tilde z_t$，可以提到加總外，而 $\sum q_t=1$。兩項以 $q_t$ 加權後都等於 $q_s$，凸組合仍是 $q_s$。這個證明需要四個條件：(i) 用真 $x$；(ii) $q_{s|t}$ 是與式 (1) 相容的真 posterior；(iii) 第二項不依賴 $z_t$；(iv) $\kappa_t$ 不依賴 $z_t$，否則 $\kappa_t$ 不能提到加總外。下方 W1 的開關讓 $z_t=x$ 的那一列用 $\kappa=0.5$、其他列用 1，邊際與 $q_s$ 的最大差變成 0.0525 <span class="tag">本頁推導</span>。因此邊際保持只對用真 $x$ 的真 posterior (11) 成立；取樣時換成去噪器 $x_\theta$ 後（04 節的式 12），條件 (i) 不成立，不再保證邊際，論文也沒有給這種情形的誤差界。</p>
+    <p>代數上 $\kappa_t$ 超出 $[0,1]$ 時等式仍成立，但 $\Psi$ 可能出現負的分量，不是合法分佈 <span class="tag">本頁推導</span>。由 Bayes 公式反推的前向過程 $\Psi(z_t|z_s,x)$ 一般同時依賴 $z_s$ 與 $x$，所以不是 Markov 過程（§3）。</p>
+  </div>
+  <div class="plate" id="w1">
+    <div class="plate-h"><span class="id">W1</span><h3>改變 κ，轉移改變，邊際不變</h3></div>
+    <p class="plate-lead">假設：已知乾淨 token 為 A；這裡用真 posterior，不用去噪器。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div class="lbl">轉移 Ψ(z_s | z_t, x)：列＝z_t，欄＝z_s</div>
+        <div id="w1-heat" class="heat-wrap"></div>
+        <div class="lbl" style="margin-top:14px">z_s 的邊際（實心）與 q_s（外框）</div>
+        <div id="w1-bars"><svg role="img" aria-label="邊際與 q_s 的長條圖"></svg></div>
+        <dl class="ro" id="w1-ro"></dl>
+        <p class="okline" id="w1-say"></p>
+      </div>
+      <div class="ctl">
+        <div class="lbl">先驗</div>
+        <div class="seg" id="w1-prior" role="radiogroup" aria-label="先驗"></div>
+        <div class="rng"><label class="lbl" for="w1-K">K（類別數）<output id="w1-Ko"></output></label><input type="range" id="w1-K" min="3" max="8" step="1" value="4"></div>
+        <div class="rng"><label class="lbl" for="w1-at">α_t <output id="w1-ato"></output></label><input type="range" id="w1-at" min="0" max="0.98" step="0.01" value="0.3"></div>
+        <div class="rng"><label class="lbl" for="w1-as">α_s <output id="w1-aso"></output></label><input type="range" id="w1-as" min="0.31" max="1" step="0.01" value="0.6"></div>
+        <div class="rng"><label class="lbl" for="w1-k">κ <output id="w1-ko"></output></label><input type="range" id="w1-k" min="0" max="1" step="0.01" value="0.5"></div>
+        <div class="ctl-row"><button class="chip" type="button" id="w1-k1">κ = 1</button><button class="chip" type="button" id="w1-k0">κ = 0</button></div>
+        <label class="chk"><input type="checkbox" id="w1-dep"> κ 依賴 z_t（違反條件 iv）</label>
+        <p class="sr" id="w1-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依式 (1)(11)(16) 即時計算；q_s|t 用 02 節的統一形式 <span class="tag">本頁推導</span>。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">式 (11) 由哪兩項組成？$\kappa_t$ 變小時 token 被改動的機率如何變化？為何任何 $\kappa_t$ 都保持 $q_s$？需要哪些條件？</p>
+    <p class="a">$\kappa_t q_{s|t}(\cdot|z_t,x)+(1-\kappa_t)q_s(\cdot|x)$；$\kappa_t$ 越小，$z_s=z_t$ 的機率越低（0.625／0.505／0.385），邊際不變。兩項以 $q_t$ 加權後都等於 $q_s$；條件：真 $x$、真 posterior、第二項不依賴 $z_t$、$\kappa_t$ 不依賴 $z_t$；換成 $x_\theta$ 後不再保證。</p>
+  </div></details>
+</section>
+
+<!-- S4 -->
+<section class="ch" id="sampler" data-toc="04" data-tt="Ψ-sampler">
+  <div class="ch-num">04 · Ψ-sampler</div>
+  <h2>Ψ-sampler 以去噪器輸出代替乾淨資料</h2>
+  <div class="prose">
+    <p>取樣時沒有 $x$。式 (12) 替換了兩處（作者用 "we choose to replace"，Suppl. A.1）：$q_{s|t}$ 裡的 $x$ 換成 $x_\theta(z_t,t)$；$q_s(\cdot|x)=\mathrm{Cat}(\alpha_s x+(1-\alpha_s)\pi)$ 裡的 $x$ 換成 $q_{0|t}(\cdot|z_t,x_\theta)$，即 $s=0$ 時的 posterior，代表由 $z_t$ 與 $x_\theta$ 推測的乾淨 token 分佈。MDM 時 $q_{0|t}=x_\theta$（Suppl. A.1 末句；這依賴 MDLM 的 carry-over 參數化：已解開位置的 $x_\theta$ 就是 $z_t$ 本身）。USDM 的 $q_{0|t}$ 論文沒有寫出；由 02 節的式子取 $\alpha_s=1$ 得 $q_{0|t}\propto x_\theta\odot(\alpha_t z_t+(1-\alpha_t)\mathbf 1/K)$ <span class="tag">本頁推導</span>。</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\Psi^\theta_{s|t}(\cdot|z_t)=\underbrace{\kappa_t\,q_{s|t}(\cdot|z_t,x_\theta)}_{\text{預測步}}+\underbrace{(1-\kappa_t)\big[\alpha_s\,q_{0|t}(\cdot|z_t,x_\theta)+(1-\alpha_s)\pi\big]}_{\text{校正步}}$$</div><span class="eq-n">式 (12)</span></div>
+  <div class="prose">
+    <p>$\kappa_t=1$ 還原 ancestral sampler。作者把第一項稱為預測步（predictor），第二項稱為校正步（corrector），類比 Gaussian 擴散的 predictor-corrector 取樣（Song et al., 2021）；校正步注入雜訊，讓先前的預測可以被修改（§3、Fig. 2）。03 節的邊際保證只對真 posterior (11) 成立：§3 末句「converge to the correct distribution given sufficient samples」是對 (11) 的敘述，論文沒有給 (12) 的誤差界。</p>
+    <p>作者認為效果的關鍵是 offset 項 $(1-\kappa_t)(1-\alpha_s)\pi$（§3 Intuitive Explanation）。在 MDM，這一項把機率放在 [MASK] 上：已解開 token 以 $(1-\kappa_t)(1-\alpha_s)$ 的機率變回 [MASK]，之後重新解開，這稱為重新遮罩（remask）。在 USDM，每個 token 至少得到 $(1-\kappa_t)(1-\alpha_s)/K$ 的機率，即使去噪器給正確 token 零機率，它仍可能出現 <span class="tag">本頁推導</span>。W2 的預設情形（USDM、去噪器給 A 零機率、$\kappa=0.5$）中，下一步抽到 A 的機率由 0.0352（$\kappa=1$）升到 0.0676。</p>
+  </div>
+  <div class="plate" id="w2">
+    <div class="plate-h"><span class="id">W2</span><h3>Ψ-sampler 的一步</h3><span class="tag">推定</span></div>
+    <p class="plate-lead">假設：正確 token 為 A；去噪器輸出是本頁設定的三組機率（推定），不是真實模型。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div id="w2-fig"><svg role="img" aria-label="預測步、校正步與混合 Ψ 的長條圖"></svg></div>
+        <div class="legend"><span class="lg bx par">預測步 q_s|t</span><span class="lg bx perp">校正步</span><span class="lg bx acc">混合 Ψ</span><span class="lg ref">下限（USDM）</span></div>
+        <div class="tscroll" tabindex="0" role="region" aria-label="W2 讀數"><table class="mini" id="w2-tab"></table></div>
+        <p class="okline" id="w2-say"></p>
+      </div>
+      <div class="ctl">
+        <div class="lbl">先驗</div>
+        <div class="seg" id="w2-prior" role="radiogroup" aria-label="先驗"></div>
+        <div class="lbl">目前 z_t</div>
+        <div class="seg" id="w2-z" role="radiogroup" aria-label="目前 z_t"></div>
+        <div class="lbl">去噪器 x_θ</div>
+        <div class="seg" id="w2-den" role="radiogroup" aria-label="去噪器"></div>
+        <p class="note small" id="w2-carry"></p>
+        <div class="rng"><label class="lbl" for="w2-at">α_t <output id="w2-ato"></output></label><input type="range" id="w2-at" min="0" max="0.98" step="0.01" value="0.3"></div>
+        <div class="rng"><label class="lbl" for="w2-as">α_s <output id="w2-aso"></output></label><input type="range" id="w2-as" min="0.31" max="1" step="0.01" value="0.6"></div>
+        <div class="rng"><label class="lbl" for="w2-k">κ <output id="w2-ko"></output></label><input type="range" id="w2-k" min="0" max="1" step="0.01" value="0.5"></div>
+        <p class="sr" id="w2-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依式 (12) 即時計算；USDM 的 q_0|t 與下限為本頁推導。</p>
+  </div>
+  <div class="read">延伸閱讀：<a href="psi-superposition-posteriors-method.html">Ψ-posterior 與 Ψ-sampler</a></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">式 (12) 替換了哪兩處？MDM 時 $q_{0|t}$ 是什麼？offset 項在 MDM 與 USDM 各有什麼作用？</p>
+    <p class="a">$q_{s|t}$ 的 $x\to x_\theta$；$q_s$ 的 $x\to q_{0|t}(\cdot|z_t,x_\theta)$；MDM 時 $q_{0|t}=x_\theta$（carry-over）。MDM：已解開 token 以 $(1-\kappa_t)(1-\alpha_s)$ 機率變回 [MASK]；USDM：每個 token 至少 $(1-\kappa_t)(1-\alpha_s)/K$。</p>
+  </div></details>
+</section>
+
+<!-- S5 -->
+<section class="ch" id="remdm" data-toc="05" data-tt="與 ReMDM 的關係">
+  <div class="ch-num">05 · 與 ReMDM 的關係</div>
+  <h2>在 mask 先驗下，ReMDM 是 Ψ-sampler 的特例</h2>
+  <div class="prose">
+    <p>ReMDM（Wang et al., 2025）是 MDM 的 remasking 取樣器，以 remask 機率 $\sigma_t$ 參數化（式 21）：$z_t\ne m$ 時 $z_s\sim\mathrm{Cat}((1-\sigma_t)x+\sigma_t m)$；$z_t=m$ 時 $z_s\sim\mathrm{Cat}\big(\frac{\alpha_s-(1-\sigma_t)\alpha_t}{1-\alpha_t}x+\frac{1-\alpha_s-\sigma_t\alpha_t}{1-\alpha_t}m\big)$；$0\le\sigma_t\le\sigma_t^{\max}=\min\{1,(1-\alpha_s)/\alpha_t\}$。Ψ 等於 ReMDM 時 $\kappa_t$ 與 $\sigma_t$ 的關係是 $\kappa_t=1-\sigma_t/(1-\alpha_s)$（Suppl. A.4）：π = m 時把 Ψ 展開，代入這個 $\kappa_t$ 即得式 (21)。論文只比對了第一列；第二列 $x$ 的係數 $\frac{\alpha_s-\alpha_t}{1-\alpha_t}+\frac{\sigma_t}{1-\alpha_s}\cdot\frac{\alpha_t(1-\alpha_s)}{1-\alpha_t}=\frac{\alpha_s-(1-\sigma_t)\alpha_t}{1-\alpha_t}$，同樣一致 <span class="tag">本頁推導</span>。ReMDM 又涵蓋 Campbell et al. (2022) 的 FB 與 Gat et al. (2024) 的 DFM 校正器，所以 Ψ 也涵蓋它們。</p>
+    <p>何時 $\kappa_t\lt0$：$\kappa_t\in[0,1]$ 等價於 $\sigma_t\le1-\alpha_s$，但 $\sigma_t^{\max}\ge1-\alpha_s$；當 $\sigma_t>1-\alpha_s$ 時 $\kappa_t\lt0$，超出 §3 宣告的 $\kappa_t\in[0,1]$（在 MDM 下分佈仍合法）<span class="tag">本頁推導</span>。因此「Ψ 涵蓋 ReMDM」嚴格成立的條件是 $\sigma_t\le1-\alpha_s$。ReMDM 有三種 $\sigma_t$ schedule（Suppl. A.5）：cap $\sigma_t=\min(\eta,\sigma_t^{\max})$（式 27）、rescale $\sigma_t=\eta\,\sigma_t^{\max}$（式 28）、loop（在 $[t_{\text{off}},t_{\text{on}}]$ 內固定 $\alpha_t$ 並用常數 $\sigma_t=\eta$）。以 $\alpha_t=1-t$、128 步換算：cap 在最後幾步（$s\lt\eta$）得到 $\kappa_t\lt0$，$\eta=0.05$ 時最小值 −0.0579；rescale 的 $\kappa_t$ 約在 $[1-2\eta,1-\eta]$ 之間，不會為負（$\alpha_t\ge1-\alpha_s$ 時 $\kappa=1-\eta/\alpha_t$，否則 $\kappa=1-\eta/(1-\alpha_s)$）<span class="tag">本頁推導</span>。loop 的 $\kappa$ 為常數 $1-\eta/(1-\alpha_{\text{on}})$。</p>
+    <p>論文對 Duo（USDM）使用「κt schedules matching ReMDM」（Table 13），本頁的讀法是：把上面的 $\kappa_t(\alpha_t,\alpha_s,\eta)$ 直接套到均勻先驗 <span class="tag">推定</span>。$\sigma^{\max}$ 作為合法上界的意義只屬於 MDM；USDM 的合法條件是 $\kappa_t\in[0,1]$，rescale 滿足，cap 不一定滿足，論文沒有說明 USDM 如何處理負 $\kappa$。</p>
+  </div>
+  <div class="plate" id="w2b">
+    <div class="plate-h"><span class="id">W2b</span><h3>κ 與 σ 的換算</h3></div>
+    <p class="plate-lead">假設：[MASK] 先驗；σ 是 ReMDM 的 remask 機率；α_t、α_s 與 W2 共用。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div id="w2b-fig"><svg role="img" aria-label="κ 對 σ 的直線"></svg></div>
+        <dl class="ro" id="w2b-ro"></dl>
+      </div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="w2b-s">σ <output id="w2b-so"></output></label><input type="range" id="w2b-s" min="0" max="1" step="0.01" value="0.04"></div>
+        <p class="note small">α_t、α_s 在 W2 調整。</p>
+        <p class="sr" id="w2b-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依 Suppl. A.4 的換算 κ = 1 − σ/(1 − α_s) 即時計算。</p>
+  </div>
+  <div class="read">延伸閱讀：<a href="psi-predictor-corrector-gaussian-to-discrete.html">從 Gaussian 到離散的 predictor-corrector</a>、<a href="dlm-remasking-self-correction.html">Remasking 與自我修正</a>、<a href="psi-ctmc-discrete-diffusion-samplers.html">CTMC 採樣器</a></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Ψ 等於 ReMDM 時 $\kappa_t$ 與 $\sigma_t$ 的關係？何時 $\kappa_t\lt0$？</p>
+    <p class="a">$\kappa_t=1-\sigma_t/(1-\alpha_s)$；$\sigma_t>1-\alpha_s$ 時 $\kappa_t\lt0$（cap 在最後幾步），超出 §3 的 $\kappa_t\in[0,1]$；rescale 的 $\kappa_t$ 約在 $[1-2\eta,1-\eta]$。</p>
+  </div></details>
+</section>
+
+<!-- S6 -->
+<section class="ch" id="toy" data-toc="06" data-tt="玩具問題">
+  <div class="ch-num">06 · 玩具問題</div>
+  <h2>玩具問題：校正步讓更多步數繼續降低錯誤率</h2>
+  <div class="prose">
+    <p>W3 用一個人為設定的小問題顯示校正步的作用。資料只有一個長度 32 的序列（8 種真實 token）；去噪器對每個位置輸出「正確 token 機率 $1-\varepsilon$，其餘 7 個 token 平分 $\varepsilon$」，錯誤率 $\varepsilon=\varepsilon_{\max}-(\varepsilon_{\max}-0.02)\,c$ 隨目前與目標相同的位置比例 $c$ 線性下降（[MASK] 位置算作不相同）；schedule 取 $\alpha_t=1-t$ <span class="tag">推定</span>。這些都是本頁的假設，不是論文的模型。</p>
+    <p>在本頁 toy 的預設設定下（$\varepsilon_{\max}=0.5$），toy 假設去噪器錯誤率隨正確位置比例下降。MDM 的 ancestral sampler 增加步數幾乎沒有改善：早期以高錯誤率解開的 token 不再更新，錯誤率停在約 0.33–0.38。Ψ-sampler 的校正步以機率 $(1-\kappa_t)(1-\alpha_s)$ 把 token 變回 [MASK]，之後由錯誤率較低的去噪器重新預測；步數越多，校正次數越多，window schedule（$\kappa=0.9$、$t\in[0.1,0.6]$）的錯誤率由 8 步的 0.367 降到 512 步的 0.195。步數少時兩者相同，因為校正次數太少。這是 toy 假設下的結果，toy 的 $T$ 不對應論文的 NFE：真實的 MDLM 在步數低於序列長度時仍會改善（Table 13，$p=0.9$ 時 70.34 到 37.91），toy 從 $T=8$ 就持平，是 $\varepsilon_{\max}$ 選擇的結果；把 $\varepsilon_{\max}$ 調低，ancestral 的錯誤率也跟著下降。</p>
+  </div>
+  <div class="plate" id="w3">
+    <div class="plate-h"><span class="id">W3</span><h3>錯誤率對步數</h3><span class="tag">示意</span></div>
+    <p class="plate-lead">假設：資料只有一個序列；去噪器的錯誤率 ε 隨目前正確位置的比例 c 線性下降（本頁自訂）；α_t = 1 − t（推定）。結果說明機制，不重現論文數字。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div class="lbl">最終錯誤率（32 次執行平均）</div>
+        <div id="w3-err"><svg role="img" aria-label="錯誤率對步數"></svg></div>
+        <div class="legend"><span class="lg mk"><span class="sym o">●</span> ancestral</span><span class="lg mk"><span class="sym d">■</span> 所選 schedule</span></div>
+        <p class="note small">每點 1024 個 token，統計誤差約 ±0.014。</p>
+        <div class="lbl" style="margin-top:12px">κ_t 曲線（T = 128）</div>
+        <div id="w3-kap"><svg role="img" aria-label="κ_t 對 t 的曲線"></svg></div>
+        <div class="lbl" style="margin-top:12px">一次執行的軌跡（seed 1000；每列一步，由上而下 t 從 1 到 0）</div>
+        <div class="trace-wrap" id="w3-trace-box" tabindex="0" role="img" aria-label="軌跡圖；按上下鍵選取步驟"><canvas id="w3-trace"></canvas></div>
+        <div class="legend"><span class="lg mk"><span class="tk-ok"></span> 正確</span><span class="lg mk"><span class="tk-bad"></span> 錯誤</span><span class="lg mk"><span class="tk-mask"></span> [MASK]</span></div>
+        <p class="okline" id="w3-row"></p>
+        <p class="okline" id="w3-say"></p>
+      </div>
+      <div class="ctl">
+        <div class="lbl">先驗</div>
+        <div class="seg" id="w3-prior" role="radiogroup" aria-label="先驗"></div>
+        <div class="lbl">schedule</div>
+        <div class="seg" id="w3-sch" role="radiogroup" aria-label="schedule"></div>
+        <div class="rng" id="w3-kbox"><label class="lbl" for="w3-k">κ（window 內）<output id="w3-ko"></output></label><input type="range" id="w3-k" min="0.5" max="1" step="0.01" value="0.9"></div>
+        <div class="rng" id="w3-onbox"><label class="lbl" for="w3-on">t_on <output id="w3-ono"></output></label><input type="range" id="w3-on" min="0" max="1" step="0.05" value="0.6"></div>
+        <div class="rng" id="w3-offbox"><label class="lbl" for="w3-off">t_off <output id="w3-offo"></output></label><input type="range" id="w3-off" min="0" max="1" step="0.05" value="0.1"></div>
+        <div class="rng" id="w3-ebox"><label class="lbl" for="w3-eta">η（rescale）<output id="w3-etao"></output></label><input type="range" id="w3-eta" min="0.005" max="0.1" step="0.005" value="0.05"></div>
+        <div class="rng"><label class="lbl" for="w3-em">ε_max <output id="w3-emo"></output></label><input type="range" id="w3-em" min="0.1" max="0.6" step="0.05" value="0.5"></div>
+        <button class="small-btn pri" type="button" id="w3-run">計算</button>
+        <p class="mono-sm" id="w3-status" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依式 (12) 逐步抽樣計算；亂數為 mulberry32(seed)，seed = 1000–1031。cap schedule 會產生負 κ，只在 κ_t 曲線中以虛線顯示。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">在本頁 toy 的預設設定下，為何 MDM ancestral 增加步數幾乎沒有改善，Ψ 會？</p>
+    <p class="a">toy 假設去噪器錯誤率隨正確位置比例下降；ancestral 下早期以高錯誤率解開的 token 不再更新；Ψ 的校正步以機率 $(1-\kappa_t)(1-\alpha_s)$ 把 token 變回 [MASK]，之後由錯誤率較低的去噪器重新預測；步數越多，校正次數越多。這是 toy 假設下的結果，不對應論文的 NFE。</p>
+  </div></details>
+</section>
+
+<!-- S7 -->
+<section class="ch" id="lang" data-toc="07" data-tt="語言實驗">
+  <div class="ch-num">07 · 語言實驗</div>
+  <h2>語言實驗：p = 0.9 與 rescale 下 Gen. PPL 在 1024 步後仍下降</h2>
+  <div class="prose">
+    <p>指標：Gen. PPL（generative perplexity）是以 GPT-2 Large 計算生成文字的 perplexity，越低代表越像自然文字；但重複的文字也會壓低 Gen. PPL，所以同時報告 unigram entropy，即單一樣本內 token 頻率分佈的熵，作為多樣性的代理（越低越重複）。nucleus sampling 的參數 $p$ 表示每一步只從累積機率達到 $p$ 的最高機率 token 中抽樣；$p=1$ 表示不截斷。</p>
+    <p>設定（§5.1.1、Suppl. C.1.1）：使用既有的 MDLM（MDM）與 Duo（USDM）checkpoint，資料 OpenWebText，序列長度 $L=1024$，訓練 1M 步、batch 512；取樣時 logits 轉成 64-bit。論文作圖時選擇 unigram entropy 與 ancestral 最接近的 κ schedule（Suppl. D.1.2）。下表摘自 Table 13（log-linear 步長、未蒸餾模型；括號內為 unigram entropy）。</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="Table 13 摘錄，可橫向捲動"><table class="stack"><caption>Table 13 摘錄：Gen. PPL（unigram entropy）</caption>
+    <thead><tr><th>設定</th><th class="num">32 步</th><th class="num">512 步</th><th class="num">1024 步</th><th class="num">4096 步</th></tr></thead><tbody>
+    <tr><td>Duo ancestral，p = 1.0</td><td class="num">96.76 (5.57)</td><td class="num">76.93 (5.54)</td><td class="num">75.02 (5.53)</td><td class="num">75.39 (5.52)</td></tr>
+    <tr><td>Duo ancestral，p = 0.9</td><td class="num">44.24 (5.40)</td><td class="num">35.77 (5.37)</td><td class="num">34.79 (5.35)</td><td class="num">34.75 (5.35)</td></tr>
+    <tr class="hl"><td>Duo rescale η = 0.05，p = 0.9</td><td class="num">44.52 (5.41)</td><td class="num">31.06 (5.34)</td><td class="num">26.94 (5.28)</td><td class="num">19.21 (5.17)</td></tr>
+    <tr><td>Duo rescale η = 0.02，p = 1.0</td><td class="num">89.55 (5.58)</td><td class="num">69.85 (5.54)</td><td class="num">68.39 (5.53)</td><td class="num">63.70 (5.52)</td></tr>
+    <tr><td>MDLM ancestral，p = 0.9</td><td class="num">70.34 (5.49)</td><td class="num">39.02 (5.35)</td><td class="num">37.91 (5.34)</td><td class="num">36.76 (5.31)</td></tr>
+    <tr><td>MDLM rescale η = 0.05，p = 0.9</td><td class="num">69.44 (5.48)</td><td class="num">34.10 (5.33)</td><td class="num">30.29 (5.30)</td><td class="num">20.85 (5.16)</td></tr>
+    <tr><td>MDLM cap η = 0.005，p = 1.0</td><td class="num">195.83 (5.74)</td><td class="num">110.75 (5.66)</td><td class="num">112.78 (5.67)</td><td class="num">131.85 (5.71)</td></tr>
+    <tr><td>Duo cap η = 0.01，p = 0.9</td><td class="num">43.05 (5.40)</td><td class="num">23.38 (5.26)</td><td class="num">18.74 (5.17)</td><td class="num">10.88 (4.87)</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <p>讀法。在 OpenWebText、nucleus $p=0.9$、log-linear、4096 步下，Duo 的 Gen. PPL 由 ancestral 的 34.75 (5.35) 降到 rescale η = 0.05 的 19.21 (5.17)；ancestral 在 1024 步之後持平，rescale 繼續下降（Takeaway 3）。持續下降需要 $p=0.9$ 與 rescale：$p=1.0$ 時 Duo rescale η = 0.02 在 4096 步只到 63.70，MDLM cap η = 0.005 由 512 步的 110.75 變差到 4096 步的 131.85。32 步時沒有增益（44.52 對 44.24），增益在 NFE 超過序列長度之後才明顯（Takeaway 2）。nucleus 本身的貢獻也很大：Duo ancestral 由 $p=1.0$ 的 75.39 降到 $p=0.9$ 的 34.75。cap η = 0.01 的 Gen. PPL 最低（10.88），但 unigram entropy 降到 4.87，作者推薦 rescale 的依據是保住熵。</p>
+    <p>作者的推薦（§5.1.1）：rescale schedule、η = 0.05、nucleus $p=0.9$、log-linear noise schedule、線性遞減的 $t$。Suppl. D.1.2 則寫最佳為 η ∈ {0.01, 0.02}，兩處不一致。§5.1.1 與圖例說取樣用的是以新課程訓練的 Duo++ checkpoint，Suppl. C.1.1、D.1 與表格列名寫的是 Duo 原始 checkpoint。蒸餾後的模型則是 MDLM 較好（Table 14，ancestral、$p=0.9$、4096 步：MDLM 22.46、Duo 29.19）。</p>
+  </div>
+  <div class="kx-mini" id="kx-lang"><svg role="img" aria-label="κ 軸：OWT 推薦的 rescale η = 0.05 對應 κ 約 0.90 到 0.95"></svg></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">OWT、nucleus $p=0.9$、log-linear、4096 步的 Duo：ancestral 與 rescale η = 0.05 的 Gen. PPL（熵）？持續下降需要什麼條件？</p>
+    <p class="a">34.75 (5.35) → 19.21 (5.17)；需要 $p=0.9$ 與 rescale；$p=1.0$ 時 Duo rescale η = 0.02 只到 63.70，MDLM cap η = 0.005 由 110.75 變差到 131.85；32 步無增益。</p>
+  </div></details>
+</section>
+
+<!-- S8 -->
+<section class="ch" id="image" data-toc="08" data-tt="影像實驗">
+  <div class="ch-num">08 · 影像實驗</div>
+  <h2>影像實驗：CIFAR-10 FID 改善依賴 κ 與時間窗</h2>
+  <div class="prose">
+    <p>設定（§5.1.2、Suppl. C.1.2）：35M 參數的 U-Net（Table 3 寫 35.8M），CIFAR-10 每個像素值當作 256 類的 token，訓練 1.5M 步、batch 128。訓練時以 10% 機率丟掉類別標籤（class dropout 0.1），供 classifier-free guidance（CFG）使用；Table 6、11 的 CFG 強度為 1，依式 (10) 這等於純條件取樣 <span class="tag">本頁推導</span>。Table 6 的 ancestral 結果最後一步取 greedy（機率最大的值）。FID（Fréchet Inception Distance）以 50k 個樣本對訓練集計算，越低越好；IS（Inception Score）越高越好。cosine 與 log-linear 是兩種 noise schedule 的形式，論文沒有給公式。CIFAR 的 Ψ 實驗不用 nucleus。</p>
+    <p>結果（Suppl. D.1.1）：ReMDM 把 MDLM 由 24.73 降到 23.71（4096 步）；Ψ-sampler 在 log-linear 取樣下把 23.71 降到 20.71。CIFAR-10 Duo 的 FID 改善：Duo（訓練 log-linear、取樣 cosine、4096 步）由 ancestral 的 25.63 降到 15.05；MDLM 降到 17.86，但論文寫的起點 24.73 是 log-linear 取樣的 ancestral，同條件（cosine 取樣）的 ancestral 基準是 23.93（Table 7），所以同條件的 MDLM 基準為 23.93 而非 24.73。兩個限制。第一，Fig. 1 右是逐步數挑最佳超參數的包絡（Table 9 caption）：4096 步的 15.05 來自 $t_{\text{on}}=0.5$，同樣 $\kappa=0.95$ 但 $t_{\text{on}}=0.6$ 時 1024 步是 16.70、4096 步是 18.99。第二，選錯 κ 比 ancestral 差：$\kappa=0.5$、$[0.4,0.6]$ 由 256 步的 20.77 惡化到 4096 步的 105.75；Suppl. D.1 原文是「With a poor choice of κt, Ψ-samplers can underperform ancestral sampling」。此外，Duo ancestral 加 $p=0.9$ 已有 22.41（Table 7），而 Ψ 的比較不用 nucleus。最佳 IS（9.50）與最佳 FID 來自不同設定（Table 10）。</p>
+    <p>作者的推薦（§5.1.2）：Duo++ 用 cosine schedule、$\kappa_t=0.95$、$t_{\text{on}}\in\{0.5,0.6\}$、$t_{\text{off}}=0.1$；MDLM 用 $\kappa_t=0.99$、$t_{\text{on}}=1.0$、$t_{\text{off}}=0.1$；$\kappa_t$ 只在 $[t_{\text{off}},t_{\text{on}}]$ 內小於 1，其餘步驟為 1。</p>
+  </div>
+  <div class="kx-mini" id="kx-img"><svg role="img" aria-label="κ 軸：CIFAR-10 推薦 Duo 0.95、MDLM 0.99，只在時間窗內"></svg></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">CIFAR-10 Duo 的 FID 改善？兩個限制？</p>
+    <p class="a">Duo（訓練 log-lin、取樣 cosine、4096 步）25.63 → 15.05；Fig. 1 右是逐步數挑最佳超參數的包絡；選錯 $\kappa$ 比 ancestral 差（$\kappa=0.5$、$[0.4,0.6]$ 在 4096 步 105.75）；同條件 MDLM 基準為 23.93 而非 24.73。</p>
+  </div></details>
+</section>
+
+<!-- S9 -->
+<section class="ch" id="duality" data-toc="09" data-tt="Duo 的課程學習">
+  <div class="ch-num">09 · Duo 的課程學習</div>
+  <h2>Duo 的課程學習需要 K 維 softmax</h2>
+  <div class="prose">
+    <p>本節起是論文的第二個貢獻，與前面的取樣器互不依賴。Duo（Sahoo et al., 2025a）指出 USDM 可以由連續的 Gaussian 擴散得到：對 one-hot 向量 $x$ 加 Gaussian 雜訊，得到 latent $w_t\sim\mathcal N(\tilde\alpha_t x,\tilde\sigma_t^2 I_K)$，其中 $\tilde\alpha_t$ 是 Gaussian 側的 schedule，$\tilde\sigma_t=\sqrt{1-\tilde\alpha_t^2}$。取 argmax（最大座標的 one-hot）後，$z_t=\arg\max(w_t)$ 的邊際正好是式 (1) 的 uniform 形式，對應的 $\alpha_t=\mathcal T(\tilde\alpha_t)$（式 6、7）；$\mathcal T$ 是把 Gaussian 側 schedule 換算成離散側的函式。</p>
+    <p>Duo 的課程學習在前 50% 訓練步把送進 transformer 的 argmax 換成 $\mathrm{softmax}(w_t/\tau)$（式 9）。softmax 的溫度 $\tau$ 越小，輸出越接近 argmax 的 one-hot；$\tau\to0$ 時兩者相同。輸入 embedding 變成 $V^\top y$，即以 softmax 權重 $y$ 對所有 $K$ 個 embedding 做加權和，而不是查一列表格。這要求每個位置在每個訓練步具現一個 $K$ 維向量；現代 LLM 的詞彙 $K>100{,}000$（§4），記憶體不可行。</p>
+    <p>作者的觀察：Duo 用的溫度是 $\tau=10^{-3}$，此時 softmax 幾乎只有少數幾項非零，所以只用 $k\ll K$ 個 embedding（式 13）就能近似加權和。本頁以 $K=50257$（GPT-2 詞彙）、$\tilde\alpha_t=0.34$、$k=3$ 重複抽樣 400 次，最大權重超過 0.99 的比例是 0.9725（W4a）。剩下的問題是如何不具現 $K$ 維向量就找到最大的 $k$ 個值（10 節），以及如何估計 softmax 的分母（11 節）。$\mathcal T$ 本身原本靠預先計算 100k 個點（GPT-2 詞彙最多兩小時），論文改用約 150 項的級數（式 49、55）並再以 9 次多項式擬合（Suppl. B.3）。</p>
+  </div>
+  <div class="read">延伸閱讀：<a href="psi-duo-curriculum-background.html">Duo 與 Gaussian 鬆弛課程學習</a>、<a href="diffusion-duality.html">The Diffusion Duality（Duo）</a></div>
+</section>
+
+<!-- S10 -->
+<section class="ch" id="topk" data-toc="10" data-tt="Top-k 抽樣">
+  <div class="ch-num">10 · Top-k 抽樣</div>
+  <h2>Order statistics 直接抽出最大的 k 個值</h2>
+  <div class="prose">
+    <p>逆轉換抽樣：若 $U\sim U[0,1]$、$F$ 是某個分佈的 CDF，則 $F^{-1}(U)$ 服從該分佈（式 29）。高斯的 CDF 寫成 $\Phi$，$\Phi^{-1}$ 單調遞增，所以均勻變數的大小順序在轉換後保持不變。</p>
+    <p>如何不具現 $K$ 維向量抽最大的 $k$ 個值：$w_t$ 中乾淨 token 的座標 $o$ 均值是 $\tilde\alpha_t$，與其他座標不同，所以另外單獨抽 $\tilde w\sim\mathcal N(\tilde\alpha_t,\tilde\sigma_t^2)$；其餘 $N=K-1$ 個座標 i.i.d. $\mathcal N(0,\tilde\sigma_t^2)$。$N$ 個 i.i.d. $U[0,1]$ 的最大值的 CDF 是 $u^N$（式 30），所以 $U^{(1)}=V^{1/N}$（$V\sim U[0,1]$）直接抽出最大值；給定 $U^{(i)}$，下一個 $U^{(i+1)}$ 是 $N-i$ 個 $U[0,U^{(i)}]$ 的最大值（Prop. B.4、式 38）。再乘 $\tilde\sigma_t\Phi^{-1}$，就得到第 $i$ 大的零均值值 $\mathcal K_i$。Algo. 1 在 log 空間計算：$R_\ell=\log U_\ell/\ell$、$P_\ell=\sum_{m=\ell}^{N}R_m$、$V_\ell=e^{P_\ell}$。接著比較 $\tilde w$：$\tilde w\lt\mathcal K_k$ 為 case 1（乾淨 token 不在前 $k$ 名）；否則為 case 2，把 $\tilde w$ 插在第 $r+1$ 名（$r$ 是大於 $\tilde w$ 的 $\mathcal K_j$ 個數），丟掉 $\mathcal K_k$。論文以 Floyd 演算法抽索引（Algo. 2：依序無放回抽 $k$ 個整數，抽到重複就改用目前範圍的最大值，不需要洗牌整個 $K$ 元素的陣列），本頁元件只示範數值。</p>
+    <p>哪些步驟是近似：值與索引在分佈上精確 <span class="tag">本頁推導</span>，W4a 的「重複 400 次」可與暴力排序比較（$K\le10^4$ 時）。只保留 $k$ 個 embedding（式 13）與 $\tilde Z$（下一節）是近似。</p>
+  </div>
+  <div class="plate" id="w4a">
+    <div class="plate-h"><span class="id">W4a</span><h3>最大的 k 個值與權重</h3></div>
+    <p class="plate-lead">假設：單一位置的 Gaussian latent，乾淨 token 索引 o = 0。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div id="w4a-fig"><svg role="img" aria-label="前 k 個值的 softmax 權重"></svg></div>
+        <dl class="ro" id="w4a-ro"></dl>
+        <div class="ctl-row"><button class="small-btn" type="button" id="w4a-rep">重複 400 次</button><button class="small-btn" type="button" id="w4a-new">重新抽樣</button></div>
+        <dl class="ro" id="w4a-stat"></dl>
+        <div id="w4a-hist"><svg role="img" aria-label="最大值的直方圖：高效法與暴力法"></svg></div>
+        <p class="note small" id="w4a-hnote"></p>
+      </div>
+      <div class="ctl" id="w4-ctl">
+        <div class="rng"><label class="lbl" for="w4-K">K（詞彙數）<output id="w4-Ko"></output></label><input type="range" id="w4-K" min="2" max="4.70" step="0.05" value="4.70"></div>
+        <button class="chip" type="button" id="w4-gpt">50257（GPT-2）</button>
+        <div class="rng"><label class="lbl" for="w4-k">k <output id="w4-ko"></output></label><input type="range" id="w4-k" min="1" max="8" step="1" value="3"></div>
+        <div class="rng"><label class="lbl" for="w4-at">α̃_t <output id="w4-ato"></output></label><input type="range" id="w4-at" min="0" max="0.99" step="0.01" value="0.34"></div>
+        <p class="note small" id="w4-atn"></p>
+        <div class="rng"><label class="lbl" for="w4-tau">τ <output id="w4-tauo"></output></label><input type="range" id="w4-tau" min="-3" max="0" step="0.1" value="-3"></div>
+        <p class="sr" id="w4-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依 Algo. 1、式 (41)(42)(44) 即時計算；亂數為 mulberry32(seed)，單次抽樣 seed 從 3 開始、統計 seed 11。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">如何不具現 K 維向量抽最大的 $k$ 個值？哪些步驟是近似？</p>
+    <p class="a">乾淨座標另外抽；其餘 $N=K-1$ 個：$U^{(1)}=V^{1/N}$，給定 $U^{(i)}$ 時下一個是 $N-i$ 個 $U[0,U^{(i)}]$ 的最大值，再乘 $\tilde\sigma_t\Phi^{-1}$；值與索引在分佈上精確；只保留 $k$ 個 embedding（式 13）與 $\tilde Z$ 是近似。</p>
+  </div></details>
+</section>
+
+<!-- S11 -->
+<section class="ch" id="normalizer" data-toc="11" data-tt="Normalizer">
+  <div class="ch-num">11 · Normalizer</div>
+  <h2>以截斷高斯的期望值近似未抽樣項</h2>
+  <div class="prose">
+    <p>softmax 的權重是 $\lambda_i=e^{\mathcal K_i/\tau}/Z$，分母 $Z$ 是全部 $K$ 項 $e^{w_j/\tau}$ 的和。未抽樣的零均值座標都小於門檻 $c$（前 $k$ 名中最小的值），所以每一項的分佈是截斷高斯：$X\sim\mathcal N(0,\tilde\sigma_t^2)$ 限制在 $X\lt c$。論文以條件期望 $\mu=\mathbb E[e^{X/\tau}\mid X\lt c]$ 代替每一項（式 40）。把指數併入高斯密度並配方，得到</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\log\mu=\frac{\tilde\sigma_t^2}{2\tau^2}-\log\Phi\Big(\frac{c}{\tilde\sigma_t}\Big)+\log\Phi\Big(\frac{c-\tilde\sigma_t^2/\tau}{\tilde\sigma_t}\Big)$$</div><span class="eq-n">式 (44)</span></div>
+  <div class="prose">
+    <p>case 1、2 的 $\tilde Z$ 各含幾個未抽樣項：case 1（乾淨 token 不在前 $k$ 名）有 $K-k-1$ 個，另加乾淨 token 的 $e^{\tilde w/\tau}$，$\tilde Z=\sum_{i\le k}e^{\mathcal K_i/\tau}+e^{\tilde w/\tau}+(K-k-1)\mu$（式 41，$c=\mathcal K_k$）；case 2 有 $K-k$ 個，$\tilde Z=\sum_{i\le k}e^{\mathcal K_i/\tau}+(K-k)\mu$（式 42）。case 2 的門檻是插入後的第 $k$ 名，也就是插入前的 $\mathcal K_{k-1}$；已知被丟掉的值是舊的 $\mathcal K_k$，以 $\mathcal K_{k-1}$ 為門檻較寬鬆，是作者的設計選擇。式 (14) 後的文字寫「δ = 1 if $\tilde w\in\mathcal K$ (case 2)」，與式 (41)(42) 和 Algo. 3 相反；本頁以後兩者為準。式 (43) 把 $\mu$ 寫成 $\log\mathbb E[e^X]$（少了 $/\tau$），自洽的讀法是式 (44) 右邊為 $\log\mathbb E[e^{X/\tau}]$。</p>
+    <p>數值上必須在 log 空間計算：$\tau=10^{-3}$、$\tilde\sigma_t\approx0.94$ 時 $\tilde\sigma_t^2/2\tau^2\approx4.4\times10^5$，與 $\log\Phi(\cdot)\approx-4.4\times10^5$ 相消，直接取指數會溢位。$\tau$ 越大，只取前 $k$ 項的誤差越大：W4b 中 $\tau\ge0.3$ 時 $Z_{\text{top}}/Z$ 低於 0.31，加入尾項期望值的 $\tilde Z$ 則在真值的 0.96–1.07 倍之間；$\tau=0.05$ 時 $\tilde Z$ 可高估到 1.27 倍，因為尾項用的是期望值，不是逐次的精確值。權重和 $\sum\lambda_i$ 隨 $\tau$ 增大而遠小於 1，說明只保留 $k$ 項本身也是近似。</p>
+  </div>
+  <div class="plate" id="w4b">
+    <div class="plate-h"><span class="id">W4b</span><h3>三個 normalizer</h3></div>
+    <p class="plate-lead">假設：同一次具現的 K 維向量 w（seed 7）上比較三個 normalizer；K、k、α̃_t、τ 與 W4a 共用。</p>
+    <div class="fig">
+      <div id="w4b-bars"><svg role="img" aria-label="Z_top/Z 與 Z̃/Z 的長條"></svg></div>
+      <dl class="ro" id="w4b-ro"></dl>
+      <div class="lbl" style="margin-top:12px">τ 掃描（同一個 w）</div>
+      <div id="w4b-sweep"><svg role="img" aria-label="Z_top/Z 與 Z̃/Z 對 τ"></svg></div>
+      <div class="legend"><span class="lg par">Z_top / Z</span><span class="lg acc">Z̃ / Z</span></div>
+      <p class="okline" id="w4b-say"></p>
+    </div>
+    <p class="plate-f">讀數由本頁依式 (41)(42)(44) 與 Algo. 3 的門檻即時計算；真值 Z 由具現的 K 個值直接加總。</p>
+  </div>
+  <div class="prose">
+    <p>結果（§5.2）。訓練用 16 張 H100、bf16、1M 步、batch 512；$\tau=0.001$，$(\beta,\gamma)=(0.03,0.15)$，課程在前 500K 步。峰值記憶體與吞吐的變化（Table 4，8 張 GH200、batch 32）：Duo 為 81.8 samples/s、94.3 GiB，Duo++ 為 121.9 samples/s、63.4 GiB，即 94.3→63.4 GiB、81.8→121.9 samples/s；Duo 課程結束後是 122.4、63.3。perplexity 相近（Table 2）：OWT PPL 25.2→25.2（$k=2$），LM1B 29.9→30.0；MDLM 仍較好（27.0／23.2）。</p>
+    <p>比值 <span class="tag">本頁推導</span>：吞吐 121.9/81.8 = 1.49 倍（Intro 寫「2× speedup」）；假設前後各半步數（前半課程期 Duo 81.8、Duo++ 121.9，後半兩者都是 122.4），總時間比為 0.803，即省 19.7%；記憶體 −32.8%。摘要的「訓練時間 −25%」、Suppl. D.3 的「平均吞吐 +25%」、Table 1 caption 的「25% fewer flops」是三個不同的量，論文沒有量測 FLOPs。另外 Table 1 caption 寫「6 個任務中 4 個高於 Duo」，表內有 7 個任務、高於 Duo 的是 5 個；Table 5 caption 寫「7 個資料集中 6 個低於 Duo」，逐欄比對是 5 個。</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="Table 2 與 Table 4 摘錄"><table class="stack"><caption>Table 2（PPL）與 Table 4（效率）摘錄</caption>
+    <thead><tr><th>方法</th><th class="num">LM1B PPL</th><th class="num">OWT PPL</th><th class="num">吞吐 samples/s</th><th class="num">峰值記憶體 GiB</th></tr></thead><tbody>
+    <tr><td>MDLM</td><td class="num">27.0</td><td class="num">23.2</td><td class="num">—</td><td class="num">—</td></tr>
+    <tr><td>Duo</td><td class="num">29.9</td><td class="num">25.2</td><td class="num">81.8</td><td class="num">94.3</td></tr>
+    <tr><td>Duo（課程結束後）</td><td class="num">—</td><td class="num">—</td><td class="num">122.4</td><td class="num">63.3</td></tr>
+    <tr class="hl"><td>Duo++ k = 2</td><td class="num">30.0</td><td class="num">25.2</td><td class="num">121.9</td><td class="num">63.4</td></tr>
+    <tr><td>Duo++ k = 3</td><td class="num">30.1</td><td class="num">25.3</td><td class="num">121.9</td><td class="num">63.4</td></tr>
+    <tr><td>Duo++ k = 5</td><td class="num">30.2</td><td class="num">25.4</td><td class="num">121.9</td><td class="num">63.4</td></tr>
+  </tbody></table></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">case 1、2 的 $\tilde Z$ 各含幾個未抽樣項？峰值記憶體與吞吐變化？</p>
+    <p class="a">case 1：$K-k-1$ 個，另加 $e^{\tilde w/\tau}$；case 2：$K-k$ 個；94.3→63.4 GiB，81.8→121.9 samples/s，OWT PPL 25.2→25.2（$k=2$）。</p>
+  </div></details>
+</section>
+
+<!-- S12 -->
+<section class="ch" id="impl" data-toc="12" data-tt="實作與常見錯誤">
+  <div class="ch-num">12 · 實作與常見錯誤</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="tscroll" tabindex="0" role="region" aria-label="取樣設定"><table class="stack"><caption>作者推薦的 Ψ-sampler 設定</caption>
+    <thead><tr><th>任務</th><th>κ schedule</th><th>其他</th></tr></thead><tbody>
+    <tr><td>OpenWebText（§5.1.1）</td><td>rescale，η = 0.05（κ 約 0.90–0.95，隨 t 變化）</td><td>nucleus p = 0.9、log-linear、線性遞減的 t、64-bit logits</td></tr>
+    <tr><td>CIFAR-10，Duo++（§5.1.2）</td><td>κ = 0.95，t ∈ [0.1, 0.5] 或 [0.1, 0.6]，其餘 1</td><td>cosine schedule、不用 nucleus</td></tr>
+    <tr><td>CIFAR-10，MDLM（§5.1.2）</td><td>κ = 0.99，t ∈ [0.1, 1.0]，其餘 1</td><td>cosine schedule、不用 nucleus</td></tr>
+  </tbody></table></div>
+  <ol class="rl">
+    <li><div>把式 (12) 的 $x$ 換成 $x_\theta$ 後仍宣稱邊際正確：§3 與 Suppl. A.2 的保證只對真 posterior (11) 成立。</div></li>
+    <li><div>在 MDM 套用 $q_{0|t}=x_\theta$ 卻沒有 carry-over：已解開位置的 $x_\theta$ 必須等於 $z_t$。</div></li>
+    <li><div>把 cap schedule 直接套到 USDM：最後幾步 $\kappa_t\lt0$，$\Psi$ 可能有負分量。</div></li>
+    <li><div>照式 (14) 後的文字設定 δ：case 寫反，以式 (41)(42)、Algo. 3 為準；式 (43) 的 $\mu$ 少了 $/\tau$。</div></li>
+    <li><div>以 B.1.4 的「$K-i+1$」實作遞迴：應為 Prop. B.4、Algo. 1 的 $N-i$，且 $N=K-1$（乾淨座標另抽）。</div></li>
+    <li><div>依 §3 原文把 $q_t$ 當校正項：式 (11) 與 Fig. 2 用的是 $q_s$。normalizer 不在 log 空間計算會溢位。</div></li>
+  </ol>
+</section>
+
+<!-- S13 -->
+<section class="ch" id="history" data-toc="13" data-tt="研究脈絡">
+  <div class="ch-num">13 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>本文接在幾條脈絡之後：Gaussian 擴散的 predictor-corrector 取樣（Song et al., 2020）；離散擴散與 CTMC 框架及其校正器（D3PM、Campbell et al., 2022、SEDD、Discrete Flow Matching）；masked diffusion 的 MDLM 與 uniform-state 擴散的 guidance 研究（2024）；MDM 的 remasking 取樣器 ReMDM（2025）；以及把 USDM 連到 Gaussian 擴散的 Duo（2025）。本文把 ReMDM 推廣到任意先驗，並改良 Duo 的課程學習。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S14 -->
+<section class="ch" id="next" data-toc="14" data-tt="限制與延伸">
+  <div class="ch-num">14 · 限制與延伸</div>
+  <h2>限制、NELBO 與延伸閱讀</h2>
+  <div class="prose">
+    <p>限制：論文沒有給可取樣的式 (12) 的收斂保證或誤差界；$\kappa_t$ 需要逐任務調整，選錯會比 ancestral 差（Suppl. D.1）；語言實驗的增益伴隨 unigram entropy 下降，影像實驗的超參數直接在 FID 上挑選；USDM 的 likelihood 仍不如 MDM（Table 2）。</p>
+    <p>NELBO（Suppl. A.3，式 17–20）：Ψ 也能寫出 reconstruction 項、prior 項與各步 KL 之和的上界，prior 項依定義為 0。論文明說它「not directly relevant for sampling」；所有實驗都用既有 checkpoint，Ψ-sampler 不引入可學習的元件（§6）。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="psi-samplers-lineage-hub.html">Ψ-Samplers 的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="psi-discrete-diffusion-interpolating-process.html">離散擴散的 interpolating 前向過程與 masked／uniform 兩種 prior</a><span>背景</span></div></li>
+    <li><div><a href="psi-ctmc-discrete-diffusion-samplers.html">連續時間離散擴散（CTMC）與其採樣器</a><span>背景</span></div></li>
+    <li><div><a href="psi-predictor-corrector-gaussian-to-discrete.html">Predictor-corrector 採樣器：從 Gaussian SDE 到 ReMDM</a><span>前作</span></div></li>
+    <li><div><a href="psi-uniform-state-guidance-and-self-correction.html">Uniform-state 擴散、guidance 與自我修正</a><span>動機</span></div></li>
+    <li><div><a href="psi-duo-curriculum-background.html">Duo 與 Gaussian 鬆弛課程學習：論文第 4 節的前置</a><span>課程學習</span></div></li>
+    <li><div><a href="psi-superposition-posteriors-method.html">Ψ-posterior 與 Ψ-sampler：以 κ_t 疊加前向與反向 posterior</a><span>本論文</span></div></li>
+    <li><div><a href="diffusion-duality.html">The Diffusion Duality（Duo）互動教學</a><span>站內</span></div></li>
+    <li><div><a href="discrete-diffusion-foundations-d3pm.html">離散擴散的基礎：D3PM、Diffusion-LM 與 DiffusionBERT</a><span>站內</span></div></li>
+    <li><div><a href="mdlm-masked-diffusion-objective.html">MDLM：遮罩式擴散的訓練目標</a><span>站內</span></div></li>
+    <li><div><a href="dlm-remasking-self-correction.html">DLM 的 remask 式迭代修正與自我修正</a><span>站內</span></div></li>
+    <li><div><a href="uniform-noise-gidd-clean-supervision.html">均勻噪聲、GIDD 與是否監督乾淨 token</a><span>站內</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Justin Deschenaux, Caglar Gulcehre, Subham Sekhar Sahoo. The Diffusion Duality, Chapter II: Ψ-Samplers. ICLR 2026. <a href="https://arxiv.org/abs/2602.21185">arXiv:2602.21185</a>.</p>
+  <p>本頁的方程式與數字取自論文 v2；標示「本頁推導」的內容為本頁自行推導，「推定」與「示意」為本頁為了計算或示範而選的設定，皆非論文結論。W1–W4 的讀數在瀏覽器中即時計算，不重現論文的實驗。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2015, "title": "Deep Unsupervised Learning using Nonequilibrium Thermodynamics", "authors_short": "Sohl-Dickstein et al.", "arxiv": "1503.03585", "role": "擴散生成框架的起點", "source": "paper:2602.21185 第 2.1 節引用"}, {"year": 2020, "title": "Score-Based Generative Modeling through Stochastic Differential Equations", "authors_short": "Song et al.", "arxiv": "2011.13456", "role": "Gaussian 擴散的 predictor-corrector 框架", "source": "arxiv.org/abs 摘要"}, {"year": 2021, "title": "Structured Denoising Diffusion Models in Discrete State-Spaces", "authors_short": "Austin et al.", "arxiv": "2107.03006", "role": "D3PM，離散狀態空間擴散", "source": "paper:2602.21185 第 2.1 節引用"}, {"year": 2022, "title": "A Continuous Time Framework for Discrete Denoising Models", "authors_short": "Campbell et al.", "arxiv": "2205.14987", "role": "CTMC 框架與既有離散 PC 方法", "source": "arxiv.org/abs 摘要"}, {"year": 2022, "title": "Classifier-Free Diffusion Guidance", "authors_short": "Ho & Salimans", "arxiv": "2207.12598", "role": "連續擴散的 CFG", "source": "paper:2602.21185 第 2.2 節引用"}, {"year": 2023, "title": "Discrete Diffusion Modeling by Estimating the Ratios of the Data Distribution", "authors_short": "Lou et al.", "arxiv": "2310.16834", "role": "離散擴散的比值估計；CTMC 採樣器表現不如 ancestral 的引用依據", "source": "paper:2602.21185 第 1 節引用"}, {"year": 2024, "title": "Simple and Effective Masked Diffusion Language Models", "authors_short": "Sahoo et al.", "arxiv": "2406.07524", "role": "MDLM，masked 擴散語言模型", "source": "paper:2602.21185 第 2.1.1 節引用"}, {"year": 2024, "title": "Unlocking Guidance for Discrete State-Space Diffusion and Flow Models", "authors_short": "Nisonoff et al.", "arxiv": "2406.01572", "role": "離散 CFG posterior", "source": "paper:2602.21185 式 (10) 引用"}, {"year": 2024, "title": "Discrete Flow Matching", "authors_short": "Gat et al.", "arxiv": "2407.15595", "role": "既有 CTMC 系 PC 方法", "source": "paper:2602.21185 第 1、2.1.1 節描述"}, {"year": 2024, "title": "Simple Guidance Mechanisms for Discrete Diffusion Models", "authors_short": "Schiff et al.", "arxiv": "2412.10193", "role": "uniform 噪聲擴散與離散 guidance", "source": "arxiv.org/abs 摘要"}, {"year": 2025, "title": "Remasking Discrete Diffusion Models with Inference-Time Scaling", "authors_short": "Wang et al.", "arxiv": "2503.00307", "role": "ReMDM，masked 擴散的 PC 採樣器", "source": "arxiv.org/abs 摘要"}, {"year": 2025, "title": "The Diffusion Duality", "authors_short": "Sahoo et al.", "arxiv": "2506.10892", "role": "Duo：Gaussian 課程學習與離散一致性蒸餾", "source": "arxiv.org/abs 摘要"}, {"year": 2026, "title": "The Diffusion Duality, Chapter II: Ψ-Samplers", "authors_short": "Deschenaux et al.", "arxiv": "2602.21185", "role": "本論文：任意噪聲的 PC 採樣器與高效課程", "source": "arxiv.org/abs 與 paper.txt"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const TEST=/[?&]test\b/.test(location.search);
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function svgIn(box,W,H){const svg=box.querySelector('svg');svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);return svg}
+const f4=v=>Number.isFinite(v)?v.toFixed(4):'—',f3=v=>Number.isFinite(v)?v.toFixed(3):'—',f2=v=>v.toFixed(2);
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+function segInit(box,opts,cur,label,onPick){box.textContent='';opts.forEach(o=>{const b=document.createElement('button');b.type='button';b.setAttribute('role','radio');
+    b.textContent=label?label(o):String(o);b.dataset.v=String(o);box.appendChild(b)});
+  const sync=v=>$$('button',box).forEach(b=>{const on=b.dataset.v===String(v);b.setAttribute('aria-checked',String(on));b.setAttribute('aria-pressed',String(on));b.tabIndex=on?0:-1});sync(cur);
+  box.addEventListener('click',e=>{const b=e.target.closest('button');if(!b||b.disabled)return;const v=opts.find(o=>String(o)===b.dataset.v);sync(v);onPick(v)});
+  box.addEventListener('keydown',e=>{const bs=$$('button',box),i=bs.findIndex(b=>b.tabIndex===0);let j=i;if(e.key==='ArrowRight'||e.key==='ArrowDown')j=(i+1)%bs.length;else if(e.key==='ArrowLeft'||e.key==='ArrowUp')j=(i-1+bs.length)%bs.length;else return;e.preventDefault();bs[j].focus();bs[j].click()});
+  return sync}
+function dl(box,rows){box.innerHTML=rows.map(([k,v,c])=>`<dt>${k}</dt><dd${c?' class="acc"':''}>${v}</dd>`).join('')}
+const cssv=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function hatchDef(svg){const d=el('defs',null,svg),p=el('pattern',{id:'hatch',width:4,height:4,patternUnits:'userSpaceOnUse',patternTransform:'rotate(45)'},d);el('rect',{width:4,height:4,class:'hatch-bg'},p);el('line',{x1:0,y1:0,x2:0,y2:4,class:'hatch-l'},p);
+  const q=el('pattern',{id:'hatchA',width:6,height:6,patternUnits:'userSpaceOnUse',patternTransform:'rotate(45)'},d);el('line',{x1:0,y1:0,x2:0,y2:6,stroke:'currentColor','stroke-width':1.5,class:'hz'},q);}
+
+/* ================= shared math (mirror verify/core.py, chain.js, topk.js) ================= */
+const onehot=(i,K)=>{const v=new Array(K).fill(0);v[i]=1;return v};
+const prior=(kind,K)=>kind==='mask'?onehot(K-1,K):new Array(K).fill(1/K);
+const qMarg=(x,a,pi)=>x.map((xi,j)=>a*xi+(1-a)*pi[j]);
+function post(zt,x,at,as,pi){const ats=at/as,K=x.length,num=new Array(K);let S=0;
+  for(let j=0;j<K;j++){const lik=(1-ats)*pi[zt]+(j===zt?ats:0);num[j]=lik*(as*x[j]+(1-as)*pi[j]);S+=num[j];}
+  if(S<1e-300)return onehot(zt,K);for(let j=0;j<K;j++)num[j]/=S;return num;}
+const q0t=(zt,x,at,pi)=>post(zt,x,at,1,pi);
+function psiTrue(zt,x,at,as,kap,pi){const a=post(zt,x,at,as,pi),b=qMarg(x,as,pi);return a.map((ai,j)=>kap*ai+(1-kap)*b[j]);}
+function psiTheta(zt,x,at,as,kap,pi){const a=post(zt,x,at,as,pi),c=post(zt,x,at,1,pi);return a.map((ai,j)=>kap*ai+(1-kap)*(as*c[j]+(1-as)*pi[j]));}
+function marginalAfter(x,at,as,kapOf,pi){const qt=qMarg(x,at,pi),K=x.length,out=new Array(K).fill(0);
+  for(let z=0;z<K;z++){if(qt[z]===0)continue;const row=psiTrue(z,x,at,as,kapOf(z),pi);for(let j=0;j<K;j++)out[j]+=qt[z]*row[j];}return out;}
+const sigmaMax=(at,as)=>at<=0?1:Math.min(1,(1-as)/at);
+const kappaFromSigma=(sig,as)=>1-as<=0?1:1-sig/(1-as);
+function kappaSched(kind,t,at,as,p){if(kind==='ancestral')return 1;if(kind==='window')return(p.toff<=t&&t<=p.ton)?p.kap:1;
+  if(kind==='rescale')return kappaFromSigma(p.eta*sigmaMax(at,as),as);if(kind==='cap')return kappaFromSigma(Math.min(p.eta,sigmaMax(at,as)),as);return 1;}
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function catSample(r,p){const u=r();let c=0;for(let i=0;i<p.length;i++){c+=p[i];if(u<c)return i;}for(let i=p.length-1;i>=0;i--)if(p[i]>0)return i;}
+function gauss(r){const u1=r(),u2=r();return Math.sqrt(-2*Math.log(1-u1))*Math.cos(2*Math.PI*u2);}
+function erfcc(x){const z=Math.abs(x),t=1/(1+0.5*z);
+  const r=t*Math.exp(-z*z-1.26551223+t*(1.00002368+t*(0.37409196+t*(0.09678418+t*(-0.18628806+t*(0.27886807+t*(-1.13520398+t*(1.48851587+t*(-0.82215223+t*0.17087277)))))))));
+  return x>=0?r:2-r;}
+function logPhi(x){if(x>-5)return Math.log(0.5*erfcc(-x/Math.SQRT2));const x2=x*x;return -x2/2-Math.log(-x)-0.5*Math.log(2*Math.PI)+Math.log1p(-1/x2+3/(x2*x2)-15/(x2*x2*x2));}
+const PA=[-3.969683028665376e+01,2.209460984245205e+02,-2.759285104469687e+02,1.383577518672690e+02,-3.066479806614716e+01,2.506628277459239e+00],
+ PB=[-5.447609879822406e+01,1.615858368580409e+02,-1.556989798598866e+02,6.680131188771972e+01,-1.328068155288572e+01],
+ PC=[-7.784894002430293e-03,-3.223964580411365e-01,-2.400758277161838e+00,-2.549732539343734e+00,4.374664141464968e+00,2.938163982698783e+00],
+ PD=[7.784695709041462e-03,3.224671290700398e-01,2.445134137142996e+00,3.754408661907416e+00];
+function ppfTail(p){let x;if(p<0.02425){const q=Math.sqrt(-2*Math.log(p));x=(((((PC[0]*q+PC[1])*q+PC[2])*q+PC[3])*q+PC[4])*q+PC[5])/((((PD[0]*q+PD[1])*q+PD[2])*q+PD[3])*q+1);}
+  else{const q=p-0.5,r=q*q;x=(((((PA[0]*r+PA[1])*r+PA[2])*r+PA[3])*r+PA[4])*r+PA[5])*q/(((((PB[0]*r+PB[1])*r+PB[2])*r+PB[3])*r+PB[4])*r+1);}
+  const e=0.5*erfcc(-x/Math.SQRT2)-p,u=e*Math.sqrt(2*Math.PI)*Math.exp(x*x/2);return x-u/(1+x*u/2);}
+function normPpf(p){if(p<=0)return -Infinity;if(p>=1)return Infinity;return p>0.5?-ppfTail(1-p):ppfTail(p);}
+const lse=a=>{const m=Math.max(...a);let s=0;for(const v of a)s+=Math.exp(v-m);return m+Math.log(s);};
+function topkZeroMean(r,N,k,sig){let P=0;const out=[];for(let l=N;l>N-k;l--){let u=r();if(!(u>0))u=1e-300;P+=Math.log(u)/l;
+  const om=-Math.expm1(P);out.push(om<0.5?-sig*normPpf(om):sig*normPpf(Math.exp(P)));}return out;}
+function logMu(c,sig,tau){return sig*sig/(2*tau*tau)-logPhi(c/sig)+logPhi((c-sig*sig/tau)/sig);}
+function efficient(r,K,k,at,tau){const sig=Math.sqrt(1-at*at);let V=topkZeroMean(r,K-1,k,sig);const wt=at+sig*gauss(r);let logs,cs,pos=-1;
+  if(wt>V[k-1]){const thr=k>=2?V[k-2]:V[k-1];let rk=0;for(const v of V)if(v>wt)rk++;V=V.slice(0,rk).concat([wt],V.slice(rk,k-1));
+    logs=V.map(v=>v/tau);if(K-k>0)logs.push(Math.log(K-k)+logMu(thr,sig,tau));cs=2;pos=rk;}
+  else{logs=V.map(v=>v/tau);logs.push(wt/tau);if(K-k-1>0)logs.push(Math.log(K-k-1)+logMu(V[k-1],sig,tau));cs=1;}
+  const logZ=lse(logs);return{vals:V,wt,case:cs,pos,lam:V.map(v=>Math.exp(v/tau-logZ)),logZ};}
+function naiveW(r,K,at){const sig=Math.sqrt(1-at*at),w=new Float64Array(K);for(let i=0;i<K;i++)w[i]=sig*gauss(r);w[0]+=at;return w;}
+function ztildeFrom(w,k,at,tau){const sig=Math.sqrt(1-at*at),K=w.length,top=[];
+  for(let i=1;i<K;i++){const v=w[i];if(top.length<k||v>top[top.length-1]){let j=top.length<k?top.length:k-1;top[j]=v;while(j>0&&top[j]>top[j-1]){const q=top[j];top[j]=top[j-1];top[j-1]=q;j--;}}}
+  let logs,tv;if(w[0]>top[k-1]){const thr=k>=2?top[k-2]:top[k-1];tv=top.slice(0,k-1).concat([w[0]]);logs=tv.map(v=>v/tau);if(K-k>0)logs.push(Math.log(K-k)+logMu(thr,sig,tau));}
+  else{tv=top.slice();logs=tv.map(v=>v/tau);logs.push(w[0]/tau);if(K-k-1>0)logs.push(Math.log(K-k-1)+logMu(top[k-1],sig,tau));}
+  return{logZt:lse(logs),logZtop:lse(tv.map(v=>v/tau))};}
+function logZexact(w,tau){let m=-Infinity;for(const v of w)if(v>m)m=v;let s=0;for(const v of w)s+=Math.exp((v-m)/tau);return m/tau+Math.log(s);}
+
+/* ================= token-cell figures (hero, S1) ================= */
+function cellRow(svg,x0,y,cells,sz){cells.forEach((c,i)=>{const x=x0+i*(sz+4);
+  if(c===0)el('rect',{x,y,width:sz,height:sz,rx:2,class:'t-ok'},svg);else if(c===1)el('rect',{x:x+.6,y:y+.6,width:sz-1.2,height:sz-1.2,rx:2,class:'t-bad'},svg);else el('rect',{x:x+.6,y:y+.6,width:sz-1.2,height:sz-1.2,rx:2,class:'t-mask'},svg)})}
+function drawHero(){const box=$('#hero-fig'),W=widthOf(box,300,520),gap=W<420?12:22,lab=W<420?74:92,sz=Math.min(13,Math.floor((W-lab-2*gap)/24-4)),gw=8*(sz+4),H=2*(sz+30)+18,svg=svgIn(box,W,H);hatchDef(svg);
+  const rows=[['不重新抽樣',[[2,2,0,2,1,2,2,2],[0,0,0,2,1,0,2,0],[0,0,0,0,1,0,0,0]]],['重新抽樣',[[2,2,0,2,1,2,2,2],[0,0,0,2,2,0,2,0],[0,0,0,0,0,0,0,0]]]];
+  rows.forEach(([name,snaps],r)=>{const y=12+r*(sz+30);tx(svg,0,y+sz-1,name,{class:'lab'});snaps.forEach((s,j)=>{cellRow(svg,lab+j*(gw+gap),y,s,sz);if(j<2)tx(svg,lab+j*(gw+gap)+gw+gap/2-2,y+sz-1,'→',{class:'lab','text-anchor':'middle'})})});
+  ['早期','中期','結束'].forEach((s,j)=>tx(svg,lab+j*(gw+gap)+gw/2,H-2,s,{class:'tk','text-anchor':'middle'}))}
+function drawS1(){const box=$('#s1-fig'),W=widthOf(box,300,720),two=W>=600,sz=13,gw=8*(sz+4),lab=56,H=two?120:236,svg=svgIn(box,W,H);hatchDef(svg);
+  const sets=[['MDM（[MASK]）',[[0,0,0,0,0,0,0,0],[0,2,0,0,2,0,2,0],[2,2,2,2,2,2,2,2]]],['USDM（均勻）',[[0,0,0,0,0,0,0,0],[0,1,0,0,1,0,1,0],[1,1,0,1,1,1,1,1]]]];
+  sets.forEach(([name,rows],g)=>{const ox=two?g*(lab+gw+40):0,oy=two?0:g*118;tx(svg,ox,oy+14,name,{class:'labm'});
+    rows.forEach((r,i)=>{const y=oy+26+i*(sz+14);tx(svg,ox,y+sz-1,['t = 0','t = 0.5','t = 1'][i],{class:'tk'});cellRow(svg,ox+lab,y,r,sz)})})}
+
+/* ================= W1 ================= */
+const w1={prior:'unif',K:4,at:.3,as:.6,k:.5,dep:false};const LET='ABCDEFGH';
+const tokName=(j,K,kind)=>kind==='mask'&&j===K-1?'[M]':LET[j];
+function w1Calc(){const{K,at,as,k,dep}=w1,pi=prior(w1.prior,K),x=onehot(0,K),kapOf=z=>dep&&z!==0?1:k,qt=qMarg(x,at,pi),qs=qMarg(x,as,pi);
+  const rows=[];for(let z=0;z<K;z++)rows.push(qt[z]>0?psiTrue(z,x,at,as,kapOf(z),pi):null);
+  const mg=marginalAfter(x,at,as,kapOf,pi);let md=0;mg.forEach((v,j)=>md=Math.max(md,Math.abs(v-qs[j])));
+  let ret=0;for(let z=0;z<K;z++)if(rows[z])ret+=qt[z]*rows[z][z];return{pi,qt,qs,rows,mg,md,ret}}
+function w1Draw(){const o=w1Calc(),{K}=w1,box=$('#w1-heat'),narrow=box.clientWidth<360;box.style.gridTemplateColumns=`${narrow?"5.4em":"6em"} repeat(${K},minmax(0,1fr))`;box.style.setProperty('--n',K);
+  let h='<div class="hh"></div>'+Array.from({length:K},(_,j)=>`<div class="hh">${tokName(j,K,w1.prior)}</div>`).join('');
+  for(let z=0;z<K;z++){h+=`<div class="hr">${tokName(z,K,w1.prior)} · ${o.qt[z].toFixed(narrow?2:3)}</div>`;
+    if(!o.rows[z]){h+=`<div class="hc off">此列不會出現</div>`;continue}
+    o.rows[z].forEach((p,j)=>{h+=`<div class="hc${z===j?' hi':''}" style="background:color-mix(in oklab,var(--c-par) ${(p*100).toFixed(0)}%,var(--surface));color:${p>=.5?'var(--surface)':'var(--ink)'}">${p.toFixed(narrow?2:3)}</div>`})}
+  box.innerHTML=h;
+  const bb=$('#w1-bars'),W=widthOf(bb,260,560),H=150,svg=svgIn(bb,W,H),L=34,R=W-8,T=10,B=H-24,y=lin(0,1,B,T),gw=(R-L)/K,bw=Math.min(36,gw*.5);
+  [0,.5,1].forEach(v=>{el('line',{x1:L,x2:R,y1:y(v),y2:y(v),class:'grid'},svg);tx(svg,L-6,y(v)+4,v.toFixed(1),{class:'tk','text-anchor':'end'})});
+  for(let j=0;j<K;j++){const cx=L+gw*(j+.5);el('rect',{x:cx-bw/2,y:y(o.mg[j]),width:bw,height:B-y(o.mg[j]),class:'par-f'},svg);
+    el('rect',{x:cx-bw/2-4,y:y(o.qs[j]),width:bw+8,height:B-y(o.qs[j]),fill:'none',stroke:cssv('--ink'),'stroke-width':2},svg);tx(svg,cx,H-6,tokName(j,K,w1.prior),{class:'tk','text-anchor':'middle'})}
+  const mdS=o.md<1e-12?'0（浮點誤差內）':f4(o.md);
+  dl($('#w1-ro'),[['最大差',mdS,o.md>=1e-12],['保留率',f4(o.ret)]]);
+  $('#w1-say').textContent=`κ = ${f2(w1.k)}${w1.dep?'（只用在 z_t = A 的列）':''}：保留率 ${f4(o.ret)}，邊際與 q_s 最大差 ${mdS}。`;
+  $('#w1-bars svg').setAttribute('aria-label',`邊際與 q_s 長條，最大差 ${mdS}`);
+  ['K','at','as','k'].forEach(n=>$('#w1-'+n+'o').textContent=n==='K'?w1.K:f2(w1[n]));
+  announce('w1',$('#w1-say').textContent)}
+function linkAlpha(pre,st,draw){const sa=$('#'+pre+'-at'),ss=$('#'+pre+'-as');
+  sa.addEventListener('input',()=>{st.at=+sa.value;const mn=Math.min(1,+(st.at+.01).toFixed(2));if(st.as<mn){st.as=mn;ss.value=mn;announce(pre,`α_s 已調為 ${f2(mn)}`)}ss.min=mn;draw()});
+  ss.addEventListener('input',()=>{st.as=Math.max(+ss.value,Math.min(1,+(st.at+.01).toFixed(2)));ss.value=st.as;draw()})}
+function initW1(){segInit($('#w1-prior'),['unif','mask'],w1.prior,k=>k==='unif'?'均勻':'[MASK]',k=>{w1.prior=k;w1Draw()});
+  $('#w1-K').addEventListener('input',e=>{w1.K=+e.target.value;w1Draw()});linkAlpha('w1',w1,w1Draw);
+  const ks=$('#w1-k');ks.addEventListener('input',()=>{w1.k=+ks.value;w1Draw()});
+  $('#w1-k1').addEventListener('click',()=>{w1.k=1;ks.value=1;w1Draw()});$('#w1-k0').addEventListener('click',()=>{w1.k=0;ks.value=0;w1Draw()});
+  $('#w1-dep').addEventListener('change',e=>{w1.dep=e.target.checked;w1Draw()});w1Draw()}
+
+/* ================= W2 / W2b ================= */
+const DEN={unif:{right:[.85,.05,.05,.05],weak:[.5,.3,.15,.05],wrong:[0,.6,.3,.1]},mask:{right:[.9,.05,.05,0],wrong:[0,.7,.3,0]}};
+const DEN_NAME={right:'猜對',weak:'偏錯',wrong:'全錯'};
+const w2={prior:'unif',z:1,den:'wrong',at:.3,as:.6,k:.5,sig:.04};let w2zSync=null,w2dSync=null;
+function w2Parts(kap){const K=4,pi=prior(w2.prior,K),carry=w2.prior==='mask'&&w2.z!==3,x=carry?onehot(w2.z,K):DEN[w2.prior][w2.den];
+  const pred=post(w2.z,x,w2.at,w2.as,pi),c=q0t(w2.z,x,w2.at,pi),corr=c.map((v,j)=>w2.as*v+(1-w2.as)*pi[j]),mix=pred.map((v,j)=>kap*v+(1-kap)*corr[j]);return{pred,corr,mix,c,carry}}
+function w2Draw(){const o=w2Parts(w2.k),o1=w2Parts(1),K=4,box=$('#w2-fig'),W=widthOf(box,280,560),H=180,svg=svgIn(box,W,H),L=34,R=W-8,T=10,B=H-24,y=lin(0,1,B,T),gw=(R-L)/K,bw=Math.min(18,gw/4.2);
+  [0,.5,1].forEach(v=>{el('line',{x1:L,x2:R,y1:y(v),y2:y(v),class:'grid'},svg);tx(svg,L-6,y(v)+4,v.toFixed(1),{class:'tk','text-anchor':'end'})});
+  for(let j=0;j<K;j++){const cx=L+gw*(j+.5);[[o.pred,'par-f',-1.15],[o.corr,'perp-f',0],[o.mix,'acc-f',1.15]].forEach(([v,c,d])=>el('rect',{x:cx+d*bw-bw/2,y:y(v[j]),width:bw,height:B-y(v[j]),class:c},svg));
+    tx(svg,cx,H-6,tokName(j,K,w2.prior)+(j===0?'（正確）':''),{class:'tk','text-anchor':'middle'})}
+  const floor=(1-w2.k)*(1-w2.as)/K;if(w2.prior==='unif'&&floor>0){el('line',{x1:L,x2:R,y1:y(floor),y2:y(floor),class:'ref'},svg);tx(svg,L+4,y(floor)-5,'下限 '+f4(floor),{class:'tk halo'})}
+  const rows=[['P(z_s = A)',o1.mix[0],o.mix[0]]];if(w2.prior==='mask')rows.push(['P(z_s = [M])',o1.mix[3],o.mix[3]]);else rows.push(['下限 (1−κ)(1−α_s)/K',0,floor]);
+  $('#w2-tab').innerHTML=`<caption>讀數</caption><thead><tr><th>量</th><th class="num">κ = 1</th><th class="num">κ = ${f2(w2.k)}</th></tr></thead><tbody>`+rows.map(r=>`<tr><td>${r[0]}</td><td class="num">${f4(r[1])}</td><td class="num">${f4(r[2])}</td></tr>`).join('')+'</tbody>';
+  $('#w2-carry').textContent=o.carry?'z_t 已解開：依 MDLM 的 carry-over 參數化，x_θ = e_{z_t}，去噪器選單不適用。':'';
+  $$('#w2-den button').forEach(b=>{b.disabled=o.carry||!(b.dataset.v in DEN[w2.prior])});
+  $('#w2-say').textContent=`目前設定：P(z_s = A) 由 κ = 1 的 ${f4(o1.mix[0])} 變為 κ = ${f2(w2.k)} 的 ${f4(o.mix[0])}`+(w2.prior==='mask'?`；P(z_s = [M]) = ${f4(o.mix[3])}。`:`；下限 ${f4(floor)}。`);
+  ['at','as','k'].forEach(n=>$('#w2-'+n+'o').textContent=f2(w2[n]));announce('w2',$('#w2-say').textContent);w2bDraw()}
+function w2Prior(k){w2.prior=k;if(k==='mask'){w2.z=3;if(!(w2.den in DEN.mask))w2.den='wrong'}else{w2.z=1}
+  w2zSync=segInit($('#w2-z'),k==='mask'?[3,1]:[0,1,2,3],w2.z,v=>k==='mask'?(v===3?'[M]':'B（已解開）'):LET[v],v=>{w2.z=v;w2Draw()});
+  w2dSync=segInit($('#w2-den'),k==='mask'?['right','wrong']:['right','weak','wrong'],w2.den,v=>DEN_NAME[v],v=>{w2.den=v;w2Draw()});w2Draw()}
+function w2bDraw(){const sm=sigmaMax(w2.at,w2.as),s=$('#w2b-s');s.max=sm.toFixed(4);if(w2.sig>sm){w2.sig=+sm.toFixed(4);announce('w2b',`σ 已調為 ${f4(w2.sig)}`)}s.value=w2.sig;
+  const box=$('#w2b-fig'),W=widthOf(box,280,560),H=190,svg=svgIn(box,W,H);hatchDef(svg);const L=44,R=W-10,T=12,B=H-30,kmin=Math.min(0,kappaFromSigma(sm,w2.as)),x=lin(0,sm||1,L,R),y=lin(kmin,1,B,T),bd=1-w2.as;
+  if(bd<sm){const r=el('rect',{x:x(bd),y:T,width:R-x(bd),height:B-T,fill:'url(#hatchA)',class:'neg'},svg);r.style.color=cssv('--accent');r.style.opacity=.35;tx(svg,R-4,T+14,'κ < 0：超出 §3 的範圍',{class:'tk','text-anchor':'end'})}
+  const yt=[1,.5,0];if(kmin<0)yt.push(+kmin.toFixed(2));yt.forEach(v=>{el('line',{x1:L,x2:R,y1:y(v),y2:y(v),class:'grid'},svg);tx(svg,L-6,y(v)+4,v.toFixed(v%1?2:0),{class:'tk','text-anchor':'end'})});
+  [0,sm].forEach(v=>tx(svg,x(v),H-12,v.toFixed(2),{class:'tk','text-anchor':'middle'}));tx(svg,(L+R)/2,H-1,'σ',{class:'tk','text-anchor':'middle'});tx(svg,4,T+4,'κ',{class:'tk'});
+  el('path',{d:lp([[x(0),y(1)],[x(sm),y(kappaFromSigma(sm,w2.as))]]),class:'acc'},svg);const kc=kappaFromSigma(w2.sig,w2.as);el('circle',{cx:x(w2.sig),cy:y(kc),r:5,class:'dot-c'},svg);
+  dl($('#w2b-ro'),[['σ_max',f4(sm)],['1 − α_s',f4(bd)],['κ',f4(kc),true],['Ψ([M] | z_t = B)',f4(Math.max(0,(1-kc)*(1-w2.as)))]]);$('#w2b-so').textContent=f2(w2.sig);
+  $('#w2b-fig svg').setAttribute('aria-label',`σ = ${f2(w2.sig)} 時 κ = ${f4(kc)}`);announce('w2b',`σ = ${f2(w2.sig)}，κ = ${f4(kc)}`)}
+function initW2(){segInit($('#w2-prior'),['unif','mask'],w2.prior,k=>k==='unif'?'均勻':'[MASK]',w2Prior);linkAlpha('w2',w2,w2Draw);
+  $('#w2-k').addEventListener('input',e=>{w2.k=+e.target.value;w2Draw()});$('#w2b-s').addEventListener('input',e=>{w2.sig=+e.target.value;w2bDraw()});w2Prior('unif')}
+
+/* ================= κ mini axes (S7, S8) ================= */
+function drawKx(id,marks){const box=$('#'+id),W=widthOf(box,300,720),H=74,svg=svgIn(box,W,H),L=16,R=W-16,x=lin(.85,1,L,R),Y=40;
+  el('line',{x1:L,x2:R,y1:Y,y2:Y,class:'ink'},svg);[.85,.9,.95,1].forEach(v=>{el('line',{x1:x(v),x2:x(v),y1:Y-4,y2:Y+4,class:'ink'},svg);tx(svg,x(v),Y+18,v.toFixed(2),{class:'tk','text-anchor':'middle'})});
+  tx(svg,L,12,'κ 軸（局部：0.85–1）',{class:'tk'});tx(svg,x(1),12,'1 = ancestral',{class:'tk','text-anchor':'end'});
+  marks.forEach(m=>{if(m.band){el('rect',{x:x(m.band[0]),y:Y-7,width:x(m.band[1])-x(m.band[0]),height:14,class:'band'},svg);tx(svg,(x(m.band[0])+x(m.band[1]))/2,H-2,m.t,{class:'tk','text-anchor':'middle'})}
+    else{el('circle',{cx:x(m.v),cy:Y,r:5,class:'dot-c'},svg);tx(svg,x(m.v),H-2-(m.dy||0),m.t,{class:'tk','text-anchor':m.a||'middle'})}})}
+function drawKxAll(){const n=widthOf($('#kx-lang'),300,720)<520;drawKx('kx-lang',[{band:[.9,.95],t:n?'OWT rescale η=0.05：κ≈0.90–0.95':'OWT：rescale η = 0.05，κ 約 0.90–0.95，隨 t 變化'}]);
+  drawKx('kx-img',[{v:.95,t:n?'Duo 0.95':'CIFAR-10 Duo：0.95（只在 [t_off, t_on] 內）',a:'end'},{v:.99,t:n?'MDLM 0.99':'MDLM：0.99',a:'end',dy:0}])}
+
+/* ================= W3 toy chain (mirror verify/chain.js) ================= */
+const W3_TS=[8,16,32,64,128,256,512],W3_R=32,W3_L=32,W3_KT=8;
+const w3={prior:'mask',sch:'window',kap:.9,ton:.6,toff:.1,eta:.05,em:.5,token:0,res:null,trace:null,row:-1,busy:false};
+const bufA=new Float64Array(9),bufC=new Float64Array(9),bufP=new Float64Array(9),bufX=new Float64Array(9);
+function postInto(out,zt,x,K,at,as,pi){const ats=at/as;let S=0;for(let j=0;j<K;j++){const lik=(1-ats)*pi[zt]+(j===zt?ats:0);out[j]=lik*(as*x[j]+(1-as)*pi[j]);S+=out[j];}
+  if(S<1e-300){for(let j=0;j<K;j++)out[j]=j===zt?1:0;return}for(let j=0;j<K;j++)out[j]/=S}
+function catSampleBuf(r,p,K){const u=r();let c=0;for(let i=0;i<K;i++){c+=p[i];if(u<c)return i;}for(let i=K-1;i>=0;i--)if(p[i]>0)return i;}
+function runChain(kind,sched,T,p,seed,emax,trace){const K=kind==='mask'?W3_KT+1:W3_KT,pi=prior(kind,K),m=K-1,r=mulberry32(seed),L=W3_L;
+  let z=new Array(L);if(kind==='mask')z.fill(m);else for(let l=0;l<L;l++)z[l]=catSample(r,pi);const nz=new Array(L);
+  const tr=trace?{z:new Uint8Array(T*L),info:[]}:null;
+  for(let i=T;i>=1;i--){const t=i/T,s=(i-1)/T,at=1-t,as=1-s;let c=0;for(let l=0;l<L;l++)if(z[l]===l%W3_KT)c++;c/=L;
+    const eps=emax-(emax-0.02)*c,kap=kappaSched(sched,t,at,as,p);
+    for(let l=0;l<L;l++){if(kind==='mask'&&z[l]!==m){for(let j=0;j<K;j++)bufX[j]=j===z[l]?1:0}else{for(let j=0;j<K;j++)bufX[j]=0;for(let j=0;j<W3_KT;j++)bufX[j]=eps/(W3_KT-1);bufX[l%W3_KT]=1-eps}
+      postInto(bufA,z[l],bufX,K,at,as,pi);postInto(bufC,z[l],bufX,K,at,1,pi);for(let j=0;j<K;j++)bufP[j]=kap*bufA[j]+(1-kap)*(as*bufC[j]+(1-as)*pi[j]);nz[l]=catSampleBuf(r,bufP,K)}
+    for(let l=0;l<L;l++)z[l]=nz[l];
+    if(tr){const row=T-i;let nm=0;for(let l=0;l<L;l++){tr.z[row*L+l]=z[l];if(kind==='mask'&&z[l]===m)nm++}tr.info.push({t,c,eps,kap,nm})}}
+  let e=0;for(let l=0;l<L;l++)if(z[l]!==l%W3_KT)e++;return trace?{err:e/L,tr}:e/L}
+const w3params=()=>({kap:w3.kap,ton:w3.ton,toff:w3.toff,eta:w3.eta});
+const w3cache=new Map();
+function errCurve(kind,sched,p,emax,onProg,onDone,sync){const key=[kind,sched,p.kap,p.ton,p.toff,p.eta,emax].join('|');if(w3cache.has(key)){onDone(w3cache.get(key));return}
+  const jobs=[];W3_TS.forEach((T,ti)=>{for(let k=0;k<W3_R;k++)jobs.push([ti,T,1000+k])});const acc=new Array(W3_TS.length).fill(0);let n=0;const tok=w3.token;
+  const step=()=>{const t0=performance.now();while(n<jobs.length&&(sync||performance.now()-t0<12)){const[ti,T,sd]=jobs[n++];acc[ti]+=runChain(kind,sched,T,p,sd,emax)/W3_R}
+    if(n<jobs.length){if(tok!==w3.token)return;onProg&&onProg(jobs[n][1]);setTimeout(step,0)}else{const res=acc;w3cache.set(key,res);if(sync||tok===w3.token)onDone(res)}};
+  step()}
+function w3Run(sync){w3.token++;w3.busy=true;$('#w3').classList.add('busy');$('#w3-status').textContent='計算中…';
+  const p=w3params(),out={};let left=2;const fin=()=>{if(--left)return;w3.busy=false;$('#w3').classList.remove('busy');w3.res=out;
+    w3.trace=runChain(w3.prior,w3.sch,innerWidth<600?32:64,p,1000,w3.em,true);w3.row=-1;w3Draw();$('#w3-status').textContent='完成：結果為目前設定';announce('w3','計算完成。'+$('#w3-say').textContent)};
+  errCurve(w3.prior,'ancestral',p,w3.em,null,r=>{out.anc=r;fin()},sync);
+  errCurve(w3.prior,w3.sch,p,w3.em,T=>{$('#w3-status').textContent=`計算中…（T = ${T}）`},r=>{out.sel=r;fin()},sync)}
+function w3Stale(){w3.token++;if(w3.res){$('#w3-status').innerHTML='<span class="stale">結果已過期，請按「計算」</span>'}w3.busy=false;$('#w3').classList.remove('busy');w3Kap()}
+function w3Draw(){w3Kap();const r=w3.res;if(!r)return;const box=$('#w3-err'),W=widthOf(box,280,560),H=214,svg=svgIn(box,W,H),L=40,R=W-78,T=10,B=H-40,x=lin(3,9,L,R),y=lin(0,.5,B,T);
+  [0,.1,.2,.3,.4,.5].forEach(v=>{el('line',{x1:L,x2:R,y1:y(v),y2:y(v),class:'grid'},svg);tx(svg,L-6,y(v)+4,v.toFixed(1),{class:'tk','text-anchor':'end'})});
+  W3_TS.forEach((T,i)=>tx(svg,x(i+3),B+16,String(T),{class:'tk','text-anchor':'middle'}));tx(svg,(L+R)/2,H-2,'步數 T（log₂ 刻度）',{class:'tk','text-anchor':'middle'});
+  const pa=r.anc.map((v,i)=>[x(i+3),y(Math.min(.5,v))]),ps=r.sel.map((v,i)=>[x(i+3),y(Math.min(.5,v))]);
+  el('path',{d:lp(pa),class:'ref'},svg);pa.forEach(([a,b])=>el('circle',{cx:a,cy:b,r:3.5,class:'mk-o'},svg));
+  if(w3.sch!=='ancestral'){el('path',{d:lp(ps),class:'acc-s'},svg);ps.forEach(([a,b])=>el('rect',{x:a-4,y:b-4,width:8,height:8,class:'dot-c'},svg))}
+  const sep=Math.abs(pa[6][1]-ps[6][1])<14&&w3.sch!=='ancestral',ya=pa[6][1]+(sep&&pa[6][1]<=ps[6][1]?-6:4),yb=ps[6][1]+(sep&&pa[6][1]<=ps[6][1]?12:4);tx(svg,pa[6][0]+8,ya,'ancestral',{class:'tk'});if(w3.sch!=='ancestral')tx(svg,ps[6][0]+8,yb,w3.sch,{class:'tk'});
+  const sname=w3.sch==='window'?`window（κ = ${f2(w3.kap)}，t ∈ [${f2(w3.toff)}, ${f2(w3.ton)}]）`:w3.sch==='rescale'?`rescale（η = ${w3.eta.toFixed(3)}）`:'ancestral';
+  $('#w3-say').textContent=`目前設定（${w3.prior==='mask'?'[MASK]':'均勻'}，${sname}，ε_max = ${f2(w3.em)}）：T = 8 → 512，錯誤率 ${f3(r.sel[0])} → ${f3(r.sel[6])}；ancestral ${f3(r.anc[0])} → ${f3(r.anc[6])}。`;
+  $('#w3-err svg').setAttribute('aria-label',$('#w3-say').textContent);w3Trace()}
+function w3Kap(){const box=$('#w3-kap'),W=widthOf(box,280,560),H=160,svg=svgIn(box,W,H);hatchDef(svg);const T=128,p=w3params(),pts=[],cap=[];
+  for(let i=T;i>=1;i--){const t=i/T,at=1-t,as=1-(i-1)/T;pts.push([t,kappaSched(w3.sch,t,at,as,p)]);cap.push([t,kappaSched('cap',t,at,as,p)])}
+  const showCap=w3.sch==='rescale',kmin=Math.min(...pts.map(q=>q[1]),...(showCap?cap.map(q=>q[1]):[1])),lo=Math.min(.8,Math.floor((kmin-.05)*10)/10),L=40,R=W-14,Tp=26,B=H-40,x=lin(1,0,L,R),y=lin(lo,1.02,B,Tp);
+  [1,lo].concat(kmin<0&&lo<0?[0]:[]).forEach(v=>{el('line',{x1:L,x2:R,y1:y(v),y2:y(v),class:'grid'},svg);tx(svg,L-6,y(v)+4,v.toFixed(1),{class:'tk','text-anchor':'end'})});
+  if(kmin<0){const r=el('rect',{x:L,y:y(0),width:R-L,height:B-y(0),fill:'url(#hatchA)'},svg);r.style.color=cssv('--accent');r.style.opacity=.3;tx(svg,R-4,B-4,'κ < 0',{class:'tk','text-anchor':'end'})}
+  [1,.5,0].forEach(v=>tx(svg,x(v),B+16,'t = '+v,{class:'tk','text-anchor':v===1?'start':v===0?'end':'middle'}));tx(svg,R,H-2,'取樣方向 →',{class:'tk','text-anchor':'end'});
+  if(showCap)el('path',{d:lp(cap.map(([t,k])=>[x(t),y(k)])),class:'ref dashp'},svg);el('path',{d:lp(pts.map(([t,k])=>[x(t),y(k)])),class:'acc-s'},svg);
+  const mn=Math.min(...pts.map(q=>q[1]));tx(svg,L,12,`最小 κ = ${f4(mn)}`+(showCap?`；cap（虛線）最小 ${f4(Math.min(...cap.map(q=>q[1])))}`:''),{class:'tk'})}
+function w3Trace(){const tr=w3.trace;if(!tr)return;const cv=$('#w3-trace'),L=W3_L,T=tr.tr.info.length,box=$('#w3-trace-box'),avail=Math.max(200,box.clientWidth||300),cs=Math.max(4,Math.min(12,Math.floor((avail-8)/L))),ch=Math.max(3,Math.min(cs,Math.floor(420/T)));
+  const dpr=window.devicePixelRatio||1,Wp=L*cs+2,Hp=T*ch+2;cv.width=Wp*dpr;cv.height=Hp*dpr;cv.style.width=Wp+'px';cv.style.height=Hp+'px';const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);
+  const ink=cssv('--ink'),ink2=cssv('--ink-2'),sur=cssv('--surface'),acc=cssv('--accent');g.fillStyle=sur;g.fillRect(0,0,Wp,Hp);
+  const m=w3.prior==='mask'?W3_KT:-1;
+  for(let row=0;row<T;row++)for(let l=0;l<L;l++){const v=tr.tr.z[row*L+l],X=1+l*cs,Y=1+row*ch,w=cs-1,h=ch-1;
+    if(v===m){g.strokeStyle=ink2;g.lineWidth=.8;g.setLineDash([1.5,1.5]);g.strokeRect(X+.5,Y+.5,w-1,h-1);g.setLineDash([])}
+    else if(v===l%W3_KT){g.fillStyle=ink;g.fillRect(X,Y,w,h)}
+    else{g.fillStyle=sur;g.fillRect(X,Y,w,h);g.strokeStyle=ink;g.lineWidth=1;g.beginPath();g.moveTo(X,Y+h);g.lineTo(X+w,Y);g.stroke();g.strokeRect(X+.5,Y+.5,w-1,h-1)}}
+  if(w3.row>=0){g.strokeStyle=acc;g.lineWidth=2;g.strokeRect(1,1+w3.row*ch,L*cs-1,ch)}
+  cv._ch=ch;const i=w3.row,info=i>=0?tr.tr.info[i]:null;
+  $('#w3-row').textContent=info?`第 ${i+1} 步：t = ${info.t.toFixed(3)}，c = ${info.c.toFixed(3)}，ε = ${info.eps.toFixed(3)}，κ_t = ${info.kap.toFixed(4)}`+(w3.prior==='mask'?`，[M] 數 = ${info.nm}`:''):`點選軌跡或按 ↑／↓ 選取一步（共 ${T} 步；最終錯誤率 ${f3(tr.err)}）。`}
+function initW3(){segInit($('#w3-prior'),['mask','unif'],w3.prior,k=>k==='mask'?'[MASK]':'均勻',k=>{w3.prior=k;w3Stale()});
+  const vis=()=>{$('#w3-kbox').hidden=$('#w3-onbox').hidden=$('#w3-offbox').hidden=w3.sch!=='window';$('#w3-ebox').hidden=w3.sch!=='rescale'};
+  segInit($('#w3-sch'),['ancestral','window','rescale'],w3.sch,null,k=>{w3.sch=k;vis();w3Stale()});vis();
+  const on=$('#w3-on'),off=$('#w3-off');
+  $('#w3-k').addEventListener('input',e=>{w3.kap=+e.target.value;$('#w3-ko').textContent=f2(w3.kap);w3Stale()});
+  on.addEventListener('input',()=>{w3.ton=+on.value;if(w3.toff>=w3.ton){w3.toff=Math.max(0,+(w3.ton-.05).toFixed(2));off.value=w3.toff;announce('w3',`t_off 已調為 ${f2(w3.toff)}`)}if(w3.ton<=w3.toff){w3.ton=+(w3.toff+.05).toFixed(2);on.value=w3.ton}w3Lab();w3Stale()});
+  off.addEventListener('input',()=>{w3.toff=+off.value;if(w3.toff>=w3.ton){w3.ton=Math.min(1,+(w3.toff+.05).toFixed(2));on.value=w3.ton;announce('w3',`t_on 已調為 ${f2(w3.ton)}`)}if(w3.toff>=w3.ton){w3.toff=+(w3.ton-.05).toFixed(2);off.value=w3.toff}w3Lab();w3Stale()});
+  $('#w3-eta').addEventListener('input',e=>{w3.eta=+e.target.value;w3Lab();w3Stale()});$('#w3-em').addEventListener('input',e=>{w3.em=+e.target.value;w3Lab();w3Stale()});
+  $('#w3-run').addEventListener('click',()=>w3Run(false));
+  const box=$('#w3-trace-box'),cv=$('#w3-trace');
+  cv.addEventListener('click',e=>{if(!w3.trace)return;const r=cv.getBoundingClientRect(),row=Math.floor((e.clientY-r.top-1)/cv._ch);w3.row=Math.max(0,Math.min(w3.trace.tr.info.length-1,row));w3Trace()});
+  box.addEventListener('keydown',e=>{if(!w3.trace)return;const n=w3.trace.tr.info.length;if(e.key==='ArrowDown'){w3.row=Math.min(n-1,w3.row+1)}else if(e.key==='ArrowUp'){w3.row=Math.max(0,w3.row-1)}else return;e.preventDefault();w3Trace();announce('w3',$('#w3-row').textContent)});
+  w3Lab();w3Run(TEST)}
+function w3Lab(){$('#w3-ko').textContent=f2(w3.kap);$('#w3-ono').textContent=f2(w3.ton);$('#w3-offo').textContent=f2(w3.toff);$('#w3-etao').textContent=w3.eta.toFixed(3);$('#w3-emo').textContent=f2(w3.em)}
+
+/* ================= W4 ================= */
+const w4={K:50257,k:3,at:.34,tau:.001,seed:3,stat:null,wCache:null};
+function w4Lab(){$('#w4-Ko').textContent=w4.K;$('#w4-ko').textContent=w4.k;$('#w4-ato').textContent=f2(w4.at);$('#w4-atn').textContent=`σ̃_t = ${Math.sqrt(1-w4.at*w4.at).toFixed(3)}，log SNR = ${w4.at>0?Math.log(w4.at*w4.at/(1-w4.at*w4.at)).toFixed(2):'−∞'}`;$('#w4-tauo').textContent=w4.tau<.01?w4.tau.toExponential(1):w4.tau.toFixed(3)}
+function w4aDraw(){const e=efficient(mulberry32(w4.seed),w4.K,w4.k,w4.at,w4.tau),box=$('#w4a-fig'),W=widthOf(box,260,560),H=150,svg=svgIn(box,W,H),L=34,R=W-8,T=12,B=H-26,y=lin(0,1,B,T),gw=(R-L)/w4.k,bw=Math.min(40,gw*.6);
+  [0,.5,1].forEach(v=>{el('line',{x1:L,x2:R,y1:y(v),y2:y(v),class:'grid'},svg);tx(svg,L-6,y(v)+4,v.toFixed(1),{class:'tk','text-anchor':'end'})});
+  e.lam.forEach((l,i)=>{const cx=L+gw*(i+.5),cl=e.case===2&&i===e.pos;el('rect',{x:cx-bw/2,y:y(l),width:bw,height:Math.max(.5,B-y(l)),class:cl?'acc-f':'par-f'},svg);tx(svg,cx,H-8,(cl?'★ ':'')+(w4.k>4&&W<500?'':'第 '+(i+1)+' 大 ')+e.vals[i].toFixed(3),{class:'tk','text-anchor':'middle'})});
+  const sl=e.lam.reduce((a,b)=>a+b,0);
+  dl($('#w4a-ro'),[['case',e.case===1?'1（乾淨 token 不在前 k 名）':'2（乾淨 token 在第 '+(e.pos+1)+' 名，★）'],['w̃',f4(e.wt)],['λ',e.lam.map(f4).join(', ')],['Σλ',f4(sl),true],['seed',w4.seed]]);
+  $('#w4a-fig svg').setAttribute('aria-label',`case ${e.case}，λ₁ = ${f4(e.lam[0])}，Σλ = ${f4(sl)}`);announce('w4',`case ${e.case}，λ₁ = ${f4(e.lam[0])}`)}
+function w4Stats(){const R=400,r=mulberry32(11);let c2=0,s1=0,l1=0,big=0;const v1=[];for(let i=0;i<R;i++){const e=efficient(r,w4.K,w4.k,w4.at,w4.tau);c2+=e.case===2;s1+=e.vals[0]/R;l1+=e.lam[0]/R;big+=e.lam[0]>.99;v1.push(e.vals[0])}
+  let nv=null;if(w4.K<=1e4){const rn=mulberry32(12);nv=[];for(let i=0;i<R;i++){const w=naiveW(rn,w4.K,w4.at);let m=-Infinity;for(let j=0;j<w.length;j++)if(w[j]>m)m=w[j];nv.push(m)}}
+  w4.stat={c2:c2/R,s1,l1,big:big/R,v1,nv};w4StatDraw()}
+function w4StatDraw(){const s=w4.stat,hb=$('#w4a-hist');hb.classList.toggle('off',!s);if(!s){$('#w4a-stat').innerHTML='';$('#w4a-hnote').textContent='';return}
+  dl($('#w4a-stat'),[['P(case 2)',f4(s.c2)],['平均最大值',f4(s.s1)],['平均 λ₁',f4(s.l1)],['λ₁ > 0.99 的比例',f4(s.big),true]]);
+  const W=widthOf(hb,260,560),H=130,svg=svgIn(hb,W,H),all=s.v1.concat(s.nv||[]),lo=Math.min(...all),hi=Math.max(...all)+1e-9,nb=20,L=10,R=W-10,B=H-22,bw=(R-L)/nb;
+  const hist=a=>{const h=new Array(nb).fill(0);a.forEach(v=>h[Math.min(nb-1,Math.floor((v-lo)/(hi-lo)*nb))]++);return h},he=hist(s.v1),hn=s.nv?hist(s.nv):null,mx=Math.max(...he,...(hn||[1])),y=lin(0,mx,B,8);
+  he.forEach((c,i)=>el('rect',{x:L+i*bw+1,y:y(c),width:bw-2,height:B-y(c),class:'par-f'},svg));if(hn)hn.forEach((c,i)=>el('rect',{x:L+i*bw+1,y:y(c),width:bw-2,height:B-y(c),fill:'none',stroke:cssv('--ink'),'stroke-width':1.5},svg));
+  tx(svg,L,H-6,lo.toFixed(2),{class:'tk'});tx(svg,R,H-6,hi.toFixed(2),{class:'tk','text-anchor':'end'});tx(svg,(L+R)/2,H-6,'最大值',{class:'tk','text-anchor':'middle'});
+  $('#w4a-hnote').textContent=s.nv?'實心＝高效法（400 次），外框＝暴力法（具現 K 個值再取最大，400 次）；兩者用不同亂數，只應在統計誤差內一致。':'K > 10⁴ 時不跑暴力法（避免一次具現上千萬個高斯值）；只顯示高效法的直方圖。'}
+function w4W(){const key=w4.K+'|'+w4.at;if(!w4.wCache||w4.wCache.key!==key)w4.wCache={key,w:naiveW(mulberry32(7),w4.K,w4.at)};return w4.wCache.w}
+function w4bDraw(){const w=w4W(),lz=logZexact(w,w4.tau),z=ztildeFrom(w,w4.k,w4.at,w4.tau),rt=Math.exp(z.logZtop-lz),rz=Math.exp(z.logZt-lz),sl=Math.exp(z.logZtop-z.logZt);
+  const box=$('#w4b-bars'),W=widthOf(box,280,720),H=96,svg=svgIn(box,W,H),L=92,R=W-60,x=lin(0,Math.max(1.3,rz*1.05),L,R);
+  el('line',{x1:x(1),x2:x(1),y1:4,y2:H-4,class:'ref'},svg);tx(svg,x(1)+4,12,'1',{class:'tk'});
+  [['Z_top / Z',rt,'par-f'],['Z̃ / Z',rz,'acc-f']].forEach(([n,v,c],i)=>{const Y=18+i*36;tx(svg,0,Y+15,n,{class:'tk'});el('rect',{x:L,y:Y,width:Math.max(1,Math.min(x(v),R)-L),height:22,class:c},svg);tx(svg,Math.min(x(v),R)+6,Y+15,f4(v),{class:'mono-t'})});
+  dl($('#w4b-ro'),[['log Z（真值）',f4(lz)],['Z_top / Z',f4(rt)],['Z̃ / Z',f4(rz),true],['Σλ = Z_top / Z̃',f4(sl)]]);
+  const sb=$('#w4b-sweep'),W2=widthOf(sb,280,720),H2=170,s2=svgIn(sb,W2,H2),L2=40,R2=W2-12,T2=10,B2=H2-26,us=Array.from({length:31},(_,i)=>-3+i*.1),pts=us.map(u=>{const tau=Math.pow(10,u),l=logZexact(w,tau),zz=ztildeFrom(w,w4.k,w4.at,tau);return[u,Math.exp(zz.logZtop-l),Math.exp(zz.logZt-l)]});
+  const ymax=Math.max(1.3,...pts.map(p=>p[2])),xs=lin(-3,0,L2,R2),ys=lin(0,ymax,B2,T2);[0,.5,1].forEach(v=>{el('line',{x1:L2,x2:R2,y1:ys(v),y2:ys(v),class:'grid'},s2);tx(s2,L2-6,ys(v)+4,v.toFixed(1),{class:'tk','text-anchor':'end'})});
+  ['10⁻³','10⁻²','10⁻¹','1'].forEach((s,i)=>tx(s2,xs(-3+i),H2-10,s,{class:'tk','text-anchor':'middle'}));tx(s2,(L2+R2)/2,H2,'τ',{class:'tk','text-anchor':'middle'});
+  el('path',{d:lp(pts.map(p=>[xs(p[0]),ys(p[1])])),class:'pow'},s2);el('path',{d:lp(pts.map(p=>[xs(p[0]),ys(p[2])])),class:'acc-s'},s2);
+  const ux=Math.log10(w4.tau);el('line',{x1:xs(ux),x2:xs(ux),y1:T2,y2:B2,class:'refl'},s2);
+  $('#w4b-say').textContent=`目前設定（K = ${w4.K}，k = ${w4.k}，α̃_t = ${f2(w4.at)}，τ = ${$('#w4-tauo').textContent}）：Z_top/Z = ${f4(rt)}，Z̃/Z = ${f4(rz)}，Σλ = ${f4(sl)}。`;
+  $('#w4b-bars svg').setAttribute('aria-label',$('#w4b-say').textContent)}
+let w4t=0;function w4All(){w4Lab();w4aDraw();w4.stat=null;w4StatDraw();clearTimeout(w4t);w4t=setTimeout(w4bDraw,TEST?0:120)}
+function initW4(){$('#w4-K').addEventListener('input',e=>{w4.K=Math.round(Math.pow(10,+e.target.value));w4All()});
+  $('#w4-gpt').addEventListener('click',()=>{w4.K=50257;$('#w4-K').value=4.7;w4All()});
+  $('#w4-k').addEventListener('input',e=>{w4.k=+e.target.value;w4All()});$('#w4-at').addEventListener('input',e=>{w4.at=+e.target.value;w4All()});
+  $('#w4-tau').addEventListener('input',e=>{w4.tau=+Math.pow(10,+e.target.value).toPrecision(3);w4All()});
+  $('#w4a-rep').addEventListener('click',w4Stats);$('#w4a-new').addEventListener('click',()=>{w4.seed++;w4aDraw()});w4Lab();w4aDraw();w4StatDraw();w4bDraw()}
+
+/* ================= timeline ================= */
+const TL_GROUP={'1503.03585':['base','psi-discrete-diffusion-interpolating-process'],'2107.03006':['base','psi-discrete-diffusion-interpolating-process'],
+ '2011.13456':['gpc','psi-predictor-corrector-gaussian-to-discrete'],'2205.14987':['ctmc','psi-ctmc-discrete-diffusion-samplers'],'2310.16834':['ctmc','psi-ctmc-discrete-diffusion-samplers'],'2407.15595':['ctmc','psi-ctmc-discrete-diffusion-samplers'],
+ '2406.07524':['mdm','mdlm-masked-diffusion-objective'],'2207.12598':['usdm','psi-uniform-state-guidance-and-self-correction'],'2406.01572':['usdm','psi-uniform-state-guidance-and-self-correction'],'2412.10193':['usdm','psi-uniform-state-guidance-and-self-correction'],
+ '2503.00307':['rem','psi-predictor-corrector-gaussian-to-discrete'],'2506.10892':['duo','diffusion-duality'],'2602.21185':['me','psi-superposition-posteriors-method']};
+const TL_NAME={base:'基礎',gpc:'Gaussian PC',ctmc:'CTMC',mdm:'MDM',usdm:'Guidance／USDM',rem:'Remasking',duo:'Duo',me:'本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  data=data.slice().sort((a,b)=>(Number(a.year)||0)-(Number(b.year)||0));
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${g[1]?`<a href="${g[1]}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+
+/* ================= toc, theme, stack tables ================= */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function redrawAll(){drawHero();drawS1();w1Draw();w2Draw();drawKxAll();w3Draw();if(!w3.res)w3Kap();w4aDraw();w4StatDraw();w4bDraw()}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}redrawAll()});
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change',redrawAll)}
+function stackTables(){$$('table.stack').forEach(t=>{const hs=$$('thead th',t).map(th=>th.textContent);$$('tbody tr',t).forEach(tr=>$$('td',tr).forEach((td,i)=>td.dataset.h=hs[i]||''))})}
+
+/* ================= self test (design.md 5 and 6.3) ================= */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t=1e-4)=>Math.abs(a-b)<=t+1e-12,nearv=(a,b,t=1e-4)=>a.length===b.length&&a.every((v,i)=>near(v,b[i],t));
+  // post vs Eq. (3) and Eq. (2); marginal; ReMDM
+  const eq3=(zt,x,at,as)=>{const K=x.length,ats=at/as,z=onehot(zt,K),den=K*at*x[zt]+1-at;return x.map((xi,j)=>(K*at*z[j]*xi+(ats-at)*z[j]+(as-at)*xi+(1-ats)*(1-as)/K)/den)};
+  const eq2=(zt,x,at,as)=>{const K=x.length,m=K-1;if(zt!==m)return x.slice();return x.map((xi,j)=>(as-at)/(1-at)*xi+(1-as)/(1-at)*(j===m?1:0))};
+  let e3=0,e2=0;for(let xi=0;xi<4;xi++)for(let z=0;z<4;z++){const x=onehot(xi,4),a=post(z,x,.3,.6,prior('unif',4)),b=eq3(z,x,.3,.6);a.forEach((v,j)=>e3=Math.max(e3,Math.abs(v-b[j])))}
+  {const xs=[.5,.3,.2,0];[3,0,1].forEach(z=>{const x=z===3?xs:onehot(z,4),a=post(z,x,.3,.6,prior('mask',4)),b=eq2(z,x,.3,.6);a.forEach((v,j)=>e2=Math.max(e2,Math.abs(v-b[j])))})}
+  ok(e3<1e-12&&e2<1e-12,'post = Eq.(3), Eq.(2)');
+  [0,.5,1,-.3].forEach(k=>['unif','mask'].forEach(pr=>{const pi=prior(pr,4),x=onehot(0,4),mg=marginalAfter(x,.3,.6,()=>k,pi),qs=qMarg(x,.6,pi);ok(mg.every((v,j)=>Math.abs(v-qs[j])<1e-12),`marginal κ=${k} ${pr}`)}));
+  {const pi=prior('mask',4),sig=.1,k=kappaFromSigma(sig,.6),x=[.5,.3,.2,0];const r21m=x.map((xi,j)=>(.6-(1-sig)*.3)/.7*xi+(1-.6-sig*.3)/.7*(j===3?1:0)),r21u=onehot(1,4).map((v,j)=>(1-sig)*v+sig*(j===3?1:0));
+   ok(nearv(psiTrue(3,x,.3,.6,k,pi),r21m,1e-12)&&nearv(psiTrue(1,onehot(1,4),.3,.6,k,pi),r21u,1e-12),'ReMDM Eq.(21) both rows')}
+  // W1 (5.1)
+  {const pi=prior('unif',4),x=onehot(0,4);ok(nearv(post(0,x,.3,.6,pi),[.9211,.0263,.0263,.0263])&&nearv(post(1,x,.3,.6,pi),[.5,.3571,.0714,.0714]),'W1 q_{s|t} rows');
+   ok(nearv(psiTrue(0,x,.3,.6,.5,pi),[.8105,.0632,.0632,.0632])&&nearv(psiTrue(1,x,.3,.6,.5,pi),[.6,.2286,.0857,.0857]),'W1 Ψ rows');
+   const sv={...w1};Object.assign(w1,{prior:'unif',K:4,at:.3,as:.6,dep:false});[[1,.625],[.5,.505],[0,.385]].forEach(([k,r])=>{w1.k=k;ok(near(w1Calc().ret,r),`W1 retention κ=${k}`)});
+   w1.k=.5;w1.dep=true;const o=w1Calc();ok(near(o.md,.0525)&&nearv(o.mg,[.6475,.1175,.1175,.1175]),'W1 κ(z_t) switch unif');w1.prior='mask';ok(near(w1Calc().md,.06),'W1 κ(z_t) switch mask');
+   w1.dep=false;[[1,.7],[.5,.58],[0,.46]].forEach(([k,r])=>{w1.k=k;ok(near(w1Calc().ret,r),`W1 mask retention κ=${k}`)});Object.assign(w1,sv)}
+  // W2 / W2b (5.2)
+  {const sv={...w2};Object.assign(w2,{prior:'unif',z:1,den:'wrong',at:.3,as:.6});
+   ok(nearv(w2Parts(1).c,[0,.8028,.1479,.0493]),'W2 q_{0|t} wrong');ok(near(w2Parts(1).mix[0],.0352)&&near(w2Parts(.9).mix[0],.0417)&&near(w2Parts(.5).mix[0],.0676),'W2 P(A) κ=1,.9,.5');
+   w2.den='weak';ok(nearv(w2Parts(1).c,[.3302,.5377,.0991,.033])&&near(w2Parts(.5).mix[0],.2434),'W2 weak');w2.den='right';ok(near(w2Parts(.9).mix[0],.4182),'W2 right');
+   w2.prior='mask';w2.z=3;w2.den='wrong';ok(nearv(w2Parts(.9).mix,[0,.312,.1337,.5543]),'W2 mask z=[M]');w2.z=1;ok(nearv(w2Parts(.9).mix,[0,.96,0,.04]),'W2 mask z=B remask .04');Object.assign(w2,sv)}
+  ok(near(sigmaMax(.3,.6),1)&&near(kappaFromSigma(.04,.6),.9)&&near(kappaFromSigma(1,.6),-1.5)&&near(sigmaMax(.7,.75),.3571)&&near(kappaFromSigma(sigmaMax(.7,.75),.75),-.4286),'W2b');
+  // κ schedules (5.3)
+  {const T=128,mins=k=>{let m=1;for(let i=T;i>=1;i--){const t=i/T;m=Math.min(m,kappaSched(k.s,t,1-t,1-(i-1)/T,{eta:k.e}))}return m};
+   ok(near(mins({s:'cap',e:.05}),-.0579)&&near(mins({s:'cap',e:.01}),-.0159)&&near(mins({s:'rescale',e:.05}),.9),'κ schedule minima');
+   ok(near(kappaSched('rescale',1,0,1/T,{eta:.05}),.9496)&&near(kappaSched('rescale',.5,.5,.5+1/T,{eta:.05}),.9),'rescale κ(t=1), κ(.5)')}
+  // PRNG + W3 (sync)
+  {const r=mulberry32(1000);ok(nearv([r(),r(),r()],[.795194906881,.827687913552,.691516105784],1e-12),'mulberry32(1000)');const g=mulberry32(1000);ok(near(gauss(g),.8351660354,1e-9),'gauss(seed 1000)')}
+  {const p={kap:.9,ton:.6,toff:.1,eta:.05},er=(kind,s,T,em=.5)=>{let a=0;for(let k=0;k<32;k++)a+=runChain(kind,s,T,p,1000+k,em)/32;return a};
+   ok(near(er('mask','window',512),.1953,.02)&&near(er('mask','ancestral',512),.3408,.02),'W3 mask T=512');ok(near(er('unif','rescale',64),.209,.02),'W3 unif rescale T=64');ok(near(er('mask','window',512,.2),.0596,.02),'W3 ε_max = 0.2');
+   ok(!!w3.res&&near(w3.res.sel[6],.1953,.02)&&near(w3.res.anc[0],.3691,.02),'W3 default curve (sync path)')}
+  // W4 (5.4)
+  ok(near(logMu(.7,.5,.2),1.21165,1e-5)&&near(normPpf(.975),1.959964,1e-6),'logMu, normPpf');
+  {const e=efficient(mulberry32(3),50257,3,.34,.001);ok(nearv(e.vals,[4.0994,3.5772,3.5308])&&near(e.wt,.3703)&&e.case===1&&nearv(e.lam,[1,0,0]),'W4a single draw')}
+  {const r=mulberry32(11);let c2=0,l1=0,big=0;for(let i=0;i<400;i++){const e=efficient(r,50257,3,.9,.001);c2+=e.case===2;l1+=e.lam[0]/400;big+=e.lam[0]>.99}ok(near(c2/400,.03,.02)&&near(l1,.9907,.02)&&near(big/400,.945,.02),'W4a stats α̃=.9')}
+  {const w=naiveW(mulberry32(7),50257,.34);[[.05,.9916,1.0297,.9631],[.3,.1129,1.0662,.1059]].forEach(([tau,a,b,c])=>{const l=logZexact(w,tau),z=ztildeFrom(w,3,.34,tau);ok(near(Math.exp(z.logZtop-l),a,1e-3)&&near(Math.exp(z.logZt-l),b,1e-3)&&near(Math.exp(z.logZtop-z.logZt),c,1e-3),`W4b τ=${tau}`)});
+   ok(near(logZexact(w,.001),3748.5352,1e-3),'W4b log Z')}
+  // DOM
+  ok($$('details.check').length===10,'check boxes: '+$$('details.check').length);
+  ok(['w1','w2','w2b','w3','w4a','w4b'].every(id=>!!$('#'+id)),'plates present');
+  ok($('#w3 .plate-lead').textContent.trim().startsWith('假設：資料只有一個序列'),'W3 first line = assumptions');
+  ok(!/κ|ReMDM|Gen\. PPL|q_|posterior/.test($$('#top .fact').map(f=>f.textContent).join('')),'hero cards avoid undefined terms');
+  {const tl=JSON.parse($('#timeline-data').textContent);ok(tl.length===13&&tl.every(e=>TL_GROUP[e.arxiv]),'timeline groups')}
+  ok(!!document.querySelector('.katex')||typeof katex==='undefined','KaTeX rendered');ok(!document.querySelector('.katex-error'),'no KaTeX errors');
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: '+document.documentElement.scrollWidth+'>'+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ================= boot ================= */
+initTheme();initToc();stackTables();drawHero();drawS1();initW1();initW2();drawKxAll();initW3();initW4();renderTimeline();
+let lastW=innerWidth,rz=0;addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(redrawAll)});
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false})}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath()});
+if(TEST)addEventListener('load',()=>setTimeout(selfTest,50));
+{const m=location.search.match(/[?&]shot=([\w-]+)/);if(m){const e=document.getElementById(m[1]);if(e)$$('main>section').forEach(sec=>{if(!sec.contains(e))sec.hidden=true});redrawAll()}}  // screenshot helper: show only the section holding #id
+})();
+</script>
+</body>
+</html>

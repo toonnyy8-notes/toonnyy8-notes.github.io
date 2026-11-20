@@ -1,0 +1,93 @@
+
+<!-- S6 -->
+<section class="ch" id="toy" data-toc="06" data-tt="玩具問題">
+  <div class="ch-num">06 · 玩具問題</div>
+  <h2>玩具問題：校正步讓更多步數繼續降低錯誤率</h2>
+  <div class="prose">
+    <p>W3 用一個人為設定的小問題顯示校正步的作用。資料只有一個長度 32 的序列（8 種真實 token）；去噪器對每個位置輸出「正確 token 機率 $1-\varepsilon$，其餘 7 個 token 平分 $\varepsilon$」，錯誤率 $\varepsilon=\varepsilon_{\max}-(\varepsilon_{\max}-0.02)\,c$ 隨目前與目標相同的位置比例 $c$ 線性下降（[MASK] 位置算作不相同）；schedule 取 $\alpha_t=1-t$ <span class="tag">推定</span>。這些都是本頁的假設，不是論文的模型。</p>
+    <p>在本頁 toy 的預設設定下（$\varepsilon_{\max}=0.5$），toy 假設去噪器錯誤率隨正確位置比例下降。MDM 的 ancestral sampler 增加步數幾乎沒有改善：早期以高錯誤率解開的 token 不再更新，錯誤率停在約 0.33–0.38。Ψ-sampler 的校正步以機率 $(1-\kappa_t)(1-\alpha_s)$ 把 token 變回 [MASK]，之後由錯誤率較低的去噪器重新預測；步數越多，校正次數越多，window schedule（$\kappa=0.9$、$t\in[0.1,0.6]$）的錯誤率由 8 步的 0.367 降到 512 步的 0.195。步數少時兩者相同，因為校正次數太少。這是 toy 假設下的結果，toy 的 $T$ 不對應論文的 NFE：真實的 MDLM 在步數低於序列長度時仍會改善（Table 13，$p=0.9$ 時 70.34 到 37.91），toy 從 $T=8$ 就持平，是 $\varepsilon_{\max}$ 選擇的結果；把 $\varepsilon_{\max}$ 調低，ancestral 的錯誤率也跟著下降。</p>
+  </div>
+  <div class="plate" id="w3">
+    <div class="plate-h"><span class="id">W3</span><h3>錯誤率對步數</h3><span class="tag">示意</span></div>
+    <p class="plate-lead">假設：資料只有一個序列；去噪器的錯誤率 ε 隨目前正確位置的比例 c 線性下降（本頁自訂）；α_t = 1 − t（推定）。結果說明機制，不重現論文數字。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div class="lbl">最終錯誤率（32 次執行平均）</div>
+        <div id="w3-err"><svg role="img" aria-label="錯誤率對步數"></svg></div>
+        <div class="legend"><span class="lg mk"><span class="sym o">●</span> ancestral</span><span class="lg mk"><span class="sym d">■</span> 所選 schedule</span></div>
+        <p class="note small">每點 1024 個 token，統計誤差約 ±0.014。</p>
+        <div class="lbl" style="margin-top:12px">κ_t 曲線（T = 128）</div>
+        <div id="w3-kap"><svg role="img" aria-label="κ_t 對 t 的曲線"></svg></div>
+        <div class="lbl" style="margin-top:12px">一次執行的軌跡（seed 1000；每列一步，由上而下 t 從 1 到 0）</div>
+        <div class="trace-wrap" id="w3-trace-box" tabindex="0" role="img" aria-label="軌跡圖；按上下鍵選取步驟"><canvas id="w3-trace"></canvas></div>
+        <div class="legend"><span class="lg mk"><span class="tk-ok"></span> 正確</span><span class="lg mk"><span class="tk-bad"></span> 錯誤</span><span class="lg mk"><span class="tk-mask"></span> [MASK]</span></div>
+        <p class="okline" id="w3-row"></p>
+        <p class="okline" id="w3-say"></p>
+      </div>
+      <div class="ctl">
+        <div class="lbl">先驗</div>
+        <div class="seg" id="w3-prior" role="radiogroup" aria-label="先驗"></div>
+        <div class="lbl">schedule</div>
+        <div class="seg" id="w3-sch" role="radiogroup" aria-label="schedule"></div>
+        <div class="rng" id="w3-kbox"><label class="lbl" for="w3-k">κ（window 內）<output id="w3-ko"></output></label><input type="range" id="w3-k" min="0.5" max="1" step="0.01" value="0.9"></div>
+        <div class="rng" id="w3-onbox"><label class="lbl" for="w3-on">t_on <output id="w3-ono"></output></label><input type="range" id="w3-on" min="0" max="1" step="0.05" value="0.6"></div>
+        <div class="rng" id="w3-offbox"><label class="lbl" for="w3-off">t_off <output id="w3-offo"></output></label><input type="range" id="w3-off" min="0" max="1" step="0.05" value="0.1"></div>
+        <div class="rng" id="w3-ebox"><label class="lbl" for="w3-eta">η（rescale）<output id="w3-etao"></output></label><input type="range" id="w3-eta" min="0.005" max="0.1" step="0.005" value="0.05"></div>
+        <div class="rng"><label class="lbl" for="w3-em">ε_max <output id="w3-emo"></output></label><input type="range" id="w3-em" min="0.1" max="0.6" step="0.05" value="0.5"></div>
+        <button class="small-btn pri" type="button" id="w3-run">計算</button>
+        <p class="mono-sm" id="w3-status" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依式 (12) 逐步抽樣計算；亂數為 mulberry32(seed)，seed = 1000–1031。cap schedule 會產生負 κ，只在 κ_t 曲線中以虛線顯示。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">在本頁 toy 的預設設定下，為何 MDM ancestral 增加步數幾乎沒有改善，Ψ 會？</p>
+    <p class="a">toy 假設去噪器錯誤率隨正確位置比例下降；ancestral 下早期以高錯誤率解開的 token 不再更新；Ψ 的校正步以機率 $(1-\kappa_t)(1-\alpha_s)$ 把 token 變回 [MASK]，之後由錯誤率較低的去噪器重新預測；步數越多，校正次數越多。這是 toy 假設下的結果，不對應論文的 NFE。</p>
+  </div></details>
+</section>
+
+<!-- S7 -->
+<section class="ch" id="lang" data-toc="07" data-tt="語言實驗">
+  <div class="ch-num">07 · 語言實驗</div>
+  <h2>語言實驗：p = 0.9 與 rescale 下 Gen. PPL 在 1024 步後仍下降</h2>
+  <div class="prose">
+    <p>指標：Gen. PPL（generative perplexity）是以 GPT-2 Large 計算生成文字的 perplexity，越低代表越像自然文字；但重複的文字也會壓低 Gen. PPL，所以同時報告 unigram entropy，即單一樣本內 token 頻率分佈的熵，作為多樣性的代理（越低越重複）。nucleus sampling 的參數 $p$ 表示每一步只從累積機率達到 $p$ 的最高機率 token 中抽樣；$p=1$ 表示不截斷。</p>
+    <p>設定（§5.1.1、Suppl. C.1.1）：使用既有的 MDLM（MDM）與 Duo（USDM）checkpoint，資料 OpenWebText，序列長度 $L=1024$，訓練 1M 步、batch 512；取樣時 logits 轉成 64-bit。論文作圖時選擇 unigram entropy 與 ancestral 最接近的 κ schedule（Suppl. D.1.2）。下表摘自 Table 13（log-linear 步長、未蒸餾模型；括號內為 unigram entropy）。</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="Table 13 摘錄，可橫向捲動"><table class="stack"><caption>Table 13 摘錄：Gen. PPL（unigram entropy）</caption>
+    <thead><tr><th>設定</th><th class="num">32 步</th><th class="num">512 步</th><th class="num">1024 步</th><th class="num">4096 步</th></tr></thead><tbody>
+    <tr><td>Duo ancestral，p = 1.0</td><td class="num">96.76 (5.57)</td><td class="num">76.93 (5.54)</td><td class="num">75.02 (5.53)</td><td class="num">75.39 (5.52)</td></tr>
+    <tr><td>Duo ancestral，p = 0.9</td><td class="num">44.24 (5.40)</td><td class="num">35.77 (5.37)</td><td class="num">34.79 (5.35)</td><td class="num">34.75 (5.35)</td></tr>
+    <tr class="hl"><td>Duo rescale η = 0.05，p = 0.9</td><td class="num">44.52 (5.41)</td><td class="num">31.06 (5.34)</td><td class="num">26.94 (5.28)</td><td class="num">19.21 (5.17)</td></tr>
+    <tr><td>Duo rescale η = 0.02，p = 1.0</td><td class="num">89.55 (5.58)</td><td class="num">69.85 (5.54)</td><td class="num">68.39 (5.53)</td><td class="num">63.70 (5.52)</td></tr>
+    <tr><td>MDLM ancestral，p = 0.9</td><td class="num">70.34 (5.49)</td><td class="num">39.02 (5.35)</td><td class="num">37.91 (5.34)</td><td class="num">36.76 (5.31)</td></tr>
+    <tr><td>MDLM rescale η = 0.05，p = 0.9</td><td class="num">69.44 (5.48)</td><td class="num">34.10 (5.33)</td><td class="num">30.29 (5.30)</td><td class="num">20.85 (5.16)</td></tr>
+    <tr><td>MDLM cap η = 0.005，p = 1.0</td><td class="num">195.83 (5.74)</td><td class="num">110.75 (5.66)</td><td class="num">112.78 (5.67)</td><td class="num">131.85 (5.71)</td></tr>
+    <tr><td>Duo cap η = 0.01，p = 0.9</td><td class="num">43.05 (5.40)</td><td class="num">23.38 (5.26)</td><td class="num">18.74 (5.17)</td><td class="num">10.88 (4.87)</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <p>讀法。在 OpenWebText、nucleus $p=0.9$、log-linear、4096 步下，Duo 的 Gen. PPL 由 ancestral 的 34.75 (5.35) 降到 rescale η = 0.05 的 19.21 (5.17)；ancestral 在 1024 步之後持平，rescale 繼續下降（Takeaway 3）。持續下降需要 $p=0.9$ 與 rescale：$p=1.0$ 時 Duo rescale η = 0.02 在 4096 步只到 63.70，MDLM cap η = 0.005 由 512 步的 110.75 變差到 4096 步的 131.85。32 步時沒有增益（44.52 對 44.24），增益在 NFE 超過序列長度之後才明顯（Takeaway 2）。nucleus 本身的貢獻也很大：Duo ancestral 由 $p=1.0$ 的 75.39 降到 $p=0.9$ 的 34.75。cap η = 0.01 的 Gen. PPL 最低（10.88），但 unigram entropy 降到 4.87，作者推薦 rescale 的依據是保住熵。</p>
+    <p>作者的推薦（§5.1.1）：rescale schedule、η = 0.05、nucleus $p=0.9$、log-linear noise schedule、線性遞減的 $t$。Suppl. D.1.2 則寫最佳為 η ∈ {0.01, 0.02}，兩處不一致。§5.1.1 與圖例說取樣用的是以新課程訓練的 Duo++ checkpoint，Suppl. C.1.1、D.1 與表格列名寫的是 Duo 原始 checkpoint。蒸餾後的模型則是 MDLM 較好（Table 14，ancestral、$p=0.9$、4096 步：MDLM 22.46、Duo 29.19）。</p>
+  </div>
+  <div class="kx-mini" id="kx-lang"><svg role="img" aria-label="κ 軸：OWT 推薦的 rescale η = 0.05 對應 κ 約 0.90 到 0.95"></svg></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">OWT、nucleus $p=0.9$、log-linear、4096 步的 Duo：ancestral 與 rescale η = 0.05 的 Gen. PPL（熵）？持續下降需要什麼條件？</p>
+    <p class="a">34.75 (5.35) → 19.21 (5.17)；需要 $p=0.9$ 與 rescale；$p=1.0$ 時 Duo rescale η = 0.02 只到 63.70，MDLM cap η = 0.005 由 110.75 變差到 131.85；32 步無增益。</p>
+  </div></details>
+</section>
+
+<!-- S8 -->
+<section class="ch" id="image" data-toc="08" data-tt="影像實驗">
+  <div class="ch-num">08 · 影像實驗</div>
+  <h2>影像實驗：CIFAR-10 FID 改善依賴 κ 與時間窗</h2>
+  <div class="prose">
+    <p>設定（§5.1.2、Suppl. C.1.2）：35M 參數的 U-Net（Table 3 寫 35.8M），CIFAR-10 每個像素值當作 256 類的 token，訓練 1.5M 步、batch 128。訓練時以 10% 機率丟掉類別標籤（class dropout 0.1），供 classifier-free guidance（CFG）使用；Table 6、11 的 CFG 強度為 1，依式 (10) 這等於純條件取樣 <span class="tag">本頁推導</span>。Table 6 的 ancestral 結果最後一步取 greedy（機率最大的值）。FID（Fréchet Inception Distance）以 50k 個樣本對訓練集計算，越低越好；IS（Inception Score）越高越好。cosine 與 log-linear 是兩種 noise schedule 的形式，論文沒有給公式。CIFAR 的 Ψ 實驗不用 nucleus。</p>
+    <p>結果（Suppl. D.1.1）：ReMDM 把 MDLM 由 24.73 降到 23.71（4096 步）；Ψ-sampler 在 log-linear 取樣下把 23.71 降到 20.71。CIFAR-10 Duo 的 FID 改善：Duo（訓練 log-linear、取樣 cosine、4096 步）由 ancestral 的 25.63 降到 15.05；MDLM 降到 17.86，但論文寫的起點 24.73 是 log-linear 取樣的 ancestral，同條件（cosine 取樣）的 ancestral 基準是 23.93（Table 7），所以同條件的 MDLM 基準為 23.93 而非 24.73。兩個限制。第一，Fig. 1 右是逐步數挑最佳超參數的包絡（Table 9 caption）：4096 步的 15.05 來自 $t_{\text{on}}=0.5$，同樣 $\kappa=0.95$ 但 $t_{\text{on}}=0.6$ 時 1024 步是 16.70、4096 步是 18.99。第二，選錯 κ 比 ancestral 差：$\kappa=0.5$、$[0.4,0.6]$ 由 256 步的 20.77 惡化到 4096 步的 105.75；Suppl. D.1 原文是「With a poor choice of κt, Ψ-samplers can underperform ancestral sampling」。此外，Duo ancestral 加 $p=0.9$ 已有 22.41（Table 7），而 Ψ 的比較不用 nucleus。最佳 IS（9.50）與最佳 FID 來自不同設定（Table 10）。</p>
+    <p>作者的推薦（§5.1.2）：Duo++ 用 cosine schedule、$\kappa_t=0.95$、$t_{\text{on}}\in\{0.5,0.6\}$、$t_{\text{off}}=0.1$；MDLM 用 $\kappa_t=0.99$、$t_{\text{on}}=1.0$、$t_{\text{off}}=0.1$；$\kappa_t$ 只在 $[t_{\text{off}},t_{\text{on}}]$ 內小於 1，其餘步驟為 1。</p>
+  </div>
+  <div class="kx-mini" id="kx-img"><svg role="img" aria-label="κ 軸：CIFAR-10 推薦 Duo 0.95、MDLM 0.99，只在時間窗內"></svg></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">CIFAR-10 Duo 的 FID 改善？兩個限制？</p>
+    <p class="a">Duo（訓練 log-lin、取樣 cosine、4096 步）25.63 → 15.05；Fig. 1 右是逐步數挑最佳超參數的包絡；選錯 $\kappa$ 比 ancestral 差（$\kappa=0.5$、$[0.4,0.6]$ 在 4096 步 105.75）；同條件 MDLM 基準為 23.93 而非 24.73。</p>
+  </div></details>
+</section>

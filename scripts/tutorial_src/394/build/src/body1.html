@@ -1,0 +1,223 @@
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 394</span>
+  <span class="ttl">Ψ-Samplers</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 394</b> · 互動教學 · arXiv 2602.21185 · ICLR 2026</div>
+  <h1>Ψ-Samplers：讓離散擴散在取樣時重新抽樣已產生的 token</h1>
+  <p class="dek">這篇論文提出一種取樣方法：每一步以可調的小機率重新抽樣已產生的 token，不需重新訓練模型。</p>
+  <p class="byline">Justin Deschenaux、Caglar Gulcehre、Subham Sekhar Sahoo（2026）〈The Diffusion Duality, Chapter II: Ψ-Samplers〉</p>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 一次寫定的 token</span><p>離散擴散模型把一段文字的每個 token 逐步換成雜訊，再由神經網路一步步還原。若雜訊是一個特殊的「遮罩」符號，模型還原出某個 token 後就不再改動它。</p></div>
+    <div class="fact"><span class="n">02 · 重新抽樣</span><p>本文的取樣方法在每一步，以一個可調的小機率重新抽樣已經還原的 token，讓後續步驟有機會改正錯誤；這個方法不需要重新訓練模型。</p></div>
+    <div class="fact"><span class="n">03 · 影像結果</span><p>在 CIFAR-10 影像生成上，以 FID（一種越低越好的影像品質分數）衡量，作者把 token 換成隨機 token 的模型 Duo 由 25.63 降到 15.05；每個步數各自挑選最佳設定。</p></div>
+  </div>
+  <div class="hero-strip">
+    <div id="hero-fig"><svg role="img" aria-label="示意：上列不重新抽樣，錯誤的格子保留到最後；下列重新抽樣，錯誤格子先變回遮罩再變成正確"></svg></div>
+    <p class="cap">示意（不是實驗結果）：實心＝正確 token，斜線＝錯誤 token，虛線空格＝遮罩。</p>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2602.21185">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-394">在關聯圖中查看</a>
+    <a class="btn" href="psi-samplers-lineage-hub.html">研究筆記總覽</a>
+  </div>
+</section>
+
+<!-- S1 -->
+<section class="ch" id="basics" data-toc="01" data-tt="離散擴散">
+  <div class="ch-num">01 · 離散擴散</div>
+  <h2>離散擴散把 token 換成 [MASK] 或隨機 token</h2>
+  <div class="prose">
+    <p>文字由 token 組成，詞彙表有 $K$ 個類別。一個 token 寫成 one-hot 向量 $x\in\{0,1\}^K$：只有該類別那一格是 1。所有長度 $K$、非負、總和為 1 的向量構成 simplex；simplex 上的向量 $v$ 決定一個類別分佈 $\mathrm{Cat}(\cdot;v)$，抽到第 $i$ 類的機率是 $v_i$。本頁還會用到兩個運算：$a\odot b$ 是逐元素乘積，$\langle a,b\rangle$ 是內積。一段文字有 $L$ 個位置，位置索引寫成 $\ell$；每個位置獨立處理，所以下文多半只寫一個位置。</p>
+    <p>離散擴散的前向過程把乾淨 token $x$ 逐步換成雜訊。時間 $t$ 從 0（乾淨）走到 1（純雜訊），時刻 $t$ 的狀態 $z_t$ 也是 one-hot。論文採用的前向邊際是 $z_t\sim q_t(\cdot|x)=\mathrm{Cat}(\cdot;\alpha_t x+(1-\alpha_t)\pi)$（式 1），其中 noise schedule $\alpha_t$ 在 $[0,1]$ 內隨 $t$ 遞減、$\alpha_1=0$，$\pi$ 是先驗分佈。字面意義是：以機率 $\alpha_t$ 保留原 token，否則從 $\pi$ 抽一個。兩種常用先驗：masked diffusion（MDM）用 $\pi=m$，$m$ 是特殊 [MASK] 符號的 one-hot，[MASK] 也算詞彙中的一類；uniform-state diffusion（USDM）用 $\pi=\mathbf 1/K$，即換成均勻隨機的 token。本頁把較早時刻 $s\lt t$ 的邊際寫成 $q_s(\cdot|x)$。</p>
+    <p>式 (1) 只規定每個時刻各自的分佈（邊際），沒有規定不同時刻之間如何相關（聯合分佈）。論文 §3 的出發點是：同一組邊際可以對應許多種聯合分佈。後面的 Ψ-posterior 就是在這個自由度裡選了一種。</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$z_t\sim q_t(\cdot|x)=\mathrm{Cat}\big(\cdot;\ \alpha_t x+(1-\alpha_t)\pi\big),\qquad \pi=m\ (\text{MDM}),\quad \pi=\mathbf 1/K\ (\text{USDM})$$</div><span class="eq-n">式 (1)</span></div>
+  <div class="plate" id="s1">
+    <div class="plate-h"><span class="id">圖</span><h3>同一段 8 個 token 在 t = 0、0.5、1 的樣子</h3><span class="tag">示意</span></div>
+    <p class="plate-lead">每列是一次前向抽樣的結果；格子記號全頁通用。</p>
+    <div id="s1-fig"><svg role="img" aria-label="MDM 與 USDM 的前向過程示意：t 增加時，MDM 的格子變成遮罩，USDM 的格子變成隨機 token"></svg></div>
+    <div class="legend"><span class="lg mk"><span class="tk-ok"></span> 原 token</span><span class="lg mk"><span class="tk-bad"></span> 換成別的 token</span><span class="lg mk"><span class="tk-mask"></span> [MASK]</span></div>
+  </div>
+  <details class="more"><summary>符號表</summary>
+    <dl class="sym">
+      <dt>$K$、$L$、$\ell$</dt><dd>類別數（MDM 時含 [MASK]）、序列長度、位置索引。</dd>
+      <dt>$x$、$z_t$</dt><dd>乾淨 token、時刻 $t$ 的 latent，皆為 one-hot。</dd>
+      <dt>$\mathrm{Cat}(\cdot;v)$、$\odot$、$\langle\cdot,\cdot\rangle$</dt><dd>類別分佈、逐元素乘積、內積。</dd>
+      <dt>$\pi$、$m$</dt><dd>先驗；[MASK] 的 one-hot。</dd>
+      <dt>$\alpha_t$</dt><dd>noise schedule，遞減，$\alpha_1=0$。</dd>
+      <dt>$q_t$、$q_s$</dt><dd>時刻 $t$、$s\lt t$ 的前向邊際（式 1）。</dd>
+      <dt>$q_{s|t}$、$q_{0|t}$</dt><dd>反向 posterior（02 節）；$q_{0|t}$ 是 $s=0$ 的情形。</dd>
+      <dt>$\alpha_{t|s}$</dt><dd>$\alpha_t/\alpha_s$，從 $s$ 到 $t$ 保留原 token 的機率。</dd>
+      <dt>$x_\theta$</dt><dd>去噪器輸出，simplex 上的機率向量（02 節）。</dd>
+      <dt>$\kappa_t$</dt><dd>Ψ-posterior 的混合係數（03 節）。</dd>
+      <dt>$\sigma_t$、$\eta$</dt><dd>ReMDM 的 remask 機率與 schedule 參數（05 節）。</dd>
+      <dt>NFE</dt><dd>去噪器呼叫次數（02 節）。</dd>
+      <dt>$\tilde\alpha_t$、$\tilde\sigma_t$、$w_t$、$\tau$、$k$</dt><dd>課程學習部分的符號（09 節起）。</dd>
+    </dl>
+  </details>
+  <div class="read">延伸閱讀：<a href="psi-discrete-diffusion-interpolating-process.html">離散擴散的 interpolating 前向過程</a>、<a href="discrete-diffusion-foundations-d3pm.html">離散擴散的基礎（D3PM）</a>、<a href="diffusion-duality.html">The Diffusion Duality（Duo）</a></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">式 (1) 怎麼寫？MDM 與 USDM 的 $\pi$？</p>
+    <p class="a">$z_t\sim\mathrm{Cat}(\alpha_t x+(1-\alpha_t)\pi)$，$\alpha_t$ 遞減、$\alpha_1=0$；MDM $\pi=m$，USDM $\pi=\mathbf 1/K$。</p>
+  </div></details>
+</section>
+
+<!-- S2 -->
+<section class="ch" id="posterior" data-toc="02" data-tt="Ancestral sampler">
+  <div class="ch-num">02 · Ancestral sampler</div>
+  <h2>Ancestral sampler 依 posterior 逐步還原</h2>
+  <div class="prose">
+    <p>生成時要從 $z_1\sim\pi$ 往回走到 $z_0$。把 $[0,1]$ 切成 $T$ 步，$t(i)=i/T$，每一步從時刻 $t$ 走到較早的 $s=t-1/T$。如果知道乾淨 token $x$，這一步該用的分佈是反向 posterior $q_{s|t}(\cdot|z_t,x)$：已知 $z_t$ 與 $x$ 時 $z_s$ 的分佈。它由 Bayes 公式得到。本頁把兩種先驗寫成同一個式子 <span class="tag">本頁推導</span>：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$q_{s|t}(\cdot|z_t,x)\ \propto\ \big(\alpha_{t|s}\,z_t+(1-\alpha_{t|s})\langle\pi,z_t\rangle\mathbf 1\big)\odot\big(\alpha_s x+(1-\alpha_s)\pi\big),\qquad \alpha_{t|s}=\alpha_t/\alpha_s$$</div><span class="eq-n">由式 (2)(3)</span></div>
+  <div class="prose">
+    <p>第一個括號是「從每一個可能的 $z_s$ 走到觀察到的 $z_t$ 的機率」，第二個括號是 $q_s(\cdot|x)$；兩者逐元素相乘再正規化。依據：本頁以 $K=3,4,6$ 數值比對，這個式子與論文的式 (2)、(3) 相差小於 $10^{-12}$；$\alpha_{t|s}=\alpha_t/\alpha_s$ 論文沒有定義，依 Duo 的慣例。</p>
+    <p>MDM 的情形（式 2）：$z_t=m$ 時，$z_s$ 以機率 $\frac{\alpha_s-\alpha_t}{1-\alpha_t}$ 解開成 $x$，否則留在 [MASK]；$z_t\ne m$ 時 $z_s$ 的分佈是 $\mathrm{Cat}(x)$，也就是已解開的 token 不再更新。USDM 的情形（式 3，原式在下方）允許 token 改成任何值，因此可以修正先前的錯誤，這是 USDM 在少步生成表現好的原因之一（§2.1.2）。</p>
+    <p>ancestral sampler 如何由 posterior 得到：生成時沒有 $x$，於是訓練一個去噪器 $x_\theta(z_t,t)$，輸出 simplex 上的機率向量，代表對乾淨 token 的猜測；把 $q_{s|t}$ 裡的 $x$ 換成 $x_\theta(z_t,t)$ 就得到 ancestral sampler $p^\theta_{s|t}=\prod_\ell q_{s|t}(\cdot|z_t^\ell,x^\ell=x_\theta^\ell(z_t,t))$（§2.1.1）。每一步呼叫一次去噪器，所以去噪器呼叫次數 NFE 等於步數。在 MDM 下，式 (2) 中 $z_t\ne m$ 時為 $\mathrm{Cat}(x)$，已解開的 token 不再更新：一旦解錯就無法回頭；USDM 的式 (3) 則允許 token 改成任何值。上面的式子對 $x$ 是線性的，所以 $x$ 換成機率向量 $x_\theta$ 仍是合法的 Bayes 更新。</p>
+  </div>
+  <details class="more"><summary>式 (3) 原式（USDM）</summary>
+    <div class="eq"><div class="eq-m">$$q_{s|t}=\mathrm{Cat}\Big(\tfrac{K\alpha_t z_t\odot x+(\alpha_{t|s}-\alpha_t)z_t+(\alpha_s-\alpha_t)x+(1-\alpha_{t|s})(1-\alpha_s)\mathbf 1/K}{K\alpha_t\langle z_t,x\rangle+1-\alpha_t}\Big)$$</div><span class="eq-n">式 (3)</span></div>
+  </details>
+  <div class="read">延伸閱讀：<a href="mdlm-masked-diffusion-objective.html">MDLM</a>、<a href="psi-uniform-state-guidance-and-self-correction.html">Uniform-state 擴散、guidance 與自我修正</a></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">ancestral sampler 如何由 posterior 得到？式 (2) 中 $z_t\ne m$ 時 $z_s$ 的分佈？</p>
+    <p class="a">把 $q_{s|t}$ 的 $x$ 換成 $x_\theta(z_t,t)$，每步呼叫一次去噪器（NFE＝步數）；$z_t\ne m$ 時為 $\mathrm{Cat}(x)$，已解開的 token 不再更新；USDM 的 (3) 允許改成任何值。</p>
+  </div></details>
+</section>
+
+<!-- S3 -->
+<section class="ch" id="psi" data-toc="03" data-tt="Ψ-posterior">
+  <div class="ch-num">03 · Ψ-posterior</div>
+  <h2>Ψ-posterior 是兩個分佈的凸組合，邊際不變</h2>
+  <div class="prose">
+    <p>Ψ-posterior（式 11）把反向 posterior 與前向邊際以係數 $\kappa_t\in[0,1]$ 混合：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\Psi_{s|t}(\cdot|x,z_t)=\kappa_t\,q_{s|t}(\cdot|z_t,x)+(1-\kappa_t)\,q_s(\cdot|x),\qquad \Psi_1=\mathrm{Cat}(\pi)$$</div><span class="eq-n">式 (11)</span></div>
+  <div class="prose">
+    <p>式 (11) 由兩項組成：第一項 $\kappa_t q_{s|t}(\cdot|z_t,x)$ 依賴目前狀態 $z_t$，第二項 $(1-\kappa_t)q_s(\cdot|x)$ 不依賴 $z_t$。$\kappa_t=1$ 時就是標準 posterior；$\kappa_t=0$ 時每一步丟棄 $z_t$，直接從 $q_s(\cdot|x)$ 重抽。$\kappa_t$ 越小，$z_s=z_t$（token 沒有被改動）的機率越低：均勻先驗、$K=4$、$\alpha_t=0.3$、$\alpha_s=0.6$ 時，$\kappa$ 為 1、0.5、0 的保留率依序是 0.625、0.505、0.385，而 $z_s$ 的邊際始終不變（下方 W1 的「保留率」讀數）。作者稱這種組合為 superposition posterior。</p>
+    <p>為何任何 $\kappa_t$ 都保持 $q_s$：論文以對 $t$ 向下的歸納證明（Suppl. A.2）。基底 $\Psi_1=\mathrm{Cat}(\pi)=q_1$。假設 $z_t$ 的邊際已經是 $q_t(\cdot|x)$，則 $z_s$ 的邊際是</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}\Psi_s(z_s|x)&=\sum_{\tilde z_t}q_t(\tilde z_t|x)\big[\kappa_t q_{s|t}(z_s|x,\tilde z_t)+(1-\kappa_t)q_s(z_s|x)\big]\\&=\kappa_t\,q_s(z_s|x)+(1-\kappa_t)\,q_s(z_s|x)\sum_{\tilde z_t}q_t(\tilde z_t|x)=q_s(z_s|x)\end{aligned}$$</div><span class="eq-n">式 (16)</span></div>
+  <div class="prose">
+    <p>第一項加總後等於 $q_s$，因為 $q_{s|t}$ 是真 posterior；第二項不依賴 $\tilde z_t$，可以提到加總外，而 $\sum q_t=1$。兩項以 $q_t$ 加權後都等於 $q_s$，凸組合仍是 $q_s$。這個證明需要四個條件：(i) 用真 $x$；(ii) $q_{s|t}$ 是與式 (1) 相容的真 posterior；(iii) 第二項不依賴 $z_t$；(iv) $\kappa_t$ 不依賴 $z_t$，否則 $\kappa_t$ 不能提到加總外。下方 W1 的開關讓 $z_t=x$ 的那一列用 $\kappa=0.5$、其他列用 1，邊際與 $q_s$ 的最大差變成 0.0525 <span class="tag">本頁推導</span>。因此邊際保持只對用真 $x$ 的真 posterior (11) 成立；取樣時換成去噪器 $x_\theta$ 後（04 節的式 12），條件 (i) 不成立，不再保證邊際，論文也沒有給這種情形的誤差界。</p>
+    <p>代數上 $\kappa_t$ 超出 $[0,1]$ 時等式仍成立，但 $\Psi$ 可能出現負的分量，不是合法分佈 <span class="tag">本頁推導</span>。由 Bayes 公式反推的前向過程 $\Psi(z_t|z_s,x)$ 一般同時依賴 $z_s$ 與 $x$，所以不是 Markov 過程（§3）。</p>
+  </div>
+  <div class="plate" id="w1">
+    <div class="plate-h"><span class="id">W1</span><h3>改變 κ，轉移改變，邊際不變</h3></div>
+    <p class="plate-lead">假設：已知乾淨 token 為 A；這裡用真 posterior，不用去噪器。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div class="lbl">轉移 Ψ(z_s | z_t, x)：列＝z_t，欄＝z_s</div>
+        <div id="w1-heat" class="heat-wrap"></div>
+        <div class="lbl" style="margin-top:14px">z_s 的邊際（實心）與 q_s（外框）</div>
+        <div id="w1-bars"><svg role="img" aria-label="邊際與 q_s 的長條圖"></svg></div>
+        <dl class="ro" id="w1-ro"></dl>
+        <p class="okline" id="w1-say"></p>
+      </div>
+      <div class="ctl">
+        <div class="lbl">先驗</div>
+        <div class="seg" id="w1-prior" role="radiogroup" aria-label="先驗"></div>
+        <div class="rng"><label class="lbl" for="w1-K">K（類別數）<output id="w1-Ko"></output></label><input type="range" id="w1-K" min="3" max="8" step="1" value="4"></div>
+        <div class="rng"><label class="lbl" for="w1-at">α_t <output id="w1-ato"></output></label><input type="range" id="w1-at" min="0" max="0.98" step="0.01" value="0.3"></div>
+        <div class="rng"><label class="lbl" for="w1-as">α_s <output id="w1-aso"></output></label><input type="range" id="w1-as" min="0.31" max="1" step="0.01" value="0.6"></div>
+        <div class="rng"><label class="lbl" for="w1-k">κ <output id="w1-ko"></output></label><input type="range" id="w1-k" min="0" max="1" step="0.01" value="0.5"></div>
+        <div class="ctl-row"><button class="chip" type="button" id="w1-k1">κ = 1</button><button class="chip" type="button" id="w1-k0">κ = 0</button></div>
+        <label class="chk"><input type="checkbox" id="w1-dep"> κ 依賴 z_t（違反條件 iv）</label>
+        <p class="sr" id="w1-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依式 (1)(11)(16) 即時計算；q_s|t 用 02 節的統一形式 <span class="tag">本頁推導</span>。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">式 (11) 由哪兩項組成？$\kappa_t$ 變小時 token 被改動的機率如何變化？為何任何 $\kappa_t$ 都保持 $q_s$？需要哪些條件？</p>
+    <p class="a">$\kappa_t q_{s|t}(\cdot|z_t,x)+(1-\kappa_t)q_s(\cdot|x)$；$\kappa_t$ 越小，$z_s=z_t$ 的機率越低（0.625／0.505／0.385），邊際不變。兩項以 $q_t$ 加權後都等於 $q_s$；條件：真 $x$、真 posterior、第二項不依賴 $z_t$、$\kappa_t$ 不依賴 $z_t$；換成 $x_\theta$ 後不再保證。</p>
+  </div></details>
+</section>
+
+<!-- S4 -->
+<section class="ch" id="sampler" data-toc="04" data-tt="Ψ-sampler">
+  <div class="ch-num">04 · Ψ-sampler</div>
+  <h2>Ψ-sampler 以去噪器輸出代替乾淨資料</h2>
+  <div class="prose">
+    <p>取樣時沒有 $x$。式 (12) 替換了兩處（作者用 "we choose to replace"，Suppl. A.1）：$q_{s|t}$ 裡的 $x$ 換成 $x_\theta(z_t,t)$；$q_s(\cdot|x)=\mathrm{Cat}(\alpha_s x+(1-\alpha_s)\pi)$ 裡的 $x$ 換成 $q_{0|t}(\cdot|z_t,x_\theta)$，即 $s=0$ 時的 posterior，代表由 $z_t$ 與 $x_\theta$ 推測的乾淨 token 分佈。MDM 時 $q_{0|t}=x_\theta$（Suppl. A.1 末句；這依賴 MDLM 的 carry-over 參數化：已解開位置的 $x_\theta$ 就是 $z_t$ 本身）。USDM 的 $q_{0|t}$ 論文沒有寫出；由 02 節的式子取 $\alpha_s=1$ 得 $q_{0|t}\propto x_\theta\odot(\alpha_t z_t+(1-\alpha_t)\mathbf 1/K)$ <span class="tag">本頁推導</span>。</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\Psi^\theta_{s|t}(\cdot|z_t)=\underbrace{\kappa_t\,q_{s|t}(\cdot|z_t,x_\theta)}_{\text{預測步}}+\underbrace{(1-\kappa_t)\big[\alpha_s\,q_{0|t}(\cdot|z_t,x_\theta)+(1-\alpha_s)\pi\big]}_{\text{校正步}}$$</div><span class="eq-n">式 (12)</span></div>
+  <div class="prose">
+    <p>$\kappa_t=1$ 還原 ancestral sampler。作者把第一項稱為預測步（predictor），第二項稱為校正步（corrector），類比 Gaussian 擴散的 predictor-corrector 取樣（Song et al., 2021）；校正步注入雜訊，讓先前的預測可以被修改（§3、Fig. 2）。03 節的邊際保證只對真 posterior (11) 成立：§3 末句「converge to the correct distribution given sufficient samples」是對 (11) 的敘述，論文沒有給 (12) 的誤差界。</p>
+    <p>作者認為效果的關鍵是 offset 項 $(1-\kappa_t)(1-\alpha_s)\pi$（§3 Intuitive Explanation）。在 MDM，這一項把機率放在 [MASK] 上：已解開 token 以 $(1-\kappa_t)(1-\alpha_s)$ 的機率變回 [MASK]，之後重新解開，這稱為重新遮罩（remask）。在 USDM，每個 token 至少得到 $(1-\kappa_t)(1-\alpha_s)/K$ 的機率，即使去噪器給正確 token 零機率，它仍可能出現 <span class="tag">本頁推導</span>。W2 的預設情形（USDM、去噪器給 A 零機率、$\kappa=0.5$）中，下一步抽到 A 的機率由 0.0352（$\kappa=1$）升到 0.0676。</p>
+  </div>
+  <div class="plate" id="w2">
+    <div class="plate-h"><span class="id">W2</span><h3>Ψ-sampler 的一步</h3><span class="tag">推定</span></div>
+    <p class="plate-lead">假設：正確 token 為 A；去噪器輸出是本頁設定的三組機率（推定），不是真實模型。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div id="w2-fig"><svg role="img" aria-label="預測步、校正步與混合 Ψ 的長條圖"></svg></div>
+        <div class="legend"><span class="lg bx par">預測步 q_s|t</span><span class="lg bx perp">校正步</span><span class="lg bx acc">混合 Ψ</span><span class="lg ref">下限（USDM）</span></div>
+        <div class="tscroll" tabindex="0" role="region" aria-label="W2 讀數"><table class="mini" id="w2-tab"></table></div>
+        <p class="okline" id="w2-say"></p>
+      </div>
+      <div class="ctl">
+        <div class="lbl">先驗</div>
+        <div class="seg" id="w2-prior" role="radiogroup" aria-label="先驗"></div>
+        <div class="lbl">目前 z_t</div>
+        <div class="seg" id="w2-z" role="radiogroup" aria-label="目前 z_t"></div>
+        <div class="lbl">去噪器 x_θ</div>
+        <div class="seg" id="w2-den" role="radiogroup" aria-label="去噪器"></div>
+        <p class="note small" id="w2-carry"></p>
+        <div class="rng"><label class="lbl" for="w2-at">α_t <output id="w2-ato"></output></label><input type="range" id="w2-at" min="0" max="0.98" step="0.01" value="0.3"></div>
+        <div class="rng"><label class="lbl" for="w2-as">α_s <output id="w2-aso"></output></label><input type="range" id="w2-as" min="0.31" max="1" step="0.01" value="0.6"></div>
+        <div class="rng"><label class="lbl" for="w2-k">κ <output id="w2-ko"></output></label><input type="range" id="w2-k" min="0" max="1" step="0.01" value="0.5"></div>
+        <p class="sr" id="w2-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依式 (12) 即時計算；USDM 的 q_0|t 與下限為本頁推導。</p>
+  </div>
+  <div class="read">延伸閱讀：<a href="psi-superposition-posteriors-method.html">Ψ-posterior 與 Ψ-sampler</a></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">式 (12) 替換了哪兩處？MDM 時 $q_{0|t}$ 是什麼？offset 項在 MDM 與 USDM 各有什麼作用？</p>
+    <p class="a">$q_{s|t}$ 的 $x\to x_\theta$；$q_s$ 的 $x\to q_{0|t}(\cdot|z_t,x_\theta)$；MDM 時 $q_{0|t}=x_\theta$（carry-over）。MDM：已解開 token 以 $(1-\kappa_t)(1-\alpha_s)$ 機率變回 [MASK]；USDM：每個 token 至少 $(1-\kappa_t)(1-\alpha_s)/K$。</p>
+  </div></details>
+</section>
+
+<!-- S5 -->
+<section class="ch" id="remdm" data-toc="05" data-tt="與 ReMDM 的關係">
+  <div class="ch-num">05 · 與 ReMDM 的關係</div>
+  <h2>在 mask 先驗下，ReMDM 是 Ψ-sampler 的特例</h2>
+  <div class="prose">
+    <p>ReMDM（Wang et al., 2025）是 MDM 的 remasking 取樣器，以 remask 機率 $\sigma_t$ 參數化（式 21）：$z_t\ne m$ 時 $z_s\sim\mathrm{Cat}((1-\sigma_t)x+\sigma_t m)$；$z_t=m$ 時 $z_s\sim\mathrm{Cat}\big(\frac{\alpha_s-(1-\sigma_t)\alpha_t}{1-\alpha_t}x+\frac{1-\alpha_s-\sigma_t\alpha_t}{1-\alpha_t}m\big)$；$0\le\sigma_t\le\sigma_t^{\max}=\min\{1,(1-\alpha_s)/\alpha_t\}$。Ψ 等於 ReMDM 時 $\kappa_t$ 與 $\sigma_t$ 的關係是 $\kappa_t=1-\sigma_t/(1-\alpha_s)$（Suppl. A.4）：π = m 時把 Ψ 展開，代入這個 $\kappa_t$ 即得式 (21)。論文只比對了第一列；第二列 $x$ 的係數 $\frac{\alpha_s-\alpha_t}{1-\alpha_t}+\frac{\sigma_t}{1-\alpha_s}\cdot\frac{\alpha_t(1-\alpha_s)}{1-\alpha_t}=\frac{\alpha_s-(1-\sigma_t)\alpha_t}{1-\alpha_t}$，同樣一致 <span class="tag">本頁推導</span>。ReMDM 又涵蓋 Campbell et al. (2022) 的 FB 與 Gat et al. (2024) 的 DFM 校正器，所以 Ψ 也涵蓋它們。</p>
+    <p>何時 $\kappa_t\lt0$：$\kappa_t\in[0,1]$ 等價於 $\sigma_t\le1-\alpha_s$，但 $\sigma_t^{\max}\ge1-\alpha_s$；當 $\sigma_t>1-\alpha_s$ 時 $\kappa_t\lt0$，超出 §3 宣告的 $\kappa_t\in[0,1]$（在 MDM 下分佈仍合法）<span class="tag">本頁推導</span>。因此「Ψ 涵蓋 ReMDM」嚴格成立的條件是 $\sigma_t\le1-\alpha_s$。ReMDM 有三種 $\sigma_t$ schedule（Suppl. A.5）：cap $\sigma_t=\min(\eta,\sigma_t^{\max})$（式 27）、rescale $\sigma_t=\eta\,\sigma_t^{\max}$（式 28）、loop（在 $[t_{\text{off}},t_{\text{on}}]$ 內固定 $\alpha_t$ 並用常數 $\sigma_t=\eta$）。以 $\alpha_t=1-t$、128 步換算：cap 在最後幾步（$s\lt\eta$）得到 $\kappa_t\lt0$，$\eta=0.05$ 時最小值 −0.0579；rescale 的 $\kappa_t$ 約在 $[1-2\eta,1-\eta]$ 之間，不會為負（$\alpha_t\ge1-\alpha_s$ 時 $\kappa=1-\eta/\alpha_t$，否則 $\kappa=1-\eta/(1-\alpha_s)$）<span class="tag">本頁推導</span>。loop 的 $\kappa$ 為常數 $1-\eta/(1-\alpha_{\text{on}})$。</p>
+    <p>論文對 Duo（USDM）使用「κt schedules matching ReMDM」（Table 13），本頁的讀法是：把上面的 $\kappa_t(\alpha_t,\alpha_s,\eta)$ 直接套到均勻先驗 <span class="tag">推定</span>。$\sigma^{\max}$ 作為合法上界的意義只屬於 MDM；USDM 的合法條件是 $\kappa_t\in[0,1]$，rescale 滿足，cap 不一定滿足，論文沒有說明 USDM 如何處理負 $\kappa$。</p>
+  </div>
+  <div class="plate" id="w2b">
+    <div class="plate-h"><span class="id">W2b</span><h3>κ 與 σ 的換算</h3></div>
+    <p class="plate-lead">假設：[MASK] 先驗；σ 是 ReMDM 的 remask 機率；α_t、α_s 與 W2 共用。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div id="w2b-fig"><svg role="img" aria-label="κ 對 σ 的直線"></svg></div>
+        <dl class="ro" id="w2b-ro"></dl>
+      </div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="w2b-s">σ <output id="w2b-so"></output></label><input type="range" id="w2b-s" min="0" max="1" step="0.01" value="0.04"></div>
+        <p class="note small">α_t、α_s 在 W2 調整。</p>
+        <p class="sr" id="w2b-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依 Suppl. A.4 的換算 κ = 1 − σ/(1 − α_s) 即時計算。</p>
+  </div>
+  <div class="read">延伸閱讀：<a href="psi-predictor-corrector-gaussian-to-discrete.html">從 Gaussian 到離散的 predictor-corrector</a>、<a href="dlm-remasking-self-correction.html">Remasking 與自我修正</a>、<a href="psi-ctmc-discrete-diffusion-samplers.html">CTMC 採樣器</a></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Ψ 等於 ReMDM 時 $\kappa_t$ 與 $\sigma_t$ 的關係？何時 $\kappa_t\lt0$？</p>
+    <p class="a">$\kappa_t=1-\sigma_t/(1-\alpha_s)$；$\sigma_t>1-\alpha_s$ 時 $\kappa_t\lt0$（cap 在最後幾步），超出 §3 的 $\kappa_t\in[0,1]$；rescale 的 $\kappa_t$ 約在 $[1-2\eta,1-\eta]$。</p>
+  </div></details>
+</section>

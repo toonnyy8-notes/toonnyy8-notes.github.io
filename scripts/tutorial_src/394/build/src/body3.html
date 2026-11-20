@@ -1,0 +1,168 @@
+
+<!-- S9 -->
+<section class="ch" id="duality" data-toc="09" data-tt="Duo 的課程學習">
+  <div class="ch-num">09 · Duo 的課程學習</div>
+  <h2>Duo 的課程學習需要 K 維 softmax</h2>
+  <div class="prose">
+    <p>本節起是論文的第二個貢獻，與前面的取樣器互不依賴。Duo（Sahoo et al., 2025a）指出 USDM 可以由連續的 Gaussian 擴散得到：對 one-hot 向量 $x$ 加 Gaussian 雜訊，得到 latent $w_t\sim\mathcal N(\tilde\alpha_t x,\tilde\sigma_t^2 I_K)$，其中 $\tilde\alpha_t$ 是 Gaussian 側的 schedule，$\tilde\sigma_t=\sqrt{1-\tilde\alpha_t^2}$。取 argmax（最大座標的 one-hot）後，$z_t=\arg\max(w_t)$ 的邊際正好是式 (1) 的 uniform 形式，對應的 $\alpha_t=\mathcal T(\tilde\alpha_t)$（式 6、7）；$\mathcal T$ 是把 Gaussian 側 schedule 換算成離散側的函式。</p>
+    <p>Duo 的課程學習在前 50% 訓練步把送進 transformer 的 argmax 換成 $\mathrm{softmax}(w_t/\tau)$（式 9）。softmax 的溫度 $\tau$ 越小，輸出越接近 argmax 的 one-hot；$\tau\to0$ 時兩者相同。輸入 embedding 變成 $V^\top y$，即以 softmax 權重 $y$ 對所有 $K$ 個 embedding 做加權和，而不是查一列表格。這要求每個位置在每個訓練步具現一個 $K$ 維向量；現代 LLM 的詞彙 $K>100{,}000$（§4），記憶體不可行。</p>
+    <p>作者的觀察：Duo 用的溫度是 $\tau=10^{-3}$，此時 softmax 幾乎只有少數幾項非零，所以只用 $k\ll K$ 個 embedding（式 13）就能近似加權和。本頁以 $K=50257$（GPT-2 詞彙）、$\tilde\alpha_t=0.34$、$k=3$ 重複抽樣 400 次，最大權重超過 0.99 的比例是 0.9725（W4a）。剩下的問題是如何不具現 $K$ 維向量就找到最大的 $k$ 個值（10 節），以及如何估計 softmax 的分母（11 節）。$\mathcal T$ 本身原本靠預先計算 100k 個點（GPT-2 詞彙最多兩小時），論文改用約 150 項的級數（式 49、55）並再以 9 次多項式擬合（Suppl. B.3）。</p>
+  </div>
+  <div class="read">延伸閱讀：<a href="psi-duo-curriculum-background.html">Duo 與 Gaussian 鬆弛課程學習</a>、<a href="diffusion-duality.html">The Diffusion Duality（Duo）</a></div>
+</section>
+
+<!-- S10 -->
+<section class="ch" id="topk" data-toc="10" data-tt="Top-k 抽樣">
+  <div class="ch-num">10 · Top-k 抽樣</div>
+  <h2>Order statistics 直接抽出最大的 k 個值</h2>
+  <div class="prose">
+    <p>逆轉換抽樣：若 $U\sim U[0,1]$、$F$ 是某個分佈的 CDF，則 $F^{-1}(U)$ 服從該分佈（式 29）。高斯的 CDF 寫成 $\Phi$，$\Phi^{-1}$ 單調遞增，所以均勻變數的大小順序在轉換後保持不變。</p>
+    <p>如何不具現 $K$ 維向量抽最大的 $k$ 個值：$w_t$ 中乾淨 token 的座標 $o$ 均值是 $\tilde\alpha_t$，與其他座標不同，所以另外單獨抽 $\tilde w\sim\mathcal N(\tilde\alpha_t,\tilde\sigma_t^2)$；其餘 $N=K-1$ 個座標 i.i.d. $\mathcal N(0,\tilde\sigma_t^2)$。$N$ 個 i.i.d. $U[0,1]$ 的最大值的 CDF 是 $u^N$（式 30），所以 $U^{(1)}=V^{1/N}$（$V\sim U[0,1]$）直接抽出最大值；給定 $U^{(i)}$，下一個 $U^{(i+1)}$ 是 $N-i$ 個 $U[0,U^{(i)}]$ 的最大值（Prop. B.4、式 38）。再乘 $\tilde\sigma_t\Phi^{-1}$，就得到第 $i$ 大的零均值值 $\mathcal K_i$。Algo. 1 在 log 空間計算：$R_\ell=\log U_\ell/\ell$、$P_\ell=\sum_{m=\ell}^{N}R_m$、$V_\ell=e^{P_\ell}$。接著比較 $\tilde w$：$\tilde w\lt\mathcal K_k$ 為 case 1（乾淨 token 不在前 $k$ 名）；否則為 case 2，把 $\tilde w$ 插在第 $r+1$ 名（$r$ 是大於 $\tilde w$ 的 $\mathcal K_j$ 個數），丟掉 $\mathcal K_k$。論文以 Floyd 演算法抽索引（Algo. 2：依序無放回抽 $k$ 個整數，抽到重複就改用目前範圍的最大值，不需要洗牌整個 $K$ 元素的陣列），本頁元件只示範數值。</p>
+    <p>哪些步驟是近似：值與索引在分佈上精確 <span class="tag">本頁推導</span>，W4a 的「重複 400 次」可與暴力排序比較（$K\le10^4$ 時）。只保留 $k$ 個 embedding（式 13）與 $\tilde Z$（下一節）是近似。</p>
+  </div>
+  <div class="plate" id="w4a">
+    <div class="plate-h"><span class="id">W4a</span><h3>最大的 k 個值與權重</h3></div>
+    <p class="plate-lead">假設：單一位置的 Gaussian latent，乾淨 token 索引 o = 0。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div id="w4a-fig"><svg role="img" aria-label="前 k 個值的 softmax 權重"></svg></div>
+        <dl class="ro" id="w4a-ro"></dl>
+        <div class="ctl-row"><button class="small-btn" type="button" id="w4a-rep">重複 400 次</button><button class="small-btn" type="button" id="w4a-new">重新抽樣</button></div>
+        <dl class="ro" id="w4a-stat"></dl>
+        <div id="w4a-hist"><svg role="img" aria-label="最大值的直方圖：高效法與暴力法"></svg></div>
+        <p class="note small" id="w4a-hnote"></p>
+      </div>
+      <div class="ctl" id="w4-ctl">
+        <div class="rng"><label class="lbl" for="w4-K">K（詞彙數）<output id="w4-Ko"></output></label><input type="range" id="w4-K" min="2" max="4.70" step="0.05" value="4.70"></div>
+        <button class="chip" type="button" id="w4-gpt">50257（GPT-2）</button>
+        <div class="rng"><label class="lbl" for="w4-k">k <output id="w4-ko"></output></label><input type="range" id="w4-k" min="1" max="8" step="1" value="3"></div>
+        <div class="rng"><label class="lbl" for="w4-at">α̃_t <output id="w4-ato"></output></label><input type="range" id="w4-at" min="0" max="0.99" step="0.01" value="0.34"></div>
+        <p class="note small" id="w4-atn"></p>
+        <div class="rng"><label class="lbl" for="w4-tau">τ <output id="w4-tauo"></output></label><input type="range" id="w4-tau" min="-3" max="0" step="0.1" value="-3"></div>
+        <p class="sr" id="w4-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依 Algo. 1、式 (41)(42)(44) 即時計算；亂數為 mulberry32(seed)，單次抽樣 seed 從 3 開始、統計 seed 11。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">如何不具現 K 維向量抽最大的 $k$ 個值？哪些步驟是近似？</p>
+    <p class="a">乾淨座標另外抽；其餘 $N=K-1$ 個：$U^{(1)}=V^{1/N}$，給定 $U^{(i)}$ 時下一個是 $N-i$ 個 $U[0,U^{(i)}]$ 的最大值，再乘 $\tilde\sigma_t\Phi^{-1}$；值與索引在分佈上精確；只保留 $k$ 個 embedding（式 13）與 $\tilde Z$ 是近似。</p>
+  </div></details>
+</section>
+
+<!-- S11 -->
+<section class="ch" id="normalizer" data-toc="11" data-tt="Normalizer">
+  <div class="ch-num">11 · Normalizer</div>
+  <h2>以截斷高斯的期望值近似未抽樣項</h2>
+  <div class="prose">
+    <p>softmax 的權重是 $\lambda_i=e^{\mathcal K_i/\tau}/Z$，分母 $Z$ 是全部 $K$ 項 $e^{w_j/\tau}$ 的和。未抽樣的零均值座標都小於門檻 $c$（前 $k$ 名中最小的值），所以每一項的分佈是截斷高斯：$X\sim\mathcal N(0,\tilde\sigma_t^2)$ 限制在 $X\lt c$。論文以條件期望 $\mu=\mathbb E[e^{X/\tau}\mid X\lt c]$ 代替每一項（式 40）。把指數併入高斯密度並配方，得到</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\log\mu=\frac{\tilde\sigma_t^2}{2\tau^2}-\log\Phi\Big(\frac{c}{\tilde\sigma_t}\Big)+\log\Phi\Big(\frac{c-\tilde\sigma_t^2/\tau}{\tilde\sigma_t}\Big)$$</div><span class="eq-n">式 (44)</span></div>
+  <div class="prose">
+    <p>case 1、2 的 $\tilde Z$ 各含幾個未抽樣項：case 1（乾淨 token 不在前 $k$ 名）有 $K-k-1$ 個，另加乾淨 token 的 $e^{\tilde w/\tau}$，$\tilde Z=\sum_{i\le k}e^{\mathcal K_i/\tau}+e^{\tilde w/\tau}+(K-k-1)\mu$（式 41，$c=\mathcal K_k$）；case 2 有 $K-k$ 個，$\tilde Z=\sum_{i\le k}e^{\mathcal K_i/\tau}+(K-k)\mu$（式 42）。case 2 的門檻是插入後的第 $k$ 名，也就是插入前的 $\mathcal K_{k-1}$；已知被丟掉的值是舊的 $\mathcal K_k$，以 $\mathcal K_{k-1}$ 為門檻較寬鬆，是作者的設計選擇。式 (14) 後的文字寫「δ = 1 if $\tilde w\in\mathcal K$ (case 2)」，與式 (41)(42) 和 Algo. 3 相反；本頁以後兩者為準。式 (43) 把 $\mu$ 寫成 $\log\mathbb E[e^X]$（少了 $/\tau$），自洽的讀法是式 (44) 右邊為 $\log\mathbb E[e^{X/\tau}]$。</p>
+    <p>數值上必須在 log 空間計算：$\tau=10^{-3}$、$\tilde\sigma_t\approx0.94$ 時 $\tilde\sigma_t^2/2\tau^2\approx4.4\times10^5$，與 $\log\Phi(\cdot)\approx-4.4\times10^5$ 相消，直接取指數會溢位。$\tau$ 越大，只取前 $k$ 項的誤差越大：W4b 中 $\tau\ge0.3$ 時 $Z_{\text{top}}/Z$ 低於 0.31，加入尾項期望值的 $\tilde Z$ 則在真值的 0.96–1.07 倍之間；$\tau=0.05$ 時 $\tilde Z$ 可高估到 1.27 倍，因為尾項用的是期望值，不是逐次的精確值。權重和 $\sum\lambda_i$ 隨 $\tau$ 增大而遠小於 1，說明只保留 $k$ 項本身也是近似。</p>
+  </div>
+  <div class="plate" id="w4b">
+    <div class="plate-h"><span class="id">W4b</span><h3>三個 normalizer</h3></div>
+    <p class="plate-lead">假設：同一次具現的 K 維向量 w（seed 7）上比較三個 normalizer；K、k、α̃_t、τ 與 W4a 共用。</p>
+    <div class="fig">
+      <div id="w4b-bars"><svg role="img" aria-label="Z_top/Z 與 Z̃/Z 的長條"></svg></div>
+      <dl class="ro" id="w4b-ro"></dl>
+      <div class="lbl" style="margin-top:12px">τ 掃描（同一個 w）</div>
+      <div id="w4b-sweep"><svg role="img" aria-label="Z_top/Z 與 Z̃/Z 對 τ"></svg></div>
+      <div class="legend"><span class="lg par">Z_top / Z</span><span class="lg acc">Z̃ / Z</span></div>
+      <p class="okline" id="w4b-say"></p>
+    </div>
+    <p class="plate-f">讀數由本頁依式 (41)(42)(44) 與 Algo. 3 的門檻即時計算；真值 Z 由具現的 K 個值直接加總。</p>
+  </div>
+  <div class="prose">
+    <p>結果（§5.2）。訓練用 16 張 H100、bf16、1M 步、batch 512；$\tau=0.001$，$(\beta,\gamma)=(0.03,0.15)$，課程在前 500K 步。峰值記憶體與吞吐的變化（Table 4，8 張 GH200、batch 32）：Duo 為 81.8 samples/s、94.3 GiB，Duo++ 為 121.9 samples/s、63.4 GiB，即 94.3→63.4 GiB、81.8→121.9 samples/s；Duo 課程結束後是 122.4、63.3。perplexity 相近（Table 2）：OWT PPL 25.2→25.2（$k=2$），LM1B 29.9→30.0；MDLM 仍較好（27.0／23.2）。</p>
+    <p>比值 <span class="tag">本頁推導</span>：吞吐 121.9/81.8 = 1.49 倍（Intro 寫「2× speedup」）；假設前後各半步數（前半課程期 Duo 81.8、Duo++ 121.9，後半兩者都是 122.4），總時間比為 0.803，即省 19.7%；記憶體 −32.8%。摘要的「訓練時間 −25%」、Suppl. D.3 的「平均吞吐 +25%」、Table 1 caption 的「25% fewer flops」是三個不同的量，論文沒有量測 FLOPs。另外 Table 1 caption 寫「6 個任務中 4 個高於 Duo」，表內有 7 個任務、高於 Duo 的是 5 個；Table 5 caption 寫「7 個資料集中 6 個低於 Duo」，逐欄比對是 5 個。</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="Table 2 與 Table 4 摘錄"><table class="stack"><caption>Table 2（PPL）與 Table 4（效率）摘錄</caption>
+    <thead><tr><th>方法</th><th class="num">LM1B PPL</th><th class="num">OWT PPL</th><th class="num">吞吐 samples/s</th><th class="num">峰值記憶體 GiB</th></tr></thead><tbody>
+    <tr><td>MDLM</td><td class="num">27.0</td><td class="num">23.2</td><td class="num">—</td><td class="num">—</td></tr>
+    <tr><td>Duo</td><td class="num">29.9</td><td class="num">25.2</td><td class="num">81.8</td><td class="num">94.3</td></tr>
+    <tr><td>Duo（課程結束後）</td><td class="num">—</td><td class="num">—</td><td class="num">122.4</td><td class="num">63.3</td></tr>
+    <tr class="hl"><td>Duo++ k = 2</td><td class="num">30.0</td><td class="num">25.2</td><td class="num">121.9</td><td class="num">63.4</td></tr>
+    <tr><td>Duo++ k = 3</td><td class="num">30.1</td><td class="num">25.3</td><td class="num">121.9</td><td class="num">63.4</td></tr>
+    <tr><td>Duo++ k = 5</td><td class="num">30.2</td><td class="num">25.4</td><td class="num">121.9</td><td class="num">63.4</td></tr>
+  </tbody></table></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">case 1、2 的 $\tilde Z$ 各含幾個未抽樣項？峰值記憶體與吞吐變化？</p>
+    <p class="a">case 1：$K-k-1$ 個，另加 $e^{\tilde w/\tau}$；case 2：$K-k$ 個；94.3→63.4 GiB，81.8→121.9 samples/s，OWT PPL 25.2→25.2（$k=2$）。</p>
+  </div></details>
+</section>
+
+<!-- S12 -->
+<section class="ch" id="impl" data-toc="12" data-tt="實作與常見錯誤">
+  <div class="ch-num">12 · 實作與常見錯誤</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="tscroll" tabindex="0" role="region" aria-label="取樣設定"><table class="stack"><caption>作者推薦的 Ψ-sampler 設定</caption>
+    <thead><tr><th>任務</th><th>κ schedule</th><th>其他</th></tr></thead><tbody>
+    <tr><td>OpenWebText（§5.1.1）</td><td>rescale，η = 0.05（κ 約 0.90–0.95，隨 t 變化）</td><td>nucleus p = 0.9、log-linear、線性遞減的 t、64-bit logits</td></tr>
+    <tr><td>CIFAR-10，Duo++（§5.1.2）</td><td>κ = 0.95，t ∈ [0.1, 0.5] 或 [0.1, 0.6]，其餘 1</td><td>cosine schedule、不用 nucleus</td></tr>
+    <tr><td>CIFAR-10，MDLM（§5.1.2）</td><td>κ = 0.99，t ∈ [0.1, 1.0]，其餘 1</td><td>cosine schedule、不用 nucleus</td></tr>
+  </tbody></table></div>
+  <ol class="rl">
+    <li><div>把式 (12) 的 $x$ 換成 $x_\theta$ 後仍宣稱邊際正確：§3 與 Suppl. A.2 的保證只對真 posterior (11) 成立。</div></li>
+    <li><div>在 MDM 套用 $q_{0|t}=x_\theta$ 卻沒有 carry-over：已解開位置的 $x_\theta$ 必須等於 $z_t$。</div></li>
+    <li><div>把 cap schedule 直接套到 USDM：最後幾步 $\kappa_t\lt0$，$\Psi$ 可能有負分量。</div></li>
+    <li><div>照式 (14) 後的文字設定 δ：case 寫反，以式 (41)(42)、Algo. 3 為準；式 (43) 的 $\mu$ 少了 $/\tau$。</div></li>
+    <li><div>以 B.1.4 的「$K-i+1$」實作遞迴：應為 Prop. B.4、Algo. 1 的 $N-i$，且 $N=K-1$（乾淨座標另抽）。</div></li>
+    <li><div>依 §3 原文把 $q_t$ 當校正項：式 (11) 與 Fig. 2 用的是 $q_s$。normalizer 不在 log 空間計算會溢位。</div></li>
+  </ol>
+</section>
+
+<!-- S13 -->
+<section class="ch" id="history" data-toc="13" data-tt="研究脈絡">
+  <div class="ch-num">13 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>本文接在幾條脈絡之後：Gaussian 擴散的 predictor-corrector 取樣（Song et al., 2020）；離散擴散與 CTMC 框架及其校正器（D3PM、Campbell et al., 2022、SEDD、Discrete Flow Matching）；masked diffusion 的 MDLM 與 uniform-state 擴散的 guidance 研究（2024）；MDM 的 remasking 取樣器 ReMDM（2025）；以及把 USDM 連到 Gaussian 擴散的 Duo（2025）。本文把 ReMDM 推廣到任意先驗，並改良 Duo 的課程學習。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S14 -->
+<section class="ch" id="next" data-toc="14" data-tt="限制與延伸">
+  <div class="ch-num">14 · 限制與延伸</div>
+  <h2>限制、NELBO 與延伸閱讀</h2>
+  <div class="prose">
+    <p>限制：論文沒有給可取樣的式 (12) 的收斂保證或誤差界；$\kappa_t$ 需要逐任務調整，選錯會比 ancestral 差（Suppl. D.1）；語言實驗的增益伴隨 unigram entropy 下降，影像實驗的超參數直接在 FID 上挑選；USDM 的 likelihood 仍不如 MDM（Table 2）。</p>
+    <p>NELBO（Suppl. A.3，式 17–20）：Ψ 也能寫出 reconstruction 項、prior 項與各步 KL 之和的上界，prior 項依定義為 0。論文明說它「not directly relevant for sampling」；所有實驗都用既有 checkpoint，Ψ-sampler 不引入可學習的元件（§6）。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="psi-samplers-lineage-hub.html">Ψ-Samplers 的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="psi-discrete-diffusion-interpolating-process.html">離散擴散的 interpolating 前向過程與 masked／uniform 兩種 prior</a><span>背景</span></div></li>
+    <li><div><a href="psi-ctmc-discrete-diffusion-samplers.html">連續時間離散擴散（CTMC）與其採樣器</a><span>背景</span></div></li>
+    <li><div><a href="psi-predictor-corrector-gaussian-to-discrete.html">Predictor-corrector 採樣器：從 Gaussian SDE 到 ReMDM</a><span>前作</span></div></li>
+    <li><div><a href="psi-uniform-state-guidance-and-self-correction.html">Uniform-state 擴散、guidance 與自我修正</a><span>動機</span></div></li>
+    <li><div><a href="psi-duo-curriculum-background.html">Duo 與 Gaussian 鬆弛課程學習：論文第 4 節的前置</a><span>課程學習</span></div></li>
+    <li><div><a href="psi-superposition-posteriors-method.html">Ψ-posterior 與 Ψ-sampler：以 κ_t 疊加前向與反向 posterior</a><span>本論文</span></div></li>
+    <li><div><a href="diffusion-duality.html">The Diffusion Duality（Duo）互動教學</a><span>站內</span></div></li>
+    <li><div><a href="discrete-diffusion-foundations-d3pm.html">離散擴散的基礎：D3PM、Diffusion-LM 與 DiffusionBERT</a><span>站內</span></div></li>
+    <li><div><a href="mdlm-masked-diffusion-objective.html">MDLM：遮罩式擴散的訓練目標</a><span>站內</span></div></li>
+    <li><div><a href="dlm-remasking-self-correction.html">DLM 的 remask 式迭代修正與自我修正</a><span>站內</span></div></li>
+    <li><div><a href="uniform-noise-gidd-clean-supervision.html">均勻噪聲、GIDD 與是否監督乾淨 token</a><span>站內</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Justin Deschenaux, Caglar Gulcehre, Subham Sekhar Sahoo. The Diffusion Duality, Chapter II: Ψ-Samplers. ICLR 2026. <a href="https://arxiv.org/abs/2602.21185">arXiv:2602.21185</a>.</p>
+  <p>本頁的方程式與數字取自論文 v2；標示「本頁推導」的內容為本頁自行推導，「推定」與「示意」為本頁為了計算或示範而選的設定，皆非論文結論。W1–W4 的讀數在瀏覽器中即時計算，不重現論文的實驗。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
