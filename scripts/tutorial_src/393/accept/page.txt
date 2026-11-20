@@ -1,0 +1,776 @@
+擴散對偶 Duo
+
+跳到內容
+
+ No. 393
+ The Diffusion Duality：高斯擴散與均勻狀態離散擴散
+
+00 摘要01 兩種離散雜訊02 USDM 的定義03 arg max 的邊際04 運算子 T05 對偶06 路徑07 兩個定理08 Duo 的損失09 課程學習10 確定性軌跡11 DCD 蒸餾12 實驗結果13 實作14 研究脈絡15 限制與延伸
+
+00摘要
+01兩種離散雜訊
+02USDM 的定義
+03arg max 的邊際
+04運算子 T
+05對偶
+06路徑
+07兩個定理
+08Duo 的損失
+09課程學習
+10確定性軌跡
+11DCD 蒸餾
+12實驗結果
+13實作
+14研究脈絡
+15限制與延伸
+
+ No. 393 · 互動教學 · arXiv 2506.10892 · ICML 2025
+
+ 擴散對偶：對高斯擴散取 arg max，每個時刻的分布就是均勻狀態離散擴散
+
+ 這篇論文證明兩種擴散在每個時刻的分布上相連，並據此把高斯擴散的技巧移植到離散文字模型。
+
+ Subham Sekhar Sahoo、Justin Deschenaux、Aaron Gokaslan、Guanghan Wang、Justin Chiu、Volodymyr Kuleshov（2025）〈The Diffusion Duality〉，方法名 Duo
+
+ 01 · 一個對應把一個詞寫成長度 K 的向量：這個詞的位置是 1，其餘是 0。在每個位置加上獨立的高斯雜訊，再取數值最大的位置當作新的詞。新詞的分布是：以某個機率保留原詞，否則在 K 個詞中均勻挑一個。一種逐步把詞換成隨機詞的生成模型（均勻狀態離散擴散）在每個時刻的分布正是這個形式。
+
+ 02 · 一個限定這個對應保證的是每個時刻的分布相同。若把一條連續加雜訊的過程逐時刻取最大位置，得到的詞序列不一定符合那種模型逐步替換詞的規則。
+
+ 03 · 兩個應用論文據此做了兩件事：訓練時先讓網路看到加雜訊向量的平滑版本，再換回離散的詞；以及把生成所需的步數由 1024 減到 16（品質相當）或 8（輸出的多樣性略降）。困惑度衡量模型對測試文字的預測，越低越好：用這些做法的模型在 LM1B 上訓練 51 萬步時為 35.2，低於前一個同類模型 UDLM 訓練 100 萬步的 36.7。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · 兩種離散雜訊
+
+ 文字擴散有遮罩與均勻兩種雜訊
+
+ 文字由 token 組成。詞表有 K $K$ 個 token，每個 token 寫成長度 K $K$ 的 one-hot 向量：該 token 的位置是 1，其餘是 0。所有 one-hot 向量構成的集合記為 V $\mathcal V$ 。乾淨的 token 記為 x∈V $x\in\mathcal V$ ，它等於 1 的索引記為 m $m$ 。Cat(⋅;π) $\mathrm{Cat}(\cdot;\pi)$ 表示機率向量為 π $\pi$ 的類別分布（categorical distribution），1 $\mathbf 1$ 是全為 1 的向量。
+
+ 擴散模型（diffusion model）先定義一個前向過程：隨時間 t $t$ 從 0 增加到 1，逐步把資料換成雜訊；再訓練一個網路學習反向過程，從雜訊逐步還原資料。離散的文字擴散有兩種主要的雜訊（§2.1）：
+
+ 遮罩式離散擴散（masked diffusion model，MDM）：每個 token 要嘛保持原樣，要嘛變成一個特殊的 mask token；變成 mask 之後就一直是 mask。反向過程中，token 一旦從 mask 揭露成某個詞，就不再改變。
+
+ 均勻狀態離散擴散（uniform-state diffusion model，USDM）：每個 token 要嘛保持原樣，要嘛被換成詞表中任一個 token，機率相同。反向過程中，token 可以在每一步被更新。
+
+ 兩者的差別在先驗（時間 t=1 $t=1$ 時的分布）。MDM 的先驗是 mask token，token 揭露後不再改變；USDM 的先驗是 K $K$ 個詞的均勻分布 1/K $\mathbf 1/K$ ，每個 token 在反向過程中可以被反覆更新（§2.1）。論文把 USDM 的這個性質稱為自我修正（self-correction）：後面的步驟可以改掉前面產生的錯誤 token，不需要額外的 predictor-corrector 步驟。
+
+ 論文 Fig. 5 用同一句話比較四種生成方式：
+
+ Fig. 5 的四種生成過程（文字重述）
+ 方式token 如何出現
+
+ 自迴歸（AR）由左到右一次產生一個 token，產生後不再修改
+
+ MDM每步揭露若干個 mask，揭露後固定
+
+ USDM所有位置從隨機詞開始，每個 token 可以經過多個中間詞
+
+ PDDT $P_{DDT}$ ​從隨機詞開始，但每個 token 翻轉一次後就固定（第 10 章解釋）
+
+ USDM 雖然可以修改 token，困惑度卻一直落後 AR 與 MDM：在 LM1B 上，先前最好的 USDM（UDLM）為 36.7，MDLM 為 31.8，AR 為 22.8（Table 1）。本論文要縮小這個差距。
+
+ 符號表（第 1–3 章）
+
+ 符號意義
+
+ K $K$ 詞彙大小（類別數）
+
+ V $\mathcal V$ 所有 one-hot 向量的集合
+
+ x $x$ 、m $m$ 乾淨 token 的 one-hot 向量、它等於 1 的索引
+
+ Cat(⋅;π) $\mathrm{Cat}(\cdot;\pi)$ 、1 $\mathbf 1$ 類別分布、全 1 向量
+
+ t∈[0,1] $t\in[0,1]$ 擴散時間；t=0 $t=0$ 接近資料，t=1 $t=1$ 為先驗
+
+ zt $z_t$ ​、αt $\alpha_t$ ​離散潛變數（one-hot）、離散擴散參數
+
+ wt $w_t$ ​、α~t $\tilde\alpha_t$ t​、σ~t $\tilde\sigma_t$ t​高斯潛變數、高斯擴散參數、σ~t=1−α~t2 $\tilde\sigma_t=\sqrt{1-\tilde\alpha_t^2}$ t​=1−α~t2​​
+
+ ϕ $\phi$ 、Φ $\Phi$ 標準常態分布的機率密度與累積分布函數
+
+ 延伸閱讀：離散擴散：遮罩式與均勻狀態、自我修正與 predictor-corrector
+
+ 02 · USDM 的定義
+
+ 均勻狀態擴散由每個時刻的分布與反向後驗定義
+
+ 先區分兩個概念。邊際（marginal）是單一時刻的隨機變數 zt $z_t$ ​ 的分布，其他時刻都被積分掉；路徑（path）是多個時刻 (zs,zt,zu,… ) $(z_s,z_t,z_u,\dots)$ ​,zt​,zu​,…) 的聯合分布，描述 token 如何從一個時刻變到下一個時刻。兩個過程可以在每個時刻有相同的邊際，路徑卻不同。第 6 章會用到這個區別。
+
+ 論文採用 Sahoo et al. (2024a) 的「插值式」寫法，直接寫出以 x $x$ 為條件的邊際：
+
+ qt(⋅∣x;αt)=Cat(⋅; αtx+(1−αt)π) $q_t(\cdot\mid x;\alpha_t)=\mathrm{Cat}\big(\cdot;\ \alpha_t x+(1-\alpha_t)\pi\big)$ ​(⋅∣x;αt​)=Cat(⋅; αt​x+(1−αt​)π)
+(1)
+
+ 其中 π $\pi$ 是先驗分布，也就是 t=1 $t=1$ 時的分布：MDM 取 mask token 的 one-hot 向量，USDM 取均勻分布 π=1/K $\pi=\mathbf 1/K$ 。擴散參數 αt∈[0,1] $\alpha_t\in[0,1]$ ​∈[0,1] 隨 t $t$ 嚴格遞減，α0≈1 $\alpha_0\approx1$ ​≈1、α1≈0 $\alpha_1\approx0$ ​≈0。對 USDM 而言，(1) 的意思是：在時刻 t $t$ ，token 以機率 αt $\alpha_t$ ​ 保留原詞，否則在 K $K$ 個詞中均勻挑一個（可能挑回原詞）。
+
+ 邊際隨時間的變化是一個線性常微分方程（ODE）：ddtqt=Qtqt $\frac{d}{dt}q_t=Q_tq_t$ d​qt​=Qt​qt​（(2)），Qt $Q_t$ ​ 是 K×K $K\times K$ 的矩陣。第 5 章會用這個方程式判斷一個過程是不是 USDM。
+
+ 速率矩陣與正負號
+
+ (3) 把 USDM 的速率矩陣印成 Qt=+αt′Kαt[11⊤−KIK] $Q_t=+\frac{\alpha_t'}{K\alpha_t}[\mathbf 1\mathbf 1^\top-KI_K]$ ​=+Kαt​αt′​​[11⊤−KIK​]。直接對 (1) 微分得 ddtqt=αt′(x−1/K)=−αt′Kαt[11⊤−KI]qt $\frac{d}{dt}q_t=\alpha_t'(x-\mathbf 1/K)=-\frac{\alpha_t'}{K\alpha_t}[\mathbf 1\mathbf 1^\top-KI]q_t$ d​qt​=αt′​(x−1/K)=−Kαt​αt′​​[11⊤−KI]qt​本頁推導，與論文的 (12)、(36) 同號；此時非對角元素 −αt′/(Kαt)>0 $-\alpha_t'/(K\alpha_t)\gt0$ ′​/(Kαt​)>0，是合法的速率。本頁採用負號版本。
+
+ 生成時要從 zt $z_t$ ​ 走到較早的時刻 zs $z_s$ ​（s<t $s\lt t$ ）。已知 x $x$ 時，真實的反向後驗為（αt∣s=αt/αs $\alpha_{t|s}=\alpha_t/\alpha_s$ ​=αt​/αs​）：
+
+ qs∣t(⋅∣zt,x)=Cat(⋅; [t]Kαtzt⊙x+(αt∣s−αt)ztKαt⟨zt,x⟩+1−αt+(αs−αt)x+(1−αt∣s)(1−αs)1/KKαt⟨zt,x⟩+1−αt) $q_{s|t}(\cdot\mid z_t,x)=\mathrm{Cat}\Big(\cdot;\ \begin{aligned}[t]&\tfrac{K\alpha_t z_t\odot x+(\alpha_{t|s}-\alpha_t)z_t}{K\alpha_t\langle z_t,x\rangle+1-\alpha_t}\\&+\tfrac{(\alpha_s-\alpha_t)x+(1-\alpha_{t|s})(1-\alpha_s)\mathbf 1/K}{K\alpha_t\langle z_t,x\rangle+1-\alpha_t}\Big)\end{aligned}$ ​(⋅∣zt​,x)=Cat(⋅; [t]​Kαt​⟨zt​,x⟩+1−αt​Kαt​zt​⊙x+(αt∣s​−αt​)zt​​+Kαt​⟨zt​,x⟩+1−αt​(αs​−αt​)x+(1−αt∣s​)(1−αs​)1/K​)​
+(4)
+
+ (4) 就是貝氏定理 q(zs∣zt,x)∝q(zt∣zs) q(zs∣x) $q(z_s\mid z_t,x)\propto q(z_t\mid z_s)\,q(z_s\mid x)$ ​∣zt​,x)∝q(zt​∣zs​)q(zs​∣x) 正規化後的結果本頁推導（本頁以 2000 組隨機數驗證，相差小於 10−12 $10^{-12}$ ）。
+
+ 邊際是單一時刻 zt $z_t$ ​ 的分布，路徑是多個時刻的聯合分布。USDM 的邊際是 Cat(αtx+(1−αt)1/K) $\mathrm{Cat}(\alpha_tx+(1-\alpha_t)\mathbf 1/K)$ ​x+(1−αt​)1/K)，即 (1) 取 π=1/K $\pi=\mathbf 1/K$ 。生成時 x $x$ 未知，所以用網路的預測 xθ(zt,t) $x_\theta(z_t,t)$ ​(zt​,t) 代入真實後驗 (4)，得到模型的反向核 ps∣tθ(⋅∣zt)=qs∣t(⋅∣zt,x=xθ(zt,t)) $p^\theta_{s|t}(\cdot\mid z_t)=q_{s|t}(\cdot\mid z_t,x=x_\theta(z_t,t))$ θ​(⋅∣zt​)=qs∣t​(⋅∣zt​,x=xθ​(zt​,t))（(5)）；取樣從 z1∼1/K $z_1\sim\mathbf 1/K$ ​∼1/K 開始，逐步抽 zs∼ps∣tθ $z_s\sim p^\theta_{s|t}$ ​∼ps∣tθ​，稱為 ancestral sampling。
+
+ 訓練目標是負證據下界（negative evidence lower bound，NELBO）(6)。NELBO 是 −log⁡pθ(x) $-\log p_\theta(x)$ ​(x) 的上界，由每個時刻「真實後驗與模型後驗之間的 KL 散度」累加而成；訓練就是把它變小。語言模型報告的困惑度（perplexity，PPL）是它的指數，所以擴散模型的 PPL 是上界。(6) 中的被積函數 f $f$ 在第 8 章展開。
+
+ 03 · arg max 的邊際
+
+ 對 one-hot 加高斯雜訊再取 arg max，得到「保留或均勻替換」的分布
+
+ 現在換一個完全不同的過程。把高斯雜訊直接加在 one-hot 向量 x $x$ 上（不是加在 embedding 上，§6）：
+
+ q~t(⋅∣x;α~t)=N(α~tx, (1−α~t2)IK) $\tilde q_t(\cdot\mid x;\tilde\alpha_t)=\mathcal N\big(\tilde\alpha_t x,\ (1-\tilde\alpha_t^2)I_K\big)$ ​t​(⋅∣x;α~t​)=N(α~t​x, (1−α~t2​)IK​)
+(7)
+
+ α~t $\tilde\alpha_t$ t​ 是高斯擴散參數，隨 t $t$ 遞減；記 σ~t=1−α~t2 $\tilde\sigma_t=\sqrt{1-\tilde\alpha_t^2}$ t​=1−α~t2​​，所以 wt=α~tx+σ~tϵ $w_t=\tilde\alpha_tx+\tilde\sigma_t\epsilon$ ​=α~t​x+σ~t​ϵ，ϵ∼N(0,IK) $\epsilon\sim\mathcal N(0,I_K)$ ​)。arg max 運算把一個實數向量映到它最大座標對應的 one-hot 向量。對 wt $w_t$ ​ 取 arg max 得到 zt=arg⁡max⁡(wt)∈V $z_t=\arg\max(w_t)\in\mathcal V$ ​=argmax(wt​)∈V。一個隨機變數經過函數映射後的分布稱為推前（pushforward），記為 [arg⁡max⁡]⋆q~t $[\arg\max]_\star\tilde q_t$ ​q~​t​。
+
+ 問題是：zt $z_t$ ​ 的分布是什麼？x $x$ 的第 m $m$ 個座標是 1，所以 wm∼N(α~,σ~2) $w_m\sim\mathcal N(\tilde\alpha,\tilde\sigma^2)$ ​∼N(α~,σ~2)，其餘 wi≠m∼N(0,σ~2) $w_{i\ne m}\sim\mathcal N(0,\tilde\sigma^2)$ =m​∼N(0,σ~2)，彼此獨立（(24)(25)）。m $m$ 成為 arg max 的條件是其餘 K−1 $K-1$ 個座標都比 wm $w_m$ ​ 小。令 ϕ $\phi$ 、Φ $\Phi$ 為標準常態分布的密度與累積分布函數，ϕ(z)=e−z2/2/2π $\phi(z)=e^{-z^2/2}/\sqrt{2\pi}$ /2/2π​，A.1 的推導得到
+
+ px:=P(arg⁡max⁡(w)=x)=∫−∞∞ϕ(z−α~1−α~2) ΦK−1(z) dz $\begin{aligned}p_x&:=P(\arg\max(w)=x)\\&=\int_{-\infty}^{\infty}\phi\Big(z-\frac{\tilde\alpha}{\sqrt{1-\tilde\alpha^2}}\Big)\,\Phi^{K-1}(z)\,dz\end{aligned}$ ​​:=P(argmax(w)=x)=∫−∞∞​ϕ(z−1−α~2​α~​)ΦK−1(z)dz​
+(28)
+
+ A.1 的三個步驟
+
+ (1) 各座標的分布：wm∼N(α~,σ~2) $w_m\sim\mathcal N(\tilde\alpha,\tilde\sigma^2)$ ​∼N(α~,σ~2)，wi≠m∼N(0,σ~2) $w_{i\ne m}\sim\mathcal N(0,\tilde\sigma^2)$ =m​∼N(0,σ~2)（(24)(25)）。(2) 其餘座標的最大值 Z=max⁡i≠mwi $Z=\max_{i\ne m}w_i$ =m​wi​ 的累積分布為各自累積分布的乘積：P(Z<l)=ΦK−1(l/σ~) $P(Z\lt l)=\Phi^{K-1}(l/\tilde\sigma)$ (l/σ~)（(27)）。(3) P(arg⁡max⁡=m)=∫P(Z<l) 1σ~ϕ(l−α~σ~)dl $P(\arg\max=m)=\int P(Z\lt l)\,\tfrac1{\tilde\sigma}\phi\big(\tfrac{l-\tilde\alpha}{\tilde\sigma}\big)dl$ 1​ϕ(σ~l−α~​)dl，代換 z=l/σ~ $z=l/\tilde\sigma$ 即得 (28)。其餘 K−1 $K-1$ 個索引的分布相同，所以機率相等，各為 (1−px)/(K−1) $(1-p_x)/(K-1)$ ​)/(K−1)（(29)(30)），向量形式為 (32)。
+
+ 注意：論文在 (11) 下方與 A.1 Part 3 把 ϕ $\phi$ 印成 e−z2/2π $e^{-z^2}/\sqrt{2\pi}$ /2π​，這不是機率密度；A.1 Part 2 與 A.3 寫成 e−z2/2/2π $e^{-z^2/2}/\sqrt{2\pi}$ /2/2π​。本頁所有計算用後者，下方的模擬也只與後者相符。
+
+ 正確類別成為 arg max 的機率是 px=∫ϕ(z−α~/σ~)ΦK−1(z)dz $p_x=\int\phi(z-\tilde\alpha/\tilde\sigma)\Phi^{K-1}(z)dz$ ​=∫ϕ(z−α~/σ~)ΦK−1(z)dz（(28)）。其餘 K−1 $K-1$ 類對稱，各為 (1−px)/(K−1) $(1-p_x)/(K-1)$ ​)/(K−1)。整個分布因此可以寫成 Cat(a x+(1−a)1/K) $\mathrm{Cat}(a\,x+(1-a)\mathbf 1/K)$ ，其中保留係數 a=(Kpx−1)/(K−1) $a=(Kp_x-1)/(K-1)$ ​−1)/(K−1)；這與 USDM 的邊際 (1) 同形。
+
+ W1arg max 的邊際：模擬與 (28)
+
+ 假設：正確詞為第 0 類；ε 的 K 個座標獨立、服從標準常態；每次 20000 個樣本。拖動 α~ $\tilde\alpha$ 與 K $K$ ，比較模擬頻率與 (28) 的理論值。
+
+ 正確詞（模擬）其他詞（模擬）理論值 ± 2 標準誤
+
+ 類別數 K $K$ 5
+
+ α~ $\tilde\alpha$ 0.60
+
+ 重新抽樣seed 7
+
+ σ~ $\tilde\sigma$ 0.8000
+
+ α~/σ~ $\tilde\alpha/\tilde\sigma$ /σ~0.7500
+
+ 保留係數 a $a$ 0.2655
+
+ 理論 px $p_x$ ​0.4124
+
+ 理論 其他類（各）0.1469
+
+ 模擬 px $p_x$ ​0.4142
+
+ 模擬 其他類平均0.1465
+
+ 最大偏離（標準誤）2.32
+
+ 互動元件需要 JavaScript。預設值（K = 5、α~ = 0.60、seed 7）：理論 p_x = 0.4124，模擬 p_x = 0.4142。
+
+ 讀數由本頁依 (28) 以數值積分即時計算；模擬用固定 seed 的 mulberry32 與 Box–Muller。標準誤 SE = √(p(1−p)/20000)；約 95% 的長條會落在理論值 ± 2SE 之內。
+
+ 04 · 運算子 T
+
+ 保留係數就是運算子 T(α~) $T(\tilde\alpha)$ )，詞表越大越集中在 α~≈1 $\tilde\alpha\approx1$ ≈1
+
+ 論文把第 3 章的保留係數 a $a$ 寫成 α~t $\tilde\alpha_t$ t​ 的函數，稱為 Diffusion Transformation 運算子 T $T$ （§3.1）：
+
+ T(α~t)=KK−1[∫−∞∞ϕ(z−α~t1−α~t2)ΦK−1(z) dz−1K] $\begin{aligned}T(\tilde\alpha_t)=\frac{K}{K-1}\Big[&\int_{-\infty}^{\infty}\phi\Big(z-\frac{\tilde\alpha_t}{\sqrt{1-\tilde\alpha_t^2}}\Big)\Phi^{K-1}(z)\,dz\\&-\frac1K\Big]\end{aligned}$ t​)=K−1K​[​∫−∞∞​ϕ(z−1−α~t2​​α~t​​)ΦK−1(z)dz−K1​]​
+(11)
+
+ 於是 zt∼Cat(T(α~t)x+(1−T(α~t))1/K) $z_t\sim\mathrm{Cat}\big(T(\tilde\alpha_t)x+(1-T(\tilde\alpha_t))\mathbf 1/K\big)$ ​∼Cat(T(α~t​)x+(1−T(α~t​))1/K)（(10)）：高斯擴散參數 α~t $\tilde\alpha_t$ t​ 經過 T $T$ 變成離散擴散參數 αt=T(α~t) $\alpha_t=T(\tilde\alpha_t)$ ​=T(α~t​)。
+
+ T(α~) $T(\tilde\alpha)$ ) 就是第 3 章的保留係數 a $a$ ，寫成 (11)。它有幾個性質本頁推導：α~=0 $\tilde\alpha=0$ =0 時積分等於 1/K $1/K$ ，所以 T(0)=0 $T(0)=0$ ；α~→1 $\tilde\alpha\to1$ →1 時 T→1 $T\to1$ ；T $T$ 只依賴訊雜比 α~/σ~ $\tilde\alpha/\tilde\sigma$ /σ~ 與 K $K$ ；K=2 $K=2$ 時有封閉式 T=erf(α~/(2σ~)) $T=\mathrm{erf}(\tilde\alpha/(2\tilde\sigma))$ /(2σ~))（α~=0.6 $\tilde\alpha=0.6$ =0.6 時為 0.4041）。K $K$ 越大，曲線越靠近 α~=1 $\tilde\alpha=1$ =1：K=30522 $K=30522$ 時 T(0.85)=0.0077 $T(0.85)=0.0077$ 、T(0.97)=0.4523 $T(0.97)=0.4523$ 。
+
+ 原因是 K $K$ 大時，K−1 $K-1$ 個雜訊座標中的最大值也大，正確座標要贏過它需要更高的訊雜比。論文因此說，K=30K $K=30K$ 時只要 α~t∈[0.85,1] $\tilde\alpha_t\in[0.85,1]$ t​∈[0.85,1]，T $T$ 就幾乎涵蓋 [0,1] $[0,1]$ （§4.1.2、C.7）。
+
+ W2aT(α~) $T(\tilde\alpha)$ ) 曲線
+
+ 假設：T 依 (11) 以數值積分計算，φ 用 e−z²/2/√(2π)。選擇 K $K$ 、拖動 α~ $\tilde\alpha$ 讀出 T $T$ ；細灰線是 K=2 $K=2$ 的參考曲線。
+
+ 類別數 K $K$ 
+23101001000BERT 30522GPT-2 50257
+
+ α~ $\tilde\alpha$ 0.600−＋
+
+ 放大 0.8–1.0
+
+ α~ $\tilde\alpha$ 0.600
+
+ σ~ $\tilde\sigma$ 0.8000
+
+ α~/σ~ $\tilde\alpha/\tilde\sigma$ /σ~0.7500
+
+ T(α~) $T(\tilde\alpha)$ )0.1838
+
+ P(z=x) $P(z=x)$ 0.2654
+
+ 互動元件需要 JavaScript。預設值（K = 10、α~ = 0.6）：T = 0.1838。
+
+ 讀數由本頁依 (11) 即時計算：梯形法，z ∈ [−10, 12]、步長 0.005，z > 12 的部分以解析尾項補上；方括號內直接計算 ∫[φ(z−μ)−φ(z)]ΦK−1(z)dz 以避免相減造成的誤差（本頁推導）。BERT 與 GPT-2 的詞彙數 30522、50257 為 tokenizer 的公開值，論文沒有寫出。
+
+ 05 · 對偶
+
+ arg max 後的分布滿足均勻狀態擴散的 ODE
+
+ 邊際的形式對了還不夠。作者接著檢查這個邊際隨時間的變化是否也是 USDM 的變化（A.2）。記 Pt=βt1+(1−Kβt)x $P_t=\beta_t\mathbf 1+(1-K\beta_t)x$ ​=βt​1+(1−Kβt​)x，其中 βt $\beta_t$ ​ 是每個錯誤類別的機率。對 t $t$ 微分並整理，得到
+
+ ddtPt=−T′(α~t)K T(α~t) [11⊤−KIK] Pt $\frac{d}{dt}P_t=-\frac{T'(\tilde\alpha_t)}{K\,T(\tilde\alpha_t)}\,[\mathbf 1\mathbf 1^\top-KI_K]\,P_t$ d​Pt​=−KT(α~t​)T′(α~t​)​[11⊤−KIK​]Pt​
+(12)
+
+ 由 (32) 到 (12) 的推導
+
+ ddtPt=βt′(1−Kx) $\frac{d}{dt}P_t=\beta_t'(\mathbf 1-Kx)$ d​Pt​=βt′​(1−Kx)。關鍵恆等式是 [11⊤−KI]Pt=(1−Kβt)(1−Kx) $[\mathbf 1\mathbf 1^\top-KI]P_t=(1-K\beta_t)(\mathbf 1-Kx)$ −KI]Pt​=(1−Kβt​)(1−Kx)，所以 ddtPt=βt′1−Kβt[11⊤−KI]Pt $\frac{d}{dt}P_t=\frac{\beta_t'}{1-K\beta_t}[\mathbf 1\mathbf 1^\top-KI]P_t$ d​Pt​=1−Kβt​βt′​​[11⊤−KI]Pt​（(33)）。代入 αt=1−Kβt $\alpha_t=1-K\beta_t$ ​=1−Kβt​（βt′=−αt′/K $\beta_t'=-\alpha_t'/K$ ′​=−αt′​/K）得 ddtPt=−αt′Kαt[11⊤−KI]Pt $\frac{d}{dt}P_t=-\frac{\alpha_t'}{K\alpha_t}[\mathbf 1\mathbf 1^\top-KI]P_t$ d​Pt​=−Kαt​αt′​​[11⊤−KI]Pt​（(36)）；再令 αt=T(α~t) $\alpha_t=T(\tilde\alpha_t)$ ​=T(α~t​) 即 (12)，其中 T′ $T'$ 是對 t $t$ 的導數。本頁以 K=5 $K=5$ 、α~t=1−t $\tilde\alpha_t=1-t$ t​=1−t 用有限差分檢查：t=0.2 $t=0.2$ 、0.4、0.6 時，兩邊的正確類別分量都是 −1.459504、−0.625977、−0.381713本頁推導。
+
+ (12) 與第 2 章的 USDM 方程式（取負號版本）形式相同，擴散參數是 T(α~t) $T(\tilde\alpha_t)$ t​)。作者把結論寫成
+
+ qt(zt∣x; T(α~t))=[arg⁡max⁡]⋆ q~t(wt∣x; α~t) $q_t\big(z_t\mid x;\,T(\tilde\alpha_t)\big)=[\arg\max]_\star\,\tilde q_t\big(w_t\mid x;\,\tilde\alpha_t\big)$ ​(zt​∣x;T(α~t​))=[argmax]⋆​q~​t​(wt​∣x;α~t​)
+(13)
+
+ 除了邊際的形式，作者還驗證了 arg max 後的邊際隨時間滿足 USDM 的線性 ODE (12)，擴散參數為 T(α~t) $T(\tilde\alpha_t)$ t​)。結論寫成 (13)：qt(⋅∣x;T(α~t))=[arg⁡max⁡]⋆q~t(⋅∣x;α~t) $q_t(\cdot\mid x;T(\tilde\alpha_t))=[\arg\max]_\star\tilde q_t(\cdot\mid x;\tilde\alpha_t)$ ​(⋅∣x;T(α~t​))=[argmax]⋆​q~​t​(⋅∣x;α~t​)，即兩者在每個時刻的邊際相同。作者稱之為 Diffusion Duality。
+
+ 作者把邊際 (35) 與 ODE (36) 稱為 USDM 的「unique signatures」。(36) 其實可以由 (35) 直接微分得到本頁推導，不是獨立的條件。
+
+ 這個結果的用途是：凡是只依賴「每個時刻的邊際」的量，例如 NELBO 中對 zt $z_t$ ​ 取的期望，都可以改用高斯潛變數 wt $w_t$ ​ 計算。第 9 章的課程學習就建立在這一點上。
+
+ 延伸閱讀：Duo 的 arg max 對偶：Diffusion Transformation 與兩個定理
+
+ 06 · 路徑
+
+ 對偶只在邊際上成立，軌跡不一定是離散擴散
+
+ 第 5 章的結論是每個時刻的邊際相同。路徑呢？把一條高斯軌跡 {wt} $\{w_t\}$ ​} 逐點取 arg max，得到的 {zt} $\{z_t\}$ ​} 是不是 USDM 的 Markov 鏈？作者在 A.3 比較兩個轉移核。高斯擴散從 ws $w_s$ ​ 到 wt $w_t$ ​（s<t $s\lt t$ ）的轉移為
+
+ wt∣ws∼N(α~t∣sws, (1−α~t∣s2)IK),α~t∣s=α~t/α~s $\begin{aligned}w_t\mid w_s&\sim\mathcal N\big(\tilde\alpha_{t|s}w_s,\ (1-\tilde\alpha_{t|s}^2)I_K\big),\\ \tilde\alpha_{t|s}&=\tilde\alpha_t/\tilde\alpha_s\end{aligned}$ ​∣ws​α~t∣s​​∼N(α~t∣s​ws​, (1−α~t∣s2​)IK​),=α~t​/α~s​​
+(37)
+
+ USDM 從 zs $z_s$ ​ 到 zt $z_t$ ​ 的轉移為 Cat(αt∣szs+(1−αt∣s)1/K) $\mathrm{Cat}(\alpha_{t|s}z_s+(1-\alpha_{t|s})\mathbf 1/K)$ ​zs​+(1−αt∣s​)1/K)（(38)），所有「不是 zs $z_s$ ​」的類別機率相等。給定整個 ws $w_s$ ​ 時，arg⁡max⁡(wt)=i $\arg\max(w_t)=i$ ​)=i 的機率是
+
+ P(arg⁡max⁡(wt)=i∣ws)=∫∏j≠iΦ(l−α~t∣s(ws)jς)⋅1ς ϕ(l−α~t∣s(ws)iς) dl $\begin{aligned}&P(\arg\max(w_t)=i\mid w_s)\\&=\int\prod_{j\ne i}\Phi\Big(\frac{l-\tilde\alpha_{t|s}(w_s)_j}{\varsigma}\Big)\\&\qquad\cdot\frac{1}{\varsigma}\,\phi\Big(\frac{l-\tilde\alpha_{t|s}(w_s)_i}{\varsigma}\Big)\,dl\end{aligned}$ ​P(argmax(wt​)=i∣ws​)=∫j=i∏​Φ(ςl−α~t∣s​(ws​)j​​)⋅ς1​ϕ(ςl−α~t∣s​(ws​)i​​)dl​
+(39)
+
+ 其中 ς=1−α~t∣s2 $\varsigma=\sqrt{1-\tilde\alpha_{t|s}^2}$ t∣s2​​。這個機率依賴 ws $w_s$ ​ 的每個座標。非最大的類別要機率相等，必須它們在 ws $w_s$ ​ 中的座標相等，這件事的機率是 0。所以一般而言 qt∣s(⋅∣zs)≠[arg⁡max⁡]⋆q~t∣s(⋅∣ws) $q_{t|s}(\cdot\mid z_s)\ne[\arg\max]_\star\tilde q_{t|s}(\cdot\mid w_s)$ ​(⋅∣zs​)=[argmax]⋆​q~​t∣s​(⋅∣ws​)（(40)）。論文的結論措辭是「does not necessarily follow a discrete diffusion process」（A.3），§3.1 寫「might not」。
+
+ 這個論證以整個 ws $w_s$ ​ 為條件：它說明下一步的 token 不是只由 zs $z_s$ ​ 決定，但沒有直接檢查 z $z$ 序列本身。本頁另外做了以 z $z$ 為條件的模擬本頁推導：K=3 $K=3$ 、α~ $\tilde\alpha$ 依序為 0.9、0.6、0.3，沿 (37) 模擬 40 萬條高斯軌跡並取 arg max。結果 P(zt=zs∣zs=x)=0.5915 $P(z_t=z_s\mid z_s=x)=0.5915$ ​=zs​∣zs​=x)=0.5915、P(zt=zs∣zs≠x)=0.4573 $P(z_t=z_s\mid z_s\ne x)=0.4573$ ​=zs​∣zs​=x)=0.4573，而 USDM 的 (38) 對兩者都給 0.6109。再往下一步，zt≠x $z_t\ne x$ ​=x 時 zu=zt $z_u=z_t$ ​=zt​ 的機率在 zs=zt $z_s=z_t$ ​=zt​ 時為 0.5104、zs≠zt $z_s\ne z_t$ ​=zt​ 時為 0.4792，依賴更早的 zs $z_s$ ​，所以這個 z $z$ 序列也不是 Markov 鏈。也就是說，在這個例子中離散化的高斯軌跡確實不是 USDM 鏈，只是理由與 A.3 的論證不同。
+
+ 另一方面，若把 (39) 對 ws∼q~s(⋅∣x) $w_s\sim\tilde q_s(\cdot\mid x)$ ​∼q~​s​(⋅∣x) 取平均，結果會回到時刻 t $t$ 的邊際（本頁以 1500 個樣本得到 (0.5590, 0.2215, 0.2194)，理論值 (0.5593, 0.2203, 0.2203)）本頁推導：個別路徑不是 USDM，但每個時刻的分布是。
+
+ 所以，逐點取 arg max 的高斯軌跡不一定是 USDM 的 Markov 鏈。論文說明，給定整個 ws $w_s$ ​ 時下一步的機率 (39) 依賴 ws $w_s$ ​ 的每個座標，而 USDM 的轉移 (38) 只依賴 zs $z_s$ ​，兩者一般不相等 (40)；這個論證以 ws $w_s$ ​ 為條件，論文的結論措辭是「不一定」。本頁以 z $z$ 為條件的模擬也得到不相等的轉移機率（0.5915、0.4573 對 0.6109）。
+
+ W3給定 ws 時的下一步：(39) 與 (38)
+
+ 假設：K = 3；條件是整個向量 ws $w_s$ ​（不只是 zs $z_s$ ​）；高斯轉移依 (37)，離散轉移依 (38)，αt∣s=T(α~t)/T(α~s) $\alpha_{t|s}=T(\tilde\alpha_t)/T(\tilde\alpha_s)$ ​=T(α~t​)/T(α~s​)。調整 ws $w_s$ ​ 的三個座標與兩個時刻。
+
+ 高斯軌跡取 arg max（給定 w_s）USDM 轉移（給定 z_s）
+
+ 非 z_s 的兩類：高斯 0.2963 與 0.1399，USDM 都是 0.1946。
+
+ (1.2, 0.6, 0)(1.2, 0, 0.6)非最大座標相等
+
+ (ws)1 $(w_s)_1$ ​)1​1.20
+
+ (ws)2 $(w_s)_2$ ​)2​0.60
+
+ (ws)3 $(w_s)_3$ ​)3​0.00
+
+ α~s $\tilde\alpha_s$ s​0.90
+
+ α~t $\tilde\alpha_t$ t​0.60
+
+ α~t∣s $\tilde\alpha_{t|s}$ t∣s​0.6667
+
+ αt∣s $\alpha_{t|s}$ ​0.4163
+
+ zs $z_s$ ​第 1 類
+
+ 高斯機率總和1.000000
+
+ 總變異距離（給定 ws $w_s$ ​）0.1018
+
+ 互動元件需要 JavaScript。預設值：高斯 (0.5638, 0.2963, 0.1399)，USDM (0.6109, 0.1946, 0.1946)，總變異距離 0.1018。
+
+ 讀數由本頁依 (39)（代換 u = (l − c_i)/s 後以梯形法在 u ∈ [−9, 9]、步長 0.01 積分）與 (38) 即時計算；T 依 (11)。總變異距離 ½Σ|P−Q| 是給定 w_s 的差距（本頁推導）。
+
+ 本頁用語
+
+ 本頁說「對偶」時，一律指每個時刻的邊際相同。不說「離散擴散就是高斯擴散取 arg max」而不加限定。
+
+ 07 · 兩個定理
+
+ 兩個定理：構造出的離散取樣器存在，且其概似不低於對應的高斯取樣器
+
+ Theorem 3.1（§3.2、A.4）：給定一個高斯反向過程 pˉθ $\bar p^\theta$ ​θ，存在一個離散反向核 (15)，使所有時刻都有 ptθ=[arg⁡max⁡]⋆pˉtθ $p^\theta_t=[\arg\max]_\star\bar p^\theta_t$ θ​=[argmax]⋆​pˉ​tθ​（(14)）。證明的前提是高斯先驗 pˉ1=N(0,IK) $\bar p_1=\mathcal N(0,I_K)$ ​1​=N(0,IK​)（由對稱性，它的推前是 1/K $\mathbf 1/K$ ），(15) 需要除以 ptθ(zt) $p^\theta_t(z_t)$ θ​(zt​)；所謂的歸納步驟實質上是一步邊際化 (43)。A.4 另外令 (5) 與 (15) 相等，解出對應的離散 denoiser (44)，但沒有證明解出的 xθ $x_\theta$ ​ 落在機率單體內。這個構造沒有在實驗中實作，論文把它列為未來工作（§7.2）。
+
+ Theorem 3.2（§3.2、A.5）：記 pdataθ $p^\theta_{data}$ θ​、pˉdataθ $\bar p^\theta_{data}$ ​dataθ​ 為 Theorem 3.1 構造出的離散與高斯取樣器所給出的資料分布，則
+
+ Ex∼qdatalog⁡pdataθ(x)≥ Ex∼qdatalog⁡pˉdataθ(x) $\begin{aligned}&\mathbb E_{x\sim q_{data}}\log p^\theta_{data}(x)\\&\ge\ \mathbb E_{x\sim q_{data}}\log\bar p^\theta_{data}(x)\end{aligned}$ ​Ex∼qdata​​logpdataθ​(x)≥ Ex∼qdata​​logpˉ​dataθ​(x)​
+(16)
+
+ 證明使用 data-processing inequality（(46)）：對兩個分布做同一個處理（這裡是 arg max）之後，它們的差異不會變大；再加上 qdata $q_{data}$ ​ 只在 one-hot 向量上有機率，所以 [arg⁡max⁡]⋆qdata=qdata $[\arg\max]_\star q_{data}=q_{data}$ ​qdata​=qdata​。
+
+ 閱讀這個定理時要注意三點。(a) 它比較的是一對構造出的取樣器的邊際概似，不是 ELBO；Fig. 1 圖說寫成 ELBO。(b) 實際訓練的 Duo 直接以離散 NELBO 訓練離散 denoiser，不是 Theorem 3.1 的構造。(c) qdata $q_{data}$ ​ 是 one-hot 上的機率質量函數，pˉdataθ $\bar p^\theta_{data}$ ​dataθ​ 是 RK $\mathbb R^K$ 上的密度，前者對後者不絕對連續，所以 DKL(qdata∥pˉdataθ)=+∞ $D_{KL}(q_{data}\Vert\bar p^\theta_{data})=+\infty$ ​(qdata​∥pˉ​dataθ​)=+∞，照原式這個不等式沒有提供資訊本頁推導。本頁因此把它稱為動機性論證。
+
+ Thm 3.2 比較的是 Thm 3.1 構造的離散與高斯取樣器在真實資料下的邊際概似：離散的不低於高斯的（(16)）。它不是 ELBO 的比較，而且照原式 pmf 對密度的 KL 為無限大，屬動機性論證。作者據此在離散潛變數上定義模型，並用離散 NELBO 訓練與評估（§3.2 末段）。
+
+ 08 · Duo 的損失
+
+ Duo 的損失是 UDLM 損失的等價改寫
+
+ NELBO 是 −log⁡pθ(x) $-\log p_\theta(x)$ ​(x) 的上界，由各時刻後驗的 KL 散度累加而成，PPL 是它的指數。Duo 用的 (17) 對每個固定的 (zt,x) $(z_t,x)$ ​,x) 都等於 UDLM 的 (49)，是不需要建構 xˉ $\bar x$ 的代數改寫；論文用兩式評估同一個模型，都得到 PPL 33.7（A.6）。
+
+ 以下定義本章的符號：xˉ=Kαtx+(1−αt)1 $\bar x=K\alpha_tx+(1-\alpha_t)\mathbf 1$ =Kαt​x+(1−αt​)1，xˉθ=Kαtxθ+(1−αt)1 $\bar x_\theta=K\alpha_tx_\theta+(1-\alpha_t)\mathbf 1$ θ​=Kαt​xθ​+(1−αt​)1，i $i$ 是 zt $z_t$ ​ 的索引，m $m$ 是 x $x$ 的索引，κt=(1−αt)/(Kαt+1−αt) $\kappa_t=(1-\alpha_t)/(K\alpha_t+1-\alpha_t)$ ​=(1−αt​)/(Kαt​+1−αt​)。UDLM（Schiff et al. 2025）的 NELBO 被積函數為
+
+ f=−αt′Kαt[Kxˉi−K(xˉθ)i−∑jxˉjxˉilog⁡(xˉθ)i xˉj(xˉθ)j xˉi] $\begin{aligned}f=-\frac{\alpha_t'}{K\alpha_t}\Big[&\frac{K}{\bar x_i}-\frac{K}{(\bar x_\theta)_i}\\&-\sum_j\frac{\bar x_j}{\bar x_i}\log\frac{(\bar x_\theta)_i\,\bar x_j}{(\bar x_\theta)_j\,\bar x_i}\Big]\end{aligned}$ ​αt′​​[​xˉi​K​−(xˉθ​)i​K​−j∑​xˉi​xˉj​​log(xˉθ​)j​xˉi​(xˉθ​)i​xˉj​​]​
+(49)
+
+ 計算它需要建構 xˉ $\bar x$ 。Duo 改寫為
+
+ fDuo=−αt′Kαt[Kxˉi−K(xˉθ)i−(κt1zt=x+1zt≠x)∑jlog⁡(xˉθ)i(xˉθ)j−Kαt1−αtlog⁡(xˉθ)i(xˉθ)m 1zt≠x−((K−1)κt1zt=x−1κt1zt≠x)log⁡κt] $\begin{aligned}f_{Duo}=-\frac{\alpha_t'}{K\alpha_t}\Big[&\frac{K}{\bar x_i}-\frac{K}{(\bar x_\theta)_i}\\&-(\kappa_t\mathbb 1_{z_t=x}+\mathbb 1_{z_t\ne x})\sum_j\log\frac{(\bar x_\theta)_i}{(\bar x_\theta)_j}\\&-K\frac{\alpha_t}{1-\alpha_t}\log\frac{(\bar x_\theta)_i}{(\bar x_\theta)_m}\,\mathbb 1_{z_t\ne x}\\&-\Big((K-1)\kappa_t\mathbb 1_{z_t=x}-\frac{1}{\kappa_t}\mathbb 1_{z_t\ne x}\Big)\log\kappa_t\Big]\end{aligned}$ ​=−Kαt​αt′​​[​xˉi​K​−(xˉθ​)i​K​−(κt​1zt​=x​+1zt​=x​)j∑​log(xˉθ​)j​(xˉθ​)i​​−K1−αt​αt​​log(xˉθ​)m​(xˉθ​)i​​1zt​=x​−((K−1)κt​1zt​=x​−κt​1​1zt​=x​)logκt​]​
+(17)
+
+ 由 (49) 拆成 (17)
+
+ xˉ $\bar x$ 只有兩種值：xˉm=Kαt+1−αt $\bar x_m=K\alpha_t+1-\alpha_t$ m​=Kαt​+1−αt​，其餘 1−αt $1-\alpha_t$ ​。所以比值 xˉj/xˉi $\bar x_j/\bar x_i$ j​/xˉi​ 只會是 1 $1$ 、κt $\kappa_t$ ​ 或 1/κt $1/\kappa_t$ ​。把 (49) 的和拆成 ∑j(xˉj/xˉi)log⁡((xˉθ)i/(xˉθ)j) $\sum_j(\bar x_j/\bar x_i)\log((\bar x_\theta)_i/(\bar x_\theta)_j)$ ​(xˉj​/xˉi​)log((xˉθ​)i​/(xˉθ​)j​) 與 ∑j(xˉj/xˉi)log⁡(xˉj/xˉi) $\sum_j(\bar x_j/\bar x_i)\log(\bar x_j/\bar x_i)$ ​(xˉj​/xˉi​)log(xˉj​/xˉi​) 兩項，再分 zt=x $z_t=x$ ​=x（i=m $i=m$ ，比值在 j≠m $j\ne m$ =m 為 κt $\kappa_t$ ​）與 zt≠x $z_t\ne x$ ​=x（比值在 j=m $j=m$ 為 1/κt $1/\kappa_t$ ​、其餘為 1，且 1/κt−1=Kαt/(1−αt) $1/\kappa_t-1=K\alpha_t/(1-\alpha_t)$ ​−1=Kαt​/(1−αt​)）兩種情形整理，就得到 (17)本頁推導。
+
+ 本頁即時計算：K = 7、α = 0.37、α′ = −1，x 的索引 m = 2，xθ 由固定 seed 產生
+ 情形f（(49)）f_Duo（(17)）相差
+
+ zt = x（i = 2）−1.7499022162−1.74990221622.2e-16
+
+ zt ≠ x（i = 4）−1.6870330826−1.68703308264.4e-16
+
+ zt ≠ x（i = 0）−2.2488799387−2.24887993870
+
+ 上表依 (49)、(17) 原式計算，兩式的差只在浮點誤差的量級；當 xθ=x $x_\theta=x$ ​=x 時兩式都是 0。表中的值是負的，原因是正負號慣例：若 αt′ $\alpha_t'$ ′​ 取 dαt/dt $d\alpha_t/dt$ ​/dt（小於 0），(49) 照印恆小於或等於 0（本頁以 20000 組隨機情形確認），而 KL 速率應大於或等於 0；若把 αt′ $\alpha_t'$ ′​ 讀作 −dαt/dt $-d\alpha_t/dt$ ​/dt，(3)、(17)、(49) 都合理，但 (12)、(36) 又多一個負號本頁推導。這個不一致不影響 (17) 與 (49) 相等。
+
+ 論文稱 (17) 為 Rao-Blackwellized，並說它降低變異（A.6）。從上面的推導看，它是 (49) 的逐點等價改寫，沒有對任何期望做解析積分。Table 3 中去掉 (17) 後 PPL 由 35.0 變為 36.7，但這一列是重新訓練的 UDLM（「Reduces to UDLM」），差距可能還包含其他實作差異；論文沒有說明這 1.7 的機制。
+
+ 序列的前向與反向過程都對每個 token 獨立分解，所以序列的 NELBO 是各 token 的 fDuo $f_{Duo}$ ​ 之和（(18)）。取樣用 USDM 的 ancestral sampling；論文另提出 Greedy-Tail：最後一步不抽樣，改取機率最大的 token，作用類似 nucleus sampling，會降低樣本的熵（§3.3）。
+
+ 09 · 課程學習
+
+ 課程學習先讓網路看 softmax，再換回 arg max
+
+ 課程學習（curriculum learning，Bengio et al. 2009）指依難度由易到難安排訓練。本文的做法分兩步（§4.1）。
+
+ 第一步：用高斯潛變數改寫 NELBO。由第 3–5 章，對 zt∼qt $z_t\sim q_t$ ​∼qt​ 取的期望可以換成對 wt∼q~t $w_t\sim\tilde q_t$ ​∼q~​t​ 取期望，只要令 zt:=arg⁡max⁡(wt) $z_t:=\arg\max(w_t)$ ​:=argmax(wt​)、αt:=T(α~t) $\alpha_t:=T(\tilde\alpha_t)$ ​:=T(α~t​)（(19)，B.1）。這一步只用到每個時刻的邊際，所以第 6 章的路徑問題不影響它。論文以 1000 個 antithetic 取樣的 t $t$ 驗證，兩種算法的 PPL 都是 33.7。
+
+ 第二步：鬆弛 arg max。arg⁡max⁡(w)=lim⁡τ→0+softmax(w/τ) $\arg\max(w)=\lim_{\tau\to0^+}\mathrm{softmax}(w/\tau)$ ​softmax(w/τ)（(20)），τ $\tau$ 是溫度。訓練時把 denoiser 的輸入換成 softmax(wtℓ/τ) $\mathrm{softmax}(w_t^\ell/\tau)$ ℓ​/τ)，損失仍是離散的 fDuo $f_{Duo}$ ​，時間 t $t$ 從區間 [β,γ] $[\beta,\gamma]$ 均勻抽取：
+
+ Ltrain= Ex, t∼U[β,γ], q~t∑ℓfDuo(ztℓ:=arg⁡max⁡(wtℓ),xθℓ([softmax(wtℓ′/τ)]ℓ′=1L,t),αt:=T(α~t); xℓ) $\begin{aligned}\mathcal L_{train}=\ &\mathbb E_{x,\,t\sim U[\beta,\gamma],\,\tilde q_t}\sum_{\ell}f_{Duo}\Big(z^\ell_t:=\arg\max(w^\ell_t),\\&x^\ell_\theta\big([\mathrm{softmax}(w^{\ell'}_t/\tau)]_{\ell'=1}^L,t\big),\\&\alpha_t:=T(\tilde\alpha_t);\ x^\ell\Big)\end{aligned}$ ​= ​Ex,t∼U[β,γ],q~​t​​ℓ∑​fDuo​(ztℓ​:=argmax(wtℓ​),xθℓ​([softmax(wtℓ′​/τ)]ℓ′=1L​,t),αt​:=T(α~t​); xℓ)​
+(21)
+
+ L $L$ 是序列長度，ℓ $\ell$ 是位置。denoiser 的第一層以 y⊤E $y^\top E$ E（E $E$ 是詞嵌入矩陣）計算 embedding，所以單體上的連續輸入會得到詞嵌入的凸組合（C.2）。作者的理由是：arg max 對微小擾動非常敏感，大部分訊號在離散化時遺失；softmax 保留 w $w$ 的數值資訊，讓還原較容易，τ $\tau$ 控制難度（§4.1.2）。這裡「易」指 τ $\tau$ 大。
+
+ (21) 只把 denoiser 的輸入由 arg⁡max⁡(wt) $\arg\max(w_t)$ ​) 換成 softmax(wt/τ) $\mathrm{softmax}(w_t/\tau)$ ​/τ)，損失仍是 fDuo $f_{Duo}$ ​。依 §5.1，前 500K 步 τ=0.001 $\tau=0.001$ 、t∼U[0.03,0.15] $t\sim U[0.03,0.15]$ ，之後 τ=0 $\tau=0$ 。τ>0 $\tau\gt0$ 時 (21) 不是合法的 NELBO（只有 τ→0+ $\tau\to0^+$ 且 β=0,γ=1 $\beta=0,\gamma=1$ 時才是），評估一律用 (18)。論文說 [0.03,0.15] $[0.03,0.15]$ 是為了讓 T∈[0.05,0.95] $T\in[0.05,0.95]$ ，但照 (11) 與 α~t=1−t $\tilde\alpha_t=1-t$ t​=1−t 計算並不成立。
+
+ 時間窗與式 (11) 不一致
+
+ C.7 的理由是：損失以 αt′ $\alpha_t'$ ′​ 加權，αt′≈0 $\alpha_t'\approx0$ ′​≈0 的時刻幾乎沒有訓練訊號，所以只取使 αt=T(α~t)∈[0.05,0.95] $\alpha_t=T(\tilde\alpha_t)\in[0.05,0.95]$ ​=T(α~t​)∈[0.05,0.95] 的時間；論文說這個區間對兩個 tokenizer 相近，都是 [β,γ]=[0.03,0.15] $[\beta,\gamma]=[0.03,0.15]$ ，並在 §5 寫 α~t=1−t $\tilde\alpha_t=1-t$ t​=1−t。照 (11) 計算，t∈[0.03,0.15] $t\in[0.03,0.15]$ 對應 α~∈[0.85,0.97] $\tilde\alpha\in[0.85,0.97]$ ∈[0.85,0.97]，K=30522 $K=30522$ 時 T $T$ 只從 0.0077 到 0.4523；要得到 T∈[0.05,0.95] $T\in[0.05,0.95]$ ，需要 α~∈[0.9238,0.9856] $\tilde\alpha\in[0.9238,0.9856]$ ∈[0.9238,0.9856]（K=50257 $K=50257$ 時為 [0.9299,0.9861] $[0.9299,0.9861]$ ）本頁推導。
+
+ 若把排程讀作 α~t2=1−t $\tilde\alpha_t^2=1-t$ t2​=1−t，t∈[0.03,0.15] $t\in[0.03,0.15]$ 對應 α~∈[0.9220,0.9849] $\tilde\alpha\in[0.9220,0.9849]$ ∈[0.9220,0.9849]，K=30522 $K=30522$ 時 T∈[0.0469,0.9337] $T\in[0.0469,0.9337]$ ，接近 [0.05, 0.95]；但 K=50257 $K=50257$ 時為 [0.0368,0.9190] $[0.0368,0.9190]$ ，較不吻合推定。這只是數值上的接近，論文沒有這樣寫。本頁無法判定筆誤在哪一處，下圖把三個區間都畫出來。
+
+ W2bT(α~) $T(\tilde\alpha)$ ) 與論文的訓練窗
+
+ 假設：T 依 (11) 以數值積分計算；三個區間帶（圖中一段 α~ $\tilde\alpha$ 範圍）都畫在同一條 α~ $\tilde\alpha$ 軸上；詞彙數為 tokenizer 的公開值，論文沒有寫出。A：論文所寫 α~t=1−t $\tilde\alpha_t=1-t$ t​=1−t、t∈[0.03,0.15] $t\in[0.03,0.15]$ 。A′：推定讀法 α~t2=1−t $\tilde\alpha_t^2=1-t$ t2​=1−t。B：照 (11) 使 T∈[0.05,0.95] $T\in[0.05,0.95]$ 。
+
+ 類別數 K $K$ 
+23101001000BERT 30522GPT-2 50257
+
+ α~ $\tilde\alpha$ 0.970−＋
+
+ 放大 0.8–1.0
+
+ T(α~) $T(\tilde\alpha)$ )0.4523
+
+ P(z=x) $P(z=x)$ 0.4523
+
+ A 兩端的 T0.0077、0.4523
+
+ A′ 兩端的 T0.0469、0.9337
+
+ B 的 α~ $\tilde\alpha$ 端點0.9238、0.9856
+
+ 互動元件需要 JavaScript。K = 30522：A = [0.85, 0.97] 的 T 為 0.0077 與 0.4523；A′ = [0.9220, 0.9849] 的 T 為 0.0469 與 0.9337；B = [0.9238, 0.9856]。
+
+ 讀數由本頁依 (11) 即時計算；B 的端點以二分法反解 T(α~) = 0.05 與 0.95。A′ 是本頁的推定讀法，不是論文的設定。
+
+ 排程與偏差–變異
+
+ §4.1 的文字說溫度「gradually decreased」，訓練一開始完全鬆弛；§5.1 給的實際設定則是兩段：前 500K 步 τ=0.001 $\tau=0.001$ 、[β,γ]=[0.03,0.15] $[\beta,\gamma]=[0.03,0.15]$ ，之後到 1M 步 τ=0 $\tau=0$ （純離散）。兩處描述不同，後 500K 步的 t $t$ 區間論文沒有寫；PPL 評估用 αt=1−t $\alpha_t=1-t$ ​=1−t。T $T$ 由預先算好的 100K 組 (α~t,T(α~t)) $(\tilde\alpha_t,T(\tilde\alpha_t))$ t​,T(α~t​)) 查表（§5），積分方法沒有說明。
+
+ Fig. 8 在 LM1B 上以固定 τ∈{0,0.001,0.01,0.1} $\tau\in\{0,0.001,0.01,0.1\}$ 訓練 150K 步：τ=0.1 $\tau=0.1$ 時損失急降，代表偏差過大；τ=0.001 $\tau=0.001$ 的損失接近 τ=0 $\tau=0$ ，變異明顯較低。Table 4（τ=0.001 $\tau=0.001$ ）中，變異最大的 100 個權重的梯度變異總和，有課程與無課程分別為：10K 步 0.30 與 11.7，100K 步 0.86 與 55.1，500K 步 1.15 與 1.92。論文沒有把「softmax 鬆弛」與「t $t$ 限制在 [β,γ] $[\beta,\gamma]$ 」兩個因素分開消融。
+
+ W5課程的輸入：softmax(w/τ)
+
+ 假設：一個 token；正確詞為第 0 類；ε 由固定 seed 產生，K 個座標獨立。結果只代表這一組 ε。調整 K $K$ 、α~ $\tilde\alpha$ 與溫度 τ $\tau$ 。
+
+ 類別數 K $K$ 
+8100030522
+
+ α~ $\tilde\alpha$ 0.90
+
+ log⁡10τ $\log_{10}\tau$ ​ττ = 0.100
+
+ τ = 0.001重新抽樣 εseed 3
+
+ arg max 是正確詞是
+
+ 差距 g=w0−max⁡j≠0wj $g=w_0-\max_{j\ne0}w_j$ ​−maxj=0​wj​1.0115
+
+ g/τ $g/\tau$ 10.1
+
+ px $p_x$ ​0.9999
+
+ pmax⁡ $p_{\max}$ ​0.9999
+
+ 熵 H $H$ （nats）0.0006
+
+ 互動元件需要 JavaScript。預設值（K = 8、α~ = 0.9、τ = 0.1、seed 3）：p_x = 0.9999，g = 1.0115。
+
+ 讀數由本頁依 (20) 即時計算；softmax 先減去最大值再取指數。K > 8 時圖中只畫正確詞與 w 最大的 7 個其他座標。
+
+ 輸入的軟硬由 g/τ $g/\tau$ 決定，g $g$ 是正確座標與最大雜訊座標的差。以這組 ε 為例，K=8 $K=8$ 、α~=0.9 $\tilde\alpha=0.9$ =0.9 時 τ=1 $\tau=1$ 的 px $p_x$ ​ 為 0.3891，τ=0.1 $\tau=0.1$ 時已是 0.9999。詞表大時，最大的雜訊座標變大，差距 g $g$ 變小：K=30522 $K=30522$ 、α~=0.9 $\tilde\alpha=0.9$ =0.9 時 arg max 甚至不是正確詞（g=−0.3832 $g=-0.3832$ ）；α~=0.97 $\tilde\alpha=0.97$ =0.97 時 g=0.2543 $g=0.2543$ ，τ=0.001 $\tau=0.001$ 下 g/τ≈254 $g/\tau\approx254$ ，輸入是 one-hot。這個元件不能回答「變異下降來自鬆弛還是時間窗」，因為論文沒有分開驗證。
+
+ 延伸閱讀：課程學習與 softmax 溫度鬆弛：Gumbel-Softmax、Concrete 到 Duo
+
+ 10 · 確定性軌跡
+
+ 已知真值的直線軌跡取 arg max，每個 token 至多翻轉一次
+
+ 高斯擴散除了隨機的反向取樣，還有一條確定性的常微分方程，稱為 probability-flow ODE（PF-ODE）：給定起點的雜訊，整條軌跡唯一決定。DDIM 是它的離散步，更新為 ws=α~sxθ(wt,t)+1−α~s2 ϵθ(wt,t) $w_s=\tilde\alpha_s x_\theta(w_t,t)+\sqrt{1-\tilde\alpha_s^2}\,\epsilon_\theta(w_t,t)$ ​=α~s​xθ​(wt​,t)+1−α~s2​​ϵθ​(wt​,t)（(57)），其中 ϵθ=(wt−α~txθ)/1−α~t2 $\epsilon_\theta=(w_t-\tilde\alpha_tx_\theta)/\sqrt{1-\tilde\alpha_t^2}$ ​=(wt​−α~t​xθ​)/1−α~t2​​。少步蒸餾方法需要這種確定性的「雜訊到資料」映射。
+
+ 問題是：訓練完的 Duo 只吃離散輸入（課程結束時 τ=0 $\tau=0$ ），不能拿來在高斯空間解 ODE。作者改假設 denoiser 完全正確，xθ=x $x_\theta=x$ ​=x。此時 (57) 退化為 ws=α~sx+1−α~s2 ϵ $w_s=\tilde\alpha_sx+\sqrt{1-\tilde\alpha_s^2}\,\epsilon$ ​=α~s​x+1−α~s2​​ϵ（(58)），整條 PF-ODE 軌跡就是 x $x$ 與固定雜訊 ϵ $\epsilon$ 的內插 {α~tx+1−α~t2ϵ}t $\{\tilde\alpha_tx+\sqrt{1-\tilde\alpha_t^2}\epsilon\}_t$ t​x+1−α~t2​​ϵ}t​（(59)）。逐點取 arg max 得到確定性的離散軌跡：
+
+ PDDT(x1:L,ϵ1:L)={[arg⁡max⁡(α~txℓ+1−α~t2 ϵℓ)]ℓ=1L}t∈[0,1] $\begin{aligned}&P_{DDT}(x^{1:L},\epsilon^{1:L})\\&=\Big\{\big[\arg\max(\tilde\alpha_tx^\ell+\sqrt{1-\tilde\alpha_t^2}\,\epsilon^\ell)\big]_{\ell=1}^{L}\Big\}_{t\in[0,1]}\end{aligned}$ ​PDDT​(x1:L,ϵ1:L)={[argmax(α~t​xℓ+1−α~t2​​ϵℓ)]ℓ=1L​}t∈[0,1]​​
+(22)
+
+ 固定 (x,ϵ) $(x,\epsilon)$ 時，除了正確類別 m $m$ 以外的座標都是 σ~tϵi $\tilde\sigma_t\epsilon_i$ t​ϵi​，其中最大的永遠是 j∗=arg⁡max⁡i≠mϵi $j^*=\arg\max_{i\ne m}\epsilon_i$ =argmaxi=m​ϵi​。所以 zt $z_t$ ​ 只會是 x $x$ 或第 j∗ $j^*$ 類；zt=x $z_t=x$ ​=x 的條件是 α~t/σ~t>Δ $\tilde\alpha_t/\tilde\sigma_t\gt\Delta$ t​/σ~t​>Δ，其中 Δ=ϵj∗−ϵm $\Delta=\epsilon_{j^*}-\epsilon_m$ ​−ϵm​本頁推導。訊雜比隨 t $t$ 單調變化，因此每個 token 至多翻轉一次，翻轉點在 α~=Δ/1+Δ2 $\tilde\alpha=\Delta/\sqrt{1+\Delta^2}$ =Δ/1+Δ2​；Δ≤0 $\Delta\le0$ 時 token 從頭到尾都是 x $x$ 。
+
+ 總結：PDDT $P_{DDT}$ ​ 的構造是假設 denoiser 完全正確（xθ=x $x_\theta=x$ ​=x），高斯 PF-ODE 軌跡變成 α~tx+σ~tϵ $\tilde\alpha_tx+\tilde\sigma_t\epsilon$ t​x+σ~t​ϵ，逐點取 arg max 得到 (22)。每個 token 至多改變一次，只在 x $x$ 與 arg⁡max⁡i≠mϵi $\arg\max_{i\ne m}\epsilon_i$ =m​ϵi​ 之間，翻轉點 α~=Δ/1+Δ2 $\tilde\alpha=\Delta/\sqrt{1+\Delta^2}$ =Δ/1+Δ2​。
+
+ A.7 也說明這只能取兩個值，類似 MDM 的 carry-over（揭露後沿用）；PDDT $P_{DDT}$ ​ 只在蒸餾時用來產生輸入，Duo 本身不是以這種方式生成。下圖並排比較 USDM 的 ancestral sampling 與 PDDT $P_{DDT}$ ​。
+
+ W4反向取樣中 token 的變動：USDM 與 PDDT
+
+ 假設：兩欄都使用已知真值的 denoiser（xθ=x $x_\theta=x$ ​=x），所以 USDM 最後一定得到目標句，真實模型的 xθ $x_\theta$ ​ 會出錯；USDM 用 αt=1−t $\alpha_t=1-t$ ​=1−t，PDDT $P_{DDT}$ ​ 用 α~t=1−t $\tilde\alpha_t=1-t$ t​=1−t；詞表 17 個詞。這個元件展示 token 能否被修改，不展示自我修正。
+
+ 步數 Tsteps $T_{\text{steps}}$ ​
+48163264
+
+ 第 n 步（t = 1 − n/Tsteps）0
+
+ 播放到結尾重新抽樣seed 7
+
+ USDM ancestral（已知真值的 denoiser）　總改變次數 15
+Really
+
+全程改變 2 次
+
+Through
+
+全程改變 3 次
+
+Data
+
+全程改變 4 次
+
+Want
+
+全程改變 3 次
+
+Other
+
+全程改變 3 次
+
+PDDT　總改變次數 4
+✓ Dual
+
+全程改變 0 次
+翻轉點 不翻轉
+
+Good
+
+全程改變 1 次
+翻轉點 α~* = 0.7845
+
+Dual
+
+全程改變 1 次
+翻轉點 α~* = 0.1217
+
+Question
+
+全程改變 1 次
+翻轉點 α~* = 0.9451
+
+Always
+
+全程改變 1 次
+翻轉點 α~* = 0.3204
+
+ 互動元件需要 JavaScript。預設值（16 步、seed 7）：USDM 各欄改變 2、3、4、3、3 次；P_DDT 各欄改變 0、1、1、1、1 次。
+
+ USDM 每步依 (4) 取樣；P_DDT 依 (22)，ε 由 seed + 1000 產生，翻轉點 α~* = Δ/√(1+Δ²)（本頁推導）。P_DDT 的第 0 步是對純雜訊取 arg max，ε 各座標同分布，所以起點在 17 個詞上均勻，與 USDM 的均勻起點一致。方塊標記 USDM 的改變，三角標記 P_DDT 的改變。
+
+ 以預設值（16 步、seed 7）為例，USDM 的五個 token 分別改變 2、3、4、3、3 次，PDDT $P_{DDT}$ ​ 分別改變 0、1、1、1、1 次。USDM 的改變次數隨步數增加（64 步時為 3、8、8、3、3），PDDT $P_{DDT}$ ​ 的翻轉點則與步數無關，因為 ϵ $\epsilon$ 固定。
+
+ 11 · DCD 蒸餾
+
+ 離散一致性蒸餾沿 PDDT 讓學生模仿教師
+
+ 知識蒸餾（knowledge distillation）讓一個學生模型（student）模仿教師模型（teacher）的輸出。consistency distillation（§2.3，(9)）的做法是：教師從較吵的 wt $w_t$ ​ 用 PF-ODE 走一步到較不吵的 ws $w_s$ ​，學生在 wt $w_t$ ​ 上直接輸出教師在 ws $w_s$ ​ 上的結果；學會之後，學生可以用較少的步數生成。
+
+ Discrete Consistency Distillation（DCD）把 PF-ODE 換成第 10 章的 PDDT $P_{DDT}$ ​。在同一條 PDDT $P_{DDT}$ ​ 上取相鄰兩點 (zs,zt) $(z_s,z_t)$ ​,zt​)，s=max⁡(t−δ,0) $s=\max(t-\delta,0)$ ，δ $\delta$ 是時間步長，讓學生看較吵的 zt $z_t$ ​，並最小化
+
+ LDCD(θ;θ−)=∑ℓDKL(xθℓ(zt1:L,t), xθ−ℓ(zs1:L,s)) $\begin{aligned}&\mathcal L_{DCD}(\theta;\theta^-)\\&=\sum_{\ell}D_{KL}\big(x^\ell_\theta(z^{1:L}_t,t),\ x^\ell_{\theta^-}(z^{1:L}_s,s)\big)\end{aligned}$ ​LDCD​(θ;θ−)=ℓ∑​DKL​(xθℓ​(zt1:L​,t), xθ−ℓ​(zs1:L​,s))​
+(23)
+
+ Algorithm 1 · Discrete Consistency Distillation（DCD）
+
+ 偽碼
+說明
+
+ for i = 1 to N do共 N $N$ 輪。
+
+ θ⁻ ← stopgrad(θ)每輪開始，教師設為目前的學生權重（上一輪結束時的學生）。
+
+ for j = 1 to M do每輪 M $M$ 步。
+
+ sample x, t ~ U[0,1], ε ~ N(0, I)抽資料、時間與每個位置的雜訊。
+
+ s ← max(t − δ, 0)較不吵的相鄰時刻。
+
+ z_s ← argmax(α~_s x + √(1−α~_s²) ε)PDDT $P_{DDT}$ ​ 在 s $s$ 的點。
+
+ z_t ← argmax(α~_t x + √(1−α~_t²) ε)同一個 ϵ $\epsilon$ 下 PDDT $P_{DDT}$ ​ 在 t $t$ 的點。
+
+ L ← KL(x_θ(z_t, t), x_θ⁻(z_s, s))學生在 zt $z_t$ ​ 的輸出逼近教師在 zs $z_s$ ​ 的輸出（(23)）。
+
+ θ ← θ − η∇θ L; θ_ema ← μθ_ema + (1−μ)θ更新學生，並維護 EMA 權重。
+
+ δ ← 2·δ每輪結束步長加倍。
+
+ return θ_ema輸出 EMA 權重。
+
+ 實驗設定（§5.2）：N=5 $N=5$ 輪、每輪 M=10K $M=10K$ 步、初始 δ=1/512 $\delta=1/512$ ，所以五輪的 δ $\delta$ 依序是 1/512、1/256、1/128、1/64、1/32本頁推導。
+
+ 依 Alg. 1，DCD 的教師是上一輪結束時的學生權重，不是 EMA；學生在較吵的 zt $z_t$ ​ 上以 KL 逼近教師在 zs $z_s$ ​（s=t−δ $s=t-\delta$ ）的輸出（(23)）；N=5 $N=5$ 輪、每輪 10K 步，δ $\delta$ 由 1/512 起每輪加倍（Alg. 1、§5.2）。B.2.2 與 Alg. 2 的對照組改用 EMA 權重當教師：B.2.2 的文字說是預訓練時得到的 EMA 權重，Alg. 2 的偽碼則是每輪取訓練中持續更新的 θema $\theta_{ema}$ ​；這個對照組的結果較差（Fig. 10、Table 6）。
+
+ DCD 沒有用教師去解 ODE，也沒有 (9) 中的加權 λ(t) $\lambda(t)$ 。它是「沿 PDDT $P_{DDT}$ ​ 相鄰兩點的輸出分布做 KL 對齊，並逐輪加倍步長」，結構上接近 SDTT（Deschenaux & Gulcehre 2024）。EMA 係數 μ $\mu$ 、Duo 蒸餾用的 batch 與學習率論文沒有寫明，只說與 SDTT 相同。
+
+ 延伸閱讀：從 consistency distillation 到 Discrete Consistency Distillation（DCD）
+
+ 12 · 實驗結果
+
+ Duo 在均勻狀態模型中困惑度最低；蒸餾後在 32 步以內勝過蒸餾的 MDLM
+
+ 先定義指標。PPL 是 NELBO 的指數，擴散模型的 PPL 是上界，越低越好。Gen PPL 是用 GPT-2 Large 評估模型生成文字的困惑度，越低代表生成的文字越流暢。entropy 是生成序列的平均熵（論文用語），越低代表多樣性越差；Gen PPL 可以靠降低多樣性壓低，所以兩者要一起看。Greedy-Tail 是第 8 章介紹的取樣器，最後一步取機率最大的 token。
+
+ 模型是 170M 參數的 DiT，在 LM1B（長度 128）與 OpenWebText（OWT，長度 1024）上訓練 1M 步；取樣實驗一律用 float64（§5）。
+
+ Table 1 摘錄：測試 PPL（↓，上界）。† 取自 Arriola et al.；‡ 重新訓練
+ 模型LM1B（無 packing）LM1BOWT
+
+ AR Transformer22.322.817.5
+
+ MDLM27.031.8†23.2
+
+ SEDD Absorb32.7–24.1
+
+ SEDD Uniform40.3–29.7
+
+ UDLM‡31.336.727.4
+
+ Duo29.933.725.2
+
+ Duo 在 LM1B 為 33.7、OWT 為 25.2，是表中均勻狀態與高斯擴散模型裡最低的。與 MDLM 的差距三欄依序為 2.9、1.9、2.0本頁推導；論文寫「below 2 PPL points」，嚴格小於 2 的只有中間一欄，而且那一欄的 MDLM 數字取自其他論文。訓練速度方面，Duo（課程加上 (17)）訓練 510K 步時 PPL 35.2，低於 UDLM 訓練 1M 步的 36.7，作者據此稱訓練加速至少 2 倍；但 Duo 去掉課程在 1M 步為 35.0，比 35.2 還低，所以「2 倍」沒有歸因到課程本身。消融（Table 3）：Duo 33.7，去掉課程 35.0，再去掉 (17)（即 UDLM）36.7。§7.1 建議無法調參時不使用課程。
+
+ Table 2 摘錄：zero-shot PPL（↓），以 OWT 訓練 1M 步
+ 模型PTBWikitextLM1BLambadaAG NewsPubmedArxiv
+
+ AR82.0525.7551.2551.2852.0949.0141.73
+
+ MDLM95.2632.8367.0147.5261.1541.8937.37
+
+ UDLM112.8239.4277.5953.5780.9650.9844.08
+
+ Duo89.3533.5773.8649.7867.8144.4840.39
+
+ Duo 在 Lambada、Pubmed、Arxiv 三個資料集勝過 AR（3/7），勝過 SEDD Absorb 4/7、勝過 MDLM 1/7（PTB）；MDLM 也在同樣三個資料集勝過 AR。未蒸餾時（Table 5），Duo 1024 步的 Gen PPL 為 77.69、entropy 5.55，8 步為 198.27；MDLM 分別為 104.85 與 830.82。
+
+ Table 7 摘錄：第 5 輪蒸餾後，ancestral 取樣的 Gen PPL（↓）
+ 步數Duo + DCDMDLM + SDTT
+
+ 8111.88193.05
+
+ 1675.2489.17
+
+ 3261.3162.29
+
+ 6455.8347.04
+
+ 102450.5536.89
+
+ 主要數字：Duo 的 PPL 在 LM1B 為 33.7、OWT 為 25.2（Table 1）。蒸餾 5 輪後，ancestral 取樣 16 步的 Gen PPL 為 75.24，已低於未蒸餾模型 1024 步的 77.69；Greedy-Tail 8 步為 69.58，但熵 5.30 較低。與 MDLM+SDTT 相比，步數 ≤ 32 時 Duo 較好，64 步以上落後（Table 7）。
+
+ 論文把前者稱為 64 倍加速（1024 到 16 步），後者稱為 128 倍（1024 到 8 步）。128 倍的比較對象是未蒸餾模型的 ancestral 1024 步（77.69、熵 5.55）；同樣用 Greedy-Tail 的未蒸餾模型 1024 步為 71.72、熵 5.22，可見 Greedy-Tail 本身就會降低熵。Fig. 12 顯示，SDTT 蒸餾的 MDLM 熵隨輪次下降，DCD 蒸餾的 Duo（Greedy-Tail）熵隨輪次上升。
+
+ 13 · 實作
+
+ 實作設定與常見錯誤
+
+ 訓練與蒸餾設定（§5、C.5、§5.2）
+ 項目設定
+
+ 模型170M 參數 DiT：12 層、hidden 768、12 heads、時間嵌入 128、旋轉位置編碼、adaLN
+
+ 最佳化AdamW，batch 512，lr 3e-4（warmup 2500 步），dropout 0.1，1M 步，8×H100，bfloat16
+
+ 資料LM1B：長度 128，bert-base-uncased；OWT：長度 1024，GPT-2；OWT 保留最後 100K 篇驗證
+
+ 課程前 500K 步 τ = 0.001、t ~ U[0.03, 0.15]；之後 τ = 0；α~t = 1 − t；後 500K 步的 t 區間論文未寫明
+
+ T 的計算預算 100K 組 (α~t, T(α~t)) 查表；積分方法論文未寫明
+
+ 評估PPL 用 (18)、αt = 1 − t、單一 t 的低差異取樣；取樣用 float64
+
+ DCDN = 5 輪、M = 10K 步、初始 δ = 1/512；EMA 係數 μ、batch、lr 論文未寫明（只說同 SDTT）
+
+ 常見錯誤
+
+ 用錯 φ。φ 是 e−z2/2/2π $e^{-z^2/2}/\sqrt{2\pi}$ /2/2π​，不是 (11) 下方印的 e−z2/2π $e^{-z^2}/\sqrt{2\pi}$ /2π​。
+
+ 弄錯速率矩陣的正負號。以 (12)、(36) 為準；(3)、(17)、(49) 的 αt′ $\alpha_t'$ ′​ 慣例與之相反。
+
+ 算 T 時下溢或相消。ΦK−1 $\Phi^{K-1}$ 以 exp⁡((K−1)log⁡Φ) $\exp((K-1)\log\Phi)$ 計算；方括號直接算 ∫[ϕ(z−μ)−ϕ(z)]ΦK−1dz $\int[\phi(z-\mu)-\phi(z)]\Phi^{K-1}dz$ dz（因為 ∫ϕ ΦK−1=1/K $\int\phi\,\Phi^{K-1}=1/K$ =1/K），不要先積分再減 1/K $1/K$ 本頁推導。
+
+ 直接套用時間窗。依「T(α~t)∈[0.05,0.95] $T(\tilde\alpha_t)\in[0.05,0.95]$ t​)∈[0.05,0.95]」的目的用 (11) 自行求區間，不要直接套 [0.03,0.15] $[0.03,0.15]$ 與 α~t=1−t $\tilde\alpha_t=1-t$ t​=1−t。論文只寫 tokenizer 名稱與「K = 30K」，沒給確切的 K $K$ ；若實作把詞表補齊到其他大小，T $T$ 會改變（T(0.97) $T(0.97)$ ：K=30522 $K=30522$ 為 0.4523，K=50257 $K=50257$ 為 0.4090）。
+
+ 把損失裡的 zt $z_t$ ​ 也換成 softmax。(21) 只換 denoiser 的輸入；損失的 zt $z_t$ ​ 仍是 arg max；τ>0 $\tau\gt0$ 時不是 NELBO。
+
+ 忘了後段改回離散。後 500K 步 τ=0 $\tau=0$ ；PPL 用 αt=1−t $\alpha_t=1-t$ ​=1−t 評估。
+
+ DCD 的教師與輸入弄反。依 Alg. 1，教師是上一輪的學生權重；每輪 δ $\delta$ 加倍；學生看較吵的 zt $z_t$ ​。
+
+ 把對偶用在轉移核。邊際相同不代表路徑相同（第 6 章）。
+
+ 引用論文中不一致的數字。Table 3 圖說與 §5.1 把課程標成「Alg. 1」（Alg. 1 是 DCD）；Fig. 13–16 圖說的數字與 Table 6–7 不完全一致（Fig. 15–16 的 79.24／5.25、42.46／5.25 是 Table 6 中 Alg. 2 的 Greedy-Tail 數字）；Fig. 12 把 DCD 寫成 CDC；C.7 首句說畫的是 α~t $\tilde\alpha_t$ t​，Fig. 6 畫的是 T(α~t) $T(\tilde\alpha_t)$ t​)。本頁只引用表格中的數字。
+
+ 14 · 研究脈絡
+
+ 研究脈絡
+
+ 本論文接在幾條研究線的交會處：擴散模型的起點（Sohl-Dickstein et al.）與高斯擴散（DDPM、score SDE、VDM）；離散擴散（D3PM、連續時間框架、SEDD、MDLM、UDLM）；以溫度 softmax 鬆弛 arg max 的技巧（Gumbel-Softmax、Concrete）；以及少步蒸餾（Progressive Distillation、Consistency Models、SDTT）。Duo 用 arg max 把前兩條線接起來，再把後兩條線的方法用到離散文字模型。每張卡片連到對應的研究筆記。
+
+ 高斯擴散離散擴散鬆弛蒸餾本文
+
+ 2015高斯擴散Deep Unsupervised Learning using Nonequilibrium Thermodynamics
+Sohl-Dickstein et al.
+擴散模型的出處
+arXiv ↗筆記
+2016鬆弛Categorical Reparameterization with Gumbel-Softmax
+Jang et al.
+以溫度 softmax 鬆弛 arg max；Duo 課程學習的技巧來源
+arXiv ↗筆記
+2016鬆弛The Concrete Distribution: A Continuous Relaxation of Discrete Random Variables
+Maddison et al.
+與 Gumbel-Softmax 同期的連續鬆弛
+arXiv ↗筆記
+2020高斯擴散Denoising Diffusion Probabilistic Models
+Ho et al.
+Gaussian diffusion 與 ϵ-parameterization
+arXiv ↗筆記
+2020高斯擴散Score-Based Generative Modeling through Stochastic Differential Equations
+Song et al.
+PF-ODE；確定性取樣的基礎
+arXiv ↗筆記
+2021離散擴散Structured Denoising Diffusion Models in Discrete State-Spaces
+Austin et al.
+D3PM；定義 uniform-state 離散擴散
+arXiv ↗筆記
+2021高斯擴散Variational Diffusion Models
+Kingma et al.
+以 SNR 導數表示的 NELBO
+arXiv ↗筆記
+2022離散擴散A Continuous Time Framework for Discrete Denoising Models
+Campbell et al.
+離散擴散連續時間框架與 predictor-corrector
+arXiv ↗筆記
+2022蒸餾Progressive Distillation for Fast Sampling of Diffusion Models
+Salimans & Ho
+Gaussian 擴散的少步蒸餾
+arXiv ↗筆記
+2023蒸餾Consistency Models
+Song et al.
+consistency distillation；DCD 的連續對應
+arXiv ↗筆記
+2023離散擴散Discrete Diffusion Modeling by Estimating the Ratios of the Data Distribution
+Lou et al.
+SEDD；Duo 的 USDM 基線
+arXiv ↗筆記
+2024離散擴散Simple and Effective Masked Diffusion Language Models
+Sahoo et al.
+MDLM；最強 MDM 基線
+arXiv ↗筆記
+2024蒸餾Beyond Autoregression: Fast LLMs via Self-Distillation Through Time
+Deschenaux & Gulcehre
+SDTT；MDM 的蒸餾基線
+arXiv ↗筆記
+2024離散擴散Simple Guidance Mechanisms for Discrete Diffusion Models
+Schiff et al.
+UDLM；Duo 的直接前身
+arXiv ↗筆記
+2025本文The Diffusion Duality
+Sahoo et al.
+本論文：arg max 對偶、課程學習、DCD
+arXiv ↗筆記
+
+ 15 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 論文列出的限制（§7.1）：課程有兩個超參數，溫度 τ $\tau$ 與課程長度；LM1B 與 OWT 用同一組設定，其他領域可能需要調整；無法調參時建議使用沒有課程的 Duo，它仍勝過先前的方法（Table 1、Table 3）。結論（§7）也承認 USDM 的困惑度仍落後 MDM，但在少步生成中較好。未來工作（§7.2）：以 Theorem 3.1 的 (15) 讓高斯潛變數持續累積分類器梯度，引導離散取樣器；以 (44) 把 ε 與 v 參數化帶進離散 denoiser。
+
+ 研究筆記（依閱讀順序）
+
+ Duo（The Diffusion Duality）的研究脈絡總覽總覽
+
+ Gaussian diffusion 的基礎：從 DDPM 到 PF-ODE借用技巧的來源
+
+ 離散擴散：遮罩式與均勻狀態（Duo 的背景）D3PM、SEDD、MDLM、UDLM
+
+ Duo 的 arg max 對偶：Diffusion Transformation 與兩個定理本論文的理論
+
+ 課程學習與 softmax 溫度鬆弛：Gumbel-Softmax、Concrete 到 Duo降低訓練變異
+
+ 從 consistency distillation 到 Discrete Consistency Distillation（DCD）少步取樣
+
+ 自我修正與 predictor-corrector：Duo 選擇 USDM 的理由為何選 USDM
+
+ 三種 corruption 與 dLLM 的發展：masked、uniform、Gaussian站內既有筆記
+
+ 離散擴散的基礎：D3PM、Diffusion-LM 與 DiffusionBERT站內既有筆記
+
+ MDLM：遮罩式擴散的訓練目標站內既有筆記
+
+ DLM 的 remask 式迭代修正與自我修正站內既有筆記
+
+ 專案頁：s-sahoo.com/duo
+
+ Subham Sekhar Sahoo, Justin Deschenaux, Aaron Gokaslan, Guanghan Wang, Justin Chiu, Volodymyr Kuleshov. The Diffusion Duality. ICML 2025 (PMLR 267). arXiv:2506.10892.
+
+ 本頁的方程式與數字取自論文 v3；標示「本頁推導」的內容為本頁自行推導或數值驗證，標示「推定」的內容為本頁的解讀，都不是論文結論。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記
