@@ -1,0 +1,186 @@
+
+<!-- S7 -->
+<section class="ch" id="guidance" data-toc="07" data-tt="無分類器引導">
+  <div class="ch-num">07 · 無分類器引導</div>
+  <h2>無分類器引導讓樣本集中在資料中報酬較高的部分</h2>
+  <div class="prose">
+    <p>要用擴散模型規劃，還要以軌跡的特性 $y(\tau)$ 為條件。一個做法是訓練分類器 $p_\phi(y(\tau)\mid x_k(\tau))$ 做分類器引導；但若 $y$ 是報酬，這等於估計 Q 函數，需要另一個複雜的動態規劃程序（Sec. 3.2）。另一個做法是直接以資料中的報酬訓練條件擴散模型；但資料由次佳軌跡組成，條件模型會混入次佳的行為（作者用語為 polluted）。作者因此使用無分類器引導加上低溫取樣，「取出資料中高概似的軌跡」，並發現這些軌跡對應資料中最好的行為（Sec. 3.2）。</p>
+    <p><b>訓練。</b>Sec. 3.4 同時訓練噪聲模型 $\epsilon_\theta$ 與逆動力學 $f_\phi$：</p>
+  </div>
+  <div class="eq"><div class="eq-m"><div class="wide-eq">$$\mathcal L(\theta,\phi):=\mathbb E_{k,\tau\in\mathcal D,\beta\sim\mathrm{Bern}(p)}\big[\|\epsilon-\epsilon_\theta(x_k(\tau),(1-\beta)y(\tau)+\beta\text{Ø},k)\|^2\big]+\mathbb E_{(s,a,s')\in\mathcal D}\big[\|a-f_\phi(s,s')\|^2\big]$$</div><div class="narrow-eq">$$\begin{aligned}\mathcal L(\theta,\phi):=\;&\mathbb E_{k,\tau,\beta}\big[\|\epsilon-\epsilon_\theta(x_k(\tau),\tilde y,k)\|^2\big]\\&+\mathbb E_{(s,a,s')\in\mathcal D}\big[\|a-f_\phi(s,s')\|^2\big],\\\tilde y:=\;&(1-\beta)\,y(\tau)+\beta\,\text{Ø},\quad\beta\sim\mathrm{Bern}(p)\end{aligned}$$</div></div><span class="eq-n">Sec. 3.4</span></div>
+  <div class="prose">
+    <p>每條軌跡抽噪聲 $\epsilon\sim\mathcal N(0,I)$ 與擴散步 $k\sim\mathcal U\{1,\dots,K\}$。$\beta\sim\mathrm{Bern}(p)$ 是伯努利變數（與排程無關）：以機率 $p$（App. B 取 $p=0.25$）把條件換成 Ø。因此同一個網路同時學到條件與無條件噪聲。條件 $y$ 是純量或 one-hot 向量，經多層感知器投影成 $z\in\mathbb R^h$；$y=\text{Ø}$ 時把 $z$ 的元素設為 0（Sec. 3.4）。逆動力學以單一轉移 $(s,a,s')$ 訓練，不需要整條軌跡。</p>
+    <p><b>取樣。</b>每個擴散步用引導後的噪聲預測：</p>
+  </div>
+  <div class="eq"><div class="eq-m"><div class="wide-eq">$$\hat\epsilon:=\epsilon_\theta(x_k(\tau),\text{Ø},k)+\omega\big(\epsilon_\theta(x_k(\tau),y(\tau),k)-\epsilon_\theta(x_k(\tau),\text{Ø},k)\big)$$</div><div class="narrow-eq">$$\begin{aligned}\hat\epsilon:=\;&\epsilon_\theta(x_k,\text{Ø},k)\\&+\omega\big(\epsilon_\theta(x_k,y,k)-\epsilon_\theta(x_k,\text{Ø},k)\big)\end{aligned}$$</div></div><span class="eq-n">Eq. 8</span></div>
+  <div class="prose">
+    <p>代入 Eq. 8 可得 <span class="tag">本頁推導</span>：$\omega=0$ 時 $\hat\epsilon$ 是無條件預測，$\omega=1$ 時是純條件預測；$\omega>1$ 把兩者的差放大。Alg. 1 第 7 行寫的 $\epsilon_\theta(x_k,k)$ 就是 $\epsilon_\theta(x_k,\text{Ø},k)$：同一個網路、條件輸入 Ø。論文的引導強度在 1.2、1.4、1.6、1.8 中依任務選擇（App. B，記為 $s$）。</p>
+  </div>
+  <details class="more"><summary>進階：ω 對應哪個分布（本頁推導）</summary><div class="prose" style="padding:0 20px 8px">
+    <p>把第 04 章的最佳預測器代入 Eq. 8，並用貝氏定理 $\nabla\log p_k(x\mid y)-\nabla\log p_k(x)=\nabla\log p_k(y\mid x)$：</p>
+    <p>$$\hat\epsilon=-\sqrt{1-\bar\alpha_k}\;\nabla_x\big[\log p_k(x)+\omega\log p_k(y\mid x)\big]$$</p>
+    <p>所以引導後的噪聲預測對應 $\log p_k(x)+\omega\log p_k(y\mid x)$ 的分數：$\omega>1$ 加強隱式分類器 $p_k(y\mid x)$。在 $k=0$ 這是 $p(x)\,p(y\mid x)^\omega$ 的分數；但各個擴散步的 $p_k(x)p_k(y\mid x)^\omega$ 一般不是同一個分布加噪後的結果，所以取樣結果不一定等於 $p(x)p(y\mid x)^\omega$。App. K 主張分類器引導（在這裡就是 Q 函數引導）與無分類器引導「理論上等價」，沒有證明，本頁未驗證；上式只在分數層面把兩者對應起來。</p>
+  </div></details>
+  <div class="prose">
+    <p>App. K 說明無分類器引導在實務上較好的兩點理由（作者的解釋）：條件模型在訓練時就專注於條件生成；離線資料學到的 Q 函數可能對資料中沒出現過的動作給出過高的估計，把擴散模型導向這些動作。</p>
+    <p><b>本頁的玩具。</b>瀏覽器中無法訓練 DD。本頁用答案已知的高斯混合分布當作「資料分布」：它的最佳噪聲預測有閉式解，可以當作訓練完美的 $\epsilon_\theta$。每條軌跡只用一個數 $x$ 表示（例如平均前進速度）；資料 $p(x)$ 由三種行為混合而成，中心為 0.25、0.55、0.85，比例 0.50、0.35、0.15，標準差都是 0.07：最好的行為最少。報酬標籤 $y=x+\eta$，$\eta$ 是標準差 0.25 的高斯雜訊，所以產生的樣本的期望報酬等於樣本 $x$ 的平均。這些數值都是本頁選的<span class="tag">推定</span>，玩具不重現論文的任何數字。排程取 cosine（$K=100$），反向變異數取 $\tilde\beta_k$<span class="tag">推定</span>：Diffuser 使用 cosine 排程，論文沒有寫 DD 的排程。</p>
+  </div>
+
+  <div class="plate" id="c1a">
+    <div class="plate-h"><span class="id">C1a</span><h3>引導強度 ω 把樣本移向高報酬區</h3><span class="tag toy">本頁玩具</span></div>
+    <p class="plate-lead">拖動 ω 與條件報酬 y。低溫係數固定為 α = 1（第 08 章再加入）。拖動中先以前 500 個樣本預覽，放開後以 2000 個樣本重算。</p>
+    <div class="pg side">
+      <div class="fig"><div id="c1a-fig"><svg role="img" aria-label="樣本直方圖"></svg></div>
+        <div class="legend"><span class="lg acc">樣本（直方圖）</span><span class="lg ref">資料 p(x)</span><span class="lg cref">p(x)·p(y|x)^ω</span></div></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1a-w">引導強度 ω <output id="c1a-wo"></output></label><input type="range" id="c1a-w" min="0" max="50" step="1" value="14"><span class="note small">論文範圍 1.2–1.8</span></div>
+        <div class="rng"><label class="lbl" for="c1a-y">條件報酬 y <output id="c1a-yo"></output></label><input type="range" id="c1a-y" min="0" max="20" step="1" value="20"></div>
+        <div class="ctl-row"><button class="small-btn" type="button" id="c1a-reset">回到預設</button></div>
+        <dl class="ro" id="c1a-read"></dl>
+        <p class="sr" id="c1a-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁的高斯混合玩具依閉式噪聲預測即時計算，不是論文的模型，也不重現論文數字。目標分布 p(x)·p(y|x)^ω 的閉式<span class="tag">本頁推導</span>：仍是三成分高斯混合，雜訊變異數換成 0.25²/ω。</p>
+  </div>
+  <div class="prose">
+    <p>本頁玩具中（y = 1）可以看到：ω = 0 時樣本接近資料分布（平均 0.4445，資料 0.4450），高報酬區（x &gt; 0.7）只占約 15%；ω 增大時樣本移向高報酬區，ω = 1、1.4、2、4 時比例為 0.6085、0.8065、0.9515、1.0000。ω = 1 時樣本近似 $p(x\mid y)$（平均 0.7407 對 0.7388；標準差 0.1605 略小於 0.1709，來自有限步數與反向變異數的選擇）。ω &gt; 1 時樣本比 $p(x)p(y\mid x)^\omega$ 更集中（ω = 2：標準差 0.0775 對 0.1171），符合上面「取樣結果不一定等於該分布」的推導。ω = 4 時樣本平均 0.9173，越過資料中最好行為的中心 0.85：引導太強時樣本離開資料的支撐。論文只說引導「取出資料中最好的部分」（Sec. 3.2），沒有主張、也沒有展示超出資料的外推；這是玩具中的現象。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="classifier-free-guidance-return-conditioning.html">無分類器引導、報酬條件與低溫取樣</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">一個網路如何同時給出條件與無條件噪聲？Eq. 8 中 ω = 0、1 各代表什麼？</p>
+    <p class="a">訓練時以機率 $p=0.25$ 把條件換成 Ø（$z$ 設為 0）；$\hat\epsilon=\epsilon_\theta(\text{Ø})+\omega(\epsilon_\theta(y)-\epsilon_\theta(\text{Ø}))$；代入 Eq. 8：ω = 0 得無條件預測、ω = 1 得純條件預測（本頁推導）；論文用 1.2–1.8。</p>
+    <p class="q">（進階）以分數表示，引導後的噪聲預測對應哪個量？為什麼取樣結果不一定等於 $p(x)p(y\mid x)^\omega$？</p>
+    <p class="a">$\hat\epsilon=-\sqrt{1-\bar\alpha_k}\nabla[\log p_k(x)+\omega\log p_k(y\mid x)]$，ω &gt; 1 加強隱式分類器 $p_k(y\mid x)$；各擴散步的 $p_k(x)p_k(y\mid x)^\omega$ 一般不是同一個分布加噪後的結果。</p>
+  </div></details>
+</section>
+
+<!-- S8 -->
+<section class="ch" id="lowtemp" data-toc="08" data-tt="低溫取樣">
+  <div class="ch-num">08 · 低溫取樣</div>
+  <h2>低溫取樣縮小樣本的散布</h2>
+  <div class="prose">
+    <p>每個去噪步由帶噪序列與預測的噪聲算出 $\mu_{k-1}$ 與 $\Sigma_{k-1}$。作者發現把變異數乘上低溫係數 $\alpha\in[0,1)$，從 $x_{k-1}\sim\mathcal N(\mu_{k-1},\alpha\Sigma_{k-1})$ 取樣，序列品質較好（Sec. 3.4）。Alg. 1 的起點也一起縮放：$x_K\sim\mathcal N(0,\alpha I)$（第 4 行），每一步 $x_{k-1}\sim\mathcal N(\mu_{k-1},\alpha\Sigma_{k-1})$（第 9 行）。低溫取樣因此改了兩處：起點與每一步的變異數。App. B 取 $\alpha=0.5$。</p>
+    <p>App. C 的 Table A1（Hopper-Medium-Expert）：α = 0 為 104.3 ± 0.7，α = 0.5 為 111.8 ± 1.6，α = 1.0 為 107.1 ± 3.5。作者的解讀是：α = 0 去除了取樣的熵，報酬較低；α = 1.0 的報酬變異較大。（Sec. 3.4 寫 $\alpha\in[0,1)$，Table A1 卻包含 α = 1.0，照錄。）</p>
+  </div>
+  <div class="tscroll"><table><caption>Table A1：低溫係數（Hopper-Medium-Expert，正規化分數）</caption><thead><tr><th>α</th><th class="num">0</th><th class="num">0.5</th><th class="num">1.0</th></tr></thead>
+    <tbody><tr><td>DD</td><td class="num">104.3 ±0.7</td><td class="num">111.8 ±1.6</td><td class="num">107.1 ±3.5</td></tr></tbody></table></div>
+
+  <div class="plate" id="c1b">
+    <div class="plate-h"><span class="id">C1b</span><h3>低溫係數 α 縮小樣本的散布</h3><span class="tag toy">本頁玩具</span></div>
+    <p class="plate-lead">與 C1a 同一個玩具、同一組 ω 與 y；多了低溫係數 α。α 同時縮放起點與每一步的噪聲。</p>
+    <div class="pg side">
+      <div class="fig"><div id="c1b-fig"><svg role="img" aria-label="樣本直方圖"></svg></div>
+        <div class="legend"><span class="lg acc">樣本（直方圖）</span><span class="lg ref">資料 p(x)</span><span class="lg cref">p(x)·p(y|x)^ω</span></div></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1b-a">低溫係數 α <output id="c1b-ao"></output></label><input type="range" id="c1b-a" min="0" max="20" step="1" value="10"></div>
+        <div class="rng"><label class="lbl" for="c1b-w">引導強度 ω <output id="c1b-wo"></output></label><input type="range" id="c1b-w" min="0" max="50" step="1" value="14"></div>
+        <div class="rng"><label class="lbl" for="c1b-y">條件報酬 y <output id="c1b-yo"></output></label><input type="range" id="c1b-y" min="0" max="20" step="1" value="20"></div>
+        <div class="ctl-row"><button class="small-btn" type="button" id="c1b-reset">回到預設</button></div>
+        <dl class="ro" id="c1b-read"></dl>
+        <p class="sr" id="c1b-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁的高斯混合玩具即時計算，不是論文的模型，也不重現 Table A1。</p>
+  </div>
+  <div class="prose">
+    <p>本頁玩具中：α = 0.5 縮小散布（ω = 1.4 時標準差由 0.1229 降到 0.0874）；α = 0 時起點與每一步都沒有噪聲，2000 個樣本完全相同。論文 Table A1 的 α 結果是 Hopper 上的實驗，玩具不重現它。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">低溫取樣改了哪兩處？論文的 α 與 Table A1 結果？</p>
+    <p class="a">$x_K\sim\mathcal N(0,\alpha I)$ 與 $x_{k-1}\sim\mathcal N(\mu,\alpha\Sigma)$；α = 0.5；Hopper-ME：α = 0 為 104.3、0.5 為 111.8、1.0 為 107.1（變異較大）。</p>
+  </div></details>
+</section>
+
+<!-- S9 -->
+<section class="ch" id="planning" data-toc="09" data-tt="規劃迴圈">
+  <div class="ch-num">09 · 規劃迴圈</div>
+  <h2>每個環境步重新產生計畫，只執行第一個動作</h2>
+  <div class="prose">
+    <p>有了以上各部分，從 DD 取樣就像 RL 中的規劃（Sec. 3.2）：先觀察環境的狀態；再以 $y$ 與最近 $C$ 個觀察到的狀態為條件，用擴散過程取樣未來的狀態；最後用逆動力學找出到達最近一個預測狀態的動作。這個程序在標準的滾動視界控制（receding-horizon control）迴圈中重複：每個環境步都重新規劃，只執行第一個動作（Alg. 1、Fig. 3）。</p>
+  </div>
+  <div class="algo" role="table" aria-label="Algorithm 1 與說明">
+    <div class="row hd"><div>Algorithm 1（原文）</div><div class="ex-h">說明</div></div>
+    <div class="row"><code>1: Input: ε_θ, f_φ, ω, C, y</code><div class="ex">噪聲模型、逆動力學、引導強度、歷史長度 $C$、條件 $y$。</div></div>
+    <div class="row"><code>2: h ← Queue(length = C), t ← 0</code><div class="ex">保存最近 $C$ 個狀態的佇列。</div></div>
+    <div class="row"><code>3: while not done do</code><div class="ex">每個環境步執行一次。</div></div>
+    <div class="row"><code>4:   Observe s; h.insert(s); x_K ~ N(0, αI)</code><div class="ex">觀察狀態放入歷史；起點的變異數乘上低溫係數 α。</div></div>
+    <div class="row"><code>5:   for k = K … 1 do</code><div class="ex">從擴散步 $K$ 去噪到 1。</div></div>
+    <div class="row"><code>6:     x_k[: length(h)] ← h</code><div class="ex">每一步都把歷史寫進計畫的前段，讓計畫與歷史一致（替換，inpainting：把已知的欄固定為觀測值，只讓其餘欄由去噪決定）。</div></div>
+    <div class="row"><code>7:     ε̂ ← ε_θ(x_k, k) + ω(ε_θ(x_k, y, k) − ε_θ(x_k, k))</code><div class="ex">Eq. 8；這裡的 $\epsilon_\theta(x_k,k)$ 就是 $\epsilon_\theta(x_k,\text{Ø},k)$：無條件版本是同一個網路、條件輸入 Ø（論文兩處寫法不同）。</div></div>
+    <div class="row"><code>8:     (μ_{k−1}, Σ_{k−1}) ← Denoise(x_k, ε̂)</code><div class="ex">由引導後的噪聲算出反向平均與變異數。</div></div>
+    <div class="row"><code>9:     x_{k−1} ~ N(μ_{k−1}, αΣ_{k−1})</code><div class="ex">低溫取樣。</div></div>
+    <div class="row"><code>10:   end for</code><div class="ex">結束去噪迴圈，得到乾淨的計畫 $x_0(\tau)$。</div></div>
+    <div class="row"><code>11:  Extract (s_t, s_{t+1}) from x_0</code><div class="ex">從計畫中取出目前狀態與下一個狀態。</div></div>
+    <div class="row"><code>12:  Execute a_t = f_φ(s_t, s_{t+1}); t ← t + 1</code><div class="ex">執行逆動力學給出的動作。</div></div>
+    <div class="row"><code>13: end while</code><div class="ex">回到第 3 行，下一個環境步重新規劃。</div></div>
+  </div>
+  <div class="flow nd-flow" id="s9-loop" role="img" aria-label="規劃迴圈：觀察狀態 s，放入長度 C 的歷史 h，從 N(0, αI) 開始去噪 K 步（每步寫入歷史、用 Eq. 8、縮放變異數），取出 sₜ 與 sₜ₊₁，以逆動力學 f 算出動作 aₜ，執行後回到觀察">
+    <span class="nd">觀察 s</span><span class="ar"></span><span class="nd">放入歷史 h（長度 C = 20）</span><span class="ar"></span><span class="nd acc">去噪 K 步：寫入歷史 · Eq. 8 · 變異數 × α</span><span class="ar"></span><span class="nd">取 (sₜ, sₜ₊₁)</span><span class="ar"></span><span class="nd">逆動力學 f(sₜ, sₜ₊₁)</span><span class="ar"></span><span class="nd">執行 aₜ</span>
+    <span class="back">回到「觀察 s」，下一個環境步重新規劃</span>
+  </div>
+  <div class="prose">
+    <p>Alg. 1 共 13 行，上表逐行照錄，行號與論文相同。App. B 取歷史長度 $C=20$、$K=100$。論文沒有寫明 $H$ 欄計畫中前幾欄是歷史、$s_t$ 在第幾欄；上圖只畫流程，不畫欄位索引。</p>
+    <p>計算時間（App. E，作者報告，只在 Hopper-Medium-Expert 上量測；性能與時間的關係只畫在 Fig. A2，沒有數據表）：每個動作要跑 100 個反向步，平均 1.26 s。暖啟動（warm-start）以上一個環境步的計畫為起點：先前向加噪固定步數，再反向去噪同樣步數。作者報告暖啟動可降到 40 步（0.48 s，性能不變）、20 步（0.21 s，損失很小）、5 步（0.06 s，性能損失小於 20%）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Alg. 1 每個環境步做什麼？$C$ 是多少？每個動作的計算時間？</p>
+    <p class="a">觀察狀態放入長度 $C=20$ 的歷史；從 $\mathcal N(0,\alpha I)$ 出發，每個擴散步先把歷史寫入計畫、用 Eq. 8 去噪；由 $x_0$ 取 $(s_t,s_{t+1})$，執行 $f_\phi(s_t,s_{t+1})$，下一步重新規劃。作者報告（Hopper-Medium-Expert，App. E）：100 步約 1.26 s；暖啟動 40 步 0.48 s 性能不變。</p>
+  </div></details>
+</section>
+
+<!-- S10 -->
+<section class="ch" id="compose" data-toc="10" data-tt="組合條件">
+  <div class="ch-num">10 · 組合條件</div>
+  <h2>限制與技能可以在測試時組合</h2>
+  <div class="cond-chips" aria-label="本章的條件"><span>報酬</span><span aria-current="true">限制</span><span aria-current="true">技能</span></div>
+  <div class="prose">
+    <p>條件 $y$ 不必是報酬（Sec. 3.3）。報酬條件時 $y=R(\tau)$ 正規化到 $[0,1]$，取樣時取 $R(\tau)=1$，不使用任何 Q 值。限制條件時，每個限制以集合 $C_i$ 表示（例如到達某個目標、依序訪問狀態、避開某些區域），條件是 one-hot 編碼 $\mathbf 1(\tau\in C_i)$；技能條件時，技能 $i$ 由示範集合 $B_i$ 指定，條件是 $\mathbf 1(\tau\in B_i)$。訓練資料中每條軌跡只滿足一個限制或展示一個技能，推論時卻可以同時滿足多個。假設已學到 $n$ 個條件的分布，可以用下面的噪聲從組合分布 $q(x_0(\tau)\mid y^1,\dots,y^n)$ 取樣（Liu et al., 2022）：</p>
+  </div>
+  <div class="eq"><div class="eq-m"><div class="wide-eq">$$\hat\epsilon:=\epsilon_\theta(x_k(\tau),\text{Ø},k)+\omega\sum_{i=1}^n\big(\epsilon_\theta(x_k(\tau),y^i(\tau),k)-\epsilon_\theta(x_k(\tau),\text{Ø},k)\big)$$</div><div class="narrow-eq">$$\begin{aligned}\hat\epsilon:=\;&\epsilon_\theta(x_k,\text{Ø},k)\\&+\omega\sum_{i=1}^n\big(\epsilon_\theta(x_k,y^i,k)-\epsilon_\theta(x_k,\text{Ø},k)\big)\end{aligned}$$</div></div><span class="eq-n">Eq. 9</span></div>
+  <div class="prose">
+    <p>這需要各條件條件獨立，而論文兩處的寫法不同：Sec. 3.3（Eq. 9 下方）寫「給定狀態軌跡 $x_0(\tau)$」，App. D 寫「給定 $x_k(\tau)$」。下面的推導對每個擴散步都需要給定 $x_k$ 的版本；給定 $x_0$ 的條件獨立一般不蘊含給定 $x_k$ 的條件獨立<span class="tag">本頁推論</span>。</p>
+    <p><b>結論：推導需要的是「給定 $x_k(\tau)$」的條件獨立（App. D 的寫法）；Sec. 3.3 的「給定 $x_0(\tau)$」較弱，不足以支撐推導。</b></p>
+    <p>作者觀察這個假設不必嚴格成立，但組合必須可行：存在一條同時滿足所有條件的 $x_0(\tau)$；組合不可行時，DD 產生不連貫的行為（App. D，以影片呈現）。資料也要包含滿足每個條件的多種方式；並且組合出的序列中相鄰狀態對 $(s_t,s_{t+1})$ 要來自示範資料的分布，否則逆動力學可能出錯（App. D）。</p>
+  </div>
+  <details class="more"><summary>App. D 的推導</summary><div class="prose" style="padding:0 20px 8px">
+    <div class="eq-m">$$\begin{aligned}q(x_k\mid\{y^i\})&\propto q(x_k)\prod_{i=1}^n\frac{q(x_k\mid y^i)}{q(x_k)}\\\Rightarrow\ \nabla\log q(x_k\mid\{y^i\})&=\nabla\log q(x_k)+\sum_{i=1}^n\big(\nabla\log q(x_k\mid y^i)-\nabla\log q(x_k)\big)\\\Rightarrow\ \epsilon_\theta(x_k,\{y^i\},k)&=\epsilon_\theta(x_k,\text{Ø},k)+\sum_{i=1}^n\big(\epsilon_\theta(x_k,y^i,k)-\epsilon_\theta(x_k,\text{Ø},k)\big)\end{aligned}$$</div>
+    <p>第一行用貝氏定理與條件獨立，第三行用 $\nabla\log q\propto-\epsilon_\theta$；再代入 Eq. 8 的形式就得到 Eq. 9。這個推導取自 Liu et al. (2022)。</p>
+  </div></details>
+  <div class="prose">
+    <p>App. J 用同樣的方法做「NOT」：要避開條件 $y^j$，把它的差值改成減號（$\beta=1$，Liu et al. 的係數）：</p>
+  </div>
+  <div class="eq"><div class="eq-m"><div class="wide-eq">$$\hat\epsilon:=\epsilon_\theta(\text{Ø})+\omega\Big(\sum_{i\ne j}\big(\epsilon_\theta(y^i)-\epsilon_\theta(\text{Ø})\big)-\big(\epsilon_\theta(y^j)-\epsilon_\theta(\text{Ø})\big)\Big)$$</div><div class="narrow-eq">$$\begin{aligned}\hat\epsilon:=\;&\epsilon_\theta(\text{Ø})+\omega\Big(\textstyle\sum_{i\ne j}\big(\epsilon_\theta(y^i)-\epsilon_\theta(\text{Ø})\big)\\&-\big(\epsilon_\theta(y^j)-\epsilon_\theta(\text{Ø})\big)\Big)\end{aligned}$$</div></div><span class="eq-n">App. J</span></div>
+  <div class="prose">
+    <p>（省略 $x_k$ 與 $k$。）DD 沒有各條件的顯式密度估計，所以不支援 OR 組合（App. J、M）。總結：DD 支援 AND（Eq. 9）與 NOT（App. J），不支援 OR。另一個看似簡單的做法，把兩個 one-hot 相加當成一個條件輸入 $\epsilon_\theta(x_k,\text{one-hot}(i)+\text{one-hot}(j),k)$，在步態實驗中「災難性地」無法產生任何步態，因為網路在訓練時從沒看過這種輸入（App. I.2）。</p>
+    <p>App. A.2 的線性系統導航例子：DD 以 1000 條專家軌跡訓練，每條滿足 $\|s_T\|\le R$（$R=1$）或 $\|s_T\|\ge r$（$r=0.7$）之一，$s_T=[x_T,y_T]$ 是最終位置（此處 $R$、$r$ 是半徑，與報酬無關），軌跡最大長度 50。單一限制的成功率為 100%；組合限制 $r\le\|s_T\|\le R$ 的成功率為 91.3%（±2.6%，5 個種子的標準誤）。</p>
+    <p><b>本頁的玩具。</b>下面的元件只建模最終位置 $s_T$，不含軌跡與動力學。資料集 1 是半徑 1 的圓盤內均勻的 200 點，資料集 2 是 $r\le\|s\|\le1.5$ 的環內均勻的 200 點（外徑 1.5 與核寬 0.05 都是<span class="tag">推定</span>）；每點視為一個小高斯，無條件分布是兩者各半的混合（對應以 $p=0.25$ 丟棄條件後學到的全部資料）。低溫係數固定 0.5。</p>
+  </div>
+
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>組合兩個限制：AND、NOT 與不可行的組合</h3><span class="tag toy">本頁玩具</span></div>
+    <p class="plate-lead">選擇組合方式、拖動 ω 與內徑 r。放開滑桿後重算 500 個樣本（分 100 段計算）。</p>
+    <div class="pg two">
+      <div class="fig"><div id="c2-plane"><svg role="img" aria-label="平面上的資料點與生成樣本"></svg></div>
+        <div class="legend"><span class="lg gd1">資料集 1（小圓點）</span><span class="lg gd2">資料集 2（叉號）</span><span class="lg gsm">生成樣本（實心點）</span><span class="lg">R = 1 實線、r 虛線</span></div></div>
+      <div class="ctl">
+        <div><div class="lbl">組合方式</div><div class="seg" id="c2-mode" role="radiogroup" aria-label="組合方式"></div></div>
+        <div class="rng"><label class="lbl" for="c2-w">引導強度 ω <output id="c2-wo"></output></label><input type="range" id="c2-w" min="5" max="30" step="1" value="12"></div>
+        <div class="rng"><label class="lbl" for="c2-r">內徑 r <output id="c2-ro"></output></label><input type="range" id="c2-r" min="3" max="13" step="1" value="7"></div>
+        <label class="chk"><input type="checkbox" id="c2-data" checked>顯示資料點</label>
+        <div id="c2-hist"><svg role="img" aria-label="樣本半徑直方圖"></svg></div>
+        <dl class="ro" id="c2-read"></dl>
+        <p class="prog" id="c2-prog"></p>
+        <p class="sr" id="c2-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁的高斯混合玩具依 Eq. 9 與 App. J 的組合式即時計算，不是論文的模型；成功率與 App. A.2 的 91.3% 不可比較。</p>
+  </div>
+  <div class="prose">
+    <p>本頁玩具中可以看到五件事。(1) 只用 y¹ 時樣本都在圓盤內，只有 21.0% 落在環中（ω = 1.2）。(2) AND 時 92.6% 落在環中（ω = 1.0：90.0%，ω = 2.0：95.0%），而兩個資料集都沒有「只在環內」的資料。(3) NOT 時 100% 落在 $\|s\|&lt;r$，但樣本擠在原點附近（平均半徑 0.08）：玩具的資料集 2 密度在圓盤內部趨近 0，使「p·p₁／p₂」在那裡變得極大，樣本被推向離環最遠的地方；這是玩具密度造成的現象，不代表 DD 的行為，論文 App. J 的 NOT 證據只有影片。(4) $r=1.1$、1.3 時組合不可行，樣本停在兩個區域之間（平均半徑 1.036、1.131），兩個限制都不滿足，對應 App. D「不可行時行為不連貫」。(5) $r=0.9$ 時可行區很窄，成功率降到 73.0%。論文 App. A.2 的 91.3% 來自有軌跡與動力學的實驗，玩具數字不可與之比較。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="composing-constraints-and-skills.html">組合限制與技能（組合式擴散）</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 9 依賴什麼假設？論文兩處的寫法有何不同？組合失敗的條件？支援哪些邏輯組合？</p>
+    <p class="a">各條件條件獨立：Sec. 3.3 寫「給定 $x_0(\tau)$」，App. D 寫「給定 $x_k(\tau)$」，推導需要後者；作者觀察假設不必嚴格成立；組合必須可行，不可行時行為不連貫；支援 AND（Eq. 9）與 NOT（App. J），不支援 OR；把 one-hot 相加輸入會失敗（App. I.2）。</p>
+  </div></details>
+</section>
