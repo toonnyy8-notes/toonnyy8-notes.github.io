@@ -1,0 +1,629 @@
+DeepSeek-R1 強化學習推理
+
+跳到內容
+
+ No. 550
+ DeepSeek-R1：以強化學習訓練推理能力
+
+00 摘要01 動機02 強化學習03 群組優勢04 裁剪與 KL05 規則式獎勵06 R1-Zero07 四階段流程08 評測09 蒸餾10 失敗與發現11 實作12 安全與限制13 研究脈絡14 延伸閱讀
+
+00摘要
+01動機
+02強化學習
+03群組優勢
+04裁剪與 KL
+05規則式獎勵
+06R1-Zero
+07四階段流程
+08評測
+09蒸餾
+10失敗與發現
+11實作
+12安全與限制
+13研究脈絡
+14延伸閱讀
+
+數學式排版載入失敗，以下保留原始 TeX。
+
+ No. 550 · 互動教學 · arXiv 2501.12948 · DeepSeek-AI
+
+ DeepSeek-R1：以強化學習訓練推理能力
+
+ 這篇論文不先讓模型模仿人寫的推理，直接依答案對錯與格式給獎勵來訓練，再用四個階段補上可讀性，最後用它的輸出教小模型。
+
+ DeepSeek-AI（2025；v2 2026）〈DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning〉
+
+ 01 · 不先模仿DeepSeek-R1-Zero 沒有先模仿人寫的解題過程，只依答案對錯與格式給獎勵，在 AIME 2024（美國數學邀請賽的題目）上的正確率由 15.6% 升到 77.9%。
+
+ 02 · 回答變長訓練過程中，模型的回答越來越長，並開始出現「wait」等回頭檢查的字眼。
+
+ 03 · 教小模型以 DeepSeek-R1 的 80 萬筆輸出微調的 1.5B 小模型，在數學評測勝過 GPT-4o（AIME 2024：28.9% 對 9.3%）；在 GPQA Diamond（研究所程度的物理、化學、生物選擇題）與程式評測則較低。
+
+ DeepSeek-V3-Base預訓練模型
+
+ → RLR1-Zero
+
+ → 冷啟動 SFTDev1
+→ RLDev2
+
+ → SFT 80 萬筆Dev3
+→ RLR1
+
+ 三條線都從 DeepSeek-V3-Base 出發（Fig. 2）。R1-Zero 提供冷啟動資料的來源，Dev2 以拒絕取樣產生 Dev3 的訓練資料。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · 動機
+
+ 推理能力過去依賴人工標註的思維鏈
+
+ 大型語言模型（large language model, LLM）讀入一段文字，逐個 token（字或字的片段）產生回應。要讓它解數學題或寫程式，常見的做法有兩種：一是思維鏈（chain-of-thought, CoT）提示，在提示中示範或要求「一步一步想」，讓模型先寫出中間步驟；二是在後訓練（post-training）階段，讓模型模仿人工標註的高品質多步推理軌跡（Sec. 1）。
+
+ 作者指出這兩種做法的限制：它們依賴人工標註，難以擴展，也會帶入標註者的認知偏誤；模型被要求複製人類的思考過程，表現上限受人類範例限制，無法探索「更好、非人類式」的推理路徑（Sec. 1）。傳統後訓練是先做監督式微調（supervised fine-tuning, SFT：以交叉熵損失模仿標註好的回應），再做強化學習（reinforcement learning, RL）（App. A.2）。作者主張 SFT 這一步可能妨礙模型探索，因為人類寫的回應常省略明確的反思與驗證步驟（App. A.2）。
+
+ R1-Zero 為什麼不先做 SFT。作者的假設是：人類定義的推理模式可能限制模型的探索，不受限的 RL 較能激發新的推理能力；人類回應也常省略反思與驗證步驟。因此 DeepSeek-R1-Zero 從 DeepSeek-V3-Base 直接做 RL，獎勵只根據最終答案是否正確（以及輸出格式），不對推理過程本身加任何限制（Sec. 1、App. A.2）。
+
+ 為了用 RL 描述這件事，本頁把 LLM 看成一個策略（policy）πθ $\pi_\theta$ ​：給定問題 q $q$ ，它產生完整輸出 o $o$ （思考過程加答案）的機率記為 πθ(o∣q) $\pi_\theta(o\mid q)$ ​(o∣q)，θ $\theta$ 是模型參數。這個機率等於各 token 條件機率的乘積本頁推導（機率連鎖律）。RL 只需要對整段輸出打一個分數，不需要每一步的標註，這是能跳過人工推理軌跡的前提。
+
+ R1-Zero 使用的提示模板只規定格式（Table 1）：先在 <think> 與 </think> 之間寫推理過程，再在 <answer> 與 </answer> 之間寫答案。作者刻意只限制結構、不限制內容，以觀察 RL 過程中模型行為的變化（Sec. 2.3）。
+
+ A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning process and answer are enclosed within <think>...</think> and <answer>...</answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> answer here </answer>. User: prompt. Assistant:
+
+ Table 1（原文照錄）：prompt 在訓練時換成實際的推理題。
+
+ 符號表
+
+ 符號意義
+
+ q $q$ 、P(Q) $P(Q)$ 問題（prompt）與問題的分布
+
+ o $o$ 、oi $o_i$ ​一個完整輸出（思考過程加答案）；oi $o_i$ ​ 為同一題的第 i $i$ 個輸出
+
+ G $G$ 每題取樣的輸出數（群組大小）；R1-Zero 用 16
+
+ πθ $\pi_\theta$ ​、πθold $\pi_{\theta_{old}}$ ​​、πref $\pi_{ref}$ ​目前策略、取樣當下的舊策略、參考策略（KL 懲罰的對象）
+
+ ri $r_i$ ​、Ai $A_i$ ​第 i $i$ 個輸出的獎勵與優勢
+
+ ρi $\rho_i$ ​機率比 πθ(oi∣q)/πθold(oi∣q) $\pi_\theta(o_i\mid q)/\pi_{\theta_{old}}(o_i\mid q)$ ​(oi​∣q)/πθold​​(oi​∣q)（論文沒有命名，本頁命名）
+
+ ε $\varepsilon$ 、β $\beta$ 裁剪範圍與 KL 係數
+
+ pass@1、cons@k $k$ 多次取樣的平均正確率；k $k$ 次取樣的多數決正確率
+
+ 延伸閱讀：思維鏈、驗證器與推論時運算、STaR：以模型自產的推理軌跡微調
+
+ 02 · 強化學習
+
+ 強化學習把答案對錯變成訓練訊號
+
+ RL 的基本循環是：用目前的策略對一批問題產生輸出（這一步稱為 rollout，即用目前策略實際生成一批輸出），替每個輸出算一個獎勵（reward，例如答對得 1、答錯得 0），再更新參數，提高高獎勵輸出的機率、降低低獎勵輸出的機率。這類「沿著提高期望獎勵的方向調整輸出機率」的方法稱為策略梯度（policy gradient）。
+
+ 只看獎勵本身會有一個問題：如果一題很簡單，大部分輸出都拿到 1，每個輸出都會被加強，訊號無法區分好壞。因此實務上比較的是優勢（advantage）：該輸出的獎勵減去一個基準線（baseline，即「這題的預期獎勵」）。優勢為正的輸出被加強，為負的被削弱。
+
+ LLM 常用的 RL 演算法是 PPO（Proximal Policy Optimization, Schulman et al. 2017）。PPO 以廣義優勢估計（Generalized Advantage Estimation, GAE）計算優勢，基準線由另外訓練的價值模型（value model）提供：價值模型讀入「到目前為止已產生的部分輸出」，預測最後會拿到多少獎勵（App. A.3）。
+
+ 作者列出價值模型的兩個成本（App. A.3）。第一，價值模型的大小通常與策略模型相近，帶來大量記憶體與運算負擔。第二，只有最終結果獎勵時，從部分輸出預測最終獎勵本身就很困難；長 CoT 中，前面寫的內容可能被後面的反思推翻，更難預測。此外，PPO 把每個 token 的 KL 懲罰（下一章說明）加進獎勵中。
+
+ Fig. 4 在 DeepSeek-Coder-V2-Lite（16B MoE，2.4B 啟用參數）上比較 PPO 與 GRPO（下一章的方法）解 MATH 題：GAE 的係數 λ=0.95 $\lambda=0.95$ （多數開源實作的預設值）時 PPO 明顯較差；調到 λ=1.0 $\lambda=1.0$ 後接近 GRPO。作者的結論是 PPO 需要額外調參，在資源有限時 GRPO 較實際（App. A.3）。
+
+ 延伸閱讀：LLM 的 RL 前史：RLHF、PPO 與 GAE、MDP、Q 函數與 Bellman backup
+
+ 03 · 群組優勢
+
+ GRPO 以同組輸出的平均獎勵當基準
+
+ GRPO（Group Relative Policy Optimization）是 DeepSeekMath（Shao et al. 2024）提出的 RL 演算法，本文用它訓練 R1-Zero 與 R1（Sec. 2.1）。它不訓練價值模型，而是對每題 q $q$ 從舊策略取樣一組 G $G$ 個輸出，得到獎勵 r1,…,rG $r_1,\dots,r_G$ ​,…,rG​，再以這組獎勵本身算優勢：
+
+ Ai=ri−mean({r1,r2,…,rG})std({r1,r2,…,rG}) $A_i=\frac{r_i-\mathrm{mean}(\{r_1,r_2,\dots,r_G\})}{\mathrm{std}(\{r_1,r_2,\dots,r_G\})}$ ​=std({r1​,r2​,…,rG​})ri​−mean({r1​,r2​,…,rG​})​
+Eq. 3
+
+ GRPO 用什麼取代價值模型。GRPO 用同一題 G $G$ 個輸出（含自己）的獎勵平均與標準差計算優勢（Eq. 3；Fig. 3：「GRPO foregoes the value model, instead estimating the advantages from group scores」）。要取代的原因有兩個：價值模型負責估計基準線，但它與策略模型大小相近、成本高；而且只有最終結果獎勵時，從部分輸出預測最終獎勵很困難，長 CoT 中前文可能被後文推翻（App. A.3）。
+
+ 本文的獎勵由兩項相加：準確度獎勵（答案正確得 1）與格式獎勵（推理過程放在指定標籤內得 1），即 Eq. 4，細節在第 05 章。下面先只看準確度獎勵。
+
+ 二元獎勵的計算。設獎勵只有 1（對）與 0（錯），G $G$ 個輸出中有 k $k$ 個正確，標準差取母體標準差（除以 G $G$ ）。則 mean =k/G $=k/G$ ，std =(k/G)(1−k/G) $=\sqrt{(k/G)(1-k/G)}$ ​，正確輸出的優勢 A+=(G−k)/k $A^+=\sqrt{(G-k)/k}$ =(G−k)/k​，錯誤輸出 A−=−k/(G−k) $A^-=-\sqrt{k/(G-k)}$ =−k/(G−k)​，且所有 Ai $A_i$ ​ 相加為 0本頁推導。例如 G=16 $G=16$ 、4 個正確、12 個錯誤：mean 0.25、std 0.4330，正確輸出的優勢 A=3≈1.732 $A=\sqrt3\approx1.732$ ​≈1.732，錯誤輸出 A=−1/3≈−0.577 $A=-1/\sqrt3\approx-0.577$ ​≈−0.577。正確的輸出越少，每個正確輸出的優勢越大；只有 1 個正確時 A+=3.873 $A^+=3.873$ =3.873。論文沒有說明標準差除以 G $G$ 還是 G−1 $G-1$ ；改用 G−1 $G-1$ 時所有優勢乘上 (G−1)/G $\sqrt{(G-1)/G}$ ​（G=16 $G=16$ 時 0.9682），方向不變本頁推導。
+
+ 全對或全錯的群組。若 16 個輸出全對（或全錯），std = 0，Eq. 3 的分母為 0。本頁採用的處理是把這組的優勢全部設為 0（論文未說明處理方式）。此時這組沒有獎勵訊號；β > 0 時，下一章 Eq. 1 的 KL 項對每個輸出仍提供一個小梯度，所以只剩 KL 項的小梯度本頁推導。若每個輸出獨立以機率 p $p$ 正確，整組獎勵相同的機率是 pG+(1−p)G $p^G+(1-p)^G$ +(1−p)G：p=0.05 $p=0.05$ 、G=16 $G=16$ 時 0.4401，p=0.9 $p=0.9$ 、G=16 $G=16$ 時 0.1853。題目太難或太簡單時，許多群組不提供訊號。
+
+ 常數獎勵不改變優勢。若所有輸出的獎勵都加上同一個常數（例如每個輸出都拿到格式獎勵 1），平均同步平移、標準差不變，Ai $A_i$ ​ 完全不變本頁推導。所以格式獎勵只在「有的輸出格式正確、有的不正確」時才產生訊號。加入格式獎勵（合規率 f $f$ ，與正確與否獨立）後 r∈{0,1,2} $r\in\{0,1,2\}$ ，整組相同的機率變成 q0G+q1G+q2G $q_0^G+q_1^G+q_2^G$ G​+q1G​+q2G​，其中 q0=(1−p)(1−f) $q_0=(1-p)(1-f)$ ​=(1−p)(1−f)、q1=p(1−f)+(1−p)f $q_1=p(1-f)+(1-p)f$ ​=p(1−f)+(1−p)f、q2=pf $q_2=pf$ ​=pf；f=1 $f=1$ 時退化為 pG+(1−p)G $p^G+(1-p)^G$ +(1−p)G本頁推導。
+
+ C1同一題的 G 個輸出與它們的優勢
+
+ 拖動 G、單次正確率 p、格式合規率 f。每個輸出的準確度與格式各自隨機決定（本頁簡化：兩者獨立）。G ≤ 16 時可切換到手動模式，點輸出卡切換它的對錯。
+
+ ✗✗✗✓✗✗✗✗✓✗✗✗✗✗✗✗
+
+ 所有輸出都拿到格式獎勵 1，等於加上常數，優勢不變。
+
+ 正確（實心、✓）優勢為負（斜線填充）格式失敗標「格式 ✗」或斜線
+
+ 群組大小 G 16
+
+ 單次正確率 p 0.25
+
+ 格式合規率 f 1.00
+
+ 標準差
+母體（÷G）樣本（÷(G−1)）
+
+ 重新抽樣手動回到抽樣模式
+
+ 正確數 k2 / 16mean1.1250std0.3307A 最大2.6458A 最小-0.3780ΣA0P(全組相同)1.00e-2
+
+ 16 個輸出中 2 個正確；優勢最大 2.65，最小 -0.38
+
+ 讀數由本頁依 Eq. 3（與 Eq. 4 的兩項相加）即時計算；全組相同時優勢設為 0 是本頁採用的保護。小圖的機率式本頁推導：f=1 $f=1$ 時為 pG+(1−p)G $p^G+(1-p)^G$ +(1−p)G，f<1 $f<1$ 時為含格式獎勵的一般式。
+
+ 元件中可以看到三件事。(1) p $p$ 很小時偶爾只有一個輸出正確，它的優勢很大（G=16 $G=16$ 時 3.873）。(2) 全對或全錯時沒有獎勵訊號；小圖顯示 p $p$ 接近 0 或 1 時這種情況很常見，G $G$ 越大越少見；f<1 $f<1$ 時格式差異也會產生訊號，所以整組相同的機率下降。(3) f=1 $f=1$ 時格式獎勵對所有輸出相同，優勢只由對錯決定；f<1 $f<1$ 時，同樣答對（或答錯）的輸出中，格式失敗者的優勢較低。
+
+ 延伸閱讀：GRPO 與規則式結果獎勵（DeepSeek-R1-Zero）
+
+ 04 · 裁剪與 KL
+
+ 裁剪比值與 KL 懲罰限制每次更新的幅度
+
+ 4a · 機率比與裁剪
+
+ GRPO 先用舊策略 πθold $\pi_{\theta_{old}}$ ​​ 產生一批輸出，再用這批輸出更新參數好幾次。第一次更新後，目前策略 πθ $\pi_\theta$ ​ 已經和產生資料的 πθold $\pi_{\theta_{old}}$ ​​ 不同，所以需要比較兩者給同一個輸出的機率，這就是機率比 ρi=πθ(oi∣q)/πθold(oi∣q) $\rho_i=\pi_\theta(o_i\mid q)/\pi_{\theta_{old}}(o_i\mid q)$ ​=πθ​(oi​∣q)/πθold​​(oi​∣q)。ρi>1 $\rho_i>1$ ​>1 表示目前策略比舊策略更常產生這個輸出。GRPO 的目標函數（Sec. 2.1）是：
+
+ JGRPO(θ)=Eq∼P(Q),{oi}i=1G∼πθold(O∣q)1G∑i=1G(min⁡(ρiAi, clip(ρi,1−ε,1+ε)Ai)−β DKL(πθ∥πref)) $\mathcal J_{GRPO}(\theta)=\mathbb E_{q\sim P(Q),\{o_i\}_{i=1}^G\sim\pi_{\theta_{old}}(O\mid q)}\frac1G\sum_{i=1}^G\Big(\min\big(\rho_iA_i,\ \mathrm{clip}(\rho_i,1-\varepsilon,1+\varepsilon)A_i\big)-\beta\,\mathbb D_{KL}(\pi_\theta\Vert\pi_{ref})\Big)$ ​(θ)=Eq∼P(Q),{oi​}i=1G​∼πθold​​(O∣q)​G1​i=1∑G​(min(ρi​Ai​, clip(ρi​,1−ε,1+ε)Ai​)−βDKL​(πθ​∥πref​))
+JGRPO(θ)=  E 1G∑i=1G(min⁡(ρiAi, clip(ρi,1−ε,1+ε)Ai)−β DKL(πθ∥πref)) $\begin{aligned}\mathcal J_{GRPO}(\theta)=\;&\mathbb E\,\frac1G\sum_{i=1}^G\Big(\min\big(\rho_iA_i,\ \mathrm{clip}(\rho_i,1-\varepsilon,1+\varepsilon)A_i\big)\\&\qquad-\beta\,\mathbb D_{KL}(\pi_\theta\Vert\pi_{ref})\Big)\end{aligned}$ ​(θ)=​EG1​i=1∑G​(min(ρi​Ai​, clip(ρi​,1−ε,1+ε)Ai​)−βDKL​(πθ​∥πref​))​
+
+Eq. 1
+
+ 期望記號 Eq∼P(Q),{oi}∼πθold $\mathbb E_{q\sim P(Q),\{o_i\}\sim\pi_{\theta_{old}}}$ ​}∼πθold​​​ 的白話是：先從問題分布抽一題，再用舊策略為它抽 G $G$ 個輸出，對所有可能的結果取平均。論文直接寫出 πθ(oi∣q)/πθold(oi∣q) $\pi_\theta(o_i\mid q)/\pi_{\theta_{old}}(o_i\mid q)$ ​(oi​∣q)/πθold​​(oi​∣q)，本頁簡寫為 ρi $\rho_i$ ​。
+
+ 裁剪讓梯度為 0 的情況。min⁡(⋅,⋅) $\min(\cdot,\cdot)$ 取兩者中較小（較保守）的值。逐段寫出 min 與 clip 可得本頁推導：A>0 $A>0$ 且 ρ>1+ε $\rho>1+\varepsilon$ 時，目標停在 (1+ε)A $(1+\varepsilon)A$ ，梯度為 0；A<0 $A<0$ 且 ρ<1−ε $\rho<1-\varepsilon$ 時，目標停在 (1−ε)A $(1-\varepsilon)A$ ，梯度為 0。也就是說，一個輸出的機率已經朝有利方向移動超過 ε $\varepsilon$ 之後，同一批資料就不再推動它，藉此限制策略離舊策略多遠。
+
+ ε 的取值。R1 第一階段 RL 的 ε = 10（Sec. 3.2.1）。作者寫道，較小的值會截斷大量 token 的梯度、降低效能，較大的值可能使訓練不穩（Sec. 3.2.1）。ε = 10 時上界 1+ε=11 $1+\varepsilon=11$ ，下界 1−ε=−9<0 $1-\varepsilon=-9<0$ ；而 ρ>0 $\rho>0$ ，所以 A<0 $A<0$ 一側的裁剪永遠不會啟動本頁推導。PPO 原論文（Schulman et al. 2017）常用 ε = 0.2，本文沒有使用或引用這個值；R1-Zero 的 ε 在 Sec. 2.1 沒有寫出。另外，Eq. 1 以整段輸出的機率寫出。論文未說明 ρ 與裁剪是在整段輸出還是逐 token 計算；上面「截斷大量 token 的梯度」是作者原話。
+
+ 4b · KL 懲罰與參考模型
+
+ Eq. 1 的第二項把目前策略拉向參考策略 πref $\pi_{ref}$ ​。論文使用的 KL 估計量是：
+
+ DKL(πθ∥πref)=πref(oi∣q)πθ(oi∣q)−log⁡πref(oi∣q)πθ(oi∣q)−1 $\mathbb D_{KL}(\pi_\theta\Vert\pi_{ref})=\frac{\pi_{ref}(o_i\mid q)}{\pi_\theta(o_i\mid q)}-\log\frac{\pi_{ref}(o_i\mid q)}{\pi_\theta(o_i\mid q)}-1$ ​(πθ​∥πref​)=πθ​(oi​∣q)πref​(oi​∣q)​−logπθ​(oi​∣q)πref​(oi​∣q)​−1
+Eq. 2
+
+ GRPO 的 KL 處理。令 x=πref/πθ $x=\pi_{ref}/\pi_\theta$ ​/πθ​，Eq. 2 是 x−log⁡x−1 $x-\log x-1$ ，對所有 x>0 $x>0$ 都 ≥0 $\ge0$ ，等號只在 x=1 $x=1$ 本頁推導。論文稱它是 KL 散度的不偏估計量（App. A.3，引用 Schulman 2020）：在 o∼πθ $o\sim\pi_\theta$ ​、且 πθ $\pi_\theta$ ​ 的支撐包含於 πref $\pi_{ref}$ ​ 的支撐兩個前提下，E[πref/πθ]=1 $\mathbb E[\pi_{ref}/\pi_\theta]=1$ ​/πθ​]=1，所以期望值等於 Eπθ[log⁡(πθ/πref)]=KL(πθ∥πref) $\mathbb E_{\pi_\theta}[\log(\pi_\theta/\pi_{ref})]=\mathrm{KL}(\pi_\theta\Vert\pi_{ref})$ ​​[log(πθ​/πref​)]=KL(πθ​∥πref​)本頁推導。不偏是對 KL 的值而言，不保證其梯度不偏；Eq. 1 的樣本來自 πθold $\pi_{\theta_{old}}$ ​​，第一次更新之後就屬於 off-policy（用舊策略產生的資料更新新策略）。KL 項的位置也與 PPO 不同：GRPO 直接把 KL 估計量加在損失中，PPO 則把每個 token 的 KL 懲罰加在獎勵中；因為 RL 最大化累積獎勵，PPO 的做法等於懲罰累積 KL，可能隱含地懲罰回應長度（App. A.3）。KL 係數 β = 0.001，訓練中每 400 步把參考模型換成最新的策略，以在探索範圍與訓練穩定之間取得平衡（Sec. 2.1、App. A.3）。
+
+ rollout 與訓練步。每次 rollout 產生 8,192 個輸出，隨機分成 16 個 mini-batch，只訓練一個 inner epoch；每個訓練步是 32 題 × 16 個輸出 = 512（Sec. 2.1）。8192/16=512 $8192/16=512$ ，所以一次 rollout 涵蓋 16 個訓練步、512 題本頁推導。第一個 mini-batch 更新前 πθ=πθold $\pi_\theta=\pi_{\theta_{old}}$ ​=πθold​​，ρi=1 $\rho_i=1$ ​=1，裁剪不起作用；之後的 mini-batch 才會出現 ρi≠1 $\rho_i\ne1$ ​=1本頁推導。Fig. 1 的「訓練步」指一次策略更新。
+
+ C2單一輸出的裁剪目標與 KL 項
+
+ 本圖只看一個輸出，並假設 πref = πold（剛更新參考模型時），於是 πref/πθ = 1/ρ。x = log ρ；x = 0 表示新舊策略給這個輸出的機率相同。dJ/dx 為正表示提高這個輸出的機率會增加目標。
+
+ ρA（未裁剪）裁剪後−β·D（KL 項）總目標 J斜線區：梯度 = 0
+
+ 優勢 A 1.00
+
+ ε 預設值
+0.2（PPO 原論文常用值，非本文）10（R1 第一階段，Sec. 3.2.1）
+
+ 裁剪範圍 ε 0.200
+
+ 滑桿以 log₁₀ ε 均分；與 0.2 或 10 相差 2% 以內時吸附到該值。
+
+ KL 係數 β
+00.001（論文）0.1（放大以便觀察）
+
+ 目前位置 x = log ρ 0.30
+
+ ρ1.3499裁剪後代理項1.2000β·D4.08e-5J1.2000dJ/dx-0.0003裁剪是（梯度只剩 KL）
+ A = 1.00，ε = 0.200，x = 0.30：已裁剪，代理項梯度為 0
+
+ 讀數由本頁依 Eq. 1、Eq. 2 的解析式即時計算；梯度 dJ/dx = ρA·[未裁剪] − β(1 − 1/ρ)本頁推導。兩圖 y 軸固定 [−4, 4]，超出部分在邊界截斷並以箭頭標示。
+
+ 元件中可以看到：ε = 0.2、A = 1 時，x>0.1823 $x>0.1823$ （ρ>1.2 $\rho>1.2$ ）之後梯度只剩很小的 KL 項；ε = 10 時上界在 x=2.398 $x=2.398$ （ρ=11 $\rho=11$ ），下界不存在，負優勢一側不會被裁剪；β = 0.1 時 KL 項在 x=0 $x=0$ 為 0，往兩側把目標往下拉。論文的 β = 0.001 時，KL 項在這個範圍內幾乎看不出來。
+
+ 延伸閱讀：RLVR、GRPO 與信用分配瓶頸
+
+ 05 · 規則式獎勵
+
+ DeepSeek-R1-Zero 只用規則式獎勵
+
+ Rewardrule=Rewardacc+Rewardformat $Reward_{rule}=Reward_{acc}+Reward_{format}$ ​=Rewardacc​+Rewardformat​
+Eq. 4
+
+ R1-Zero 的獎勵。R1-Zero 的獎勵由準確度獎勵與格式獎勵兩項組成，等權相加（Eq. 4）。準確度獎勵判斷答案是否正確：數學題要求把最終答案放在指定格式（例如方框）中，以規則比對；程式題以編譯器執行預先定義的測試案例（Sec. 2.2）。RL 資料中，數學答案相符得 1、否則 0；STEM 選擇題依是否選中正確選項給二元獎勵（App. B.3.1）。格式獎勵要求推理過程放在 <think> 與 </think> 之間（Sec. 2.2）。
+
+ 推理任務為什麼不用神經獎勵模型。獎勵模型（reward model, RM）是另外訓練、用來替輸出打分的神經網路。作者在推理任務上不使用神經獎勵模型，不論是只看結果的結果式，或逐步打分的過程式。理由是：神經獎勵模型（結果式或過程式）在大規模 RL 中容易被 reward hacking，重新訓練又耗資源、使流程複雜（Sec. 2.2）。reward hacking 指模型找到提高獎勵分數、卻沒有真正完成任務的方式。
+
+ RL 資料（Table 4）：數學 26K 題、程式 17K、STEM 22K、邏輯 15K，另有通用 66K（只用於 R1）。數學題排除證明題，因為難以判斷正確性（App. B.3.1）。
+
+ Table 4：RL 資料
+ 類型題數題型輸出
+
+ 數學26K定量推理數字／式子／方程式
+
+ 程式17K演算法與修 bug程式碼
+
+ STEM22K選擇題選項
+
+ 邏輯15K選擇／定量推理選項／數字
+
+ 通用66K有用性／無害性排序的回應
+
+ 06 · R1-Zero
+
+ 純 RL 讓回應變長，並出現 wait 等詞
+
+ 先定義本章用到的評測名詞。AIME 是美國數學邀請賽（American Invitational Mathematics Examination），每題答案是一個整數。pass@1 是每題取樣多次、計算平均正確率（第 08 章詳述）；cons@16 是每題取樣 16 次、以多數決的答案計算正確率。GPQA Diamond 是研究所程度的物理、化學、生物多選題（App. D.1）。
+
+ R1-Zero 的訓練設定與結果。R1-Zero 每個訓練步取 32 題、每題 16 個輸出，batch 為 512；學習率 3e-6、KL 係數 0.001、取樣溫度 1，共訓練 10,400 步（1.6 個 epoch），每 400 步更新參考模型（Sec. 2.1）。輸出最大長度在第 8.2k 步之前是 32,768 tokens，之後調為 65,536；調高的那一刻，效能與回應長度都明顯跳升（Sec. 2.1）。AIME 2024 的 pass@1 由 15.6% 升到 77.9%，自洽解碼達 86.7%（R1-Zero，cons@16 自洽解碼），超過人類參賽者的平均（Sec. 2.3、Fig. 1a）。R1-Zero 在 GPQA Diamond 的 pass@1 為 75.8（Table 3）。
+
+ 訓練中出現的推理行為。R1-Zero 在訓練集上的平均回應長度隨訓練持續增加（Fig. 1b），作者稱之為「思考時間」（thinking time）增加，來自模型本身的適應而非外部修改（Sec. 2.3）。作者另外統計十個反思詞（作者稱；wait、mistake、however、but、retry、error、verify、wrong、evaluate、check，由 3 位人類專家選出）：它們的出現次數比訓練開始時增加 5–7 倍（App. C.2、Fig. 9a）。這是次數，不是比率；回應變長本身也會使次數增加。"wait" 一詞在訓練早期幾乎沒有，第 4000–7000 步偶爾出現，第 8000 步後大幅增加（App. C.2、Fig. 9b）。作者稱之為 aha moment：一個中間版本在解題中寫出「Wait, wait. Wait. That's an aha moment I can flag here.」（等等。這是我可以標記的頓悟時刻。）然後重新逐步檢查（Table 2）。
+
+ 依 MATH 難度分層（App. C.1、Fig. 8）：等級 1–3 很快達到 0.90–0.95；等級 4 由約 0.78 升到 0.95；等級 5 由約 0.55 升到 0.90。等級 1 在 500 題中只有 43 題，95–97% 的正確率只代表 1–2 題未解。
+
+ R1-Zero 也有問題：輸出可讀性差，同一段 CoT 會中英混雜；規則式 RL 只針對推理任務，寫作與開放問答的能力有限（Sec. 1、Sec. 3）。作者推測語言混雜與 base model 的訓練資料主要是中英文有關（App. A.1）。
+
+ 長度上限為什麼重要：超過上限的輸出被截斷，沒有答案，準確度獎勵是 0。上限因此壓住了「能被強化的長度」；調高上限後，原本會被截斷、但能答對的長輸出開始拿到正的優勢。下面的玩具只示範這個機制。
+
+ C3玩具 GRPO：長度上限如何截斷獎勵
+本頁構造
+
+ 本圖假設：答案越長，答對機率越高（c(L) = 0.9·(1 − e−L/10000)）；超過長度上限的輸出被截斷、得 0 分。這是本頁構造的玩具，不是論文資料，只示範 Eq. 1–3 如何依答案對錯移動長度分布。
+
+ 選擇群組大小 G 與「調高長度上限的步數 S」。每次選擇後，8 條獨立的訓練（seed 1–8）各跑 2,000 步；淡線為各條，粗線為平均。
+
+ 群組大小 G
+41632
+
+ 調高長度上限的步數 S
+040010001600不調高
+
+ 8 條平均兩個上限下的最佳值淡線：個別 seed
+
+ 第 2000 步平均正確率0.776平均期望長度31,333中位數長度28,331截斷比例0.047無訊號群組比例0.004
+
+ 第 2000 步，平均正確率 0.776，平均長度 31,333
+
+ 平均值表
+C3 的 8 條平均（本頁構造）步中位數長度期望正確率期望長度截斷比例
+12,0030.1782,2700.000
+40015,8970.63317,3510.072
+80015,3470.63416,8250.061
+120015,7090.62917,1730.074
+160016,4950.70318,6980.003
+170026,2680.77329,2730.036
+200028,3310.77631,3330.047
+
+ 玩具設定：每個輸出的長度 L 滿足 log L ~ N(μ, 0.5²)，標準差固定，只訓練 μ（初始中位數 2,000 tokens）。每步取 G 個輸出，依 Eq. 3 算優勢，依 Eq. 1 的梯度更新 μ（學習率 0.02，與論文 3e-6 不可比）；每次 rollout 只更新一次，所以 ρ = 1、裁剪不啟動（見 C2）。β 固定為論文的 0.001，每 400 步更新參考；在此玩具中 KL 項的影響可忽略。期望值以 96 點積分即時計算。S 當步的正確率小跳是「原本被截斷的輸出現在算數」，之後 100 步內的上升才是策略移動。
+
+ 在這個假設下可以看到四件事。(1) 上限 32,768 時，中位數長度停在約 16,000、正確率約 0.63，仍有約 7% 的輸出被截斷：再長一點雖然更準，但被截斷的比例上升，兩者互相抵消。(2) 不論 S 設在 400、1000 或 1600，調高上限後 100 步內中位數由約 16,000 升到 26,000 以上、正確率升到 0.77 以上，之後停在約 27,000–28,000、0.775。這與論文「第 8.2k 步調高上限後效能與長度跳升」在定性上一致，但玩具不重現 Fig. 1 的任何數字。(3) 不調高時停在 0.63。(4) G = 4 時約 22% 的群組沒有訊號，曲線較抖。「長推導較準」是輸入的假設，不是這張圖的結論。
+
+ 07 · 四階段流程
+
+ DeepSeek-R1 用四個階段補上可讀性與通用能力
+
+ 為了解決 R1-Zero 的可讀性與語言混雜問題，並補上通用能力，作者設計了 DeepSeek-R1 的流程（Sec. 3、Fig. 2）。Fig. 2 把中間的檢查點命名為 Dev1、Dev2、Dev3。
+
+ DeepSeek-R1 的四個階段（Fig. 2、Sec. 3、App. B.3–B.4）
+ 階段起點模型資料與獎勵產物
+
+ 冷啟動 SFTDeepSeek-V3-Base數千筆長 CoT 冷啟動資料Dev1
+
+ 第一階段 RLDev1推理題；規則式準確度 + 格式 + 語言一致性獎勵Dev2
+
+ 拒絕取樣 + 第二次 SFTDeepSeek-V3-Base約 60 萬筆推理 + 約 20 萬筆非推理Dev3
+
+ 第二階段 RLDev3推理題用規則獎勵；通用題用獎勵模型 + 格式；加語言獎勵R1
+
+ R1 的四個階段。DeepSeek-R1 的訓練依序是：冷啟動 SFT（V3-Base，數千筆長 CoT）→ 第一階段 RL（規則獎勵 + 語言一致性獎勵 Eq. 7，ε = 10）→ 拒絕取樣 + SFT（再次微調 V3-Base，約 60 萬推理 + 20 萬非推理）→ 第二階段 RL（規則 + 獎勵模型 + 語言獎勵，溫度 0.7，1,700 步，偏好獎勵只在最後 400 步）（Sec. 3、App. B.3–B.4）。注意 Dev1 與 Dev3 都從 DeepSeek-V3-Base 出發：Dev1 不是由 R1-Zero 繼續訓練，Dev3 也不是由 Dev2 繼續訓練；Dev2 只用來產生資料（App. B.4.2、B.3.3）。
+
+ 冷啟動資料（App. B.3.2）。動機主要來自產品面：使用者覺得第一人稱的思考過程較直觀。作者先蒐集數千個推理問題，用 R1-Zero 在溫度 1.0 下產生多條軌跡，只保留最終答案正確、格式可讀者（數學以 sympy 比對；格式以重複偵測與語言混雜過濾），再請 DeepSeek-V3 改寫推理與摘要，並要求「把思考過程翻譯成與問題相同的語言」；另請人工標註者把部分軌跡改成自然的對話風格，作為範例讓 LLM 改寫更多資料，再經第二輪人工驗證。作者強調，這些生動的推理風格主要反映 DeepSeek 設計的啟發式，不代表模型具有類人的智慧。
+
+ Rewardlanguage=Num(Wordstarget)Num(Words) $Reward_{language}=\frac{Num(Words_{target})}{Num(Words)}$ ​=Num(Words)Num(Wordstarget​)​
+Eq. 7
+
+ 語言一致性獎勵是 CoT 中目標語言詞所占的比例（Eq. 7），直接加到最終獎勵，推理與非推理資料都套用（Sec. 3.2.1）。App. B.6 以 DeepSeek-R1-Distill-Qwen-7B 做消融：沒有這項獎勵時，語言一致性隨訓練步數逐漸變差；加上後維持穩定，數學表現相當、程式略降（Fig. 7）。作者接受這個小幅下降，因為輸出較易讀。第一階段 RL 的其他設定與 R1-Zero 相同：學習率 3e-6、KL 0.001、溫度 1、每題 16 個輸出、最大長度 32,768、每步 32 題、每 400 步更新參考（Sec. 3.2.1）。
+
+ 80 萬筆 SFT 資料（App. B.3.3、Table 5）。推理資料由第一階段 RL 的檢查點做拒絕取樣：每題取樣多個回應，只保留正確者。除了規則可驗證的題目，也加入以 DeepSeek-V3 當生成式獎勵模型判斷對錯的題目；過濾語言混雜、長段落與程式碼區塊，約 60 萬筆。非推理資料（寫作、事實問答、自我認知、翻譯）沿用 DeepSeek-V3 的 SFT 資料並加入軟體工程資料，簡單問題（如「hello」）不附 CoT，約 20 萬筆。Table 5 合計 804,745 筆（推理類 626,933、通用 177,812）。兩次 SFT 都微調 DeepSeek-V3-Base 2–3 個 epoch，學習率以 cosine 由 5e-5 降到 5e-6，最大長度 32,768，batch 128（App. B.4.2）。
+
+ Reward=Rewardreasoning+Rewardgeneral+RewardlanguageRewardreasoning=Rewardrule,Rewardgeneral=Rewardreward_model+Rewardformat $\begin{aligned}Reward&=Reward_{reasoning}+Reward_{general}+Reward_{language}\\Reward_{reasoning}&=Reward_{rule},\qquad Reward_{general}=Reward_{reward\_model}+Reward_{format}\end{aligned}$ Rewardreasoning​​=Rewardreasoning​+Rewardgeneral​+Rewardlanguage​=Rewardrule​,Rewardgeneral​=Rewardreward_model​+Rewardformat​​
+Reward=Rewardreasoning+Rewardgeneral+RewardlanguageRewardreasoning=RewardruleRewardgeneral=Rewardreward_model+Rewardformat $\begin{aligned}Reward&=Reward_{reasoning}\\&\quad+Reward_{general}\\&\quad+Reward_{language}\\Reward_{reasoning}&=Reward_{rule}\\Reward_{general}&=Reward_{reward\_model}\\&\quad+Reward_{format}\end{aligned}$ Rewardreasoning​Rewardgeneral​​=Rewardreasoning​+Rewardgeneral​+Rewardlanguage​=Rewardrule​=Rewardreward_model​+Rewardformat​​
+
+Eq. 8–10
+
+ 第二階段 RL（Sec. 3.2.2）沿用第一階段大部分參數，溫度降為 0.7（較高溫度在此階段造成不連貫的生成）；共 1,700 步，通用指令資料與偏好獎勵只在最後 400 步加入。作者發現以模型偏好獎勵訓練更多步會導致 reward hacking（Sec. 3.2.2、App. B.5）。獎勵模型（Sec. 3.1）：有用性獎勵模型的訓練資料由 DeepSeek-V3 以 arena-hard 格式比較兩個回應產生，每對問 4 次並隨機交換 A／B 位置以減少位置偏誤，只保留平均分差 Δ > 1 的配對，並讓選中與落選回應的長度相當，共 66,000 對；它只評最終摘要。安全獎勵模型以 106,000 個標註「安全／不安全」的回應逐點訓練，評整段回應（含推理）。
+
+ 各階段的取捨。Dev1 相較 R1-Zero，指令遵循與偏好評測上升（IF-Eval 46.6 → 71.7），推理下降（AIME 77.9 → 59.0），作者歸因於冷啟動資料量小；Dev1 不是由 R1-Zero 繼續訓練而來，這是 Sec. 4 的跨線比較。Dev2 在程式、數學、STEM 等推理評測明顯提升（AIME 74.0）。Dev3 加入非推理資料，AlpacaEval 2.0 與 Aider-Polyglot 提升。最後 RL 主要提升通用指令與偏好：AlpacaEval 2.0 62.1 → 87.6、ArenaHard 75.6 → 92.3，與論文所寫的 25%、17% 的百分點差吻合（論文未說明單位）本頁推導（Sec. 4、Table 3）。
+
+ C4模型譜系與 Table 3：每個階段改變了什麼
+
+ 選一個模型，查看它與論文 Sec. 4 所比較的模型之間的差異；選擇評測（最多 8 個）畫出五個模型的分數。
+
+ DeepSeek-V3-Base起點
+
+ → RLR1-Zero規則獎勵
+
+ → 冷啟動 SFTDev1起點 V3-Base→ RL + 語言獎勵Dev2
+
+ → SFT 80 萬筆Dev3起點 V3-Base→ RL（規則 + 獎勵模型）R1
+
+ 虛線關係（資料，不是繼續訓練）：R1-Zero ⇢ Dev1「冷啟動資料來源」；Dev2 ⇢ Dev3「拒絕取樣資料」。
+
+ R1
+起點：Dev3
+資料與獎勵：推理題用規則獎勵；通用題用獎勵模型 + 格式；加語言獎勵（Eq. 8–10）；溫度 0.7，1,700 步
+比較對象：Dev3（同一條訓練線）
+上升（前 3 名，|Δ| ≥ 1.0）：
+AlpacaEval2.0 +25.5
+ArenaHard +16.7
+Aider-Polyglot +8.5
+下降：僅 C-SimpleQA −3.2
+另列（Elo 分數，不列入上方排名）Codeforces Rating：1746 → 2029（上升）
+論文敘述：主要提升通用指令與偏好評測；程式與數學只小幅提升（Sec. 4）。
+
+ EnglishMMLUMMLU-ReduxMMLU-ProDROPIF-EvalGPQA DiamondSimpleQAFRAMESAlpacaEval2.0ArenaHardCodeLiveCodeBenchCodeforces 百分位SWE VerifiedAider-PolyglotMathAIME 2024MATH-500CNMO 2024ChineseCLUEWSCC-EvalC-SimpleQA
+
+ R1，與 Dev3 比較：上升最多 AlpacaEval2.0 +25.5
+
+ 完整 Table 3
+Table 3（各階段結果）評測R1-ZeroDev1Dev2Dev3R1
+MMLU88.889.191.29190.8
+MMLU-Redux85.6909393.192.9
+MMLU-Pro68.974.183.883.184
+DROP89.189.891.188.792.2
+IF-Eval46.671.77278.183.3
+GPQA Diamond75.866.170.771.271.5
+SimpleQA30.317.828.224.930.1
+FRAMES82.378.581.881.982.5
+AlpacaEval2.024.750.155.862.187.6
+ArenaHard53.67773.275.692.3
+LiveCodeBench5057.563.564.665.9
+Codeforces 百分位80.484.590.592.196.3
+Codeforces Rating14441534168717462029
+SWE Verified43.239.644.645.649.2
+Aider-Polyglot12.26.725.644.853.3
+AIME 202477.9597478.179.8
+MATH-50095.994.295.995.497.3
+CNMO 202488.15873.977.378.8
+CLUEWSC93.192.892.691.692.8
+C-Eval92.885.791.986.491.8
+C-SimpleQA66.458.864.266.963.7
+
+ 資料照錄 Table 3。差值以整數十分位計算、顯示到小數一位，只列 |Δ| ≥ 1.0 個百分點；論文以粗體標示 p < 0.01 的顯著差異，此排序沒有帶入顯著性。斜率圖中 R1-Zero–Dev1 與 Dev2–Dev3 兩段畫成虛線，表示跨線比較。Codeforces Rating 的單位不同，只在卡片中以文字顯示。
+
+ 延伸閱讀：GRPO 與規則式結果獎勵
+
+ 08 · 評測
+
+ 評測採取樣式 pass@1，R1 與 o1-1217 相當
+
+ pass@1=1k∑i=1kpi $\text{pass@1}=\frac1k\sum_{i=1}^k p_i$ 1​i=1∑k​pi​
+App. D.1
+
+ pass@1 的計算與主要結果。作者發現以 greedy decoding 評測長輸出的推理模型時，重複率較高，不同檢查點之間的差異也大，因此預設改用取樣：溫度 0.6、top-p 0.95，每題產生 k $k$ 個回應（AIME 與 GPQA 用 k=64 $k=64$ ；MATH 與 Codeforces 用 16；LiveCodeBench 用 8），pass@1 =1k∑pi $=\frac1k\sum p_i$ 1​∑pi​，其中 pi $p_i$ ​ 表示第 i $i$ 個回應是否正確（App. D.1）。在 AIME 2024 上，R1 的 pass@1 為 79.8%，OpenAI-o1-1217 為 79.2%（Table 8）。R1 的 pass@64（64 次中至少一次正確）為 90.0%，多數決為 86.7%（R1，64 樣本多數決；App. E.4）。所有輸出的上限是 32,768 tokens。
+
+ 論文中 86.7 出現三次，指標各不相同：R1-Zero 的 cons@16（Sec. 2.3）、R1 的 64 樣本多數決（App. E.4）、Distill-Llama-70B 的 AIME cons@64（Distill-Llama-70B，cons@64；Table 15）。
+
+ 去汙染（App. D.1）：過濾與評測題或參考解答有 10-gram 重疊的文本；僅數學領域就移除約 600 萬筆預訓練文本；SFT 與 RL 的數學題只取 2023 年以前的競賽。作者承認 n-gram 方法無法排除改寫過的題目。
+
+ 新競賽（App. E.2、Table 13）：App. E.2 寫「DeepSeek-R1 achieves a 75% solve rate (Pass@1), approaching o1's performance of 80%」（AIME 2025）；Table 13 以平均分數列出 AIME 2025 為 11.3/15（o1 12.0/15）。AMC 12 2024 為 143.7/150，USAMO 指數 256.7 超過 251.5 的資格線（o1 為 261.0）。
+
+ 推論時運算（App. E.4、Fig. 18）：在 2024 年 93 場競賽的 366 題上，R1 平均使用 8,793 個思考 tokens，pass@1 61.8%；簡單題少於 7,000 tokens，最難的題超過 18,000。GPT-4o 0513 在同一題組只有 24.7%，平均 711 個輸出 tokens；在 AIME 2024 上，GPT-4o 以 64 個樣本多數決也只由 9.3% 升到 13.4%。
+
+ Table 8 摘錄（R1 與 OpenAI-o1-1217）
+ 評測DeepSeek-V3o1-1217R1
+
+ AIME 2024（pass@1）39.279.279.8
+
+ MATH-500（pass@1）90.296.497.3
+
+ Codeforces（百分位）58.796.696.3
+
+ Codeforces（rating）113420612029
+
+ GPQA Diamond（pass@1）59.175.771.5
+
+ SWE Verified（resolved）42.048.949.2
+
+ Aider-Polyglot（acc.）49.661.753.3
+
+ 09 · 蒸餾
+
+ 蒸餾比直接對小模型做 RL 更有效
+
+ 蒸餾（distillation）在這裡是指：用大模型的輸出當 SFT 資料訓練小模型。作者以第 07 章的 80 萬筆樣本對 Qwen2.5 與 Llama 做 SFT，不加 RL 階段（App. F）；訓練 2–3 個 epoch，cosine 學習率降到初始值的 1/10，最大長度 32,768，batch 64（App. B.4.3）。
+
+ Table 15 中，AIME 2024 的 pass@1：Distill-Qwen-1.5B 28.9、7B 55.5、14B 69.7、32B 72.6，Distill-Llama-8B 50.4、70B 70.0；GPT-4o-0513 為 9.3，Claude-3.5-Sonnet-1022 為 16.0。1.5B 模型只在數學評測勝過 GPT-4o（MATH-500 83.9 對 74.6），GPQA Diamond（33.8 對 49.9）與 LiveCodeBench（16.9 對 32.9）仍較低。學生模型越大，表現越好。
+
+ 蒸餾與小模型直接 RL 的比較。作者對 Qwen2.5-32B-Base 以數學、程式、STEM 資料做超過 10K 步的 RL，得到 Qwen2.5-32B-Zero（學習率 2e-6，其餘同 R1 第一階段 RL 設定，最大長度固定 32,768；App. B.4.1）。它的 AIME 2024 pass@1 為 47.0，而 Distill-Qwen-32B 為 72.6，也就是 72.6 對 47.0（Table 16）。作者由此得到兩個結論：把強模型蒸餾到小模型效果很好，小模型靠大規模 RL 需要大量運算，而且可能不及蒸餾；蒸餾經濟有效，但要超越人類智慧的邊界，可能仍需要更強的 base model 與更大規模的 RL（App. F.1）。作者在開發初期也試過以 7B dense 與 16B MoE 的模型做純 RL，在 AIME 上沒有有意義的提升，回應變長時傾向重複；改用 32B dense、230B MoE、671B MoE 後才看到大幅提升。作者因此認為 RL 從 base 出發的效果高度依賴模型容量（App. G.1）。
+
+ Table 17：作者在 o1 發布之前釋出的 Qwen2-Math-7B 上做約 10,000 步 RL（確保 base 沒看過推理軌跡資料），AIME 2024 為 22.3%、AIME 2025 為 18.1%，高於 Qwen2-Math-7B-Instruct 的 7.9%、4.6%。
+
+ Table 15、16 摘錄（AIME 2024 pass@1）
+ 模型AIME 2024MATH-500GPQA Diamond
+
+ GPT-4o-05139.374.649.9
+
+ DeepSeek-R1-Distill-Qwen-1.5B28.983.933.8
+
+ QwQ-32B-Preview50.090.654.5
+
+ Qwen2.5-32B-Zero（直接 RL）47.091.655.0
+
+ DeepSeek-R1-Distill-Qwen-32B72.694.362.1
+
+ 延伸閱讀：以 DeepSeek-R1 輸出蒸餾小模型、知識蒸餾基礎
+
+ 10 · 失敗與發現
+
+ 失敗嘗試與關鍵發現
+
+ 驗證器（App. G.1）。R1-Zero 的效果高度依賴獎勵訊號是否可靠。作者目前的經驗是，規則式獎勵與「以 LLM 對照標準答案判斷對錯」兩種方式能減輕 reward hacking；後者適合答案簡短明確的任務，不容易推廣到開放生成與長文寫作。
+
+ 迭代流程（App. G.1）。RL 讓模型探索人工標註達不到的推理軌跡；SFT 處理難以定義可靠獎勵的任務，例如開放問答與創意寫作。只用 RL 會在定義不良的任務上 reward hacking，只用 SFT 則無法透過探索最佳化推理，所以作者認為兩者都不可缺少。
+
+ 過程獎勵模型（process reward model, PRM）的三個限制（App. G.2）。PRM 對推理的每一步打分。作者列出：一般推理中難以明確定義「一步」；難以判斷中間步驟是否正確，自動標註效果不佳、人工標註又難以擴展；一旦引入模型式 PRM，必然導致 reward hacking，重新訓練又增加資源與流程複雜度。PRM 在重排前 N 個回應或引導搜尋上有用，但相對於大規模 RL 的額外成本，優勢有限。
+
+ 蒙地卡羅樹搜尋（MCTS）的兩個挑戰（App. G.2）。作者仿照 AlphaGo 與 AlphaZero，把答案拆成小段做樹搜尋，並以預訓練的價值模型引導。但 token 生成的搜尋空間比西洋棋大上指數倍，限制每個節點的最大擴展數又可能陷入局部最佳；價值模型直接影響每一步搜尋的品質，而細粒度的價值模型很難訓練，無法像 AlphaGo 那樣逐步自我改進。作者的結論是，MCTS 搭配預訓練價值模型可以改善推論，但以自我搜尋反覆提升模型仍很困難。
+
+ reward hacking 實例（App. B.5、Fig. 6）。以有用性獎勵模型訓練時，獎勵分數持續上升，但 CodeForces 的 test pass@1 下降。這是第二階段 RL 只在最後 400 步加入偏好獎勵的原因。
+
+ 延伸閱讀：過程監督與 PRM：結果與步驟回饋的比較
+
+ 11 · 實作
+
+ 實作設定與常見錯誤
+
+ 超參數總表（Sec. 2.1、3.2、App. B.4）
+ 項目R1-ZeroR1 第一階段 RLR1 第二階段 RLSFT（兩次）蒸餾
+
+ 起點V3-BaseDev1Dev3V3-BaseQwen2.5／Llama（Table 6）
+
+ 學習率3e-63e-6沿用5e-5 → 5e-6（cosine）Table 6 初始值，cosine 降到 1/10
+
+ KL β／ε0.001／未寫明0.001／10沿用——
+
+ 溫度110.7——
+
+ 每題輸出／每步題數16／3216／32沿用——
+
+ 最大長度32,768 → 65,536（8.2k 步）32,768沿用32,76832,768
+
+ 步數／epoch10,400 步（1.6 epoch）未寫明1,700 步（偏好獎勵最後 400 步）2–3 epoch2–3 epoch
+
+ batch512512沿用12864
+
+ 參考模型更新每 400 步每 400 步沿用——
+
+ 基礎設施（App. B.1）。RL 框架分成四個模組：Rollout（以 vLLM 取樣；MoE 跨節點專家平行、熱點專家冗餘，並以多 token 預測做自我推測解碼）、Inference（獎勵模型與參考模型的前向計算）、Rule-based Reward（程式執行器、答案比對、格式檢查，以非同步排程與前兩者重疊）、Training（依長度排序後以 Best-Fit 打包成固定長度區塊，並用 DualPipe 管線平行）。除規則獎勵模組外，每個模組結束後把模型從 GPU 記憶體卸載到主記憶體或磁碟。
+
+ 成本（App. B.4.4、Table 7，以 H800 每 GPU 小時 2 美元計）。R1-Zero 用 64×8 張 H800 約 198 小時，共 101K GPU 小時（202K 美元）；SFT 資料製作 5K GPU 小時（10K 美元）；R1 約 80 小時，41K GPU 小時（82K 美元）；合計 147K GPU 小時、294K 美元。64×8×198=101,376 $64\times8\times198=101{,}376$ 、64×8×80=40,960 $64\times8\times80=40{,}960$ ，與表一致本頁推導。
+
+ 常見錯誤
+
+ 以為 R1 完全沒有 SFT：只有 R1-Zero 沒有 SFT；R1 有冷啟動 SFT 與 80 萬筆的第二次 SFT（Sec. 3、App. B.4.2）。
+
+ 以為 Dev3 由 Dev2 繼續微調：第二次 SFT 微調的是 DeepSeek-V3-Base，Dev2 只用來拒絕取樣產生資料（App. B.4.2、B.3.3）。
+
+ 全對或全錯的群組照算 Eq. 3：std = 0，需要保護；這些題目沒有獎勵訊號，只剩 β > 0 時的 KL 梯度本頁推導。
+
+ 期待格式獎勵在所有輸出都合規時仍有作用：常數獎勵不改變優勢本頁推導。
+
+ 沿用 PPO 原論文常用的 ε = 0.2（本文未使用此值）：R1 第一階段 RL 用 ε = 10，此時負優勢一側的裁剪不會啟動。
+
+ 把 KL 懲罰加在每個 token 的獎勵中（PPO 做法）：GRPO 加在損失中；前者可能隱含懲罰長度（App. A.3）。
+
+ 以 greedy decoding 評測長推理模型：論文改用溫度 0.6、top-p 0.95 的 pass@1（App. D.1）。
+
+ 在小模型上直接複製純 RL：7B dense、16B MoE 沒有成功（App. G.1）；小模型用蒸餾較好（App. F.1）。
+
+ 在偏好獎勵上訓練太久：第二階段 RL 只在最後 400 步加偏好獎勵，更多步會 reward hacking（Sec. 3.2.2、App. B.5）。
+
+ 用 few-shot 提示評測或使用 R1：few-shot 一致降低表現，建議 zero-shot 直接描述問題與輸出格式（Sec. 6、App. D.1）。
+
+ 12 · 安全與限制
+
+ 安全評估與限制
+
+ 安全（App. D.3）。官方服務另有風險控制系統：使用者問題先比對關鍵字，命中者連同 Listing 8 的審查提示送給 DeepSeek-V3 判斷是否撤回回應。Table 9 六個公開安全基準的平均分數，R1 為 95.0，括號內的模型本身分數為 85.9。Table 11 的越獄攻擊中，R1（無風控）的不安全比例由 25.2% 升到 85.9%；加上風控後不安全比例為 4.3%，拒答比例 87.3%。50 種語言的安全分數，R1 加風控為 85.9%、模型本身為 74.2%（D.3.4）。85.9 在這三處分別是不同的指標。作者建議部署開源模型的開發者採用類似的風控（D.3.5）。
+
+ 能力限制（Sec. 6）。結構化輸出與工具使用較弱；簡單問題仍有過度思考，token 效率有改進空間；針對中英文最佳化，其他語言的問題可能以英文推理或回答；對提示敏感，few-shot 會降低表現；軟體工程任務評估時間長，沒有大規模 RL，相對 DeepSeek-V3 提升有限。
+
+ 方法限制（Sec. 6）。純 RL 依賴可靠的獎勵訊號；寫作等任務難以建構可靠的獎勵模型，以模型打分時容易被利用。對無法可靠評估的複雜任務，擴展純 RL 仍是開放問題。
+
+ 13 · 研究脈絡
+
+ 研究脈絡
+
+ 本文接在幾條脈絡之後：思維鏈提示與以多次取樣、驗證器換取效能的推論時運算；以 RLHF 與 PPO 對齊人類偏好；以模型自產的正確推理再微調（STaR）與過程監督（PRM）；DeepSeekMath 提出的 GRPO。蒸餾的原型是 Hinton 等人的知識蒸餾。每張卡片連到對應的研究筆記。
+
+ 思維鏈與推論時運算RLHF 與 PPO自產推理過程監督GRPO蒸餾本文
+
+ 2015蒸餾Distilling the Knowledge in a Neural Network
+Hinton et al.
+蒸餾的原型，本文用於把 R1 推理能力轉移到小模型
+arXiv ↗筆記
+2015RLHF 與 PPOHigh-Dimensional Continuous Control Using Generalized Advantage Estimation
+Schulman et al.
+GAE，PPO 優勢值計算；本文與 GRPO 對照
+arXiv ↗筆記
+2017RLHF 與 PPOProximal Policy Optimization Algorithms
+Schulman et al.
+PPO，GRPO 所簡化的 RL 演算法
+arXiv ↗筆記
+2020思維鏈與推論時運算Scaling Laws for Neural Language Models
+Kaplan et al.
+預訓練規模與能力，本文 §1 引用
+arXiv ↗筆記
+2021思維鏈與推論時運算Training Verifiers to Solve Math Word Problems
+Cobbe et al.
+GSM8K 與驗證器重排序
+arXiv ↗筆記
+2022思維鏈與推論時運算Chain-of-Thought Prompting Elicits Reasoning in Large Language Models
+Wei et al.
+思維鏈提示，本文摘要所述前提
+arXiv ↗筆記
+2022自產推理STaR: Bootstrapping Reasoning With Reasoning
+Zelikman et al.
+以自產正確推理微調，最接近的前作
+arXiv ↗筆記
+2022RLHF 與 PPOTraining language models to follow instructions with human feedback
+Ouyang et al.
+RLHF 流程（SFT、獎勵模型、PPO）
+arXiv ↗筆記
+2022過程監督Solving math word problems with process- and outcome-based feedback
+Uesato et al.
+比較結果式與過程式監督
+arXiv ↗筆記
+2023過程監督Let's Verify Step by Step
+Lightman et al.
+過程監督與 PRM
+arXiv ↗筆記
+2023過程監督Math-Shepherd: Verify and Reinforce LLMs Step-by-step without Human Annotations
+Wang et al.
+無人工標註的 PRM
+arXiv ↗筆記
+2024GRPODeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models
+Shao et al.
+提出 GRPO
+arXiv ↗筆記
+2024思維鏈與推論時運算Scaling LLM Test-Time Compute Optimally can be More Effective than Scaling Model Parameters
+Snell et al.
+推論時運算的擴展
+arXiv ↗筆記
+2025本文DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning
+DeepSeek-AI
+以純 RL 激發推理能力
+arXiv ↗筆記
+
+ 14 · 延伸閱讀
+
+ 延伸閱讀
+
+ 研究筆記（依閱讀順序）
+
+ DeepSeek-R1 的研究脈絡總覽總覽
+
+ 思維鏈、驗證器與推論時運算背景
+
+ LLM 的 RL 前史：RLHF、PPO 與 GAE背景
+
+ STaR：以模型自產的推理軌跡微調前作
+
+ 過程監督與 PRM：結果與步驟回饋的比較前作
+
+ GRPO 與規則式結果獎勵（DeepSeek-R1-Zero）本論文的方法
+
+ 以 DeepSeek-R1 輸出蒸餾小模型本論文的方法
+
+ RLVR、GRPO 與信用分配瓶頸站內相關
+
+ MDP、Q 函數與 Bellman backup站內相關
+
+ 知識蒸餾基礎站內相關
+
+ Denoising 作為 MDP，以及 Flow-GRPO 的目標函數站內相關
+
+ DeepSeek-AI. DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning. arXiv:2501.12948（v2，2026-01-04）。
+
+ 本頁的方程式與數字取自論文 v2；標示「本頁推導」的內容為本頁自行推導，「本頁構造」為本頁為教學構造的玩具數值，皆非論文結論。C1–C3 的讀數在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記

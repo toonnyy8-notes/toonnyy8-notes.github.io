@@ -1,0 +1,148 @@
+
+<!-- S6 -->
+<section class="ch" id="zero" data-toc="06" data-tt="R1-Zero">
+  <div class="ch-num">06 · R1-Zero</div>
+  <h2>純 RL 讓回應變長，並出現 wait 等詞</h2>
+  <div class="prose">
+    <p>先定義本章用到的評測名詞。AIME 是美國數學邀請賽（American Invitational Mathematics Examination），每題答案是一個整數。pass@1 是每題取樣多次、計算平均正確率（第 08 章詳述）；cons@16 是每題取樣 16 次、以多數決的答案計算正確率。GPQA Diamond 是研究所程度的物理、化學、生物多選題（App. D.1）。</p>
+    <p><b>R1-Zero 的訓練設定與結果。</b>R1-Zero 每個訓練步取 32 題、每題 16 個輸出，batch 為 512；學習率 3e-6、KL 係數 0.001、取樣溫度 1，共訓練 10,400 步（1.6 個 epoch），每 400 步更新參考模型（Sec. 2.1）。輸出最大長度在第 8.2k 步之前是 32,768 tokens，之後調為 65,536；調高的那一刻，效能與回應長度都明顯跳升（Sec. 2.1）。AIME 2024 的 pass@1 由 15.6% 升到 77.9%，自洽解碼達 86.7%（R1-Zero，cons@16 自洽解碼），超過人類參賽者的平均（Sec. 2.3、Fig. 1a）。R1-Zero 在 GPQA Diamond 的 pass@1 為 75.8（Table 3）。</p>
+    <p><b>訓練中出現的推理行為。</b>R1-Zero 在訓練集上的平均回應長度隨訓練持續增加（Fig. 1b），作者稱之為「思考時間」（thinking time）增加，來自模型本身的適應而非外部修改（Sec. 2.3）。作者另外統計十個反思詞（作者稱；wait、mistake、however、but、retry、error、verify、wrong、evaluate、check，由 3 位人類專家選出）：它們的出現次數比訓練開始時增加 5–7 倍（App. C.2、Fig. 9a）。這是次數，不是比率；回應變長本身也會使次數增加。"wait" 一詞在訓練早期幾乎沒有，第 4000–7000 步偶爾出現，第 8000 步後大幅增加（App. C.2、Fig. 9b）。作者稱之為 aha moment：一個中間版本在解題中寫出「Wait, wait. Wait. That's an aha moment I can flag here.」（等等。這是我可以標記的頓悟時刻。）然後重新逐步檢查（Table 2）。</p>
+    <p>依 MATH 難度分層（App. C.1、Fig. 8）：等級 1–3 很快達到 0.90–0.95；等級 4 由約 0.78 升到 0.95；等級 5 由約 0.55 升到 0.90。等級 1 在 500 題中只有 43 題，95–97% 的正確率只代表 1–2 題未解。</p>
+    <p>R1-Zero 也有問題：輸出可讀性差，同一段 CoT 會中英混雜；規則式 RL 只針對推理任務，寫作與開放問答的能力有限（Sec. 1、Sec. 3）。作者推測語言混雜與 base model 的訓練資料主要是中英文有關（App. A.1）。</p>
+    <p>長度上限為什麼重要：超過上限的輸出被截斷，沒有答案，準確度獎勵是 0。上限因此壓住了「能被強化的長度」；調高上限後，原本會被截斷、但能答對的長輸出開始拿到正的優勢。下面的玩具只示範這個機制。</p>
+  </div>
+
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>玩具 GRPO：長度上限如何截斷獎勵</h3><span class="tag toy">本頁構造</span></div>
+    <p class="lead-assume">本圖假設：答案越長，答對機率越高（c(L) = 0.9·(1 − e<sup>−L/10000</sup>)）；超過長度上限的輸出被截斷、得 0 分。這是本頁構造的玩具，不是論文資料，只示範 Eq. 1–3 如何依答案對錯移動長度分布。</p>
+    <p class="plate-lead">選擇群組大小 G 與「調高長度上限的步數 S」。每次選擇後，8 條獨立的訓練（seed 1–8）各跑 2,000 步；淡線為各條，粗線為平均。</p>
+    <div class="ctl-row" style="margin-bottom:14px">
+      <div><div class="lbl">群組大小 G</div><div class="seg" id="c3-G" role="radiogroup" aria-label="群組大小"></div></div>
+      <div><div class="lbl">調高長度上限的步數 S</div><div class="seg" id="c3-S" role="radiogroup" aria-label="調高上限的步數"></div></div>
+    </div>
+    <div class="pg two">
+      <div class="fig"><div id="c3-acc"><svg role="img" aria-label="期望正確率對訓練步數"></svg></div></div>
+      <div class="fig"><div id="c3-len"><svg role="img" aria-label="期望回應長度對訓練步數"></svg></div></div>
+    </div>
+    <div class="legend"><span class="lg acc">8 條平均</span><span class="lg ref">兩個上限下的最佳值</span><span class="lg">淡線：個別 seed</span></div>
+    <dl class="ro" id="c3-read" style="margin-top:12px"></dl>
+    <p class="prog" id="c3-prog"></p>
+    <p class="sr" id="c3-live" aria-live="polite"></p>
+    <details class="more mini"><summary>平均值表</summary><div class="tscroll"><table id="c3-tab"><caption>C3 的 8 條平均（本頁構造）</caption><thead><tr><th class="num">步</th><th class="num">中位數長度</th><th class="num">期望正確率</th><th class="num">期望長度</th><th class="num">截斷比例</th></tr></thead><tbody></tbody></table></div></details>
+    <p class="plate-f">玩具設定：每個輸出的長度 L 滿足 log L ~ N(μ, 0.5²)，標準差固定，只訓練 μ（初始中位數 2,000 tokens）。每步取 G 個輸出，依 Eq. 3 算優勢，依 Eq. 1 的梯度更新 μ（學習率 0.02，與論文 3e-6 不可比）；每次 rollout 只更新一次，所以 ρ = 1、裁剪不啟動（見 C2）。β 固定為論文的 0.001，每 400 步更新參考；在此玩具中 KL 項的影響可忽略。期望值以 96 點積分即時計算。S 當步的正確率小跳是「原本被截斷的輸出現在算數」，之後 100 步內的上升才是策略移動。</p>
+  </div>
+  <div class="prose">
+    <p>在這個假設下可以看到四件事。(1) 上限 32,768 時，中位數長度停在約 16,000、正確率約 0.63，仍有約 7% 的輸出被截斷：再長一點雖然更準，但被截斷的比例上升，兩者互相抵消。(2) 不論 S 設在 400、1000 或 1600，調高上限後 100 步內中位數由約 16,000 升到 26,000 以上、正確率升到 0.77 以上，之後停在約 27,000–28,000、0.775。這與論文「第 8.2k 步調高上限後效能與長度跳升」在定性上一致，但玩具不重現 Fig. 1 的任何數字。(3) 不調高時停在 0.63。(4) G = 4 時約 22% 的群組沒有訊號，曲線較抖。「長推導較準」是輸入的假設，不是這張圖的結論。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">R1-Zero 每步多少題、每題幾個輸出？最大長度如何變化？AIME 2024 結果？回應長度與反思詞有什麼變化？"wait" 何時大量出現？</p>
+    <p class="a">每步 32 題 × 16 個輸出（batch 512），學習率 3e-6，共 10,400 步；最大長度 32,768，第 8.2k 步後 65,536，此時效能與長度跳升。AIME 2024 pass@1 15.6% → 77.9%，cons@16 86.7%（R1-Zero，cons@16 自洽解碼）。回應長度持續增加；反思詞出現次數增加 5–7 倍；"wait" 早期幾乎沒有，第 4000–7000 步偶爾出現，第 8000 步後大幅增加。</p>
+  </div></details>
+</section>
+
+<!-- S7 -->
+<section class="ch" id="pipeline" data-toc="07" data-tt="四階段流程">
+  <div class="ch-num">07 · 四階段流程</div>
+  <h2>DeepSeek-R1 用四個階段補上可讀性與通用能力</h2>
+  <div class="prose">
+    <p>為了解決 R1-Zero 的可讀性與語言混雜問題，並補上通用能力，作者設計了 DeepSeek-R1 的流程（Sec. 3、Fig. 2）。Fig. 2 把中間的檢查點命名為 Dev1、Dev2、Dev3。</p>
+  </div>
+  <div class="tscroll"><table><caption>DeepSeek-R1 的四個階段（Fig. 2、Sec. 3、App. B.3–B.4）</caption>
+    <thead><tr><th>階段</th><th>起點模型</th><th>資料與獎勵</th><th>產物</th></tr></thead><tbody>
+    <tr><td>冷啟動 SFT</td><td>DeepSeek-V3-Base</td><td>數千筆長 CoT 冷啟動資料</td><td>Dev1</td></tr>
+    <tr><td>第一階段 RL</td><td>Dev1</td><td>推理題；規則式準確度 + 格式 + 語言一致性獎勵</td><td>Dev2</td></tr>
+    <tr><td>拒絕取樣 + 第二次 SFT</td><td>DeepSeek-V3-Base</td><td>約 60 萬筆推理 + 約 20 萬筆非推理</td><td>Dev3</td></tr>
+    <tr><td>第二階段 RL</td><td>Dev3</td><td>推理題用規則獎勵；通用題用獎勵模型 + 格式；加語言獎勵</td><td>R1</td></tr></tbody></table></div>
+  <div class="prose">
+    <p><b>R1 的四個階段。</b>DeepSeek-R1 的訓練依序是：冷啟動 SFT（V3-Base，數千筆長 CoT）→ 第一階段 RL（規則獎勵 + 語言一致性獎勵 Eq. 7，ε = 10）→ 拒絕取樣 + SFT（再次微調 V3-Base，約 60 萬推理 + 20 萬非推理）→ 第二階段 RL（規則 + 獎勵模型 + 語言獎勵，溫度 0.7，1,700 步，偏好獎勵只在最後 400 步）（Sec. 3、App. B.3–B.4）。注意 Dev1 與 Dev3 都從 DeepSeek-V3-Base 出發：Dev1 不是由 R1-Zero 繼續訓練，Dev3 也不是由 Dev2 繼續訓練；Dev2 只用來產生資料（App. B.4.2、B.3.3）。</p>
+    <p><b>冷啟動資料</b>（App. B.3.2）。動機主要來自產品面：使用者覺得第一人稱的思考過程較直觀。作者先蒐集數千個推理問題，用 R1-Zero 在溫度 1.0 下產生多條軌跡，只保留最終答案正確、格式可讀者（數學以 sympy 比對；格式以重複偵測與語言混雜過濾），再請 DeepSeek-V3 改寫推理與摘要，並要求「把思考過程翻譯成與問題相同的語言」；另請人工標註者把部分軌跡改成自然的對話風格，作為範例讓 LLM 改寫更多資料，再經第二輪人工驗證。作者強調，這些生動的推理風格主要反映 DeepSeek 設計的啟發式，不代表模型具有類人的智慧。</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$Reward_{language}=\frac{Num(Words_{target})}{Num(Words)}$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="prose">
+    <p><b>語言一致性獎勵</b>是 CoT 中目標語言詞所占的比例（Eq. 7），直接加到最終獎勵，推理與非推理資料都套用（Sec. 3.2.1）。App. B.6 以 DeepSeek-R1-Distill-Qwen-7B 做消融：沒有這項獎勵時，語言一致性隨訓練步數逐漸變差；加上後維持穩定，數學表現相當、程式略降（Fig. 7）。作者接受這個小幅下降，因為輸出較易讀。第一階段 RL 的其他設定與 R1-Zero 相同：學習率 3e-6、KL 0.001、溫度 1、每題 16 個輸出、最大長度 32,768、每步 32 題、每 400 步更新參考（Sec. 3.2.1）。</p>
+    <p><b>80 萬筆 SFT 資料</b>（App. B.3.3、Table 5）。推理資料由第一階段 RL 的檢查點做<b>拒絕取樣</b>：每題取樣多個回應，只保留正確者。除了規則可驗證的題目，也加入以 DeepSeek-V3 當生成式獎勵模型判斷對錯的題目；過濾語言混雜、長段落與程式碼區塊，約 60 萬筆。非推理資料（寫作、事實問答、自我認知、翻譯）沿用 DeepSeek-V3 的 SFT 資料並加入軟體工程資料，簡單問題（如「hello」）不附 CoT，約 20 萬筆。Table 5 合計 804,745 筆（推理類 626,933、通用 177,812）。兩次 SFT 都微調 DeepSeek-V3-Base 2–3 個 epoch，學習率以 cosine 由 5e-5 降到 5e-6，最大長度 32,768，batch 128（App. B.4.2）。</p>
+  </div>
+  <div class="eq"><div class="eq-m"><div class="wide-eq">$$\begin{aligned}Reward&=Reward_{reasoning}+Reward_{general}+Reward_{language}\\Reward_{reasoning}&=Reward_{rule},\qquad Reward_{general}=Reward_{reward\_model}+Reward_{format}\end{aligned}$$</div><div class="narrow-eq">$$\begin{aligned}Reward&=Reward_{reasoning}\\&\quad+Reward_{general}\\&\quad+Reward_{language}\\Reward_{reasoning}&=Reward_{rule}\\Reward_{general}&=Reward_{reward\_model}\\&\quad+Reward_{format}\end{aligned}$$</div></div><span class="eq-n">Eq. 8–10</span></div>
+  <div class="prose">
+    <p><b>第二階段 RL</b>（Sec. 3.2.2）沿用第一階段大部分參數，溫度降為 0.7（較高溫度在此階段造成不連貫的生成）；共 1,700 步，通用指令資料與偏好獎勵只在最後 400 步加入。作者發現以模型偏好獎勵訓練更多步會導致 reward hacking（Sec. 3.2.2、App. B.5）。<b>獎勵模型</b>（Sec. 3.1）：有用性獎勵模型的訓練資料由 DeepSeek-V3 以 arena-hard 格式比較兩個回應產生，每對問 4 次並隨機交換 A／B 位置以減少位置偏誤，只保留平均分差 Δ &gt; 1 的配對，並讓選中與落選回應的長度相當，共 66,000 對；它只評最終摘要。安全獎勵模型以 106,000 個標註「安全／不安全」的回應逐點訓練，評整段回應（含推理）。</p>
+    <p><b>各階段的取捨。</b>Dev1 相較 R1-Zero，指令遵循與偏好評測上升（IF-Eval 46.6 → 71.7），推理下降（AIME 77.9 → 59.0），作者歸因於冷啟動資料量小；Dev1 不是由 R1-Zero 繼續訓練而來，這是 Sec. 4 的跨線比較。Dev2 在程式、數學、STEM 等推理評測明顯提升（AIME 74.0）。Dev3 加入非推理資料，AlpacaEval 2.0 與 Aider-Polyglot 提升。最後 RL 主要提升通用指令與偏好：AlpacaEval 2.0 62.1 → 87.6、ArenaHard 75.6 → 92.3，與論文所寫的 25%、17% 的百分點差吻合（論文未說明單位）<span class="tag">本頁推導</span>（Sec. 4、Table 3）。</p>
+  </div>
+
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>模型譜系與 Table 3：每個階段改變了什麼</h3></div>
+    <p class="plate-lead">選一個模型，查看它與論文 Sec. 4 所比較的模型之間的差異；選擇評測（最多 8 個）畫出五個模型的分數。</p>
+    <div class="lin" id="c4-lin" role="radiogroup" aria-label="選擇模型">
+      <div class="mnode base">DeepSeek-V3-Base<small>起點</small></div>
+      <div class="lines">
+        <div class="lrow"><span class="la">→ <small>RL</small></span><button class="mnode" type="button" role="radio" data-n="0">R1-Zero<small>規則獎勵</small></button></div>
+        <div class="lrow"><span class="la">→ <small>冷啟動 SFT</small></span><button class="mnode" type="button" role="radio" data-n="1">Dev1<small>起點 V3-Base</small></button><span class="la">→ <small>RL + 語言獎勵</small></span><button class="mnode" type="button" role="radio" data-n="2">Dev2</button></div>
+        <div class="lrow"><span class="la">→ <small>SFT 80 萬筆</small></span><button class="mnode" type="button" role="radio" data-n="3">Dev3<small>起點 V3-Base</small></button><span class="la">→ <small>RL（規則 + 獎勵模型）</small></span><button class="mnode" type="button" role="radio" data-n="4">R1</button></div>
+      </div>
+    </div>
+    <p class="lin-note">虛線關係（資料，不是繼續訓練）：R1-Zero ⇢ Dev1「冷啟動資料來源」；Dev2 ⇢ Dev3「拒絕取樣資料」。</p>
+    <div class="pg two" style="margin-top:16px">
+      <div class="fig"><div id="c4-slope"><svg role="img" aria-label="選取評測在五個模型的分數"></svg></div></div>
+      <div class="ctl"><div class="c4card" id="c4-card" aria-live="off"></div></div>
+    </div>
+    <div class="c4chips" id="c4-chips" role="group" aria-label="選擇評測（最多 8 個）"></div>
+    <p class="sr" id="c4-live" aria-live="polite"></p>
+    <details class="more mini"><summary>完整 Table 3</summary><div class="tscroll" id="c4-full"></div></details>
+    <p class="plate-f">資料照錄 Table 3。差值以整數十分位計算、顯示到小數一位，只列 |Δ| ≥ 1.0 個百分點；論文以粗體標示 p &lt; 0.01 的顯著差異，此排序沒有帶入顯著性。斜率圖中 R1-Zero–Dev1 與 Dev2–Dev3 兩段畫成虛線，表示跨線比較。Codeforces Rating 的單位不同，只在卡片中以文字顯示。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="r1-grpo-outcome-rewards.html">GRPO 與規則式結果獎勵</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">DeepSeek-R1 的訓練依序有哪些階段？由 R1-Zero 到 Dev1，哪類評測上升、哪類下降？最後一個 RL 階段主要提升什麼？</p>
+    <p class="a">冷啟動 SFT（V3-Base）→ 第一階段 RL（規則 + 語言一致性，ε = 10）→ 拒絕取樣 + SFT（再次微調 V3-Base，約 60 萬 + 20 萬）→ 第二階段 RL（溫度 0.7，1,700 步，偏好獎勵最後 400 步）。Dev1 的 IF-Eval 46.6 → 71.7 上升、AIME 77.9 → 59.0 下降（作者歸因於冷啟動資料量小，且為跨線比較）。最後 RL：AlpacaEval 2.0 62.1 → 87.6、ArenaHard 75.6 → 92.3。</p>
+  </div></details>
+</section>
+
+<!-- S8 -->
+<section class="ch" id="eval" data-toc="08" data-tt="評測">
+  <div class="ch-num">08 · 評測</div>
+  <h2>評測採取樣式 pass@1，R1 與 o1-1217 相當</h2>
+  <div class="eq"><div class="eq-m">$$\text{pass@1}=\frac1k\sum_{i=1}^k p_i$$</div><span class="eq-n">App. D.1</span></div>
+  <div class="prose">
+    <p><b>pass@1 的計算與主要結果。</b>作者發現以 greedy decoding 評測長輸出的推理模型時，重複率較高，不同檢查點之間的差異也大，因此預設改用取樣：溫度 0.6、top-p 0.95，每題產生 $k$ 個回應（AIME 與 GPQA 用 $k=64$；MATH 與 Codeforces 用 16；LiveCodeBench 用 8），pass@1 $=\frac1k\sum p_i$，其中 $p_i$ 表示第 $i$ 個回應是否正確（App. D.1）。在 AIME 2024 上，R1 的 pass@1 為 79.8%，OpenAI-o1-1217 為 79.2%（Table 8）。R1 的 pass@64（64 次中至少一次正確）為 90.0%，多數決為 86.7%（R1，64 樣本多數決；App. E.4）。所有輸出的上限是 32,768 tokens。</p>
+    <p>論文中 86.7 出現三次，指標各不相同：R1-Zero 的 cons@16（Sec. 2.3）、R1 的 64 樣本多數決（App. E.4）、Distill-Llama-70B 的 AIME cons@64（Distill-Llama-70B，cons@64；Table 15）。</p>
+    <p>去汙染（App. D.1）：過濾與評測題或參考解答有 10-gram 重疊的文本；僅數學領域就移除約 600 萬筆預訓練文本；SFT 與 RL 的數學題只取 2023 年以前的競賽。作者承認 n-gram 方法無法排除改寫過的題目。</p>
+    <p>新競賽（App. E.2、Table 13）：App. E.2 寫「DeepSeek-R1 achieves a 75% solve rate (Pass@1), approaching o1's performance of 80%」（AIME 2025）；Table 13 以平均分數列出 AIME 2025 為 11.3/15（o1 12.0/15）。AMC 12 2024 為 143.7/150，USAMO 指數 256.7 超過 251.5 的資格線（o1 為 261.0）。</p>
+    <p>推論時運算（App. E.4、Fig. 18）：在 2024 年 93 場競賽的 366 題上，R1 平均使用 8,793 個思考 tokens，pass@1 61.8%；簡單題少於 7,000 tokens，最難的題超過 18,000。GPT-4o 0513 在同一題組只有 24.7%，平均 711 個輸出 tokens；在 AIME 2024 上，GPT-4o 以 64 個樣本多數決也只由 9.3% 升到 13.4%。</p>
+  </div>
+  <div class="tscroll"><table><caption>Table 8 摘錄（R1 與 OpenAI-o1-1217）</caption>
+    <thead><tr><th>評測</th><th class="num">DeepSeek-V3</th><th class="num">o1-1217</th><th class="num">R1</th></tr></thead><tbody>
+    <tr><td>AIME 2024（pass@1）</td><td class="num">39.2</td><td class="num">79.2</td><td class="num">79.8</td></tr>
+    <tr><td>MATH-500（pass@1）</td><td class="num">90.2</td><td class="num">96.4</td><td class="num">97.3</td></tr>
+    <tr><td>Codeforces（百分位）</td><td class="num">58.7</td><td class="num">96.6</td><td class="num">96.3</td></tr>
+    <tr><td>Codeforces（rating）</td><td class="num">1134</td><td class="num">2061</td><td class="num">2029</td></tr>
+    <tr><td>GPQA Diamond（pass@1）</td><td class="num">59.1</td><td class="num">75.7</td><td class="num">71.5</td></tr>
+    <tr><td>SWE Verified（resolved）</td><td class="num">42.0</td><td class="num">48.9</td><td class="num">49.2</td></tr>
+    <tr><td>Aider-Polyglot（acc.）</td><td class="num">49.6</td><td class="num">61.7</td><td class="num">53.3</td></tr></tbody></table></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">論文的 pass@1 怎麼算？R1 與 o1-1217 的 AIME 2024 各是多少？</p>
+    <p class="a">溫度 0.6、top-p 0.95，每題取 $k$ 個回應（AIME $k=64$），pass@1 $=\frac1k\sum p_i$；不用 greedy 是因重複率高、檢查點間變異大。R1 79.8%，o1-1217 79.2%；R1 的 pass@64 90.0%，多數決 86.7%（R1，64 樣本多數決）。</p>
+  </div></details>
+</section>
+
+<!-- S9 -->
+<section class="ch" id="distill" data-toc="09" data-tt="蒸餾">
+  <div class="ch-num">09 · 蒸餾</div>
+  <h2>蒸餾比直接對小模型做 RL 更有效</h2>
+  <div class="prose">
+    <p><b>蒸餾</b>（distillation）在這裡是指：用大模型的輸出當 SFT 資料訓練小模型。作者以第 07 章的 80 萬筆樣本對 Qwen2.5 與 Llama 做 SFT，不加 RL 階段（App. F）；訓練 2–3 個 epoch，cosine 學習率降到初始值的 1/10，最大長度 32,768，batch 64（App. B.4.3）。</p>
+    <p>Table 15 中，AIME 2024 的 pass@1：Distill-Qwen-1.5B 28.9、7B 55.5、14B 69.7、32B 72.6，Distill-Llama-8B 50.4、70B 70.0；GPT-4o-0513 為 9.3，Claude-3.5-Sonnet-1022 為 16.0。1.5B 模型只在數學評測勝過 GPT-4o（MATH-500 83.9 對 74.6），GPQA Diamond（33.8 對 49.9）與 LiveCodeBench（16.9 對 32.9）仍較低。學生模型越大，表現越好。</p>
+    <p><b>蒸餾與小模型直接 RL 的比較。</b>作者對 Qwen2.5-32B-Base 以數學、程式、STEM 資料做超過 10K 步的 RL，得到 Qwen2.5-32B-Zero（學習率 2e-6，其餘同 R1 第一階段 RL 設定，最大長度固定 32,768；App. B.4.1）。它的 AIME 2024 pass@1 為 47.0，而 Distill-Qwen-32B 為 72.6，也就是 72.6 對 47.0（Table 16）。作者由此得到兩個結論：把強模型蒸餾到小模型效果很好，小模型靠大規模 RL 需要大量運算，而且可能不及蒸餾；蒸餾經濟有效，但要超越人類智慧的邊界，可能仍需要更強的 base model 與更大規模的 RL（App. F.1）。作者在開發初期也試過以 7B dense 與 16B MoE 的模型做純 RL，在 AIME 上沒有有意義的提升，回應變長時傾向重複；改用 32B dense、230B MoE、671B MoE 後才看到大幅提升。作者因此認為 RL 從 base 出發的效果高度依賴模型容量（App. G.1）。</p>
+    <p>Table 17：作者在 o1 發布之前釋出的 Qwen2-Math-7B 上做約 10,000 步 RL（確保 base 沒看過推理軌跡資料），AIME 2024 為 22.3%、AIME 2025 為 18.1%，高於 Qwen2-Math-7B-Instruct 的 7.9%、4.6%。</p>
+  </div>
+  <div class="tscroll"><table><caption>Table 15、16 摘錄（AIME 2024 pass@1）</caption>
+    <thead><tr><th>模型</th><th class="num">AIME 2024</th><th class="num">MATH-500</th><th class="num">GPQA Diamond</th></tr></thead><tbody>
+    <tr><td>GPT-4o-0513</td><td class="num">9.3</td><td class="num">74.6</td><td class="num">49.9</td></tr>
+    <tr><td>DeepSeek-R1-Distill-Qwen-1.5B</td><td class="num">28.9</td><td class="num">83.9</td><td class="num">33.8</td></tr>
+    <tr><td>QwQ-32B-Preview</td><td class="num">50.0</td><td class="num">90.6</td><td class="num">54.5</td></tr>
+    <tr><td>Qwen2.5-32B-Zero（直接 RL）</td><td class="num">47.0</td><td class="num">91.6</td><td class="num">55.0</td></tr>
+    <tr class="hl"><td>DeepSeek-R1-Distill-Qwen-32B</td><td class="num">72.6</td><td class="num">94.3</td><td class="num">62.1</td></tr></tbody></table></div>
+  <p class="read">延伸閱讀：<a href="r1-distillation-to-small-models.html">以 DeepSeek-R1 輸出蒸餾小模型</a>、<a href="knowledge-distillation-foundations.html">知識蒸餾基礎</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Distill-Qwen-32B 與 Qwen2.5-32B-Zero 的 AIME 2024 pass@1？作者由此及早期實驗得到什麼結論？</p>
+    <p class="a">72.6 對 47.0。蒸餾強模型到小模型效果很好，小模型靠大規模 RL 需大量運算且可能不及蒸餾；早期 7B dense、16B MoE 的純 RL 沒有成功，RL 從 base 出發的效果高度依賴模型容量。</p>
+  </div></details>
+</section>

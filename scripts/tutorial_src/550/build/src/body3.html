@@ -1,0 +1,127 @@
+
+<!-- S10 -->
+<section class="ch" id="lessons" data-toc="10" data-tt="失敗與發現">
+  <div class="ch-num">10 · 失敗與發現</div>
+  <h2>失敗嘗試與關鍵發現</h2>
+  <div class="prose">
+    <p><b>驗證器</b>（App. G.1）。R1-Zero 的效果高度依賴獎勵訊號是否可靠。作者目前的經驗是，規則式獎勵與「以 LLM 對照標準答案判斷對錯」兩種方式能減輕 reward hacking；後者適合答案簡短明確的任務，不容易推廣到開放生成與長文寫作。</p>
+    <p><b>迭代流程</b>（App. G.1）。RL 讓模型探索人工標註達不到的推理軌跡；SFT 處理難以定義可靠獎勵的任務，例如開放問答與創意寫作。只用 RL 會在定義不良的任務上 reward hacking，只用 SFT 則無法透過探索最佳化推理，所以作者認為兩者都不可缺少。</p>
+    <p><b>過程獎勵模型（process reward model, PRM）的三個限制</b>（App. G.2）。PRM 對推理的每一步打分。作者列出：一般推理中難以明確定義「一步」；難以判斷中間步驟是否正確，自動標註效果不佳、人工標註又難以擴展；一旦引入模型式 PRM，必然導致 reward hacking，重新訓練又增加資源與流程複雜度。PRM 在重排前 N 個回應或引導搜尋上有用，但相對於大規模 RL 的額外成本，優勢有限。</p>
+    <p><b>蒙地卡羅樹搜尋（MCTS）的兩個挑戰</b>（App. G.2）。作者仿照 AlphaGo 與 AlphaZero，把答案拆成小段做樹搜尋，並以預訓練的價值模型引導。但 token 生成的搜尋空間比西洋棋大上指數倍，限制每個節點的最大擴展數又可能陷入局部最佳；價值模型直接影響每一步搜尋的品質，而細粒度的價值模型很難訓練，無法像 AlphaGo 那樣逐步自我改進。作者的結論是，MCTS 搭配預訓練價值模型可以改善推論，但以自我搜尋反覆提升模型仍很困難。</p>
+    <p><b>reward hacking 實例</b>（App. B.5、Fig. 6）。以有用性獎勵模型訓練時，獎勵分數持續上升，但 CodeForces 的 test pass@1 下降。這是第二階段 RL 只在最後 400 步加入偏好獎勵的原因。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="r1-process-supervision-prm.html">過程監督與 PRM：結果與步驟回饋的比較</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">PRM 有哪三個限制？MCTS 遇到哪兩個挑戰？</p>
+    <p class="a">PRM：「一步」難定義、中間步驟對錯難判斷、模型式 PRM 必然被 reward hacking。MCTS：搜尋空間比西洋棋大上指數倍、細粒度價值模型難訓練（App. G.2）。</p>
+  </div></details>
+</section>
+
+<!-- S11 -->
+<section class="ch" id="impl" data-toc="11" data-tt="實作">
+  <div class="ch-num">11 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="tscroll"><table class="stack"><caption>超參數總表（Sec. 2.1、3.2、App. B.4）</caption>
+    <thead><tr><th>項目</th><th>R1-Zero</th><th>R1 第一階段 RL</th><th>R1 第二階段 RL</th><th>SFT（兩次）</th><th>蒸餾</th></tr></thead><tbody>
+    <tr><td data-h="項目">起點</td><td data-h="R1-Zero">V3-Base</td><td data-h="第一階段 RL">Dev1</td><td data-h="第二階段 RL">Dev3</td><td data-h="SFT">V3-Base</td><td data-h="蒸餾">Qwen2.5／Llama（Table 6）</td></tr>
+    <tr><td data-h="項目">學習率</td><td data-h="R1-Zero">3e-6</td><td data-h="第一階段 RL">3e-6</td><td data-h="第二階段 RL">沿用</td><td data-h="SFT">5e-5 → 5e-6（cosine）</td><td data-h="蒸餾">Table 6 初始值，cosine 降到 1/10</td></tr>
+    <tr><td data-h="項目">KL β／ε</td><td data-h="R1-Zero">0.001／未寫明</td><td data-h="第一階段 RL">0.001／10</td><td data-h="第二階段 RL">沿用</td><td data-h="SFT">—</td><td data-h="蒸餾">—</td></tr>
+    <tr><td data-h="項目">溫度</td><td data-h="R1-Zero">1</td><td data-h="第一階段 RL">1</td><td data-h="第二階段 RL">0.7</td><td data-h="SFT">—</td><td data-h="蒸餾">—</td></tr>
+    <tr><td data-h="項目">每題輸出／每步題數</td><td data-h="R1-Zero">16／32</td><td data-h="第一階段 RL">16／32</td><td data-h="第二階段 RL">沿用</td><td data-h="SFT">—</td><td data-h="蒸餾">—</td></tr>
+    <tr><td data-h="項目">最大長度</td><td data-h="R1-Zero">32,768 → 65,536（8.2k 步）</td><td data-h="第一階段 RL">32,768</td><td data-h="第二階段 RL">沿用</td><td data-h="SFT">32,768</td><td data-h="蒸餾">32,768</td></tr>
+    <tr><td data-h="項目">步數／epoch</td><td data-h="R1-Zero">10,400 步（1.6 epoch）</td><td data-h="第一階段 RL">未寫明</td><td data-h="第二階段 RL">1,700 步（偏好獎勵最後 400 步）</td><td data-h="SFT">2–3 epoch</td><td data-h="蒸餾">2–3 epoch</td></tr>
+    <tr><td data-h="項目">batch</td><td data-h="R1-Zero">512</td><td data-h="第一階段 RL">512</td><td data-h="第二階段 RL">沿用</td><td data-h="SFT">128</td><td data-h="蒸餾">64</td></tr>
+    <tr><td data-h="項目">參考模型更新</td><td data-h="R1-Zero">每 400 步</td><td data-h="第一階段 RL">每 400 步</td><td data-h="第二階段 RL">沿用</td><td data-h="SFT">—</td><td data-h="蒸餾">—</td></tr></tbody></table></div>
+  <div class="prose">
+    <p><b>基礎設施</b>（App. B.1）。RL 框架分成四個模組：Rollout（以 vLLM 取樣；MoE 跨節點專家平行、熱點專家冗餘，並以多 token 預測做自我推測解碼）、Inference（獎勵模型與參考模型的前向計算）、Rule-based Reward（程式執行器、答案比對、格式檢查，以非同步排程與前兩者重疊）、Training（依長度排序後以 Best-Fit 打包成固定長度區塊，並用 DualPipe 管線平行）。除規則獎勵模組外，每個模組結束後把模型從 GPU 記憶體卸載到主記憶體或磁碟。</p>
+    <p><b>成本</b>（App. B.4.4、Table 7，以 H800 每 GPU 小時 2 美元計）。R1-Zero 用 64×8 張 H800 約 198 小時，共 101K GPU 小時（202K 美元）；SFT 資料製作 5K GPU 小時（10K 美元）；R1 約 80 小時，41K GPU 小時（82K 美元）；合計 147K GPU 小時、294K 美元。$64\times8\times198=101{,}376$、$64\times8\times80=40{,}960$，與表一致<span class="tag">本頁推導</span>。</p>
+    <h3>常見錯誤</h3>
+    <ol>
+      <li>以為 R1 完全沒有 SFT：只有 R1-Zero 沒有 SFT；R1 有冷啟動 SFT 與 80 萬筆的第二次 SFT（Sec. 3、App. B.4.2）。</li>
+      <li>以為 Dev3 由 Dev2 繼續微調：第二次 SFT 微調的是 DeepSeek-V3-Base，Dev2 只用來拒絕取樣產生資料（App. B.4.2、B.3.3）。</li>
+      <li>全對或全錯的群組照算 Eq. 3：std = 0，需要保護；這些題目沒有獎勵訊號，只剩 β &gt; 0 時的 KL 梯度<span class="tag">本頁推導</span>。</li>
+      <li>期待格式獎勵在所有輸出都合規時仍有作用：常數獎勵不改變優勢<span class="tag">本頁推導</span>。</li>
+      <li>沿用 PPO 原論文常用的 ε = 0.2（本文未使用此值）：R1 第一階段 RL 用 ε = 10，此時負優勢一側的裁剪不會啟動。</li>
+      <li>把 KL 懲罰加在每個 token 的獎勵中（PPO 做法）：GRPO 加在損失中；前者可能隱含懲罰長度（App. A.3）。</li>
+      <li>以 greedy decoding 評測長推理模型：論文改用溫度 0.6、top-p 0.95 的 pass@1（App. D.1）。</li>
+      <li>在小模型上直接複製純 RL：7B dense、16B MoE 沒有成功（App. G.1）；小模型用蒸餾較好（App. F.1）。</li>
+      <li>在偏好獎勵上訓練太久：第二階段 RL 只在最後 400 步加偏好獎勵，更多步會 reward hacking（Sec. 3.2.2、App. B.5）。</li>
+      <li>用 few-shot 提示評測或使用 R1：few-shot 一致降低表現，建議 zero-shot 直接描述問題與輸出格式（Sec. 6、App. D.1）。</li>
+    </ol>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">R1 的第二次 SFT 從哪個模型開始？R1-Zero 的 GPU 小時數如何得到？</p>
+    <p class="a">DeepSeek-V3-Base（App. B.4.2）；64×8 張 H800 × 約 198 小時 ≈ 101K GPU 小時（Table 7）。</p>
+  </div></details>
+</section>
+
+<!-- S12 -->
+<section class="ch" id="safety" data-toc="12" data-tt="安全與限制">
+  <div class="ch-num">12 · 安全與限制</div>
+  <h2>安全評估與限制</h2>
+  <div class="prose">
+    <p><b>安全</b>（App. D.3）。官方服務另有風險控制系統：使用者問題先比對關鍵字，命中者連同 Listing 8 的審查提示送給 DeepSeek-V3 判斷是否撤回回應。Table 9 六個公開安全基準的平均分數，R1 為 95.0，括號內的模型本身分數為 85.9。Table 11 的越獄攻擊中，R1（無風控）的不安全比例由 25.2% 升到 85.9%；加上風控後不安全比例為 4.3%，拒答比例 87.3%。50 種語言的安全分數，R1 加風控為 85.9%、模型本身為 74.2%（D.3.4）。85.9 在這三處分別是不同的指標。作者建議部署開源模型的開發者採用類似的風控（D.3.5）。</p>
+    <p><b>能力限制</b>（Sec. 6）。結構化輸出與工具使用較弱；簡單問題仍有過度思考，token 效率有改進空間；針對中英文最佳化，其他語言的問題可能以英文推理或回答；對提示敏感，few-shot 會降低表現；軟體工程任務評估時間長，沒有大規模 RL，相對 DeepSeek-V3 提升有限。</p>
+    <p><b>方法限制</b>（Sec. 6）。純 RL 依賴可靠的獎勵訊號；寫作等任務難以建構可靠的獎勵模型，以模型打分時容易被利用。對無法可靠評估的複雜任務，擴展純 RL 仍是開放問題。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">R1（無風控）在越獄攻擊下的不安全比例如何變化？作者列出哪一項方法層面的限制？</p>
+    <p class="a">25.2% 升到 85.9%（Table 11）；純 RL 依賴可靠獎勵，無法可靠評估的任務上擴展純 RL 仍是開放問題（Sec. 6）。</p>
+  </div></details>
+</section>
+
+<!-- S13 -->
+<section class="ch" id="history" data-toc="13" data-tt="研究脈絡">
+  <div class="ch-num">13 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>本文接在幾條脈絡之後：思維鏈提示與以多次取樣、驗證器換取效能的推論時運算；以 RLHF 與 PPO 對齊人類偏好；以模型自產的正確推理再微調（STaR）與過程監督（PRM）；DeepSeekMath 提出的 GRPO。蒸餾的原型是 Hinton 等人的知識蒸餾。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">GRPO 最早由哪篇論文提出？</p>
+    <p class="a">DeepSeekMath（Shao et al. 2024，arXiv 2402.03300）。</p>
+  </div></details>
+</section>
+
+<!-- S14 -->
+<section class="ch" id="next" data-toc="14" data-tt="延伸閱讀">
+  <div class="ch-num">14 · 延伸閱讀</div>
+  <h2>延伸閱讀</h2>
+  <div class="prose"><h3>研究筆記（依閱讀順序）</h3></div>
+  <ol class="rl">
+    <li><div><a href="r1-lineage-hub.html">DeepSeek-R1 的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="r1-cot-and-test-time-compute.html">思維鏈、驗證器與推論時運算</a><span>背景</span></div></li>
+    <li><div><a href="r1-rlhf-ppo-background.html">LLM 的 RL 前史：RLHF、PPO 與 GAE</a><span>背景</span></div></li>
+    <li><div><a href="r1-star-self-generated-reasoning.html">STaR：以模型自產的推理軌跡微調</a><span>前作</span></div></li>
+    <li><div><a href="r1-process-supervision-prm.html">過程監督與 PRM：結果與步驟回饋的比較</a><span>前作</span></div></li>
+    <li><div><a href="r1-grpo-outcome-rewards.html">GRPO 與規則式結果獎勵（DeepSeek-R1-Zero）</a><span>本論文的方法</span></div></li>
+    <li><div><a href="r1-distillation-to-small-models.html">以 DeepSeek-R1 輸出蒸餾小模型</a><span>本論文的方法</span></div></li>
+    <li><div><a href="rlvr-grpo-credit-assignment.html">RLVR、GRPO 與信用分配瓶頸</a><span>站內相關</span></div></li>
+    <li><div><a href="rl-mdp-q-learning-basics.html">MDP、Q 函數與 Bellman backup</a><span>站內相關</span></div></li>
+    <li><div><a href="knowledge-distillation-foundations.html">知識蒸餾基礎</a><span>站內相關</span></div></li>
+    <li><div><a href="flowgrpo-denoising-mdp-and-grpo.html">Denoising 作為 MDP，以及 Flow-GRPO 的目標函數</a><span>站內相關</span></div></li>
+  </ol>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">要從頭理解本文，建議先讀哪一篇筆記？</p>
+    <p class="a">研究脈絡總覽（r1-lineage-hub），它依閱讀順序連到其他筆記。</p>
+  </div></details>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>DeepSeek-AI. DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning. <a href="https://arxiv.org/abs/2501.12948">arXiv:2501.12948</a>（v2，2026-01-04）。</p>
+  <p>本頁的方程式與數字取自論文 v2；標示「本頁推導」的內容為本頁自行推導，「本頁構造」為本頁為教學構造的玩具數值，皆非論文結論。C1–C3 的讀數在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
