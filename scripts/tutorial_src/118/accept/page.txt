@@ -1,0 +1,555 @@
+生成式驗證器 GenRM
+
+跳到內容
+
+ No. 118
+ Generative Verifiers（GenRM）
+
+00 摘要01 Best-of-N02 判別式驗證器03 GenRM04 統一訓練05 GenRM-CoT06 多數決07 合成理由08 實驗結果09 加權 SC10 實作11 研究脈絡12 限制與延伸
+
+00摘要
+01Best-of-N
+02判別式驗證器
+03GenRM
+04統一訓練
+05GenRM-CoT
+06多數決
+07合成理由
+08實驗結果
+09加權 SC
+10實作
+11研究脈絡
+12限制與延伸
+
+ No. 118 · 互動教學 · arXiv 2408.15240 · ICLR 2025
+
+ 生成式驗證器：把驗證寫成下一個 token 的預測
+
+ 這篇論文用「Yes」這個 token 的機率當作解答正確性的分數，讓驗證器能先寫出檢查步驟再下判斷。
+
+ Lunjun Zhang、Arian Hosseini、Hritik Bansal、Mehran Kazemi、Aviral Kumar、Rishabh Agarwal（2024）〈Generative Verifiers: Reward Modeling as Next-Token Prediction〉
+
+ 01 · Best-of-N讓語言模型對同一題寫 N 份解答，由驗證器（替解答打分的模型）選分數最高的一份。驗證器越準，選到正確解答的機會越大。詳見 01。
+
+ 02 · 問「答案正確嗎？」GenRM 問模型「答案正確嗎（Yes/No）？」，把下一個 token 是 Yes 的機率當分數；還能先寫出逐步檢查（思維鏈，chain-of-thought，CoT）再回答。詳見 03、05。
+
+ 03 · GSM8K 的結果在 GSM8K（小學數學應用題資料集）上，用 GenRM-CoT 從 16 份解答中選一份，解題率由 73.0% 提高到 93.4%（Fig. 1；起點推定為單次取樣的解題率 推定）。詳見 08。
+
+ 同一份錯誤解答在兩種驗證器下的分數（Fig. 2）：0 表示判為錯誤，1 表示判為正確。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · Best-of-N
+
+ Best-of-N 的效果取決於驗證器
+
+ 大型語言模型（LLM）解推理題時，常寫出看似合理但錯誤的解答；推理題中只要一步錯，整份解答就錯（Sec. 1）。常用的補救是 Best-of-N（Sec. 2）：給定一道題目 x $\mathbf x$ ，從一個固定的生成器（generator，負責寫解答的 LLM）抽出 N $N$ 份候選解答 y $\mathbf y$ ，再由一個學過的驗證器（verifier，也稱獎勵模型 reward model，RM）替每份解答打分數，選分數最高的一份當作最終答案。
+
+ 兩個基準量。Pass@1 是單次取樣就答對的題目比率。Pass@N 是 N $N$ 份中至少有一份正確的題目比率，也就是「完美驗證器」下的 Best-of-N。兩者都是對題目取平均的量。
+
+ 論文用兩種指標評估驗證器（Sec. 4）。Best-of-N 解題率：固定生成器，用驗證器挑選後，測試集上答對的題目比率。RM accuracy：驗證器把單份解答分類為正確或錯誤的準確率。論文寫兩者相關，但 RM accuracy 只評估逐點分類，Best-of-N 評估的是排序後能否選出正確解。
+
+ 下面的玩具模型需要一個量 μ。驗證器替正確解打的分數，平均比錯誤解高出 μ 個標準差；μ = 0 表示分數與對錯無關，μ 越大，正確解與錯誤解的分數越容易分開。μ 越大，單份解答的分類準確率（RM accuracy）越高；但 Best-of-N 還取決於單份正確率 p $p$ 與候選數 N $N$ 。
+
+ C1Best-of-N 模擬器
+示範值
+
+ 假設：每道題目都有相同的單份正確率 p，每份解答獨立地以機率 p 正確（真實資料各題 p 不同，Pass@N 是各題的平均）；驗證器給正確解的分數服從 N(μ, 1)、給錯誤解的分數服從 N(0, 1)，彼此獨立；RM accuracy 以正確、錯誤各半的測試集與閾值 μ/2 計算。這是本頁自訂的玩具模型，μ 與 p 都是示範值，不對應論文中任何驗證器。
+
+ Best-of-N（本驗證器）完美驗證器 Pass@N隨機挑選 Pass@1
+
+ 正確解的分數 N(μ, 1)錯誤解的分數 N(0, 1)
+
+ 單份正確率 p 0.30
+
+ 分離度 μ 1.5
+
+ 候選數 N
+1248163264
+
+ Pass@1：30.0%；Best-of-1：30.0%；Best-of-16：84.7% 非論文結果；Pass@16：99.7%；RM accuracy：77.3%；
+ RM accuracy：一份解答的分數高於閾值就判為正確，判對的比率（逐點）。
+Best-of-N：N 份中分數最高的一份是否正確（排序）。
+
+ p = 0.30，μ = 1.5，Best-of-16 84.7%，RM accuracy 77.3%
+
+ 計算方式
+
+ 給定 c $c$ 份正確解與 m $m$ 份錯誤解，「最高分落在正確解」的機率是 W(c,m,μ)=∫c φ(s−μ) Φ(s−μ)c−1Φ(s)m ds $W(c,m,\mu)=\int c\,\varphi(s-\mu)\,\Phi(s-\mu)^{c-1}\Phi(s)^m\,ds$ Φ(s)mds，其中 φ,Φ $\varphi,\Phi$ 是標準常態的密度與累積分布；c=0 $c=0$ 時為 0，m=0 $m=0$ 時為 1。正確解份數 c $c$ 服從二項分布，所以 BoN=∑c=0N(Nc)pc(1−p)N−cW(c,N−c,μ) $\text{BoN}=\sum_{c=0}^{N}\binom Nc p^c(1-p)^{N-c}W(c,N-c,\mu)$ N​(cN​)pc(1−p)N−cW(c,N−c,μ)。積分以梯形法計算，範圍 [min⁡(0,μ)−8,max⁡(0,μ)+8] $[\min(0,\mu)-8,\max(0,\mu)+8]$ ，步長 0.01，指數部分在對數空間相加以免下溢。RM accuracy =Φ(μ/2) $=\Phi(\mu/2)$ 本頁推導。
+
+ 讀數由本頁依上式即時計算（本頁自訂模型，非論文公式）。Pass@N 與 Pass@1 的邊界 本頁推導：分數與對錯無關時，選最高分等於隨機挑一份。
+
+ Best-of-N 抽 N $N$ 份解答，由驗證器打分，選最高分的一份。驗證器分數與正確性無關時，選最高分等於隨機挑一份，結果等於 Pass@1；驗證器完美時，只要 N $N$ 份中有一份正確就會被選到，結果等於 Pass@N。對單一題目，若每份解答獨立地以機率 p $p$ 正確，Pass@N =1−(1−p)N $=1-(1-p)^N$ ；資料集的 Pass@N 是各題這個值的平均，各題 p $p$ 不同時，不能把平均正確率直接代入公式（例如一半題目 p=0 $p=0$ 、一半 p=1 $p=1$ ，Pass@N 恆為 0.5）。C1 讓每題的 p $p$ 相同，所以 1−(1−p)N $1-(1-p)^N$ 就是圖中的完美驗證器曲線 本頁推導。
+
+ RM accuracy 與 Best-of-N 解題率是不同的量。RM accuracy 只看單份解答是否被正確分類（逐點）；Best-of-N 看驗證器能否在多份解答中排出並選到正確解（排序）。兩者相關但不相同（Sec. 4）。在 C1 的預設值（p = 0.30、μ = 1.5）下，RM accuracy 是 77.3%，與 N $N$ 無關；Best-of-N 在 N=1 $N=1$ 時是 30.0%，在 N=16 $N=16$ 時是 84.7%。兩個數字的定義不同，不能直接比大小。
+
+ 本章符號
+
+ 符號意義
+
+ x $\mathbf x$ 、y $\mathbf y$ ；題目；一份解答（token 序列），y+ $\mathbf y^+$ 正確、y− $\mathbf y^-$ 錯誤
+
+ N $N$ ；Best-of-N 的候選解答數
+
+ Pass@1、Pass@N；單次答對的題目比率；N 份中至少一份正確的題目比率
+
+ p $p$ 、μ；C1 玩具模型的單份正確率、分數分離度（示範值）
+
+ 延伸閱讀：Best-of-N 與判別式驗證器
+
+ 02 · 判別式驗證器
+
+ 判別式驗證器只輸出一個分數
+
+ 先整理後面會用到的四個詞。logit 是模型對每個 token 輸出的未正規化分數 zj $z_j$ ​。softmax 把 logit 轉成機率：pj=ezj/γ/∑iezi/γ $p_j=e^{z_j/\gamma}/\sum_i e^{z_i/\gamma}$ ​=ezj​/γ/∑i​ezi​/γ，γ $\gamma$ 是溫度，溫度越低，機率越集中在 logit 最大的 token，溫度 0 即貪婪解碼（每步取機率最大的 token）。sigmoid σ(z)=1/(1+e−z) $\sigma(z)=1/(1+e^{-z})$ ) 把一個實數轉成 0 到 1 之間的機率，等於只有兩類時的 softmax。BCE（binary cross-entropy，二元交叉熵）是二元分類的損失：標記 y∈{0,1} $y\in\{0,1\}$ 、預測機率 r $r$ 時為 −[ylog⁡r+(1−y)log⁡(1−r)] $-[y\log r+(1-y)\log(1-r)]$ 。
+
+ LLM 是自迴歸模型：在參數 θ $\theta$ 下，給定題目 x $\mathbf x$ 生成序列 y=(y1,…,yT) $\mathbf y=(y_1,\dots,y_T)$ ​,…,yT​) 的機率逐個 token 相乘（Eq. 1），每個 token 的機率由 softmax 在 logit 上算出。監督式微調（SFT）最小化目標序列的負對數機率（Eq. 2）：
+
+ pθ(y∣x)=∏t=1Tpθ(yt∣x,y<t),LSFT(θ,D)=−E(x,y)∼D[∑tlog⁡pθ(yt∣x,y<t)] $p_\theta(\mathbf y\mid\mathbf x)=\prod_{t=1}^{T}p_\theta(y_t\mid\mathbf x,y_{\lt t}),\qquad \mathcal L_{\text{SFT}}(\theta,\mathcal D)=-\mathbb E_{(\mathbf x,\mathbf y)\sim\mathcal D}\Big[\sum_{t}\log p_\theta(y_t\mid\mathbf x,y_{\lt t})\Big]$ ​(y∣x)=t=1∏T​pθ​(yt​∣x,y<t​),LSFT​(θ,D)=−E(x,y)∼D​[t∑​logpθ​(yt​∣x,y<t​)]
+Eq. 1、2
+
+ 推理任務上主流的驗證器是判別式 RM（Discriminative RM，論文也稱 ORM，outcome reward model；Cobbe et al., 2021）。它在一個特殊詞彙 token cls $cls$ 的 logit zcls $z_{cls}$ ​ 上接 sigmoid，輸出解答正確的機率 rθ(x,y)∈[0,1] $r_\theta(\mathbf x,\mathbf y)\in[0,1]$ ​(x,y)∈[0,1]，在正確解集合 Dcorrect $\mathcal D_{\text{correct}}$ ​ 與錯誤解集合 Dincorrect $\mathcal D_{\text{incorrect}}$ ​ 上以 BCE 訓練（Eq. 3）。論文的資料一律正確、錯誤各半。
+
+ L(θ,DRM)=−EDcorrectlog⁡rθ(x,y+)−EDincorrectlog⁡(1−rθ(x,y−)),rθ=sigmoid(zcls) $\mathcal L(\theta,\mathcal D_{RM})=-\mathbb E_{\mathcal D_{\text{correct}}}\log r_\theta(\mathbf x,\mathbf y^+)-\mathbb E_{\mathcal D_{\text{incorrect}}}\log\big(1-r_\theta(\mathbf x,\mathbf y^-)\big),\quad r_\theta=\mathrm{sigmoid}(z_{cls})$ ​)=−EDcorrect​​logrθ​(x,y+)−EDincorrect​​log(1−rθ​(x,y−)),rθ​=sigmoid(zcls​)
+Eq. 3
+
+ 論文比較的其他三種做法（Sec. 2、Sec. 4）：LLM-as-a-Judge 不微調，直接提示現成 LLM 檢查解答（Table A.3），實驗中產生 32 條驗證理由取多數決；DPO 驗證器依 Hosseini et al. (2024)，以 DPO（direct preference optimization，一種直接在「較好／較差」配對上訓練政策的方法）在「正確解 vs 錯誤解」配對上訓練；self-consistency 不用驗證器，抽多份解答、取最常見的最終答案。
+
+ 判別式 RM 的分數是 rθ=sigmoid(zcls) $r_\theta=\mathrm{sigmoid}(z_{cls})$ ​=sigmoid(zcls​)，以 BCE 訓練（Eq. 3），正確與錯誤資料各半。它只在一個專用輸出（cls $cls$ 的 logit）上給一個數字、不產生文字，所以不能先寫 CoT，也無法和解題的 SFT 在同一個輸出頭上統一。論文 Sec. 5 提到 Yang et al. (2024) 雖然加了輔助的生成式 SFT 損失，但放在另一個頭上作正則化、訓練後丟棄，查詢 RM 時不產生文字。這就是作者說判別式 RM 沒有用到 LLM 生成能力的意思。
+
+ 本章符號
+
+ 符號意義
+
+ θ $\theta$ 、pθ $p_\theta$ ​；LLM 參數；自迴歸生成機率（Eq. 1）
+
+ zj $z_j$ ​、γ $\gamma$ ；logit；softmax 溫度（原文 Sec. 2 有一處誤植為 τ）
+
+ Dcorrect $\mathcal D_{\text{correct}}$ ​、Dincorrect $\mathcal D_{\text{incorrect}}$ ​；正確／錯誤的題目–解答配對
+
+ rθ $r_\theta$ ​、zcls $z_{cls}$ ​；驗證器分數；特殊 token cls $cls$ 的 logit
+
+ 延伸閱讀：步驟級與結果級監督的驗證器、LLM-as-a-Judge 與自我獎勵、自學評估器
+
+ 03 · GenRM
+
+ GenRM 以 Yes token 的機率作為分數
+
+ GenRM 的最簡形式是直接驗證器（Sec. 3.1）。在題目與解答後面接上固定提示 I $I$ ＝「Is the answer correct (Yes/No)?」，讓模型預測下一個 token。訓練資料是 DDirect={((x,y+,I),’Yes’)}∪{((x,y−,I),’No’)} $\mathcal D_{\text{Direct}}=\{((\mathbf x,\mathbf y^+,I),\text{'Yes'})\}\cup\{((\mathbf x,\mathbf y^-,I),\text{'No'})\}$ ​={((x,y+,I),’Yes’)}∪{((x,y−,I),’No’)}，在上面最小化 Eq. 2 的 SFT 損失，等於最大化正確解的 log⁡pθ(Yes∣⋅) $\log p_\theta(\text{Yes}\mid\cdot)$ ​(Yes∣⋅) 與錯誤解的 log⁡pθ(No∣⋅) $\log p_\theta(\text{No}\mid\cdot)$ ​(No∣⋅)。推論時以 Yes 的機率為分數：
+
+ rDirect(x,y)=pθ(Yes∣x,y,I) $r_{\text{Direct}}(\mathbf x,\mathbf y)=p_\theta(\text{Yes}\mid\mathbf x,\mathbf y,I)$ ​(x,y)=pθ​(Yes∣x,y,I)
+Eq. 4
+
+ 作者認為使用機率（而不是只看最後輸出 Yes 或 No）納入了驗證器的信心，降低測試時判錯的機會。pθ(Yes) $p_\theta(\text{Yes})$ ​(Yes) 是對整個詞彙表做 softmax 的結果，Fig. 3 也畫出「其他 token」的機率。論文的溫度 γ $\gamma$ 是為生成定義的，Eq. 4 沒有說評分時使用 γ≠1 $\gamma\ne1$ =1；本頁推定評分時 γ=1 $\gamma=1$ 推定。
+
+ C2Yes token 的分數與損失
+示範值
+
+ 這是單一位置的 softmax 計算，logit 為示範值；實際 LLM 的詞彙表有數十萬個 token，這裡把 Yes、No 以外的 token 合併成一個「其他」，它的 logit 代表這些 token 的 log-sum-exp。
+
+ Yes（目標）
+
+0.8789
+No
+
+0.1189
+其他
+
+0.0022
+
+ GenRM 分數 r = p(Yes)：0.8789 非論文結果；只看 Yes 與 No 的 sigmoid：0.8808；兩者差：0.0019；損失 −log p(目標)：0.1291；
+ logit∂損失/∂z梯度下降後
+z_Y（Yes）−0.1211上升
+z_N（No）0.1189下降
+z_O（其他）0.0022下降
+
+ Yes 的 logit z_Y 2.0
+
+ No 的 logit z_N 0.0
+
+ 其他 token 的 logit z_O -4.0
+
+ 溫度 γ（示範值；論文評分推定 γ = 1）1.00
+
+ 這份解答其實是
+正確（目標 Yes）錯誤（目標 No）
+
+ p(Yes) = 0.8789，sigmoid = 0.8808，損失 0.1291
+
+ 讀數由本頁依 Eq. 4 與 softmax 即時計算。「只看 Yes 與 No 的 sigmoid」與梯度式 本頁推導。
+
+ GenRM 直接驗證器的分數是 rDirect=pθ(Yes∣x,y,I) $r_{\text{Direct}}=p_\theta(\text{Yes}\mid\mathbf x,\mathbf y,I)$ ​=pθ​(Yes∣x,y,I)，I $I$ ＝「Is the answer correct (Yes/No)?」，以 SFT 損失訓練正確解→Yes、錯誤解→No（Eq. 2、4）。它與判別式 RM 的關係 本頁推導：若其他 token 的機率可忽略，p(Yes)≈sigmoid(zY−zN) $p(\text{Yes})\approx\mathrm{sigmoid}(z_Y-z_N)$ ​−zN​)，正確解上的損失 −log⁡p(Yes) $-\log p(\text{Yes})$ 就與 Eq. 3 的 BCE 形式相同；是否真的近似取決於其他 token 分到的機率，論文沒有量測。兩者的參數也不同：判別式 RM 用特殊 token cls $cls$ 的 logit，GenRM 用語言模型頭上既有的 Yes／No token，並接在提示 I $I$ 之後。論文的量測是直接 GenRM（不用 CoT）只與判別式 RM 相當或略好（Fig. D.1），主要增益來自後面的 CoT 與多數決（Sec. 4.1）。
+
+ C2 的梯度欄是損失 −log⁡p(target) $-\log p(\text{target})$ 對各 logit 的偏微分 (pj−1[j=target])/γ $(p_j-\mathbb 1[j=\text{target}])/\gamma$ ​−1[j=target])/γ 本頁推導。目標是 Yes 時，梯度下降會提高 zY $z_Y$ ​、降低 zN $z_N$ ​ 與其他 token 的 logit。
+
+ 本章符號
+
+ 符號意義
+
+ I $I$ ；固定提示「Is the answer correct (Yes/No)?」
+
+ DDirect $\mathcal D_{\text{Direct}}$ ​；直接驗證的訓練資料：題目＋解答＋I $I$ → Yes／No
+
+ rDirect $r_{\text{Direct}}$ ​；直接 GenRM 的分數（Eq. 4）
+
+ 延伸閱讀：GenRM 方法：以 Yes token 機率作驗證分數
+
+ 04 · 統一訓練
+
+ 同一個模型同時學解題與驗證
+
+ 因為驗證只是再生成一個 token，GenRM 可以把驗證資料與解題資料混在同一個 SFT 損失裡（Sec. 3.2）。Dverify $\mathcal D_{\text{verify}}$ ​ 是驗證資料，目前只介紹過 DDirect $\mathcal D_{\text{Direct}}$ ​；05 章會介紹另一種驗證資料 DCoT $\mathcal D_{\text{CoT}}$ ​（每份解答附一段逐步驗證理由），它同樣可以放進下式。Dcorrect $\mathcal D_{\text{correct}}$ ​ 在這裡當作「題目 → 正確解」的生成資料，λ>0 $\lambda>0$ 控制兩者的混合比例：
+
+ LGenRM(θ,Dverify)=LSFT(θ,Dverify)+λ LSFT(θ,Dcorrect) $\mathcal L_{\text{GenRM}}(\theta,\mathcal D_{\text{verify}})=\mathcal L_{\text{SFT}}(\theta,\mathcal D_{\text{verify}})+\lambda\,\mathcal L_{\text{SFT}}(\theta,\mathcal D_{\text{correct}})$ ​(θ,Dverify​)=LSFT​(θ,Dverify​)+λLSFT​(θ,Dcorrect​)
+Eq. 5
+
+ 統一訓練的實驗結論圖設定結論
+
+ Fig. 9；Last Letter、Word Sorting（2B）；GSM8K（7B）；加入解題資料後驗證變好；「Verification Only」即 λ = 0
+
+ Fig. D.3；Gemma-7B，GSM8K，λ ∈ {0, 1/4, 1/3, 1/2, 1}；中間值最好；解題資料過多會降低驗證表現
+
+ Fig. 10；生成器的 Pass@N（oracle verifier）；加入驗證資料後生成也變好；演算法任務的增益大於 GSM8K
+
+ 統一訓練的損失是 LGenRM=LSFT(Dverify)+λLSFT(Dcorrect) $\mathcal L_{\text{GenRM}}=\mathcal L_{\text{SFT}}(\mathcal D_{\text{verify}})+\lambda\mathcal L_{\text{SFT}}(\mathcal D_{\text{correct}})$ ​=LSFT​(Dverify​)+λLSFT​(Dcorrect​)（Eq. 5），論文預設所有 GenRM 都用它；λ $\lambda$ 的預設值是演算法任務 1/3、GSM8K 1/4（App. D）。加入解題資料在所有任務上都提升驗證（Fig. 9），但解題資料過多會降低驗證表現（Fig. D.3）；反方向，把驗證資料加進生成器的訓練，生成器本身的 Pass@N 也提高（Fig. 10）。演算法任務用真值驗證資料，增益大於使用合成理由的 GSM8K。作者推測教模型驗證能加深它對生成過程的理解。
+
+ 延伸閱讀：DPO 與隱式驗證器：生成與驗證的統一
+
+ 05 · GenRM-CoT
+
+ GenRM-CoT 先寫驗證理由再回答 Yes/No
+
+ 驗證常需要細緻的推理，所以 GenRM 可以先生成一段驗證用的思維鏈（Sec. 3.3）。提示 ICoT $I_{\text{CoT}}$ ​＝「Let's verify step by step.」之後，模型寫出驗證理由 vCoT $\mathbf v_{\text{CoT}}$ ​（verification rationale），再接上 I $I$ 回答 Yes 或 No。訓練資料是
+
+ DCoT={((x,y+,ICoT),(vCoT,I,’Yes’))}∪{((x,y−,ICoT),(vCoT,I,’No’))} $\mathcal D_{\text{CoT}}=\{((\mathbf x,\mathbf y^+,I_{\text{CoT}}),(\mathbf v_{\text{CoT}},I,\text{'Yes'}))\}\cup\{((\mathbf x,\mathbf y^-,I_{\text{CoT}}),(\mathbf v_{\text{CoT}},I,\text{'No'}))\}$ ​={((x,y+,ICoT​),(vCoT​,I,’Yes’))}∪{((x,y−,ICoT​),(vCoT​,I,’No’))}
+Sec. 3.3
+
+ 理由可以是人寫的，也可以由 LLM 生成（07 章）。推論時先抽一條理由，再取 Yes 的機率：
+
+ rCoT(x,y)=pθ(Yes∣x,y,ICoT,vCoT,I),vCoT∼pθ(⋅∣x,y,ICoT) $r_{\text{CoT}}(\mathbf x,\mathbf y)=p_\theta(\text{Yes}\mid\mathbf x,\mathbf y,I_{\text{CoT}},\mathbf v_{\text{CoT}},I),\qquad \mathbf v_{\text{CoT}}\sim p_\theta(\cdot\mid\mathbf x,\mathbf y,I_{\text{CoT}})$ ​(x,y)=pθ​(Yes∣x,y,ICoT​,vCoT​,I),vCoT​∼pθ​(⋅∣x,y,ICoT​)
+Eq. 6
+
+ 以貪婪解碼產生這一條理由時，論文稱為 greedy。Fig. 2 是一個例子：解答把「Hulu 與 Disney Plus 每個月各 10 美元，合購打八折」算成 10 × 80% = 8 美元，忽略了「each」。判別式 RM 給這份錯誤解答 0.999；GenRM-CoT 的理由寫出「Step 3. … 10 * 80% = 8. (Incorrect) Expected Answer: … 10 + 10 = 20 … 20 * 0.8 = 16」（原文金額前有美元符號，此處省略），多數決分數為 0.0015。
+
+ GenRM-CoT 推論時依序做兩件事：先在題目與解答後接「Let's verify step by step.」，生成驗證理由 vCoT $\mathbf v_{\text{CoT}}$ ​；再接上 I $I$ ，以下一個 token 是 Yes 的機率為分數（Eq. 6）。和直接驗證器相比，分數另外以模型自己生成的理由為條件。
+
+ 本章符號
+
+ 符號意義
+
+ ICoT $I_{\text{CoT}}$ ​；固定提示「Let's verify step by step.」
+
+ vCoT $\mathbf v_{\text{CoT}}$ ​；驗證理由（驗證用的 CoT）
+
+ DCoT $\mathcal D_{\text{CoT}}$ ​、rCoT $r_{\text{CoT}}$ ​；CoT 驗證的訓練資料；GenRM-CoT 的分數（Eq. 6）
+
+ 延伸閱讀：批評與 CoT 用於獎勵模型
+
+ 06 · 多數決
+
+ 平均多條驗證理由的 Yes 機率
+
+ 同一份解答每次抽到的理由不同，Yes 的機率也不同。論文抽 K $K$ 條理由，平均各條理由下的 Yes 機率（Eq. 7）。名稱雖然叫 majority voting（多數決），算的是機率的平均，不是票數。
+
+ rMajV@K(x,y)=1K∑i=1Kpθ(Yes∣x,y,ICoT,vCoT(i),I),vCoT(i)∼pθ(⋅∣x,y,ICoT) $r_{\text{MajV@}K}(\mathbf x,\mathbf y)=\frac1K\sum_{i=1}^{K}p_\theta\big(\text{Yes}\mid\mathbf x,\mathbf y,I_{\text{CoT}},\mathbf v^{(i)}_{\text{CoT}},I\big),\qquad \mathbf v^{(i)}_{\text{CoT}}\sim p_\theta(\cdot\mid\mathbf x,\mathbf y,I_{\text{CoT}})$ ​(x,y)=K1​i=1∑K​pθ​(Yes∣x,y,ICoT​,vCoT(i)​,I),vCoT(i)​∼pθ​(⋅∣x,y,ICoT​)
+Eq. 7
+
+ Eq. 7 平均的是 K $K$ 條抽樣理由下的 Yes 機率，不是票數；除非另外註明，論文的 GenRM-CoT 結果都用 K=32 $K=32$ 。作者認為單條理由可能推理出錯，平均可以減輕它的影響，並寫判別式驗證器做不到用推論運算換取準確度這件事（Sec. 3.3）。〔本頁說明〕判別式 RM 對同一個輸入只有一個確定的分數，沒有可以抽樣的推理路徑。Fig. 11 顯示，三種 Gemma 大小下，K=2 $K=2$ 以內就超過 greedy。
+
+ C3平均多條驗證理由（MajV@K）
+示範值
+
+ 假設（皆為本頁簡化）：(1) 每條理由的 Yes 機率以 0 或 1 近似（只看判斷），所以平均值就是 Yes 票的比例；論文 Eq. 7 平均的是連續機率（例如 Fig. 2 的 0.0015）。(2) 驗證器對正確解與錯誤解對稱：判對機率相同。(3) 理由彼此獨立；實際上同一模型抽出的理由錯誤會相關。(4) 開啟「系統性判錯的解答」時，比例 h 對正確解與錯誤解相同，這些解答上判對機率為 q_h。假設 (3) 本身就保證判對機率大於 0.5 的解答在 K 增加時被判得更準；這不是論文的結論，論文的 Fig. 11 是實際量測。p = 0.30、N = 16 固定。
+
+ 正確解（向上）錯誤解（向下）
+
+ RM accuracyBest-of-16Pass@16
+
+ 理由條數 K
+12481632
+
+逐步增加 K
+
+ 一般解答上單條理由的判對機率 q_e 0.80
+
+ 加入系統性判錯的解答
+
+ 系統性判錯解答的比例 h 0.20
+
+ 這些解答上的判對機率 q_h 0.30
+
+ K：1；RM accuracy：80.00% 非論文結果；Best-of-16：63.13%；Pass@16：99.7%；
+ K = 1，RM accuracy 80.00%，Best-of-16 63.13%
+
+ 讀數由本頁精確計算（有限和，同分時均勻隨機選一）；模型與參數皆為本頁自訂。
+
+ 預設狀態（沒有系統性判錯、qe=0.8 $q_e=0.8$ ​=0.8）下，K $K$ 從 1 增加到 32，RM accuracy 由 80.0% 升到 99.99%，這是獨立性假設的直接結果。K=1 $K=1$ 與 K=2 $K=2$ 的 RM accuracy 相同，因為 K=2 $K=2$ 會出現 1:1 平手，本頁計為半對。K=1 $K=1$ 的分數只有 0 與 1 兩層，16 份解答中大量同分，Best-of-16 只能在同分者中隨機選（63.1%）；K $K$ 增加後分數層級變多，Best-of-16 在 K=4 $K=4$ 已達 97.3%。勾選「系統性判錯的解答」並取 h=0.2 $h=0.2$ 、qh=0.3 $q_h=0.3$ ​=0.3 後，RM accuracy 趨近 80%（1−h $1-h$ ）：平均只能抵消隨機錯誤，判對機率低於 0.5 的解答會被越來越穩定地判錯。K=16 $K=16$ 的 80.66% 略高於 K=32 $K=32$ 的 80.18%，因為這些解答在有限 K $K$ 時仍有一點機會被判對，這個機會隨 K $K$ 遞減，曲線由上方逼近 80% 本頁推導。同一設定下 Best-of-16 在 K=32 $K=32$ 仍上升到 90.1%，因為排序只需要正確解的分數層級高於錯誤解，不需要越過 0.5。
+
+ 延伸閱讀：推論時運算與多數決（CoT、Self-Consistency、重複取樣）
+
+ 07 · 合成理由
+
+ 訓練用的驗證理由由同一個 LLM 參考正確解答合成
+
+ 演算法任務的驗證理由由程式產生（Table A.1），例如 Word Sorting 逐對檢查「Are ‘a p p l e’, ‘c o u r a g e’ in the correct order? Yes」，這是訓練理由沒有雜訊的理想情形。GSM8K 沒有現成的驗證理由，人工撰寫又昂貴，所以作者讓 LLM 合成（Sec. 3.3）。
+
+ 只依最終 Yes/No 過濾的做法是：用「Let's verify step by step」提示 LLM，只保留最終判斷正確的理由。作者指出這樣留下的理由品質仍差，因為隨機猜也有 50% 會判對。改進是在提示中額外給一份參考解答（任何得到正確最終答案的模型解答），讓 LLM 比較容易指出待驗解答的錯誤（reference-guided grading）。Table A.2 的提示原文：
+
+ You are a math teacher. Grade the Solution, verifying correctness step by step.
+Use Expected Answer to find any erroneous step in the Solution.
+At the end of the Solution verification, when you give your final grade, write it in
+the form "Verification: Is the answer correct (Yes/No)? X", where X is either Yes
+or No.
+Question: {problem}
+Solution: {solution}
+Expected Answer: {a solution that arrives at the correct answer}
+
+ 中譯：「你是數學老師。逐步批改『Solution』，用『Expected Answer』找出 Solution 中的錯誤步驟，最後寫成『Verification: Is the answer correct (Yes/No)? X』。」
+
+ App. C 的過濾：答案檢查器（字串比對或 SymPy）會有偽陰性，錯誤推理也可能碰巧得到正確答案（偽陽性）。作者只保留「超過 50% 的驗證理由與答案檢查器判定一致」的解答的理由。品質與數量都有影響：有參考引導 91.7%、無引導 87.8%（Gemma-7B，GSM8K，Fig. 13 圖說數字；圖說未寫指標，圖的橫軸到 N = 16，推定為 Best-of-16 推定）；每份解答的理由數 1 → 2 → 4 提升 RM accuracy 與 Best-of-N（Fig. 14）；每題的解答數 8 → 16 → 32 也提升（Fig. D.2）。作者推測多條理由有集成效果，避免過擬合到單條理由的錯誤。
+
+ GSM8K 的訓練理由由 Gemini 1.0 Pro 在提示中看參考解答（得到正確答案的解答）逐步批改產生（Table A.2）；只保留判定與答案檢查器一致的理由，而且只取超過 50% 理由一致的解答（App. C）。參考解答只用於產生訓練資料，微調驗證器與推論時都不放入，避免訓練與測試不一致。有參考引導時 91.7%，沒有引導時 87.8%（Fig. 13）。生成解答與合成理由用的是同一個模型 Gemini 1.0 Pro，不需要更強的模型或人工（Sec. 4.4）。
+
+ 08 · 實驗結果
+
+ GenRM-CoT 在 Best-of-N 上勝過判別式驗證器
+
+ 任務與模型（Sec. 4、App. A）。演算法任務是 Last Letter Concatenation（取每個字的最後一個字母並串接）與 BBH Word Sorting（依字母排序），訓練長度 {2, 3, 4}；評估長度 Sec. 4 寫 {5, 6}，App. A 寫 Last Letter 6、Word Sorting 5；驗證器與生成器都是 Gemma-2B（Google 的開源 LLM）。GSM8K 約 7.2K 訓練題、1.3K 測試題，每題測試 16 份解答（所以是 Best-of-16），生成器是 Gemini 1.0 Pro，驗證器是 Gemma 2B、7B 與 Gemma-2 9B。MATH500 是高中競賽題資料集 MATH 的 500 題保留集，MMLU 是多科目選擇題基準，論文取其中的數學子集；兩者都用只在 GSM8K 上訓練的驗證器做 easy-to-hard 泛化評估。
+
+ 主要結果位置設定結果
+
+ Fig. 1 左；演算法 2 任務平均，Gemma-2B，Best-of-32；5.0% → 45.3%；接近 oracle verifier
+
+ Fig. 1 中；GSM8K，Gemma2-9B，Best-of-16；73.0% → 93.4%
+
+ Fig. 1 右；轉移到 MATH，Best-of-32；28.0% → 44.6%（16.6 個百分點）
+
+ Fig. 7；MMLU college math，Best-of-32；Disc RM 53.0%，GenRM-CoT 56.1%
+
+ Fig. 5；樣本效率；MATH 少用 6.4 倍解答達到 Disc RM 的 Best-of-32；圖上另標 1.5×、1.2×（基準論文未明寫）
+
+ Fig. D.1；直接 GenRM（無 CoT）；勝過 LLM-as-a-Judge 與 DPO；與 Disc RM 相當或略好
+
+ Table 1：MMLU 數學子集（只用 GSM8K 訓練的驗證器；表中未註明 N）子集Pass@1Disc-RMGenRM-CoT差（百分點）
+
+ elementary_mathematics；80.1%；90.6%；91.1%；+0.5
+
+ high_school_mathematics；52.2%；74.8%；76.1%；+1.3
+
+ college_mathematics；47.6%；53%；56.1%；+3.1
+
+ abstract_algebra；37.9%；50%；53.50%；+3.5
+
+ 三個 Best-of-N 主結果是演算法任務 5.0% → 45.3%、GSM8K 73.0% → 93.4%、MATH 28.0% → 44.6%，MMLU abstract algebra 是 37.9% → 53.5%。Table 1 明寫 37.9% 是生成器的 Pass@1；Fig. 1 只說箭頭表示用 GenRM-CoT 做 Best-of-N 的增量，沒有寫起點，本頁推定三個起點同為 Pass@1 推定。所以這些箭頭是「加上驗證器 vs 不用驗證器」；與判別式 RM 的同條件比較，abstract algebra 是 50% → 53.5%。MATH 增加的是 16.6 個百分點；Sec. 1 寫「多解 17%」，這個 17% 是百分點，不是相對百分比 本頁推導。作者也寫 GSM8K 結果超過 GPT-4 與 Gemini 1.5 Pro，但論文沒有列出這兩者的數字。
+
+ 增加模型大小時（Gemma 2B → 7B → 9B，MATH），GenRM、GenRM-CoT 與判別式 RM 都上升，生成式驗證器在每個大小都較好（Fig. 12）；作者推測較大的模型文字生成能力較強，GenRM-CoT 更能利用 CoT。增加推論運算時，K $K$ 越大分數越高，微調過的 Gemma GenRM-CoT 勝過用同樣 CoT 與票數、但模型更強的 Gemini 1.0 Pro LLM-as-a-Judge（Fig. 11）。在 MATH 上，GenRM-CoT 以少 6.4 倍的解答數達到判別式 RM 的 Best-of-32（Fig. 5）。分科上 Pre-Algebra、Algebra、Pre-Calculus 特別好，五個難度級都較高（Fig. 6）。
+
+ 質性例子：Fig. 15（沒把 90 分鐘換成 1.5 小時）判別式 0.8414、GenRM-CoT 0.2498；Fig. 4（MATH，化簡錯誤）0.827 對 0.438。反過來，Table E.3 是一份正確解，判別式只給 0.0399，GenRM-CoT 給 0.5131。
+
+ 09 · 加權 SC
+
+ 驗證分數也能加權 self-consistency
+
+ Self-consistency 與驗證器可以結合成 weighted self-consistency（Sec. 4.1、App. C）：每份解答依驗證器分數加權，對每個最終答案加總分數，選總和最大的答案。App. C 再改一步：每個答案只加總分數最高的 Ktop $K_{\text{top}}$ ​ 份解答。這個 Ktop $K_{\text{top}}$ ​ 與 Eq. 7 的 K $K$ 是不同的量。
+
+ C4四種選答案的規則
+示範值
+
+ 8 份候選解答的最終答案與驗證分數都是示範值，用來比較四種選法的規則，不代表論文的資料。答案之間同分時取字母序較前者。
+
+ P1 最高分是錯的P2 與多數一致P3 很多低分錯誤自訂
+
+ 1ABCD0.40
+2ABCD0.35
+3ABCD0.30
+4ABCD0.45
+5ABCD0.90
+6ABCD0.85
+7ABCD0.20
+8ABCD0.95
+
+ 每個答案加總的最高分份數 K_top 4
+
+ 正確答案
+ABCD
+
+ SC（票數）A✗ 錯誤
+Best-of-ND✗ 錯誤
+加權（全部）B✓ 正確
+加權 top-4B✓ 正確
+
+ 答案票總分top-K
+A41.501.50
+B21.751.75
+C10.200.20
+D10.950.95
+
+ 以上選出的答案由本頁示範值計算，非論文結果。
+
+ SC A，Best-of-N D，加權 B，top-4 B；正確答案 B
+
+ 讀數由本頁依 App. C 的規則即時計算；候選與分數為示範值。
+
+ Weighted SC 依驗證分數對每個最終答案加總，選總和最大的答案；App. C 只加總每個答案分數最高的 Ktop $K_{\text{top}}$ ​ 份解答（GSM8K 用 6、MATH 用 4），作者寫這「略為」提升表現。在 MATH 上，以 GenRM-CoT 加權的 SC 比以判別式 RM 加權的 SC 少用 2.5 倍的解答就達到相同表現（Fig. 8）；GSM8K 幾乎沒有增益，16 份解答時只從 93.4% 到 93.5%，作者認為改進空間已經飽和（Fig. D.4）。C4 的三組示範值對應三種情形：P1 中分數最高的一份是錯的，Best-of-N 選錯而加總選對；P3 中很多低分的錯誤答案把全加總拉走，只取最高的幾份才選對；P2 中四種方法一致，類似 GSM8K 上沒有增益的情形（本頁不宣稱這解釋了論文結果）。
+
+ 10 · 實作
+
+ 實作設定與常見錯誤
+
+ App. A–C 的設定（參考用）項目值
+
+ GenRM 學習率；掃描後 {2e-6, 1e-6, 5e-7} 表現良好，2e-6 通常最好（掃描範圍論文未給）
+
+ 最佳化；Adam + decoupled weight decay 1e-2；不用 dropout；梯度範數截斷 1.0
+
+ 排程；線性 warmup 1000 步；cosine 衰減到峰值的 10%
+
+ 長度／batch；300K 步／64；資料混合用 seqio
+
+ checkpoint；依保留題目上的驗證準確率挑選
+
+ 資料平衡；正確 50%、錯誤 50%
+
+ 判別式 RM；特殊 token 的 logit 分類；Z-loss = 1e-4 · log² Z；最終 LR 1e-7、dropout 0
+
+ DPO；先 SFT 得參考政策；LR 1e-6、β = 0.1；分數用 log π_DPO，不減參考政策（Fig. D.5）
+
+ 資料量；Last Letter 每長度 350 題 × 128 次，約 50K；Word Sorting 每長度 4096 題 × 64 次，約 100K；GSM8K 每題 50 份解答，最多 16 正確 + 16 錯誤
+
+ λ／K／K_top；1/3（演算法）、1/4（GSM8K）／32／6（GSM8K）、4（MATH）
+
+ 三個容易混淆的量符號意義論文值
+
+ K $K$ ；Eq. 7 平均的驗證理由條數；預設 32
+
+ Ktop $K_{\text{top}}$ ​；weighted SC 中每個答案只加總的最高分解答份數（App. C）；GSM8K 6、MATH 4
+
+ λ $\lambda$ ；Eq. 5 中解題資料的混合係數；演算法 1/3、GSM8K 1/4
+
+ 訓練 GenRM-CoT 需要三類資料：正確、錯誤各半的「題目–解答」配對與它們的 Yes/No 標記；每份解答的驗證理由（GSM8K 是參考解答引導合成、再經過濾）；以及「題目 → 正確解」的生成資料（Eq. 5）。它與判別式 RM 有三項設定不同：(1) 分數來自語言模型頭的 Yes token，而不是專用 cls $cls$ 的 logit；(2) 損失是 next-token 的 SFT，並與 λ $\lambda$ 倍的解題資料混合；(3) 推論時可以先生成理由，並平均 K 條理由（App. A–C、Eq. 3–7）。上表的超參數只供參考。
+
+ 常見錯誤
+
+ 把 rDirect $r_{\text{Direct}}$ ​ 算成只在 Yes 與 No 之間正規化的機率：Eq. 4 是整個詞彙表上的 pθ(Yes) $p_\theta(\text{Yes})$ ​(Yes)（Fig. 3 畫出其他 token）。
+
+ 推論時把參考解答放進驗證器輸入：參考解答只用於產生訓練理由（Sec. 3.3）。
+
+ 只依最終 Yes/No 過濾合成理由而不用參考解答：隨機猜也有 50% 判對（Sec. 3.3）。
+
+ 把 Eq. 7 當成票數：它平均的是 Yes 機率。
+
+ 以為解題資料越多越好：Fig. D.3 顯示 λ 過大會降低驗證表現。
+
+ 混淆兩個 K：Eq. 7 的理由數（32）與 weighted SC 的 Ktop $K_{\text{top}}$ ​（6／4）。
+
+ 混淆指標：Best-of-N 解題率與 RM accuracy 衡量不同能力（Sec. 4）。
+
+ 11 · 研究脈絡
+
+ 研究脈絡
+
+ GenRM 接在幾條脈絡之後。判別式獎勵模型來自人類偏好學習（Stiennon et al., 2020）與 GSM8K 的驗證器（Cobbe et al., 2021）；過程監督把標記細分到每一步（Uesato et al., 2022；Lightman et al., 2023）。思維鏈與 self-consistency（2022）提供了「先推理、再多次取樣」的做法；LLM-as-a-Judge（2023）用現成模型評分，但不訓練。DPO 與 V-STaR（2023–2024）嘗試用同一個政策同時表示生成與驗證。
+
+ 作者在 Sec. 5 拿 GenRM 與 DPO 對比：DPO 以政策的 logits 隱式表示獎勵，作者引用的文獻指出這種綁定在推理任務上會出現錯誤外推與表徵退化；作者寫 GenRM 用較簡單的 next-token 損失、不需要參考政策，驗證表現顯著較好（Fig. 1、5）。每張卡片連到對應的研究筆記。
+
+ 判別式 RM過程／結果監督CoT 與推論運算批評模型LLM 評審生成與驗證統一本文
+
+ 2020判別式 RMLearning to summarize from human feedback
+Stiennon et al.
+以人類偏好訓練獎勵模型並微調政策；GenRM 列為判別式 RM
+arXiv ↗筆記
+2021判別式 RMTraining Verifiers to Solve Math Word Problems
+Cobbe et al.
+GSM8K 與驗證器加 Best-of-N 的設定
+arXiv ↗筆記
+2022CoT 與推論運算Chain-of-Thought Prompting Elicits Reasoning in Large Language Models
+Wei et al.
+CoT 推理；GenRM-CoT 的依據
+arXiv ↗筆記
+2022CoT 與推論運算Self-Consistency Improves Chain of Thought Reasoning in Language Models
+Wang et al.
+多路徑邊際化；GenRM 的多數決驗證
+arXiv ↗筆記
+2022生成與驗證統一STaR: Bootstrapping Reasoning With Reasoning
+Zelikman et al.
+自生成推理軌跡的自我改進；V-STaR 的前身
+arXiv ↗筆記
+2022批評模型Self-critiquing models for assisting human evaluators
+Saunders et al.
+以人類資料訓練的批評模型
+arXiv ↗筆記
+2022過程／結果監督Solving math word problems with process- and outcome-based feedback
+Uesato et al.
+過程與結果監督的比較；判別式驗證器
+arXiv ↗筆記
+2023過程／結果監督Let's Verify Step by Step
+Lightman et al.
+過程級判別式驗證器；MATH500 評測集
+arXiv ↗筆記
+2023生成與驗證統一Direct Preference Optimization: Your Language Model is Secretly a Reward Model
+Rafailov et al.
+以政策 logits 隱式表示獎勵；生成與驗證統一的對照
+arXiv ↗筆記
+2023LLM 評審Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena
+Zheng et al.
+LLM-as-a-Judge 基線
+arXiv ↗筆記
+2024LLM 評審Self-Rewarding Language Models
+Yuan et al.
+以 LLM-as-a-Judge 提供自身獎勵
+arXiv ↗筆記
+2024生成與驗證統一V-STaR: Training Verifiers for Self-Taught Reasoners
+Hosseini et al.
+以 DPO 訓練驗證器；本文的 DPO 基線
+arXiv ↗筆記
+2024CoT 與推論運算Large Language Monkeys: Scaling Inference Compute with Repeated Sampling
+Brown et al.
+推論時運算作為縮放軸
+arXiv ↗筆記
+2024本文Generative Verifiers: Reward Modeling as Next-Token Prediction
+Zhang et al.
+本論文：以 Yes token 機率與 CoT 訓練生成式驗證器
+arXiv ↗筆記
+
+ 12 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 論文沒有獨立的限制段。從實驗設定可以讀出 本頁整理：只測數學與演算法字串任務；GSM8K 每題只評 16 份解答；GenRM-CoT 的增益依賴驗證理由的品質（Fig. 13、14）；K=32 $K=32$ 時每份解答需要生成 32 條理由，論文沒有報告這部分的成本 本頁推導。作者列出的未來方向：程式碼、對齊、文字到影像與開放式生成；過程級監督；以強化學習訓練 CoT 驗證器；檢索增強、many-shot、多階段提示與工具使用；把 GenRM 放進 LLM 的強化學習流程。
+
+ 研究筆記（依閱讀順序）
+
+ Generative Verifiers（GenRM）的研究脈絡總覽總覽
+
+ Best-of-N 與判別式驗證器問題設定與基線
+
+ 步驟級與結果級監督的驗證器監督粒度
+
+ LLM-as-a-Judge 與自我獎勵、自學評估器不訓練的生成式驗證
+
+ 批評與 CoT 用於獎勵模型最接近的工作
+
+ DPO 與隱式驗證器：生成與驗證的統一統一訓練的對照
+
+ 推論時運算與多數決多數決的來源
+
+ GenRM 方法：以 Yes token 機率作驗證分數本論文
+
+ 相關筆記（No. 550）
+
+ LLM 的 RL 前史：RLHF、PPO 與 GAE獎勵模型的用途
+
+ 過程監督與 PRM：結果與步驟回饋的比較步驟級驗證器
+
+ 思維鏈、驗證器與推論時運算test-time compute
+
+ STaR：以模型自產的推理軌跡微調合成理由
+
+ Lunjun Zhang, Arian Hosseini, Hritik Bansal, Mehran Kazemi, Aviral Kumar, Rishabh Agarwal. Generative Verifiers: Reward Modeling as Next-Token Prediction. ICLR 2025. arXiv:2408.15240.
+
+ 本頁的方程式與數字取自論文 v3；標示「本頁推導」的內容為本頁自行推導，「示範值」為本頁為了示範而選的數值，「推定」為本頁依論文推估、論文未明寫的事項，皆非論文結論。C1–C4 的讀數在瀏覽器中即時計算，不重現論文的實驗。
+
+ ← Paper Master
+ 教學與筆記

@@ -1,0 +1,96 @@
+
+<!-- S10 -->
+<section class="ch" id="impl" data-toc="10" data-tt="實作">
+  <div class="ch-num">10 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="tscroll" tabindex="0" role="region" aria-label="實作設定表，可橫向捲動"><table class="stack"><caption>App. A–C 的設定（參考用）</caption><thead><tr><th>項目</th><th>值</th></tr></thead><tbody>
+    <tr><td data-h="項目">GenRM 學習率<span class="sr">；</span></td><td data-h="值">掃描後 {2e-6, 1e-6, 5e-7} 表現良好，2e-6 通常最好（掃描範圍論文未給）</td></tr>
+    <tr><td data-h="項目">最佳化<span class="sr">；</span></td><td data-h="值">Adam + decoupled weight decay 1e-2；不用 dropout；梯度範數截斷 1.0</td></tr>
+    <tr><td data-h="項目">排程<span class="sr">；</span></td><td data-h="值">線性 warmup 1000 步；cosine 衰減到峰值的 10%</td></tr>
+    <tr><td data-h="項目">長度／batch<span class="sr">；</span></td><td data-h="值">300K 步／64；資料混合用 seqio</td></tr>
+    <tr><td data-h="項目">checkpoint<span class="sr">；</span></td><td data-h="值">依保留題目上的驗證準確率挑選</td></tr>
+    <tr><td data-h="項目">資料平衡<span class="sr">；</span></td><td data-h="值">正確 50%、錯誤 50%</td></tr>
+    <tr><td data-h="項目">判別式 RM<span class="sr">；</span></td><td data-h="值">特殊 token 的 logit 分類；Z-loss = 1e-4 · log² Z；最終 LR 1e-7、dropout 0</td></tr>
+    <tr><td data-h="項目">DPO<span class="sr">；</span></td><td data-h="值">先 SFT 得參考政策；LR 1e-6、β = 0.1；分數用 log π_DPO，不減參考政策（Fig. D.5）</td></tr>
+    <tr><td data-h="項目">資料量<span class="sr">；</span></td><td data-h="值">Last Letter 每長度 350 題 × 128 次，約 50K；Word Sorting 每長度 4096 題 × 64 次，約 100K；GSM8K 每題 50 份解答，最多 16 正確 + 16 錯誤</td></tr>
+    <tr><td data-h="項目">λ／K／K_top<span class="sr">；</span></td><td data-h="值">1/3（演算法）、1/4（GSM8K）／32／6（GSM8K）、4（MATH）</td></tr>
+  </tbody></table></div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="三個容易混淆的量"><table class="stack"><caption>三個容易混淆的量</caption><thead><tr><th>符號</th><th>意義</th><th>論文值</th></tr></thead><tbody>
+    <tr><td data-h="符號">$K$<span class="sr">；</span></td><td data-h="意義">Eq. 7 平均的驗證理由條數<span class="sr">；</span></td><td data-h="論文值">預設 32</td></tr>
+    <tr><td data-h="符號">$K_{\text{top}}$<span class="sr">；</span></td><td data-h="意義">weighted SC 中每個答案只加總的最高分解答份數（App. C）<span class="sr">；</span></td><td data-h="論文值">GSM8K 6、MATH 4</td></tr>
+    <tr><td data-h="符號">$\lambda$<span class="sr">；</span></td><td data-h="意義">Eq. 5 中解題資料的混合係數<span class="sr">；</span></td><td data-h="論文值">演算法 1/3、GSM8K 1/4</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <p>訓練 GenRM-CoT 需要三類資料：正確、錯誤各半的「題目–解答」配對與它們的 Yes/No 標記；每份解答的驗證理由（GSM8K 是參考解答引導合成、再經過濾）；以及「題目 → 正確解」的生成資料（Eq. 5）。它與判別式 RM 有三項設定不同：(1) 分數來自語言模型頭的 Yes token，而不是專用 $cls$ 的 logit；(2) 損失是 next-token 的 SFT，並與 $\lambda$ 倍的解題資料混合；(3) 推論時可以先生成理由，並平均 K 條理由（App. A–C、Eq. 3–7）。上表的超參數只供參考。</p>
+    <h3>常見錯誤</h3>
+    <ol>
+      <li>把 $r_{\text{Direct}}$ 算成只在 Yes 與 No 之間正規化的機率：Eq. 4 是整個詞彙表上的 $p_\theta(\text{Yes})$（Fig. 3 畫出其他 token）。</li>
+      <li>推論時把參考解答放進驗證器輸入：參考解答只用於產生訓練理由（Sec. 3.3）。</li>
+      <li>只依最終 Yes/No 過濾合成理由而不用參考解答：隨機猜也有 50% 判對（Sec. 3.3）。</li>
+      <li>把 Eq. 7 當成票數：它平均的是 Yes 機率。</li>
+      <li>以為解題資料越多越好：Fig. D.3 顯示 λ 過大會降低驗證表現。</li>
+      <li>混淆兩個 K：Eq. 7 的理由數（32）與 weighted SC 的 $K_{\text{top}}$（6／4）。</li>
+      <li>混淆指標：Best-of-N 解題率與 RM accuracy 衡量不同能力（Sec. 4）。</li>
+    </ol>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">訓練 GenRM-CoT 需要哪些資料？哪三項設定與判別式 RM 不同？</p>
+    <p class="a">正負各半的配對與 Yes/No 標記、驗證理由、題目→正確解的生成資料；分數來自 LM 頭的 Yes token、損失是混合解題資料的 SFT、推論可先生成理由並平均 K 條。</p>
+  </div></details>
+</section>
+
+<!-- S11 -->
+<section class="ch" id="history" data-toc="11" data-tt="研究脈絡">
+  <div class="ch-num">11 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>GenRM 接在幾條脈絡之後。判別式獎勵模型來自人類偏好學習（Stiennon et al., 2020）與 GSM8K 的驗證器（Cobbe et al., 2021）；過程監督把標記細分到每一步（Uesato et al., 2022；Lightman et al., 2023）。思維鏈與 self-consistency（2022）提供了「先推理、再多次取樣」的做法；LLM-as-a-Judge（2023）用現成模型評分，但不訓練。DPO 與 V-STaR（2023–2024）嘗試用同一個政策同時表示生成與驗證。</p>
+    <p>作者在 Sec. 5 拿 GenRM 與 DPO 對比：DPO 以政策的 logits 隱式表示獎勵，作者引用的文獻指出這種綁定在推理任務上會出現錯誤外推與表徵退化；作者寫 GenRM 用較簡單的 next-token 損失、不需要參考政策，驗證表現顯著較好（Fig. 1、5）。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S12 -->
+<section class="ch" id="next" data-toc="12" data-tt="限制與延伸">
+  <div class="ch-num">12 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>論文沒有獨立的限制段。從實驗設定可以讀出 <span class="tag">本頁整理</span>：只測數學與演算法字串任務；GSM8K 每題只評 16 份解答；GenRM-CoT 的增益依賴驗證理由的品質（Fig. 13、14）；$K=32$ 時每份解答需要生成 32 條理由，論文沒有報告這部分的成本 <span class="tag">本頁推導</span>。作者列出的未來方向：程式碼、對齊、文字到影像與開放式生成；過程級監督；以強化學習訓練 CoT 驗證器；檢索增強、many-shot、多階段提示與工具使用；把 GenRM 放進 LLM 的強化學習流程。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="genrm-lineage-hub.html">Generative Verifiers（GenRM）的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="genrm-best-of-n-discriminative-verifiers.html">Best-of-N 與判別式驗證器</a><span>問題設定與基線</span></div></li>
+    <li><div><a href="genrm-step-level-supervision-verifiers.html">步驟級與結果級監督的驗證器</a><span>監督粒度</span></div></li>
+    <li><div><a href="genrm-llm-as-a-judge.html">LLM-as-a-Judge 與自我獎勵、自學評估器</a><span>不訓練的生成式驗證</span></div></li>
+    <li><div><a href="genrm-critiques-and-cot-reward-models.html">批評與 CoT 用於獎勵模型</a><span>最接近的工作</span></div></li>
+    <li><div><a href="genrm-dpo-implicit-verifiers-unification.html">DPO 與隱式驗證器：生成與驗證的統一</a><span>統一訓練的對照</span></div></li>
+    <li><div><a href="genrm-inference-time-compute-majority-voting.html">推論時運算與多數決</a><span>多數決的來源</span></div></li>
+    <li><div><a href="genrm-yes-token-method.html">GenRM 方法：以 Yes token 機率作驗證分數</a><span>本論文</span></div></li>
+  </ol>
+  <div class="prose"><h3>相關筆記（No. 550）</h3></div>
+  <ol class="rl">
+    <li><div><a href="r1-rlhf-ppo-background.html">LLM 的 RL 前史：RLHF、PPO 與 GAE</a><span>獎勵模型的用途</span></div></li>
+    <li><div><a href="r1-process-supervision-prm.html">過程監督與 PRM：結果與步驟回饋的比較</a><span>步驟級驗證器</span></div></li>
+    <li><div><a href="r1-cot-and-test-time-compute.html">思維鏈、驗證器與推論時運算</a><span>test-time compute</span></div></li>
+    <li><div><a href="r1-star-self-generated-reasoning.html">STaR：以模型自產的推理軌跡微調</a><span>合成理由</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Lunjun Zhang, Arian Hosseini, Hritik Bansal, Mehran Kazemi, Aviral Kumar, Rishabh Agarwal. Generative Verifiers: Reward Modeling as Next-Token Prediction. ICLR 2025. <a href="https://arxiv.org/abs/2408.15240">arXiv:2408.15240</a>.</p>
+  <p>本頁的方程式與數字取自論文 v3；標示「本頁推導」的內容為本頁自行推導，「示範值」為本頁為了示範而選的數值，「推定」為本頁依論文推估、論文未明寫的事項，皆非論文結論。C1–C4 的讀數在瀏覽器中即時計算，不重現論文的實驗。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>

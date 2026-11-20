@@ -1,0 +1,192 @@
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 118</span>
+  <span class="ttl">Generative Verifiers（GenRM）</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 118</b> · 互動教學 · arXiv 2408.15240 · ICLR 2025</div>
+  <h1>生成式驗證器：把驗證寫成下一個 token 的預測</h1>
+  <p class="dek">這篇論文用「Yes」這個 token 的機率當作解答正確性的分數，讓驗證器能先寫出檢查步驟再下判斷。</p>
+  <p class="byline">Lunjun Zhang、Arian Hosseini、Hritik Bansal、Mehran Kazemi、Aviral Kumar、Rishabh Agarwal（2024）〈Generative Verifiers: Reward Modeling as Next-Token Prediction〉</p>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · Best-of-N</span><p>讓語言模型對同一題寫 N 份解答，由驗證器（替解答打分的模型）選分數最高的一份。驗證器越準，選到正確解答的機會越大。詳見 01。</p></div>
+    <div class="fact"><span class="n">02 · 問「答案正確嗎？」</span><p>GenRM 問模型「答案正確嗎（Yes/No）？」，把下一個 token 是 Yes 的機率當分數；還能先寫出逐步檢查（思維鏈，chain-of-thought，CoT）再回答。詳見 03、05。</p></div>
+    <div class="fact"><span class="n">03 · GSM8K 的結果</span><p>在 GSM8K（小學數學應用題資料集）上，用 GenRM-CoT 從 16 份解答中選一份，解題率由 73.0% 提高到 93.4%（Fig. 1；起點推定為單次取樣的解題率 <span class="tag">推定</span>）。詳見 08。</p></div>
+  </div>
+  <div class="hero-axis" id="hero-axis"><p class="cap">同一份錯誤解答在兩種驗證器下的分數（Fig. 2）：0 表示判為錯誤，1 表示判為正確。</p><svg role="img" aria-label="分數軸 0 到 1：判別式 RM 給這份錯誤解答 0.999，GenRM-CoT 給 0.0015"></svg></div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2408.15240">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-118">在關聯圖中查看</a>
+    <a class="btn" href="genrm-lineage-hub.html">研究筆記總覽</a>
+  </div>
+</section>
+
+<!-- S1 -->
+<section class="ch" id="bon" data-toc="01" data-tt="Best-of-N">
+  <div class="ch-num">01 · Best-of-N</div>
+  <h2>Best-of-N 的效果取決於驗證器</h2>
+  <div class="prose">
+    <p>大型語言模型（LLM）解推理題時，常寫出看似合理但錯誤的解答；推理題中只要一步錯，整份解答就錯（Sec. 1）。常用的補救是 <b>Best-of-N</b>（Sec. 2）：給定一道題目 $\mathbf x$，從一個固定的<b>生成器</b>（generator，負責寫解答的 LLM）抽出 $N$ 份候選解答 $\mathbf y$，再由一個學過的<b>驗證器</b>（verifier，也稱獎勵模型 reward model，RM）替每份解答打分數，選分數最高的一份當作最終答案。</p>
+    <p>兩個基準量。<b>Pass@1</b> 是單次取樣就答對的題目比率。<b>Pass@N</b> 是 $N$ 份中至少有一份正確的題目比率，也就是「完美驗證器」下的 Best-of-N。兩者都是對題目取平均的量。</p>
+    <p>論文用兩種指標評估驗證器（Sec. 4）。<b>Best-of-N 解題率</b>：固定生成器，用驗證器挑選後，測試集上答對的題目比率。<b>RM accuracy</b>：驗證器把單份解答分類為正確或錯誤的準確率。論文寫兩者相關，但 RM accuracy 只評估逐點分類，Best-of-N 評估的是排序後能否選出正確解。</p>
+    <p>下面的玩具模型需要一個量 μ。驗證器替正確解打的分數，平均比錯誤解高出 μ 個標準差；μ = 0 表示分數與對錯無關，μ 越大，正確解與錯誤解的分數越容易分開。μ 越大，單份解答的分類準確率（RM accuracy）越高；但 Best-of-N 還取決於單份正確率 $p$ 與候選數 $N$。</p>
+  </div>
+
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>Best-of-N 模擬器</h3><span class="tag">示範值</span></div>
+    <p class="plate-lead">假設：每道題目都有相同的單份正確率 p，每份解答獨立地以機率 p 正確（真實資料各題 p 不同，Pass@N 是各題的平均）；驗證器給正確解的分數服從 N(μ, 1)、給錯誤解的分數服從 N(0, 1)，彼此獨立；RM accuracy 以正確、錯誤各半的測試集與閾值 μ/2 計算。這是本頁自訂的玩具模型，μ 與 p 都是示範值，不對應論文中任何驗證器。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div id="c1-main"><svg role="img" aria-label="Best-of-N 解題率對 N 的曲線"></svg></div>
+        <div class="legend"><span class="lg acc">Best-of-N（本驗證器）</span><span class="lg ref">完美驗證器 Pass@N</span><span class="lg dot">隨機挑選 Pass@1</span></div>
+        <div id="c1-dens"><svg role="img" aria-label="正確解與錯誤解的分數分布"></svg></div>
+        <div class="legend"><span class="lg pos">正確解的分數 N(μ, 1)</span><span class="lg neg">錯誤解的分數 N(0, 1)</span></div>
+      </div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1-p">單份正確率 p <output id="c1-po"></output></label><input type="range" id="c1-p" min="1" max="19" step="1" value="6"></div>
+        <div class="rng"><label class="lbl" for="c1-mu">分離度 μ <output id="c1-muo"></output></label><input type="range" id="c1-mu" min="0" max="40" step="1" value="15"></div>
+        <div><div class="lbl">候選數 N</div><div class="seg" id="c1-n" role="radiogroup" aria-label="候選數 N"></div></div>
+        <dl class="ro" id="c1-read"></dl>
+        <p class="defs"><b>RM accuracy</b>：一份解答的分數高於閾值就判為正確，判對的比率（逐點）。<br><b>Best-of-N</b>：N 份中分數最高的一份是否正確（排序）。</p>
+        <p class="sr" id="c1-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <details class="more"><summary>計算方式</summary><div class="prose" style="padding:0 20px 12px">
+      <p>給定 $c$ 份正確解與 $m$ 份錯誤解，「最高分落在正確解」的機率是 $W(c,m,\mu)=\int c\,\varphi(s-\mu)\,\Phi(s-\mu)^{c-1}\Phi(s)^m\,ds$，其中 $\varphi,\Phi$ 是標準常態的密度與累積分布；$c=0$ 時為 0，$m=0$ 時為 1。正確解份數 $c$ 服從二項分布，所以 $\text{BoN}=\sum_{c=0}^{N}\binom Nc p^c(1-p)^{N-c}W(c,N-c,\mu)$。積分以梯形法計算，範圍 $[\min(0,\mu)-8,\max(0,\mu)+8]$，步長 0.01，指數部分在對數空間相加以免下溢。RM accuracy $=\Phi(\mu/2)$ <span class="tag">本頁推導</span>。</p>
+    </div></details>
+    <p class="plate-f">讀數由本頁依上式即時計算（本頁自訂模型，非論文公式）。Pass@N 與 Pass@1 的邊界 <span class="tag">本頁推導</span>：分數與對錯無關時，選最高分等於隨機挑一份。</p>
+  </div>
+
+  <div class="prose">
+    <p>Best-of-N 抽 $N$ 份解答，由驗證器打分，選最高分的一份。驗證器分數與正確性無關時，選最高分等於隨機挑一份，結果等於 Pass@1；驗證器完美時，只要 $N$ 份中有一份正確就會被選到，結果等於 Pass@N。對單一題目，若每份解答獨立地以機率 $p$ 正確，Pass@N $=1-(1-p)^N$；資料集的 Pass@N 是各題這個值的平均，各題 $p$ 不同時，不能把平均正確率直接代入公式（例如一半題目 $p=0$、一半 $p=1$，Pass@N 恆為 0.5）。C1 讓每題的 $p$ 相同，所以 $1-(1-p)^N$ 就是圖中的完美驗證器曲線 <span class="tag">本頁推導</span>。</p>
+    <p>RM accuracy 與 Best-of-N 解題率是不同的量。RM accuracy 只看單份解答是否被正確分類（逐點）；Best-of-N 看驗證器能否在多份解答中排出並選到正確解（排序）。兩者相關但不相同（Sec. 4）。在 C1 的預設值（p = 0.30、μ = 1.5）下，RM accuracy 是 77.3%，與 $N$ 無關；Best-of-N 在 $N=1$ 時是 30.0%，在 $N=16$ 時是 84.7%。兩個數字的定義不同，不能直接比大小。</p>
+  </div>
+  <details class="more"><summary>本章符號</summary>
+    <div class="tscroll" tabindex="0" role="region" aria-label="本章符號表"><table class="stack"><thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td data-h="符號">$\mathbf x$、$\mathbf y$<span class="sr">；</span></td><td data-h="意義">題目；一份解答（token 序列），$\mathbf y^+$ 正確、$\mathbf y^-$ 錯誤</td></tr>
+      <tr><td data-h="符號">$N$<span class="sr">；</span></td><td data-h="意義">Best-of-N 的候選解答數</td></tr>
+      <tr><td data-h="符號">Pass@1、Pass@N<span class="sr">；</span></td><td data-h="意義">單次答對的題目比率；N 份中至少一份正確的題目比率</td></tr>
+      <tr><td data-h="符號">$p$、μ<span class="sr">；</span></td><td data-h="意義">C1 玩具模型的單份正確率、分數分離度（示範值）</td></tr>
+    </tbody></table></div></details>
+  <p class="read">延伸閱讀：<a href="genrm-best-of-n-discriminative-verifiers.html">Best-of-N 與判別式驗證器</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Best-of-N 怎麼運作？驗證器完全無用與完美時，結果各是多少？</p>
+    <p class="a">抽 N 份解答、驗證器打分、選最高分者。分數與正確性無關時等於 Pass@1；完美時等於 Pass@N。單題、每份獨立以機率 $p$ 正確時 Pass@N $=1-(1-p)^N$；資料集的 Pass@N 是各題此值的平均（本頁推導）。</p>
+    <p class="q">Best-of-N 解題率與 RM accuracy 差在哪裡？</p>
+    <p class="a">RM accuracy 是逐點分類的準確率；Best-of-N 是排序後選到正確解的比率。兩者相關但不相同（Sec. 4）。</p>
+  </div></details>
+</section>
+
+<!-- S2 -->
+<section class="ch" id="disc" data-toc="02" data-tt="判別式驗證器">
+  <div class="ch-num">02 · 判別式驗證器</div>
+  <h2>判別式驗證器只輸出一個分數</h2>
+  <div class="prose">
+    <p>先整理後面會用到的四個詞。<b>logit</b> 是模型對每個 token 輸出的未正規化分數 $z_j$。<b>softmax</b> 把 logit 轉成機率：$p_j=e^{z_j/\gamma}/\sum_i e^{z_i/\gamma}$，$\gamma$ 是溫度，溫度越低，機率越集中在 logit 最大的 token，溫度 0 即貪婪解碼（每步取機率最大的 token）。<b>sigmoid</b> $\sigma(z)=1/(1+e^{-z})$ 把一個實數轉成 0 到 1 之間的機率，等於只有兩類時的 softmax。<b>BCE</b>（binary cross-entropy，二元交叉熵）是二元分類的損失：標記 $y\in\{0,1\}$、預測機率 $r$ 時為 $-[y\log r+(1-y)\log(1-r)]$。</p>
+    <p>LLM 是自迴歸模型：在參數 $\theta$ 下，給定題目 $\mathbf x$ 生成序列 $\mathbf y=(y_1,\dots,y_T)$ 的機率逐個 token 相乘（Eq. 1），每個 token 的機率由 softmax 在 logit 上算出。監督式微調（SFT）最小化目標序列的負對數機率（Eq. 2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$p_\theta(\mathbf y\mid\mathbf x)=\prod_{t=1}^{T}p_\theta(y_t\mid\mathbf x,y_{\lt t}),\qquad \mathcal L_{\text{SFT}}(\theta,\mathcal D)=-\mathbb E_{(\mathbf x,\mathbf y)\sim\mathcal D}\Big[\sum_{t}\log p_\theta(y_t\mid\mathbf x,y_{\lt t})\Big]$$</div><span class="eq-n">Eq. 1、2</span></div>
+  <div class="prose">
+    <p>推理任務上主流的驗證器是<b>判別式 RM</b>（Discriminative RM，論文也稱 ORM，outcome reward model；Cobbe et al., 2021）。它在一個特殊詞彙 token $cls$ 的 logit $z_{cls}$ 上接 sigmoid，輸出解答正確的機率 $r_\theta(\mathbf x,\mathbf y)\in[0,1]$，在正確解集合 $\mathcal D_{\text{correct}}$ 與錯誤解集合 $\mathcal D_{\text{incorrect}}$ 上以 BCE 訓練（Eq. 3）。論文的資料一律正確、錯誤各半。</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathcal L(\theta,\mathcal D_{RM})=-\mathbb E_{\mathcal D_{\text{correct}}}\log r_\theta(\mathbf x,\mathbf y^+)-\mathbb E_{\mathcal D_{\text{incorrect}}}\log\big(1-r_\theta(\mathbf x,\mathbf y^-)\big),\quad r_\theta=\mathrm{sigmoid}(z_{cls})$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="prose">
+    <p>論文比較的其他三種做法（Sec. 2、Sec. 4）：<b>LLM-as-a-Judge</b> 不微調，直接提示現成 LLM 檢查解答（Table A.3），實驗中產生 32 條驗證理由取多數決；<b>DPO 驗證器</b>依 Hosseini et al. (2024)，以 DPO（direct preference optimization，一種直接在「較好／較差」配對上訓練政策的方法）在「正確解 vs 錯誤解」配對上訓練；<b>self-consistency</b> 不用驗證器，抽多份解答、取最常見的最終答案。</p>
+    <p>判別式 RM 的分數是 $r_\theta=\mathrm{sigmoid}(z_{cls})$，以 BCE 訓練（Eq. 3），正確與錯誤資料各半。它只在一個專用輸出（$cls$ 的 logit）上給一個數字、不產生文字，所以不能先寫 CoT，也無法和解題的 SFT 在同一個輸出頭上統一。論文 Sec. 5 提到 Yang et al. (2024) 雖然加了輔助的生成式 SFT 損失，但放在另一個頭上作正則化、訓練後丟棄，查詢 RM 時不產生文字。這就是作者說判別式 RM 沒有用到 LLM 生成能力的意思。</p>
+  </div>
+  <details class="more"><summary>本章符號</summary>
+    <div class="tscroll" tabindex="0" role="region" aria-label="本章符號表"><table class="stack"><thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td data-h="符號">$\theta$、$p_\theta$<span class="sr">；</span></td><td data-h="意義">LLM 參數；自迴歸生成機率（Eq. 1）</td></tr>
+      <tr><td data-h="符號">$z_j$、$\gamma$<span class="sr">；</span></td><td data-h="意義">logit；softmax 溫度（原文 Sec. 2 有一處誤植為 τ）</td></tr>
+      <tr><td data-h="符號">$\mathcal D_{\text{correct}}$、$\mathcal D_{\text{incorrect}}$<span class="sr">；</span></td><td data-h="意義">正確／錯誤的題目–解答配對</td></tr>
+      <tr><td data-h="符號">$r_\theta$、$z_{cls}$<span class="sr">；</span></td><td data-h="意義">驗證器分數；特殊 token $cls$ 的 logit</td></tr>
+    </tbody></table></div></details>
+  <p class="read">延伸閱讀：<a href="genrm-step-level-supervision-verifiers.html">步驟級與結果級監督的驗證器</a>、<a href="genrm-llm-as-a-judge.html">LLM-as-a-Judge 與自我獎勵、自學評估器</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">判別式 RM 的分數與損失是什麼？為什麼說它沒用到生成能力？</p>
+    <p class="a">$r_\theta=\mathrm{sigmoid}(z_{cls})$，以 BCE 訓練（Eq. 3），正負資料各半；只在專用輸出上給一個數字、不產生文字，不能先寫 CoT，也無法和解題 SFT 在同一個輸出頭上統一。</p>
+  </div></details>
+</section>
+
+<!-- S3 -->
+<section class="ch" id="direct" data-toc="03" data-tt="GenRM">
+  <div class="ch-num">03 · GenRM</div>
+  <h2>GenRM 以 Yes token 的機率作為分數</h2>
+  <div class="prose">
+    <p>GenRM 的最簡形式是直接驗證器（Sec. 3.1）。在題目與解答後面接上固定提示 $I$＝「Is the answer correct (Yes/No)?」，讓模型預測下一個 token。訓練資料是 $\mathcal D_{\text{Direct}}=\{((\mathbf x,\mathbf y^+,I),\text{'Yes'})\}\cup\{((\mathbf x,\mathbf y^-,I),\text{'No'})\}$，在上面最小化 Eq. 2 的 SFT 損失，等於最大化正確解的 $\log p_\theta(\text{Yes}\mid\cdot)$ 與錯誤解的 $\log p_\theta(\text{No}\mid\cdot)$。推論時以 Yes 的機率為分數：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$r_{\text{Direct}}(\mathbf x,\mathbf y)=p_\theta(\text{Yes}\mid\mathbf x,\mathbf y,I)$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="fig" style="max-width:680px" id="fig-direct"><svg role="img" aria-label="GenRM 示意：題目、解答與提示 I 輸入微調過的驗證器，輸出下一個 token 的機率：Yes、No 與其他 token；Yes 的機率就是分數 r"></svg></div>
+  <div class="prose">
+    <p>作者認為使用機率（而不是只看最後輸出 Yes 或 No）納入了驗證器的信心，降低測試時判錯的機會。$p_\theta(\text{Yes})$ 是對整個詞彙表做 softmax 的結果，Fig. 3 也畫出「其他 token」的機率。論文的溫度 $\gamma$ 是為生成定義的，Eq. 4 沒有說評分時使用 $\gamma\ne1$；本頁推定評分時 $\gamma=1$ <span class="tag">推定</span>。</p>
+  </div>
+
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>Yes token 的分數與損失</h3><span class="tag">示範值</span></div>
+    <p class="plate-lead">這是單一位置的 softmax 計算，logit 為示範值；實際 LLM 的詞彙表有數十萬個 token，這裡把 Yes、No 以外的 token 合併成一個「其他」，它的 logit 代表這些 token 的 log-sum-exp。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div class="c2bars" id="c2-bars"></div>
+        <dl class="ro" id="c2-read" style="margin-top:14px"></dl>
+        <div class="tscroll" tabindex="0" role="region" aria-label="梯度表" style="margin-top:12px"><table class="grad" id="c2-grad"></table></div>
+      </div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c2-zy">Yes 的 logit z_Y <output id="c2-zyo"></output></label><input type="range" id="c2-zy" min="-60" max="60" step="1" value="20"></div>
+        <div class="rng"><label class="lbl" for="c2-zn">No 的 logit z_N <output id="c2-zno"></output></label><input type="range" id="c2-zn" min="-60" max="60" step="1" value="0"></div>
+        <div class="rng"><label class="lbl" for="c2-zo">其他 token 的 logit z_O <output id="c2-zoo"></output></label><input type="range" id="c2-zo" min="-300" max="60" step="1" value="-40"></div>
+        <div class="rng"><label class="lbl" for="c2-g">溫度 γ（示範值；論文評分推定 γ = 1）<output id="c2-go"></output></label><input type="range" id="c2-g" min="5" max="40" step="1" value="20"></div>
+        <div><div class="lbl">這份解答其實是</div><div class="seg" id="c2-t" role="radiogroup" aria-label="解答的真實標記"></div></div>
+        <p class="sr" id="c2-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依 Eq. 4 與 softmax 即時計算。「只看 Yes 與 No 的 sigmoid」與梯度式 <span class="tag">本頁推導</span>。</p>
+  </div>
+
+  <div class="prose">
+    <p>GenRM 直接驗證器的分數是 $r_{\text{Direct}}=p_\theta(\text{Yes}\mid\mathbf x,\mathbf y,I)$，$I$＝「Is the answer correct (Yes/No)?」，以 SFT 損失訓練正確解→Yes、錯誤解→No（Eq. 2、4）。它與判別式 RM 的關係 <span class="tag">本頁推導</span>：若其他 token 的機率可忽略，$p(\text{Yes})\approx\mathrm{sigmoid}(z_Y-z_N)$，正確解上的損失 $-\log p(\text{Yes})$ 就與 Eq. 3 的 BCE 形式相同；是否真的近似取決於其他 token 分到的機率，論文沒有量測。兩者的參數也不同：判別式 RM 用特殊 token $cls$ 的 logit，GenRM 用語言模型頭上既有的 Yes／No token，並接在提示 $I$ 之後。論文的量測是直接 GenRM（不用 CoT）只與判別式 RM 相當或略好（Fig. D.1），主要增益來自後面的 CoT 與多數決（Sec. 4.1）。</p>
+    <p>C2 的梯度欄是損失 $-\log p(\text{target})$ 對各 logit 的偏微分 $(p_j-\mathbb 1[j=\text{target}])/\gamma$ <span class="tag">本頁推導</span>。目標是 Yes 時，梯度下降會提高 $z_Y$、降低 $z_N$ 與其他 token 的 logit。</p>
+  </div>
+  <details class="more"><summary>本章符號</summary>
+    <div class="tscroll" tabindex="0" role="region" aria-label="本章符號表"><table class="stack"><thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td data-h="符號">$I$<span class="sr">；</span></td><td data-h="意義">固定提示「Is the answer correct (Yes/No)?」</td></tr>
+      <tr><td data-h="符號">$\mathcal D_{\text{Direct}}$<span class="sr">；</span></td><td data-h="意義">直接驗證的訓練資料：題目＋解答＋$I$ → Yes／No</td></tr>
+      <tr><td data-h="符號">$r_{\text{Direct}}$<span class="sr">；</span></td><td data-h="意義">直接 GenRM 的分數（Eq. 4）</td></tr>
+    </tbody></table></div></details>
+  <p class="read">延伸閱讀：<a href="genrm-yes-token-method.html">GenRM 方法：以 Yes token 機率作驗證分數</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">GenRM 的分數怎麼定義、怎麼訓練？它與判別式 RM 在數學上的關係？</p>
+    <p class="a">$r_{\text{Direct}}=p_\theta(\text{Yes}\mid\mathbf x,\mathbf y,I)$，以 SFT 損失訓練正確解→Yes、錯誤解→No（Eq. 2、4）。其他 token 機率可忽略時 $p(\text{Yes})\approx\mathrm{sigmoid}(z_Y-z_N)$，損失與 BCE 形式相同，是否近似論文未量測（本頁推導）；直接 GenRM 只與判別式 RM 相當或略好（Fig. D.1）。</p>
+  </div></details>
+</section>
+
+<!-- S4 -->
+<section class="ch" id="unified" data-toc="04" data-tt="統一訓練">
+  <div class="ch-num">04 · 統一訓練</div>
+  <h2>同一個模型同時學解題與驗證</h2>
+  <div class="prose">
+    <p>因為驗證只是再生成一個 token，GenRM 可以把驗證資料與解題資料混在同一個 SFT 損失裡（Sec. 3.2）。$\mathcal D_{\text{verify}}$ 是驗證資料，目前只介紹過 $\mathcal D_{\text{Direct}}$；05 章會介紹另一種驗證資料 $\mathcal D_{\text{CoT}}$（每份解答附一段逐步驗證理由），它同樣可以放進下式。$\mathcal D_{\text{correct}}$ 在這裡當作「題目 → 正確解」的生成資料，$\lambda>0$ 控制兩者的混合比例：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathcal L_{\text{GenRM}}(\theta,\mathcal D_{\text{verify}})=\mathcal L_{\text{SFT}}(\theta,\mathcal D_{\text{verify}})+\lambda\,\mathcal L_{\text{SFT}}(\theta,\mathcal D_{\text{correct}})$$</div><span class="eq-n">Eq. 5</span></div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="統一訓練的實驗結論"><table class="stack"><caption class="sr">統一訓練的實驗結論</caption><thead><tr><th>圖</th><th>設定</th><th>結論</th></tr></thead><tbody>
+    <tr><td data-h="圖">Fig. 9<span class="sr">；</span></td><td data-h="設定">Last Letter、Word Sorting（2B）；GSM8K（7B）<span class="sr">；</span></td><td data-h="結論">加入解題資料後驗證變好；「Verification Only」即 λ = 0</td></tr>
+    <tr><td data-h="圖">Fig. D.3<span class="sr">；</span></td><td data-h="設定">Gemma-7B，GSM8K，λ ∈ {0, 1/4, 1/3, 1/2, 1}<span class="sr">；</span></td><td data-h="結論">中間值最好；解題資料過多會降低驗證表現</td></tr>
+    <tr><td data-h="圖">Fig. 10<span class="sr">；</span></td><td data-h="設定">生成器的 Pass@N（oracle verifier）<span class="sr">；</span></td><td data-h="結論">加入驗證資料後生成也變好；演算法任務的增益大於 GSM8K</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <p>統一訓練的損失是 $\mathcal L_{\text{GenRM}}=\mathcal L_{\text{SFT}}(\mathcal D_{\text{verify}})+\lambda\mathcal L_{\text{SFT}}(\mathcal D_{\text{correct}})$（Eq. 5），論文預設所有 GenRM 都用它；$\lambda$ 的預設值是演算法任務 1/3、GSM8K 1/4（App. D）。加入解題資料在所有任務上都提升驗證（Fig. 9），但解題資料過多會降低驗證表現（Fig. D.3）；反方向，把驗證資料加進生成器的訓練，生成器本身的 Pass@N 也提高（Fig. 10）。演算法任務用真值驗證資料，增益大於使用合成理由的 GSM8K。作者推測教模型驗證能加深它對生成過程的理解。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="genrm-dpo-implicit-verifiers-unification.html">DPO 與隱式驗證器：生成與驗證的統一</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 5 是什麼？λ 的預設值與過大的後果？</p>
+    <p class="a">$\mathcal L_{\text{GenRM}}=\mathcal L_{\text{SFT}}(\mathcal D_{\text{verify}})+\lambda\mathcal L_{\text{SFT}}(\mathcal D_{\text{correct}})$；演算法 1/3、GSM8K 1/4；加入解題資料提升驗證（Fig. 9），過多則降低（Fig. D.3）；驗證資料也提升生成的 Pass@N（Fig. 10）。</p>
+  </div></details>
+</section>
