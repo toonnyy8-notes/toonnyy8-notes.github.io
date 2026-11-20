@@ -6,7 +6,7 @@ kind: topic
 tags: [offline-rl, CQL, BEAR, BRAC, REM, D4RL, Atari, OpenAI-Gym]
 arxiv: ["2106.01345", "2005.01643", "1812.02900", "1906.00949", "1911.11361", "1907.04543", "2006.04779", "2004.07219", "1910.00177", "1606.01540", "1312.5602", "2010.02193"]
 sources: ["2106.01345 §1, §4, §6.1", "arXiv abstract 2005.01643", "arXiv abstract 1812.02900", "arXiv abstract 1906.00949", "arXiv abstract 1911.11361", "arXiv abstract 1907.04543", "arXiv abstract 2006.04779", "arXiv abstract 2004.07219"]
-related: ["dt-lineage-overview", "dt-method-and-results", "rl-mdp-q-learning-basics", "offline-rl-distribution-shift"]
+related: ["dt-lineage-overview", "dt-method-and-results", "rl-mdp-q-learning-basics", "offline-rl-distribution-shift", "batch-constrained-policy-constraint-methods"]
 ---
 # Decision Transformer 比較的離線 RL 基準方法與資料集
 
@@ -19,9 +19,9 @@ MDP、Q-learning 與離線 RL 的分布位移問題見 [MDP 與 Q-learning 基�
 | 方法 | arXiv | 作者（年） | abstract 的重點 |
 | --- | --- | --- | --- |
 | 離線 RL 教學綜述 | 2005.01643 | Levine 等（2020） | 論文 §1 引用為「誤差傳播與價值高估」使離線 RL 困難的來源 |
-| BCQ | 1812.02900 | Fujimoto、Meger、Precup（2018） | 外推誤差使標準 off-policy 方法在固定資料上失敗；提出限制動作空間的 batch-constrained RL |
-| BEAR | 1906.00949 | Kumar 等（2019） | 指出 bootstrapping error 是不穩定來源，限制動作選擇可降低它 |
-| BRAC | 1911.11361 | Wu、Tucker、Nachum（2019） | 行為正則化的 actor-critic 框架；發現許多近期方法的複雜設計並非必要 |
+| BCQ | 1812.02900 | Fujimoto、Meger、Precup（2018） | 見 [批次約束與策略約束方法](batch-constrained-policy-constraint-methods.html) |
+| BEAR | 1906.00949 | Kumar 等（2019） | 同上 |
+| BRAC | 1911.11361 | Wu、Tucker、Nachum（2019） | 同上 |
 | REM | 1907.04543 | Agarwal 等（2020） | 以 DQN replay dataset 做離線 RL；提出 Random Ensemble Mixture |
 | CQL | 2006.04779 | Kumar 等（2020） | 學保守的 Q 函數，使策略價值的估計為真實價值的下界 |
 

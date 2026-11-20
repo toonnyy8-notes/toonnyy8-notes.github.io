@@ -6,7 +6,7 @@ kind: topic
 tags: [BPO, critic-free, binary-KL, mismatch-correction, AIME]
 arxiv: ["2609.15987", "2602.04879"]
 sources: ["2609.15987 §3, §4, App. A-C"]
-related: [bpo-lineage-hub, bpo-policy-mirror-descent, bpo-terminal-reward-bellman-telescoping, bpo-ppo-grpo-ratio-clipping, bpo-trust-region-variants-gspo-cispo-dppo]
+related: [bpo-lineage-hub, bpo-policy-mirror-descent, bpo-terminal-reward-bellman-telescoping, ppo-grpo-dapo-llm-rl-objectives, bpo-trust-region-variants-gspo-cispo-dppo]
 ---
 # BPO 的推導與實驗結果
 
@@ -20,7 +20,7 @@ related: [bpo-lineage-hub, bpo-policy-mirror-descent, bpo-terminal-reward-bellma
 5. 實用化：線性化殘差；V^µ(x) 以組內平均估計，ϕ(x) 取 1/std，得 GRPO 的 advantage；以 binary KL（見 [DPPO](bpo-trust-region-variants-gspo-cispo-dppo.html)）近似完整 KL，得梯度因子 (1 − µ)/(1 − π)。
 
 ## 損失
-BPO 損失保留 [GRPO 形式](bpo-ppo-grpo-ratio-clipping.html)，ratio 換成 ω = (1 + ε − µ)/(1 + ε − π)，上限 C。預設 ε = 0.1、C = 3.0。
+BPO 損失保留 [GRPO 形式](ppo-grpo-dapo-llm-rl-objectives.html)，ratio 換成 ω = (1 + ε − µ)/(1 + ε − π)，上限 C。預設 ε = 0.1、C = 3.0。
 
 ## 結果
 Qwen3-30B-A3B-Base，DAPO-Math-17k，400 步：AIME24/25/26 平均 50.5%（GRPO-ClipHigher 39.5、GSPO 43.5、CISPO 47.4、DPPO 46.4）。Qwen3-4B-Base 消融：ε ∈ {0.05, 0.1, 0.2, 0.3} 平均 25.8、25.4、25.5、24.1，C ∈ {2, 3, 4} 平均 25.3、25.4、25.8，GRPO-ClipHigher 為 20.5。

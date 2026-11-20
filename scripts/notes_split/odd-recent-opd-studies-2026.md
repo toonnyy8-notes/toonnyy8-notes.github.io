@@ -6,14 +6,15 @@ kind: topic
 tags: [on-policy-distillation, survey, failure-modes, OPD]
 arxiv: ["2609.35259", "2604.00626", "2604.13016", "2605.10889", "2605.06387", "2606.02684", "2605.11182", "2606.13657"]
 sources: ["2609.35259 §2", "arXiv abstract 2604.00626", "arXiv abstract 2604.13016", "arXiv abstract 2605.10889", "arXiv abstract 2605.06387", "arXiv abstract 2606.02684", "arXiv abstract 2605.11182", "arXiv abstract 2606.13657"]
-related: ["odd-lineage-hub", "odd-onpd-vs-offpd-setup", "on-policy-distillation-imitation", "context-distillation-self-distillation", "odd-on-policy-forgetting-sparsity-claims", "odd-onpd-vs-offpd-setup"]
+related: ["odd-lineage-hub", "odd-onpd-vs-offpd-setup", "on-policy-distillation-imitation", "context-distillation-self-distillation", "odd-on-policy-forgetting-sparsity-claims", "lopd-opd-failure-modes-and-stabilization"]
 ---
 # 2026 年的 on-policy 蒸餾研究
 
 屬於 [蒸餾動態研究的研究脈絡總覽](odd-lineage-hub.html)。論文相關工作（arXiv:2609.35259 §2）把這批文獻歸為「OnPD 的演算法變體與失敗模式」，並指出其中很少直接對比 OnPD 與 OffPD。前置概念見 [On-policy 蒸餾與線上模仿學習](on-policy-distillation-imitation.html)。
 
-- Song and Zheng（arXiv:2604.00626）：on-policy 蒸餾的綜述，以學生產生的狀態、教師資訊與策略更新的互動建立統一視角。
+- Song and Zheng（arXiv:2604.00626）：on-policy 蒸餾的綜述，以學生產生的狀態、教師資訊與策略更新的互動建立統一視角（LOPD 論文亦引為 OPD 的依據，見 [OPD 與 OPSD 的失敗模式與穩定化](lopd-opd-failure-modes-and-stabilization.html)）。
 - Li et al.（arXiv:2604.13016）：系統性研究 OPD 動態，摘要指出成功需要師生思考模式相容，且教師須提供學生未見過的新能力。本論文因此在每個任務上另訓練教師，以確保能力差距。
+- Fu et al.（arXiv:2603.25562）：摘要指出常見實作把分布匹配簡化為取樣 token 的 log-ratio，在長 rollout 上訊號脆弱，並分析 token 層級 OPD 相對序列層級 reverse KL 的偏差與變異。
 - Armandpour et al.（arXiv:2605.10889）：摘要提出免訓練的診斷框架，在每個 token、問題與教師的解析度上判斷 OPD 訊號何時有益、何時有害。
 - Jia et al.（arXiv:2605.06387）：摘要指出標準的優勢加權策略梯度 OPD 有高變異、零優勢區梯度消失與探索瓶頸，提出 AOPD。
 - Li et al.（arXiv:2606.02684）：FiRe-OPD，先過濾軌跡，再對保留軌跡內的 token 軟加權。

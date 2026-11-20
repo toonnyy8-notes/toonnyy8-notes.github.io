@@ -6,7 +6,7 @@ kind: topic
 tags: [offline-RL, distribution-shift, OOD-actions, policy-constraint, overestimation]
 arxiv: ["2006.04779", "1812.02900", "1906.00949", "1911.11361", "2005.01643"]
 sources: ["arXiv:2006.04779 §1, §2, §6", "arXiv abstract 1812.02900", "arXiv abstract 1906.00949", "arXiv abstract 1911.11361", "arXiv abstract 2005.01643"]
-related: ["rl-mdp-q-learning-basics"]
+related: ["rl-mdp-q-learning-basics", "batch-constrained-policy-constraint-methods"]
 ---
 # Offline RL 的分布偏移
 
@@ -16,11 +16,7 @@ related: ["rl-mdp-q-learning-basics"]
 
 **狀態分布偏移。** CQL 指出 offline 的 Q 函數訓練沒有狀態分布偏移，因為 Bellman backup 不會在 OOD 狀態上查詢 Q 函數；但策略在測試時仍可能遇到狀態分布偏移。
 
-**既有對策：限制策略。** CQL 描述的典型做法是把學到的策略限制在遠離 OOD 動作的範圍：
-
-- BCQ（Fujimoto、Meger、Precup，*Off-Policy Deep Reinforcement Learning without Exploration*，arXiv:1812.02900，2018）。依其 abstract，指出 off-policy 演算法在固定資料集上表現差，並提出只選擇與資料集中行為相近之動作的方法。
-- BEAR（Kumar 等，*Stabilizing Off-Policy Q-Learning via Bootstrapping Error Reduction*，arXiv:1906.00949，2019）。依其 abstract，把問題歸因於 bootstrapping error（以 OOD 動作做 bootstrap 造成的誤差累積），並以限制策略支撐集的方式降低。
-- BRAC（Wu、Tucker、Nachum，*Behavior Regularized Offline Reinforcement Learning*，arXiv:1911.11361，2019）。依其 abstract，以行為正則化的 actor-critic 為框架，論文比較的是這類方法的變體。
+**既有對策：限制策略。** CQL 描述的典型做法是把學到的策略限制在遠離 OOD 動作的範圍，代表為 BCQ（arXiv:1812.02900）、BEAR（arXiv:1906.00949）、BRAC（arXiv:1911.11361），各方法的內容見 [批次約束與策略約束方法](batch-constrained-policy-constraint-methods.html)。
 
 綜述見 Levine、Kumar、Tucker、Fu 的 *Offline Reinforcement Learning: Tutorial, Review, and Perspectives on Open Problems*（arXiv:2005.01643，2020），CQL 以它作為 offline RL 與策略限制的參考。
 

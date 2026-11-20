@@ -6,7 +6,7 @@ kind: topic
 tags: [diffusion-policy, behavior-cloning, importance-sampling, policy-extraction, offline-rl]
 arxiv: ["2304.10573", "2209.14548", "2206.00695", "2007.11091", "2208.06193", "2103.15209"]
 sources: ["arXiv:2304.10573 §2, §4.2, §5, 附錄 F", "arXiv 摘要 2209.14548、2206.00695、2007.11091、2208.06193"]
-related: ["idql-implicit-policy-and-critic-choice", "diffusion-policy-class", "awr-advantage-weighted-policy-extraction", "diffusion-bc-ddpm-and-network-design", "idql-evaluation-and-online-finetuning"]
+related: [idql-implicit-policy-and-critic-choice, diffusion-policy-class, advantage-weighted-bc-methods, diffusion-bc-ddpm-and-network-design, idql-evaluation-and-online-finetuning]
 ---
 # 以擴散行為模型做策略抽取
 
@@ -28,6 +28,6 @@ related: ["idql-implicit-policy-and-critic-choice", "diffusion-policy-class", "a
 | ARQ（2206.00695） | 用擴散行為模型做 critic 更新，再用 AWR 抽取策略 | 抽取仍用 AWR |
 | DQL（2208.06193） | 擴散模型作為 actor，TD3+BC 風格 | 見 [擴散策略作為表達力強的策略類別](diffusion-policy-class.html) |
 
-IDQL 將擴散行為模型與 critic 學習分開，只在評估時互動，因此超參數調整較有效率；論文稱就其所知是第一個把擴散用於線上微調的方法。critic 側的推導見 [廣義 IQL 的隱含 actor 與 critic 損失選擇](idql-implicit-policy-and-critic-choice.html)，原抽取方式見 [Advantage-weighted regression 與策略抽取](awr-advantage-weighted-policy-extraction.html)。擴散模型本身的設計見 [擴散行為複製、DDPM 與 LN_Resnet](diffusion-bc-ddpm-and-network-design.html)。
+IDQL 將擴散行為模型與 critic 學習分開，只在評估時互動，因此超參數調整較有效率；論文稱就其所知是第一個把擴散用於線上微調的方法。critic 側的推導見 [廣義 IQL 的隱含 actor 與 critic 損失選擇](idql-implicit-policy-and-critic-choice.html)，原抽取方式見 [Advantage-weighted regression 與策略抽取](advantage-weighted-bc-methods.html)。擴散模型本身的設計見 [擴散行為複製、DDPM 與 LN_Resnet](diffusion-bc-ddpm-and-network-design.html)。
 
 實驗結果見 [IDQL 的實驗與線上微調](idql-evaluation-and-online-finetuning.html)。

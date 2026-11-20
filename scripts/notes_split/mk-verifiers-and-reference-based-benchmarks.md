@@ -10,7 +10,7 @@ related: ["genrm-best-of-n-discriminative-verifiers", "mk-generative-rm-for-rlvr
 ---
 # 驗證器與參考式基準
 
-**Cobbe 等 2021（arXiv 2110.14168）。** 摘要：提出 GSM8K（8.5K 題小學數學應用題），並提出訓練驗證器判斷模型完成內容是否正確；測試時產生多個候選解，選驗證器評分最高者。本文以 GSM8K 作為評估集之一。驗證器加 Best-of-N 的細節見 [判別式驗證器與 Best-of-N](genrm-best-of-n-discriminative-verifiers.html)。
+**Cobbe 等 2021（arXiv 2110.14168）。** 提出 GSM8K 與驗證器；本文以 GSM8K 作為評估集之一。內容見 [判別式驗證器與 Best-of-N](genrm-best-of-n-discriminative-verifiers.html)。
 
 **本文使用的評估資料（§3.1）。** Multi-subject RLVR 與 NaturalReasoning 子集（一般推理），GSM8K、MATH、AIME 1983–2024（數學）。NaturalReasoning 對應 arXiv 2502.13124（Yuan 等 2025）。
 

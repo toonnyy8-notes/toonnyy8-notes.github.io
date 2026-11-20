@@ -21,7 +21,7 @@ related: ["decision-diffuser-lineage-hub", "offline-rl-benchmarks-and-baselines"
 - 結果為 5 個隨機種子的平均與標準誤。
 
 ## 表 2（Hopper 消融）
-Diffuser、CondDiffuser、CondMLPDiffuser、DD 的 Med-Expert 分別為 107.6、111.3、105.6、111.8；Medium 為 58.5、66.3、54.1、79.3；Med-Replay 為 96.8、76.5、66.5、100。無分類器引導使 CondDiffuser 在 3 個環境中的 2 個優於 Diffuser；逆動力學使 DD 在 3 個環境都最佳（見[逆動力學](inverse-dynamics-state-diffusion.html)與[無分類器引導](classifier-free-guidance-return-conditioning.html)）。
+Diffuser、CondDiffuser（同時擴散狀態與動作，使用無分類器引導）、CondMLPDiffuser、DD 的 Med-Expert 分別為 107.6、111.3、105.6、111.8；Medium 為 58.5、66.3、54.1、79.3；Med-Replay 為 96.8、76.5、66.5、100。無分類器引導使 CondDiffuser 在 3 個環境中的 2 個優於 Diffuser；逆動力學使 DD 在 3 個環境都最佳（見[逆動力學](inverse-dynamics-state-diffusion.html)與[無分類器引導](classifier-free-guidance-return-conditioning.html)）。
 
 ## 與報酬條件策略的關係（§5、附錄 L）
 Decision Transformer 建模給定目標回報與過去軌跡的下一動作概似（見[序列建模離線 RL](sequence-modeling-offline-rl.html)與[報酬條件的監督式學習](return-conditioned-sequence-modeling.html)）；RvS（Emmons 等，arXiv 2112.10751）不用 Transformer，但依賴容量調校（依本論文描述）。論文指出 DD 建模未來狀態軌跡的分數函數，並可組合條件變數。

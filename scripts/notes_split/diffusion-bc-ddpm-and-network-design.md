@@ -23,7 +23,7 @@ IDQL §3 以三篇作為擴散模型的來源：Sohl-Dickstein et al.（arXiv 15
 - Pearce et al.（arXiv 2301.10677，2023）：以擴散模型模仿人類行為（行為複製）。
 - Florence et al.：Implicit behavioral cloning，用 energy-based 模型（IDQL 引用，未取得 arXiv 條目，未驗證）。
 - Reuss et al.（arXiv 2304.02532，2023）：以 score-based 擴散策略做目標條件模仿學習。
-- Janner et al.（arXiv 2205.09991，2022）與 Ajay et al.（arXiv 2211.15657，2022）：以擴散建模整條軌跡，分別用梯度引導與獎勵條件取樣。見 [軌跡層級擴散規劃（Diffuser）](trajectory-diffusion-planning.html)。
+- Janner et al.（arXiv 2205.09991，2022）與 Ajay et al.（arXiv 2211.15657，2022）：以擴散建模整條軌跡，分別用梯度引導與獎勵條件取樣。見 [軌跡層級擴散規劃（Diffuser）](trajectory-diffusion-planning.html)與 [擴散模型在 RL 中的同期與前驅工作](diffusion-in-rl-concurrent-work.html)。
 
 ## 連續動作空間的問題與網路設計（§5）
 

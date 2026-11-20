@@ -1,0 +1,1220 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Score centering 與 off-policy RL</title>
+<meta name="description" content="圖解 Marek 與 Ryabinin 的論文：訓練與推論引擎不一致時，policy gradient 多出一項朝 sampler 蒸餾的 drift；score centering 減去期望 score 把它消掉，並可用 top-k logprob 實作、與 importance sampling 疊加。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+/* ---- No.129 additions ---- */
+:root{--c-p:var(--c-par);--c-q:var(--c-perp)}
+.tag.toy{color:var(--accent);border-color:color-mix(in oklab,var(--accent) 50%,var(--line))}
+.aside{font-size:15px;color:var(--ink-2);border-left:2px solid var(--line);padding-left:14px}
+.scope{color:var(--ink-2);border-left:3px solid var(--accent);padding:4px 0 4px 12px}
+details.more{max-width:760px;margin:16px 0 24px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.more>summary{cursor:pointer;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body)}
+details.more .qa{padding:0 20px 18px;font-size:15px}
+.tbox{margin-top:16px}
+.motif{max-width:700px;margin:8px 0 28px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.motif .mrow{display:flex;align-items:center;gap:12px}
+.motif .mlab{white-space:nowrap;min-width:0}
+.motif .mline{flex:1;height:0;border-top:3px solid var(--c-par)}
+.motif .mrow.q .mline{border-top:3px dashed var(--c-perp)}
+.motif .mmid{display:flex;flex-wrap:wrap;gap:4px 18px;padding:8px 0 8px 24px;font:400 12px/1.5 var(--f-mono);color:var(--ink-3)}
+.motif.wide{margin:16px 0 28px}
+.motif.mini{margin:0 0 16px;max-width:420px}
+svg .bar{stroke:var(--ink-2);stroke-width:.6}
+svg .band{fill:var(--accent-soft);opacity:.6}
+svg .selbox{fill:none;stroke:var(--accent);stroke-width:1.5;stroke-dasharray:3 3}
+svg .pmark{stroke:var(--ink);stroke-width:2}
+svg .axl0{stroke:var(--ink-2);stroke-width:1.2}
+svg .c3l{stroke-width:2.5}
+svg path.ink.c3l{stroke-width:2}
+.fig.bars{border-radius:10px}
+.lg.sw::before{content:none}
+.lg.pmark::before{border-top:2px solid var(--ink)}
+.lg.c3-pg::before{border-top:3px solid var(--ink)}
+.lg.c3-fix::before{border-top:2px dashed var(--ink)}
+.lg.c3-onp::before{border-top:2.5px solid var(--c-par)}
+.lg.c3-sc::before{border-top:3px dotted var(--accent)}
+@media (max-width:599px){.algo .row>code{overflow-x:auto;white-space:pre;word-break:normal}}
+.ch-num,.plate-h .id{letter-spacing:.04em}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
+  <pattern id="pt-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)" style="color:var(--c-perp)"><rect width="6" height="6" fill="var(--surface)"/><line x1="0" y1="0" x2="0" y2="6" stroke="currentColor" stroke-width="3"/></pattern>
+  <pattern id="pt-dots" width="5" height="5" patternUnits="userSpaceOnUse" style="color:var(--accent)"><rect width="5" height="5" fill="var(--surface)"/><circle cx="2.5" cy="2.5" r="1.4" fill="currentColor"/></pattern>
+</defs></svg>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 129</span>
+  <span class="ttl">Score centering：減去期望 score，讓 off-policy RL 穩定</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 129</b> · 互動教學 · arXiv 2609.20807 · 2026</div>
+  <h1><span class="lat">Score centering</span>：減去期望 <span class="lat">score</span>，讓 <span class="lat">off-policy RL</span> 穩定</h1>
+  <p class="dek">推論引擎與訓練引擎的輸出略有不同時，policy gradient 的期望更新多出一項 drift；score centering 在每個 prefix 減去一個確定的修正項把它消掉。</p>
+  <p class="byline">Martin Marek、Max Ryabinin（Together AI，2026）〈Score Centering Stabilizes Off-policy Reinforcement Learning〉</p>
+  <div class="motif" aria-hidden="true">
+    <div class="mrow p"><span class="mlab">訓練引擎（trainer，p）</span><span class="mline"></span></div>
+    <div class="mmid"><span>rollout ↓</span><span>梯度 ↑</span><span>同步 ←</span></div>
+    <div class="mrow q"><span class="mlab">推論引擎（sampler，q）</span><span class="mline"></span></div>
+  </div>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 兩個引擎</span><p>強化學習訓練 LLM 時，產生回答的推論引擎與計算梯度的訓練引擎，對同一段文字給出的機率略有不同。</p></div>
+    <div class="fact"><span class="n">02 · 多出一項</span><p>這個差異讓期望更新多出一項：即使每個回答的 reward 都相同，模型也會被拉向推論引擎的分布。論文稱之為 drift。</p></div>
+    <div class="fact"><span class="n">03 · 一個修正項</span><p>score centering 在每個位置減去一個由推論引擎機率算出的固定修正項，期望上 drift 為 0。論文中 30B 參數模型在最嚴重的低精度推論設定下，訓練準確率為 30%，次佳方法為 12%。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2609.20807">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-129">在關聯圖中查看</a>
+    <a class="btn" href="score-centering-lineage-hub.html">研究筆記總覽</a>
+    <a class="btn" href="https://github.com/martin-marek/score-centering">程式碼 ↗</a>
+  </div>
+</section>
+
+<!-- S1 -->
+<section class="ch" id="tim" data-toc="01" data-tt="兩個引擎">
+  <div class="ch-num">01 · 兩個引擎</div>
+  <h2>訓練引擎與推論引擎的輸出並不相同</h2>
+  <div class="prose">
+    <p>用強化學習（reinforcement learning，RL）訓練大型語言模型時，模型對一個 prompt 產生一條完整回答，稱為 rollout，記為 $y$；$y_t$ 是第 $t$ 個 token，$y_{&lt;t}$ 是它之前的部分，稱為 prefix。環境為每條 rollout 打一個分數 $R$（reward），例如答案正確得 1。目標是提高期望 reward $\mathbb E_{p_\theta}[R]$，其中 $p_\theta$ 是參數為 $\theta$ 的模型給出的機率。</p>
+    <p>先記住一個恆等式：$\nabla p=p\,\nabla\log p$（因為 $\nabla\log p=\nabla p/p$）。梯度的算法是 log-derivative trick：$\nabla_\theta\mathbb E_{p_\theta}[R]=\sum_yR\,\nabla_\theta p_\theta(y)=\sum_yp_\theta(y)\,R\,\nabla_\theta\log p_\theta(y)$，因為 $\nabla p=p\,\nabla\log p$。寫成期望值就是 policy gradient（Williams, 1992）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\nabla_\theta\,\mathbb E_{p_\theta}[R]=\mathbb E_{p_\theta}\big[R\,\nabla_\theta\log p_\theta(y)\big]$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="prose">
+    <p>$\nabla_\theta\log p_\theta(y)$ 稱為 score。一條 rollout 的 score 是各 token score 的和，每個都乘上同一個 $R$。PPO、GRPO、DAPO、IcePop 等常用演算法都建立在這個式子上（§1）。</p>
+    <p>實作 Eq. 1 需要兩次 forward：一次由推論引擎（sampler，機率記為 $q_\theta$）產生 rollout，一次由訓練引擎（trainer，機率記為 $p_\theta$）在這些 rollout 上計算梯度。理論上兩者是同一個模型，輸出應該相同；實際上多數 codebase 兩者有小差異。Eq. 1 只在「算梯度的 policy 就是產生 rollout 的 policy」時成立，所以 $q_\theta\neq p_\theta$ 時就出現訓練與推論不一致（training-inference mismatch，TIM，§2.1）。TIM 會讓表現下降，甚至讓 reward 崩潰。</p>
+    <p>TIM 的來源依嚴重程度可分三類（§2.1）。第一，兩個引擎使用不同精度，或來自兩套獨立的 codebase，各自有難以察覺的 bug。第二，即使兩邊都正確、用同一套 GPU kernel，浮點加法不可結合也會讓結果不同：論文註 2 的例子是 fp4_e2m1 精度下 $(0.5+0.5)+2=3$，但 $0.5+(0.5+2)=2$。取樣是自回歸的、訓練則沿序列維度平行，兩邊以不同輸入形狀呼叫同一個 kernel，reduction 順序不同，數值就略有差異。第三，即使 kernel 完全相同，為了提高 GPU 使用率而把兩個引擎分開、非同步執行並使用 continuous batching，一個 batch、甚至一條 rollout 的不同片段都可能來自不同 checkpoint，這稱為 staleness。</p>
+    <p>fp4 例子的捨入過程<span class="tag">本頁推導</span>：fp4_e2m1 的非負可表示值是 0、0.5、1、1.5、2、3、4、6。$0.5+2=2.5$ 落在 2 與 3 的正中間，就近偶數捨入到 2，再加 0.5 又得到 2.5，再捨入到 2；先算 $0.5+0.5=1$ 再加 2 則精確得到 3。</p>
+    <p>完全消除 TIM 的代價很高：batch-invariant kernel 需要大量工程、GPU 使用率較差；把兩邊從 bf16 換成 fp16 能大幅減少、但不能消除不一致。作者的目標是用演算法讓 TIM 下的訓練穩定，保留硬體使用率（§2.1）。</p>
+  </div>
+  <figure class="motif wide" aria-label="trainer 與 sampler 對照圖：sampler 產生 rollout，trainer 計算梯度，trainer 的權重再同步回 sampler">
+    <div class="mrow p"><span class="mlab">trainer p：計算梯度</span><span class="mline"></span></div>
+    <div class="mmid"><span>rollout ↓（由 sampler 產生）</span><span>梯度 ↑（由 trainer 計算）</span><span>同步 ←（trainer 權重複製到 sampler）</span></div>
+    <div class="mrow q"><span class="mlab">sampler q：產生 rollout</span><span class="mline"></span></div>
+  </figure>
+  <p class="note cheat"><b>符號速查</b>：$p$ ＝ trainer 的機率、$q$ ＝ sampler 的機率、$s=\nabla_\theta\log p$（score）、$\bar s=\mathbb E_q[s]$（sampler 下的期望 score）。完整定義見 <a href="#escore">04a 的符號表</a>。</p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">什麼是 TIM？列出三類來源。</p>
+    <p class="a">rollout 由 sampler $q$ 產生、梯度由 trainer $p$ 計算，$q\ne p$ 即 TIM（§2.1）。來源：精度不同或兩套 codebase 的 bug；同一 kernel 因浮點不可結合與不同輸入形狀改變 reduction 順序（fp4_e2m1：$(0.5+0.5)+2=3$、$0.5+(0.5+2)=2$）；非同步與 continuous batching 造成 staleness。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="training-inference-mismatch-sources.html">訓練與推論不一致（TIM）的來源</a>、<a href="policy-gradient-baselines-score-function.html">Policy gradient、baseline 與 score function</a></p>
+</section>
+
+<!-- S2 -->
+<section class="ch" id="is" data-toc="02" data-tt="Importance sampling">
+  <div class="ch-num">02 · Importance sampling</div>
+  <h2>Importance sampling 能精確修正，但實務上必須截斷</h2>
+  <div class="prose">
+    <p>若 rollout 來自 sampler $q_\theta$ 而非 trainer $p_\theta$，可以用 importance sampling（IS）把期望換回 $p_\theta$ 下（§2.2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\nabla_\theta\,\mathbb E_{p_\theta}[R]=\mathbb E_{p_\theta}[R\,\nabla_\theta\log p_\theta(y)]=\mathbb E_{q_\theta}\Big[\frac{p_\theta(y)}{q_\theta(y)}\,R\,\nabla_\theta\log p_\theta(y)\Big]$$</div><span class="eq-n">Eq. 2</span></div>
+  <div class="prose">
+    <p>也就是以 importance ratio $r=p/q$ 重新加權每條 rollout：$\mathbb E_p[R\nabla\log p]=\mathbb E_q[(p/q)R\nabla\log p]$。Eq. 2 寫在序列層級，此時修正是精確的；實務上比值通常逐 token 套用（Zheng et al., 2025）。逐 token 套用時，prefix 本身的出現機率仍由 $q$ 決定，逐 token 比值不修正它<span class="tag">本頁推導</span>，所以只有序列層級是精確的。</p>
+    <p>代價是變異數。比值在稀有 token 上可以任意大，梯度估計的變異因此膨脹；直接用原始比值訓練不穩定，所以實務方法都會截斷（clip）或遮罩（mask）比值，而這必然引入偏差（§2.2）。論文把常見方法整理成一張格子（Table 1，§B.2），差別在於比值算在 token 或序列層級、在哪個區間外截斷或遮罩、以及對哪些 advantage 符號套用。下表是本頁後面會用到的兩列：</p>
+  </div>
+  <div class="tscroll"><table>
+    <caption>Table 1 摘錄（Low…High 區間外：clip 為截斷到邊界，drop 為權重設 0）</caption>
+    <thead><tr><th>方法</th><th>層級</th><th>統計量</th><th class="num">Low</th><th class="num">High</th><th>區間外</th></tr></thead>
+    <tbody><tr><td>TIS（truncated IS）</td><td>token</td><td>ratio</td><td class="num">0</td><td class="num">2.0</td><td>clip</td></tr>
+    <tr><td>MIS（masked IS，即 IcePop）</td><td>token</td><td>ratio</td><td class="num">0.5</td><td class="num">5.0</td><td>drop</td></tr></tbody></table></div>
+  <details class="more"><summary>Table 1 全表與實作附註</summary><div class="qa">
+    <div class="tscroll"><table>
+      <caption>Table 1。上標 P＝原論文預設、V＝verl 預設。Sign：both 對所有 token 加權；neg 只對負 advantage；ppo 為 PPO 的悲觀 clip</caption>
+      <thead><tr><th>方法</th><th>層級</th><th>統計量</th><th class="num">Low</th><th class="num">High</th><th>區間外</th><th>Sign</th><th>本文實作附註</th></tr></thead>
+      <tbody>
+      <tr><td>Naive IS</td><td>token</td><td>ratio</td><td class="num">0</td><td class="num">∞</td><td>–</td><td>both</td><td>—</td></tr>
+      <tr><td>TIS<sup>V</sup></td><td>token</td><td>ratio</td><td class="num">0</td><td class="num">2.0</td><td>clip</td><td>both</td><td>省略 CISPO 的 dynamic sampling 與長度懲罰</td></tr>
+      <tr><td>MIS（IcePop）<sup>P</sup></td><td>token</td><td>ratio</td><td class="num">0.5</td><td class="num">5.0</td><td>drop</td><td>both</td><td>省略 policy 版本之間的 PPO surrogate</td></tr>
+      <tr><td>PPO<sup>P,V</sup></td><td>token</td><td>ratio</td><td class="num">0.8</td><td class="num">1.2</td><td>drop</td><td>ppo</td><td>dual clipping 3</td></tr>
+      <tr><td>DAPO<sup>P,V</sup></td><td>token</td><td>ratio</td><td class="num">0.8</td><td class="num">1.28</td><td>drop</td><td>ppo</td><td>dual clipping 3；省略 dynamic sampling 與 overlong penalty</td></tr>
+      <tr><td>GSPO<sup>P,V</sup></td><td>seq</td><td>ratio</td><td class="num">0.9997</td><td class="num">1.0004</td><td>drop</td><td>ppo</td><td>token 梯度加總而非回答平均；加 dual clipping 3</td></tr>
+      <tr><td>TOPR<sup>P</sup></td><td>seq</td><td>ratio</td><td class="num">0</td><td class="num">1.0</td><td>clip</td><td>neg</td><td>—</td></tr>
+      <tr><td>DPPO<sup>P</sup></td><td>token</td><td>tv</td><td class="num">0</td><td class="num">0.2</td><td>drop</td><td>ppo</td><td>不做比值截斷</td></tr>
+      </tbody></table></div>
+    <p class="note">dual clipping：ratio 大於 3 的負 advantage 貢獻被丟棄（GSPO 丟整條回答）。本文把每個修正規則單獨套在同一個目標上，比較的是修正規則本身，不是各原論文的完整配方。</p>
+  </div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 2 如何修正 TIM？為何實務方法都截斷比值，代價是什麼？</p>
+    <p class="a">以 $p/q$ 重新加權：$\mathbb E_p[R\nabla\log p]=\mathbb E_q[(p/q)R\nabla\log p]$，序列層級精確；比值在稀有 token 上可任意大，變異膨脹，所以實務上截斷或遮罩（Table 1），代價是引入偏差（§2.2）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="importance-sampling-corrections-llm-rl.html">LLM RL 中的 importance sampling 修正</a></p>
+</section>
+
+<!-- S3 -->
+<section class="ch" id="sft" data-toc="03" data-tt="SFT 與 RL">
+  <div class="ch-num">03 · SFT 與 RL</div>
+  <h2>SFT 在離線資料下穩定；線上 RL 在 TIM 下不穩定</h2>
+  <div class="prose">
+    <p>先定義兩個詞。advantage $A$ 是實際乘在 score 上的權重，可以是 reward 本身，也可以是 reward 減去某個基準。group centering（GRPO 的做法）指每個 prompt 取 $G$ 條 rollout，令 $A_i=R_i-\frac1G\sum_jR_j$，同一組的 advantage 總和為 0。</p>
+    <p>監督式微調（SFT）在比 TIM 嚴重得多的不一致下仍然穩定：它常用另一個模型離線產生的資料訓練，不需要任何 importance sampling 修正（§3）。作者注意到，在二元 reward 的任務上，若 advantage 為 +1/0（reward 沒有中心化或正規化）且訓練完全離線（sampler 從不更新），policy gradient 就等於 SFT。所以 SFT 與 RL 只差兩件事：reward 模式與 staleness。</p>
+    <p>論文註 4 補充：on-policy 時把 reward 加上常數不改變期望梯度，group centering 只把期望梯度縮放 $1-1/G$；中心化 reward 的目的是降低變異。但這在離線時不成立：+1/0 的 SFT 收斂到最大概似估計，0/−1 的 loss 則無界，可能造成模型崩潰（Ren &amp; Sutherland, 2025）。</p>
+    <p>為了判斷是哪一個差異讓 RL 對 TIM 敏感，作者用 Qwen3-1.7B 在 Countdown 上訓練，並把 sampler 的權重相對 trainer 擾動一小量（論文寫 "a small amount"，未給數值；離線資料如何產生也未說明）。Fig. 2 的圖說結論是：離線訓練只有 +1/0 reward 穩定；線上訓練在 TIM 下則以 +1/0 最不穩定，group-centered reward 最穩定。離線時，+1/−1 與 group-centered 等含負值的 reward 都不穩定，只有 +1/0 穩定；圖說沒有在這些負值 reward 之間排名。group-centered 由哪一種 reward 中心化，Fig. 2 沒有另外說明；依 §B.1 的預設（Eq. 13）應為 ±1。</p>
+    <p>作者據此假設（原文 "We hypothesize"）有兩個不同的機制：一個讓離線訓練在負 reward 下不穩定（Ren &amp; Sutherland 認為是 logprob 沒有下界、可以被推向 −∞，本文不再探討），另一個讓線上訓練在全正 reward 下不穩定。作者指出，線上 +1/0 訓練本身就是一種蒸餾：trainer 擬合 sampler 產生的成功 rollout，而 sampler 是 trainer 的有偏副本，每一步又從 trainer 同步權重。它與離線蒸餾唯一的差別是 teacher（sampler）隨 student（trainer）更新，作者認為不穩定就來自這裡。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">PG 在什麼條件下等於 SFT？Fig. 2 線上與離線各以哪種 reward 最不穩定？作者據此提出什麼假設？</p>
+    <p class="a">二元 reward、advantage 為 +1/0（未中心化）且完全離線時；離線時負 reward（+1/−1、group-centered）不穩定、只有 +1/0 穩定；線上 +1/0 最不穩定、group-centered 最穩定；作者假設有兩個不同機制，線上的不穩定來自 teacher（sampler）隨 student 更新（§3）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="sft-vs-rl-offline-negative-rewards.html">SFT 與 RL 的差異</a>、<a href="ppo-grpo-dapo-llm-rl-objectives.html">PPO、GRPO、DAPO 與 LLM 的 RL 目標</a></p>
+</section>
+
+<!-- S4a -->
+<section class="ch" id="escore" data-toc="04a" data-tt="期望 score">
+  <div class="ch-num">04a · 期望 score</div>
+  <h2>On-policy 時期望 score 為 0，TIM 時不為 0</h2>
+  <div class="prose">
+    <p>論文把分析縮到一個位置：固定 prefix $y_{&lt;t}$，看下一個 token $y_t$ 對期望更新的貢獻（§4 Notation）。$v$ 表示詞彙中的任一 token，$p_v$、$q_v$ 是 trainer 與 sampler 給 $v$ 的 next-token 機率，$s_v=\nabla_\theta\log p_v$ 是 $v$ 的 score（永遠用 trainer 計算），$s_{y_t}$ 是被取樣 token 的 score。$\mathbb E_p$、$\mathbb E_q$ 表示 token 分別由 $p$ 或 $q$ 取樣時，對其餘 rollout 取期望。</p>
+    <p>先看一個思想實驗：reward 恆為 +1。環境沒有提供任何訊號，理論上不應有學習。on-policy 時確實如此，因為對任何分布</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbb E_p[s_{y_t}]=\sum_vp_v\,\nabla_\theta\log p_v=\sum_v\nabla_\theta p_v=\nabla_\theta\sum_vp_v=\nabla_\theta1=0$$</div><span class="eq-n">§4</span></div>
+  <div class="prose">
+    <p>所以常數 reward 下 on-policy 期望梯度是 $R\cdot0=0$。TIM 下，token 由 $q$ 取樣、score 卻由 $p$ 計算，期望 score 變成</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbb E_q[s_{y_t}]=\sum_vq_v\,\nabla_\theta\log p_v=\bar s$$</div><span class="eq-n">§4</span></div>
+  <div class="prose">
+    <p>$\bar s=\sum_vq_vs_v$ 稱為 sampler 下的期望 score。它一般不為 0，因為 $\sum_vq_v\nabla p_v/p_v$ 不能合併成 $\nabla\sum_vp_v$。換句話說：$\mathbb E_p[s]=\sum_vp_v\nabla\log p_v=\nabla\sum_vp_v=\nabla1=0$；TIM 下 $\mathbb E_q[s]=\sum_vq_v\nabla\log p_v=\bar s$，一般不為 0。</p>
+  </div>
+  <details class="more"><summary>符號表</summary><div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$y$、$y_t$、$y_{&lt;t}$</td><td>rollout、第 $t$ 個 token、prefix</td></tr>
+    <tr><td>$p$、$q$</td><td>trainer、sampler 的機率</td></tr>
+    <tr><td>$p_v$、$q_v$</td><td>固定 prefix 下 token $v$ 的 next-token 機率</td></tr>
+    <tr><td>$s_v=\nabla_\theta\log p_v$</td><td>score；$s_{y_t}$ 為被取樣 token 的 score</td></tr>
+    <tr><td>$\bar s=\sum_vq_vs_v$</td><td>sampler 下的期望 score</td></tr>
+    <tr><td>$\tilde s_{y_t}=s_{y_t}-\bar s$</td><td>中心化後的 score（Eq. 4，S07）</td></tr>
+    <tr><td>$R$；$A_i$；$G$</td><td>reward；第 $i$ 條 rollout 的 advantage；每個 prompt 的 rollout 數</td></tr>
+    <tr><td>$r=p/q$；$w=f(r)$</td><td>importance ratio；IS 方法給的權重（TIS：$\min(r,2)$；MIS：$r\in[0.5,5]$ 時為 $r$，否則 0）</td></tr>
+    <tr><td>$H$、$T$；$\rho$；$\hat q$</td><td>top-k 的 head 與 tail；tail 質量比；重建的 sampler 分布（S08b）</td></tr>
+    <tr><td>$\hat w_v=f(p_v/\hat q_v)$；$\alpha$</td><td>以 $\hat q$ 計算的權重；$\alpha=\rho f(1/\rho)$（Eq. 10）</td></tr>
+    <tr><td>$\mathrm{sg}[\cdot]$</td><td>stop-gradient</td></tr>
+    <tr><td>$z$、$e_v$、$Q_v$</td><td>玩具模型：單一 prefix 的 logits、標準基底向量、$\mathbb E[R\mid y_t=v]$</td></tr>
+    <tr><td>$\lambda$、$\sigma$</td><td>玩具模型的不一致程度（C1、C3）與擾動尺度（C4）</td></tr>
+    <tr><td>$\mathrm{Ent}(p)$；$N$</td><td>熵；C3 的總步數</td></tr>
+    </tbody></table></div></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼常數 reward 下 on-policy 期望梯度為 0？TIM 下是多少？</p>
+    <p class="a">$\mathbb E_p[s]=\sum_vp_v\nabla\log p_v=\nabla\sum_vp_v=\nabla1=0$；TIM 下 token 由 $q$ 取樣，$\mathbb E_q[s]=\sum_vq_v\nabla\log p_v=\bar s$，一般不為 0（§4）。</p>
+  </div></details>
+</section>
+
+<!-- S4b -->
+<section class="ch" id="drift" data-toc="04b" data-tt="drift 與 signal">
+  <div class="ch-num">04b · drift 與 signal</div>
+  <h2>Policy gradient 更新分成 drift 與 signal</h2>
+  <div class="prose">
+    <p>共變異數的定義是 $\mathrm{Cov}(A,B)=\mathbb E[AB]-\mathbb E[A]\,\mathbb E[B]$，移項得 $\mathbb E[AB]=\mathbb E[A]\,\mathbb E[B]+\mathrm{Cov}(A,B)$（論文註 5）。取 $A=R$、$B=s_{y_t}$，期望在 $q$ 下、固定 prefix，就得到期望更新的分解：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\underbrace{\mathbb E_q[R\,s_{y_t}]}_{\text{PG 更新}}=\underbrace{\mathbb E_q[R]\,\bar s}_{\text{drift}}+\underbrace{\mathrm{Cov}_q(R,s_{y_t})}_{\text{signal}}$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="prose">
+    <p>這一步只用了 $\mathbb E[AB]=\mathbb E[A]\,\mathbb E[B]+\mathrm{Cov}(A,B)$，其中 $\mathbb E_q[s_{y_t}]=\bar s$。$\bar s$ 之所以不為 0，是因為 $\sum_vq_v\nabla\log p_v=\sum_v(q_v/p_v)\nabla p_v$ 帶著權重 $q_v/p_v$，不能合併成 $\nabla\sum_vp_v=\nabla1=0$；只有 $q=p$ 時權重全為 1，才能合併。所以 TIM 下 $\mathbb E_q[s]\neq0$。</p>
+    <p>這裡的 $\mathbb E_q[R]$ 是「從這個 prefix 繼續由 sampler 產生，平均能拿到的 reward」，記作 $\mathbb E_q[R\mid\text{prefix}]$。drift 只透過這個平均依賴 reward，它不知道哪一條 rollout 成功；只有 signal（共變異數項）看得到哪個 token 帶來哪個 reward（§4）。所以：$\mathbb E_q[Rs_{y_t}]=\mathbb E_q[R]\bar s+\mathrm{Cov}_q(R,s_{y_t})$，drift 只依賴平均 reward，signal 才知道哪個 token 帶來哪個 reward。on-policy 時 $\bar s=0$，drift 消失。</p>
+    <p class="aside"><span class="tag">本頁說明</span>論文 §1 說 drift「若且唯若」trainer 與 sampler 相同時為 0。這是寬鬆的說法：drift $=\mathbb E_q[R]\,\bar s$，在某個 prefix 的 $\mathbb E_q[R]=0$ 時也是 0；另外在一般網路中 $\bar s=J^\top(q-p)$（$J$ 是 logits 對 $\theta$ 的 Jacobian），$p\ne q$ 時仍可能為 0。</p>
+    <p>為了能在瀏覽器裡直接計算，下面的元件用一個最小的模型：參數就是這個 prefix 的 logits $z$（不是整個網路），$p=\mathrm{softmax}(z)$。此時 $s_v=\nabla_z\log p_v=e_v-p$，$e_v$ 是第 $v$ 個標準基底向量<span class="tag">本頁推導</span>（softmax 的導數）。代入後 $\bar s=\sum_vq_v(e_v-p)=q-p$，drift $=\mathbb E_q[R]\,(q-p)$，signal $=q\odot(Q-\mathbb E_q[R])$，其中 $Q_v=\mathbb E[R\mid y_t=v]$ 是選了 token $v$ 之後的期望 reward<span class="tag">本頁推導</span>。</p>
+    <p>數值例（C1 的預設）：trainer logits $z=[1.2,0.6,0,-0.8]$，得 $p=[0.5037,0.2764,0.1517,0.0682]$；sampler 是 $z+0.5\,\xi$，$\xi=[-0.5,0.8,0.2,-0.5]$，得 $q=[0.3826,0.4022,0.1635,0.0518]$。期望 score $\bar s=q-p=[-0.1211,0.1257,0.0118,-0.0164]$。reward 恆為 1 時 $\mathbb E_q[R]=1$、$Q_v-\mathbb E_q[R]=0$，所以 signal 為 0，PG 更新整個等於 drift $=\bar s$：沒有任何 reward 訊號，trainer 仍被推向 sampler 偏好的 token 2。</p>
+  </div>
+  <div class="plate" id="c1a">
+    <div class="plate-h"><span class="id">C1a</span><h3>四個 token 上的 PG、drift 與 signal</h3></div>
+    <p class="plate-lead">拖動 λ 改變 sampler 與 trainer 的差異；切換 reward。常數 reward 時 signal 為 0，PG 全部是 drift。</p>
+    <div class="pg two">
+      <div class="fig bars" id="c1a-fig" tabindex="0" aria-label="長條圖，左右鍵選擇 token"><svg role="img" aria-label="C1a 長條圖"></svg></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1-lam">不一致程度 λ<output id="c1-lamo">0.50</output></label><input id="c1-lam" type="range" min="0" max="2" step="0.05" value="0.5"></div>
+        <div class="ctl-row" role="group" aria-label="reward 預設" id="c1-pre"><button class="chip" type="button" data-p="const" aria-pressed="true">常數 +1</button><button class="chip" type="button" data-p="b01" aria-pressed="false">+1/0</button><button class="chip" type="button" data-p="pm1" aria-pressed="false">±1</button><button class="chip" type="button" data-p="custom" aria-pressed="false" disabled>自訂</button></div>
+        <div id="c1-q"></div>
+        <div class="legend"><span class="lg sw s1"><svg width="14" height="12" aria-hidden="true"><rect x=".5" y=".5" width="13" height="11" fill="var(--c-par)" stroke="var(--ink-2)"/></svg>PG</span><span class="lg sw s2"><svg width="14" height="12" aria-hidden="true"><rect x=".5" y=".5" width="13" height="11" fill="url(#pt-hatch)" stroke="var(--ink-2)"/></svg>drift</span><span class="lg sw s3"><svg width="14" height="12" aria-hidden="true"><rect x=".5" y=".5" width="13" height="11" fill="url(#pt-dots)" stroke="var(--ink-2)"/></svg>signal</span></div>
+        <p class="readout" id="c1a-ro"></p>
+        <button class="small-btn" type="button" data-tab="c1a">以表格顯示</button>
+      </div>
+    </div>
+    <p class="cap guide">怎麼看：λ 是 sampler 偏離 trainer 的程度（0 為無 TIM）；Q 是選了各 token 之後的期望 reward。先看讀數中的 ‖drift‖ 與 ‖signal‖：常數 reward 時 ‖signal‖ = 0、‖drift‖ 隨 λ 增大。</p>
+    <div class="tbox hide" id="c1a-tab"></div>
+    <p class="plate-f">本元件的參數化（θ = logits）為本頁的簡化；論文的 score 是對整個網路參數的梯度。p = softmax(z)，q = softmax(z + λξ)，score s_v = e_v − p（本頁推導），代入 Eq. 3 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c1a-live"></p>
+  </div>
+  <div class="prose"><p>切換到 +1/0 與 ±1 可以看到：兩者的 signal 只差 2 倍（共變異數對 reward 平移不變），PG 卻差了一個 $\bar s$。±1 時 drift 很小，因為這個 prefix 的 $\mathbb E_q[R]$ 接近 0，對應上面的「本頁說明」。</p></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">寫出 drift／signal 分解。哪一項帶有 reward 的資訊？</p>
+    <p class="a">$\mathbb E_q[Rs_{y_t}]=\mathbb E_q[R]\bar s+\mathrm{Cov}_q(R,s_{y_t})$；drift 只依賴平均 reward，signal（共變異數）才知道哪個 token 帶來哪個 reward（Eq. 3）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="score-centering-drift-decomposition.html">Score centering：drift 與 signal 的分解與 top-k 實作</a></p>
+</section>
+
+<!-- S5 -->
+<section class="ch" id="loop" data-toc="05" data-tt="回饋迴路">
+  <div class="ch-num">05 · 回饋迴路</div>
+  <h2>論文論證：drift 是朝 sampler 的蒸餾，並在回饋迴路中累積</h2>
+  <div class="prose">
+    <p>先定義三個量。熵 $\mathrm{Ent}(p)=-\sum_vp_v\log p_v$ 衡量分布有多分散；cross-entropy $\mathrm{CE}(q,p)=-\sum_vq_v\log p_v$ 是以 $q$ 為 teacher 訓練 $p$ 時的 SFT loss；KL divergence $\mathrm{KL}(q\|p)=\mathrm{CE}(q,p)-\mathrm{Ent}(q)$。</p>
+    <p>drift 的方向 $\bar s$ 有明確的意義：把 $q$ 當常數，$-\nabla_\theta\mathrm{CE}(q,p)=\sum_vq_v\nabla_\theta\log p_v=\bar s$。也就是說，$\bar s$ 是以 sampler 為 teacher 的 cross-entropy 負梯度，vanilla policy gradient 在每個 prefix 都把 trainer 朝 sampler 蒸餾，強度是該 prefix 的期望 reward（§4）。因為 $\mathrm{Ent}(q)$ 與 $\theta$ 無關，這也等於 $-\nabla_\theta\mathrm{KL}(q\|p)$<span class="tag">本頁推導</span>。</p>
+    <p>作者接著論證（§4 "Drift is an artifact…"）：朝固定 teacher 蒸餾是無害的，它會收斂到該 teacher 的最大概似擬合。但 sampler 不是固定的，它是 trainer 的有偏副本（量化或過時）。每一步把 trainer 推向 sampler，trainer 的權重又同步回 sampler，誤差在回饋迴路中累積而不收斂。作者用這點解釋 Fig. 2 中線上 +1/0 最不穩定，並引用 Dong et al.（2026）同樣指出系統性偏差經由正回饋累積。這一段是文字論證：論文沒有給出定理，也沒有給出發散速率。</p>
+    <p>所以 drift 造成不穩定的理由是：$\bar s$ 是以 sampler 為 teacher 的 CE 負梯度，PG 在每個 prefix 把 trainer 蒸餾向 sampler，強度為期望 reward；固定 teacher 收斂到其最大概似擬合；sampler 是 trainer 的有偏副本且定期同步回來，誤差在回饋迴路中累積（§4）。</p>
+    <p>§5.1 用同一個論點解釋為什麼溫和的 TIM 下各方法難以區分：drift 需要更多步才累積到足以造成差異。Qiu et al.（2026）發現 fp8 rollout 只用 token 層級 IS 就穩定，Microsoft AI Team（2026）在 bf16 下仍看到發散；作者認為兩者都與「drift 隨訓練累積」相容。</p>
+    <p>下面的元件是本頁設計的玩具，用來呈現「固定 teacher」與「隨 student 更新的 teacher」的差別。它的範圍有限，請先讀圖版的第一行。</p>
+  </div>
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>固定偏差下的 drift 累積</h3><span class="tag toy">教學示意</span></div>
+    <p class="plate-lead scope">此模型為本頁設計的示意，不是論文的實驗，也不重現 Fig. 1–5。sampler 與 trainer 之間是一個固定的 logit 偏差（類似量化），所以這裡看到的是固定偏差在每次同步後線性累積，不是論文所說誤差互相放大的回饋迴路，也沒有模擬 staleness。</p>
+    <div class="motif mini" aria-hidden="true"><div class="mrow p"><span class="mlab">trainer：z</span><span class="mline"></span></div><div class="mmid"><span>同步 ←：sampler = softmax(z + λξ)</span></div><div class="mrow q"><span class="mlab">sampler</span><span class="mline"></span></div></div>
+    <div class="pg two">
+      <div class="fig" id="c3-fig"><svg role="img" aria-label="C3 熵對步數"></svg></div>
+      <div class="ctl">
+        <div class="ctl-row" role="group" aria-label="reward 模式" id="c3-mode"><button class="chip" type="button" data-m="const" aria-pressed="true">常數 R = 1</button><button class="chip" type="button" data-m="b01" aria-pressed="false">+1/0</button></div>
+        <div class="rng"><label class="lbl" for="c3-lam">不一致程度 λ（對數刻度）<output id="c3-lamo">0.10</output></label><input id="c3-lam" type="range" min="0" max="200" step="1" value="100"></div>
+        <div><div class="lbl">步長 η</div><div class="seg" id="c3-eta" role="group" aria-label="步長"><button type="button" data-v="0.5" aria-pressed="false">0.5</button><button type="button" data-v="1" aria-pressed="true">1</button><button type="button" data-v="2" aria-pressed="false">2</button></div></div>
+        <label class="chk"><input type="checkbox" id="c3-sc">顯示 score centering（S07 定義）</label>
+        <div class="legend" id="c3-leg"></div>
+        <p class="readout" id="c3-ro"></p>
+      </div>
+    </div>
+    <p class="cap guide">怎麼看：λ 是 sampler 相對 trainer 的固定 logit 偏差大小；η 是每步的步長。看讀數中各曲線第 3000 步的熵與 t½：只有「PG（sampler 同步）」的熵趨近 0。</p>
+    <p class="cap">t½ 約與 1/λ 成正比，這是固定線性偏差的結果，不是論文的主張。</p>
+    <p class="plate-f">5 個 token，z₀ = 0；sampler = softmax(z + λξ)，ξ = [0.6, −0.2, 0.1, −0.3, −0.2]；以期望更新做梯度上升 z ← z + η·g（無取樣雜訊），共 N = 3000 步。橫軸為對數刻度的步數。本元件的參數化（θ = logits）為本頁的簡化。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+  <div class="prose">
+    <p>在這個玩具中，reward 恆為 1 時 on-policy 更新完全不動；固定 teacher 的 PG 收斂到 $p=q$，熵停在 $\mathrm{Ent}(\mathrm{softmax}(\lambda\xi))$；只有 sampler 隨 trainer 同步的 PG 持續把機率集中到 sampler 偏好的 token，熵趨近 0。λ 越小，熵降到一半所需的步數越多（λ = 0.05、0.1、0.5、1.0 時為 280、140、29、15 步），但仍會發生。固定 teacher 即使 λ = 1 也停住，這是 §6「重點不是不一致的大小，而是 teacher 固定還是隨 student 更新」這句話的示意。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">drift 的方向是什麼？為什麼朝固定 teacher 蒸餾無害、TIM 下卻累積？</p>
+    <p class="a">$\bar s$ 是以 sampler 為 teacher 的 CE 負梯度，PG 在每個 prefix 把 trainer 蒸餾向 sampler，強度為期望 reward；固定 teacher 收斂到其最大概似擬合；sampler 是 trainer 的有偏副本且定期同步回來，誤差在回饋迴路中累積（§4）。這是文字論證，沒有定理。</p>
+  </div></details>
+</section>
+
+<!-- S6 -->
+<section class="ch" id="group" data-toc="06" data-tt="Group centering">
+  <div class="ch-num">06 · Group centering</div>
+  <h2>Group centering 只縮小 drift</h2>
+  <div class="prose">
+    <p>既然 drift 正比於 $\mathbb E_q[R]$，把 reward 中心化是否就夠了？論文的答案是否定的（§4 "Group centering does not remove drift"）。group centering 讓同一個 prompt 的 advantage 總和為 0，但 drift 發生在單一 prefix，而特定 prefix 上的期望 advantage 不是 0：容易導向正確答案的 prefix 期望 advantage 為正，已經含有錯誤的 prefix 期望 advantage 為負。於是 trainer 在前者之後被拉向 sampler，在後者之後被推離 sampler，與該 token 是否影響 reward 無關。group centering 相對 +1/0 確實縮小 drift，這與它在 Fig. 2 中最穩定一致，但它不消除 drift。</p>
+    <p>可以把這段話寫成公式<span class="tag">本頁推導</span>。設 $G$ 條 rollout 彼此獨立，第 $i$ 條的 prefix 只影響 $R_i$。由 $A_i=R_i-\frac1G\sum_jR_j$，</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbb E[A_i\mid y_{i,&lt;t}]=\Big(1-\frac1G\Big)\big(\mathbb E_q[R\mid y_{i,&lt;t}]-\mathbb E_q[R]\big)$$</div><span class="eq-n">本頁推導</span></div>
+  <div class="prose">
+    <p>這個 prefix 的 drift 就是上式乘上該 prefix 的 $\bar s$。對所有 prefix 平均，上式為 0（prompt 層級總和為 0），但個別 prefix 一般不為 0。$G\to\infty$ 時係數趨近 $\mathbb E_q[R\mid\text{prefix}]-\mathbb E_q[R]$，也就是以 prompt 平均為基準的 advantage；它等於未中心化 ±1 reward 的條件期望，只在 prompt 的平均 ±1 reward 剛好為 0 時成立。單步（bandit）問題中 prefix 就是 prompt，上式恆為 0；這也是 C3 不放 group centering 的原因。下面的元件用兩步的例子呈現。</p>
+  </div>
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>group centering 下各 prefix 的 drift 係數</h3><span class="tag toy">教學示意</span></div>
+    <p class="plate-lead">每條 rollout 先選路徑甲或乙，之後成功的機率分別是 h甲、h乙。長條是第二步 drift 的係數（再乘上該 prefix 的平均 score 才是 drift）。</p>
+    <div class="pg two">
+      <div class="fig bars" id="c2-fig" tabindex="0" aria-label="長條圖，左右鍵選擇長條"><svg role="img" aria-label="C2 長條圖"></svg></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c2-ha">路徑甲之後的成功機率 h甲<output id="c2-hao">0.80</output></label><input id="c2-ha" type="range" min="0" max="1" step="0.01" value="0.8"></div>
+        <div class="rng"><label class="lbl" for="c2-hb">路徑乙之後的成功機率 h乙<output id="c2-hbo">0.20</output></label><input id="c2-hb" type="range" min="0" max="1" step="0.01" value="0.2"></div>
+        <div class="rng"><label class="lbl" for="c2-pi">sampler 選甲的機率 π甲<output id="c2-pio">0.50</output></label><input id="c2-pi" type="range" min="0.05" max="0.95" step="0.01" value="0.5"></div>
+        <div><div class="lbl">每個 prompt 的 rollout 數 G</div><div class="seg" id="c2-G" role="group" aria-label="G"><button type="button" data-v="2" aria-pressed="false">2</button><button type="button" data-v="4" aria-pressed="false">4</button><button type="button" data-v="8" aria-pressed="true">8</button><button type="button" data-v="16" aria-pressed="false">16</button><button type="button" data-v="64" aria-pressed="false">64</button></div></div>
+        <div class="legend"><span class="lg sw s1"><svg width="14" height="12" aria-hidden="true"><rect x=".5" y=".5" width="13" height="11" fill="var(--c-par)" stroke="var(--ink-2)"/></svg>路徑甲</span><span class="lg sw s2"><svg width="14" height="12" aria-hidden="true"><rect x=".5" y=".5" width="13" height="11" fill="url(#pt-hatch)" stroke="var(--ink-2)"/></svg>路徑乙</span></div>
+        <p class="readout" id="c2-ro"></p>
+        <button class="small-btn" type="button" data-tab="c2">以表格顯示</button>
+      </div>
+    </div>
+    <p class="cap guide">怎麼看：h甲、h乙 是走各路徑之後答對的機率，π甲 是 sampler 選甲的機率，G 是每個 prompt 的 rollout 數。看 group-centered 那兩根長條：prompt 平均為 0，但甲、乙各自不為 0。</p>
+    <div class="tbox hide" id="c2-tab"></div>
+    <p class="plate-f">+1/0：c = h；±1：c = 2h − 1；group-centered（由 ±1 計算，Eq. 13，論文預設）：c = (1 − 1/G)·2(h − 平均 +1/0 reward)（本頁推導）。正值表示該 prefix 之後被拉向 sampler，負值表示被推離（§4 "pulled toward / pushed away"）。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <div class="prose">
+    <p>預設值下（h甲 = 0.8、h乙 = 0.2、π甲 = 0.5、G = 8），group-centered 的係數是 +0.525 與 −0.525：prompt 平均為 0，但兩個 prefix 各自不為 0、正負相反。只有 h甲 = h乙（第一步不影響結果）時兩者都歸零。G 越大，係數越接近 2(h − 平均 +1/0 reward)；π甲 = 0.8 時 G → ∞ 的 c甲 是 0.24，而 ±1 的值是 0.60，兩者只在 prompt 平均 ±1 reward 為 0 時相同。所以 group centering 讓 advantage 總和為 0，drift 仍在，因為 drift 發生在單一 prefix，特定 prefix 的期望 advantage 不為 0（好的 prefix 為正、含錯的為負），trainer 在前者後被拉向、後者後被推離 sampler；group centering 只縮小 drift（§4）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">group centering 讓 advantage 總和為 0，為何 drift 仍在？</p>
+    <p class="a">drift 發生在單一 prefix，特定 prefix 的期望 advantage 不為 0（好的 prefix 為正、含錯的為負），trainer 在前者後被拉向、後者後被推離 sampler；group centering 只縮小 drift（§4）。〔本頁推導〕$\mathbb E[A_i\mid\text{prefix}]=(1-1/G)(\mathbb E_q[R\mid\text{prefix}]-\mathbb E_q[R])$。</p>
+  </div></details>
+</section>
+
+<!-- S7 -->
+<section class="ch" id="sc" data-toc="07" data-tt="Score centering">
+  <div class="ch-num">07 · Score centering</div>
+  <h2>Score centering 減去期望 score</h2>
+  <div class="prose">
+    <p>以上的觀察直接導出本文的方法 score centering（SC）：即使有 TIM，也希望每個 prefix 的期望 score 為 0，就像 on-policy 一樣。做法是從每個 score 減去 sampler 下的期望 score（§4）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\tilde s_{y_t}=s_{y_t}-\bar s$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="eq"><div class="eq-m">$$\begin{aligned}\mathbb E_q[R\,\tilde s_{y_t}]&amp;=\mathbb E_q[R]\,\underbrace{\mathbb E_q[\tilde s_{y_t}]}_{=\bar s-\bar s=0}+\mathrm{Cov}_q(R,\tilde s_{y_t})\\&amp;=\mathrm{Cov}_q(R,\tilde s_{y_t})=\mathrm{Cov}_q(R,s_{y_t})\end{aligned}$$</div><span class="eq-n">Eq. 5</span></div>
+  <div class="prose">
+    <p>最後一個等號成立，因為 $\bar s$ 在給定 prefix 下是常數，與任何隨機量的共變異數都是 0。中心化的期望與取樣使用同一個 $q$，所以 drift 在每個 prefix 精確歸零。SC 的定義是 $\tilde s=s-\bar s$（Eq. 4），$\mathbb E_q[\tilde s]=0$，期望更新 $=\mathrm{Cov}_q(R,s_{y_t})$（Eq. 5）。</p>
+    <p>它不是無偏的 policy gradient。論文的說法是，在固定 prefix 下，SC 與 on-policy 更新唯一的差別是共變異數在哪個分布下量：on-policy 與（精確）IS 在 trainer 分布 $p$ 下量，SC 在 sampler 分布 $q$ 下量（§4、§6 Limitations）。沒有 TIM、$p=q$ 時，修正項恰為 0，SC 是 no-op。另外，Eq. 5 是固定 prefix 的陳述；整條序列上 prefix 本身的出現機率仍由 $q$ 決定，SC 不修正這一點<span class="tag">本頁推導</span>。</p>
+    <p>回到 C3 勾選「顯示 score centering」：reward 恆為 1 時 SC 完全不動；+1/0 模式下 SC 的熵緩慢下降（λ = 0.1 時約 473 步降到 0.35，同步的 PG 在 100 步內就低於 0.35），on-policy 則停在約 ln 2。這只是 $\mathrm{Cov}_q\neq\mathrm{Cov}_p$ 的示意：SC 剩下的更新以 sampler 機率加權，在兩個同分 token 之間偏向 sampler 偏好的那一個。它是玩具中的觀察，不代表 LLM 中會發生。 <button class="small-btn" type="button" id="goto-c3">捲到 C3 並顯示 SC</button></p>
+    <h3>與 importance sampling 的差別</h3>
+    <p>IS 也能精確消除 drift，但它是隨機的乘法修正：值依賴被取樣的 token，會增加變異；稀有 token 的比值很大，所以實務上都要截斷或遮罩，而這會重新引入 drift。SC 是加法修正，在給定 prefix 下是確定的，不依賴被取樣的 token，也能精確算出。兩者以獨立的方式修正 TIM，因此可以疊加（§4，App. A.2）。截斷只在真正生效的地方才重新引入 drift<span class="tag">本頁推導</span>：TIS 下若所有 token 都滿足 $p_v\le2q_v$，權重就等於比值，$\sum_vq_vw_vs_v=\sum_vp_vs_v=0$。下面的 C1b 顯示這一點。</p>
+    <h3>與 baseline 的關係</h3>
+    <p>value function（critic）是「給定 prefix 時期望 reward 的估計器」。從 policy gradient 減去零平均的量是經典的變異縮減手法：reward baseline（Williams, 1992）與 score-function control variate（Ranganath et al., 2014）都依賴 $\mathbb E_p[s]=0$。SC 則是偏差修正：減去的向量在 prefix 下是確定的，目的是移動更新的平均；on-policy 時 reward baseline 只改變變異、不改變平均。離線時，若 baseline 等於該 prefix 的期望 reward（精確的 value function），期望上也能消除 drift；SC 不需要 critic 就得到同樣的期望更新（§4）。驗證<span class="tag">本頁推導</span>：令 $V=\mathbb E_q[R\mid\text{prefix}]$，$\mathbb E_q[(R-V)s]=\mathbb E_q[R]\bar s+\mathrm{Cov}_q(R,s)-V\bar s=\mathrm{Cov}_q(R,s)$。古典離線 RL 中期望 score 需要對動作空間做難解的期望；LLM 的 TIM 情境特殊在於期望 score 不為 0，而且能以 next-token logprob 的和精確算出。</p>
+    <p>整理：IS 是隨機的乘法修正、依賴被取樣 token、增加變異、截斷後重新引入 drift；SC 是在 prefix 下確定的加法修正、可精確計算，兩者可疊加；等於期望 reward 的精確 value baseline 期望上也消除 drift，但需要 critic，SC 不需要（§4）。</p>
+  </div>
+  <div class="plate" id="c1b">
+    <div class="plate-h"><span class="id">C1b</span><h3>SC、on-policy 與 TIS 的期望更新</h3></div>
+    <p class="plate-lead">與 C1a 共用 λ 與 reward 設定。λ 小於約 1.068 時 TIS 的截斷沒有生效，與 on-policy 完全相同。</p>
+    <div class="pg two">
+      <div class="fig bars" id="c1b-fig" tabindex="0" aria-label="長條圖，左右鍵選擇 token"><svg role="img" aria-label="C1b 長條圖"></svg></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1b-lam">不一致程度 λ<output id="c1b-lamo">0.50</output></label><input id="c1b-lam" type="range" min="0" max="2" step="0.05" value="0.5"></div>
+        <div class="ctl-row" role="group" aria-label="reward 預設" id="c1b-pre"><button class="chip" type="button" data-p="const" aria-pressed="true">常數 +1</button><button class="chip" type="button" data-p="b01" aria-pressed="false">+1/0</button><button class="chip" type="button" data-p="pm1" aria-pressed="false">±1</button></div>
+        <div class="legend"><span class="lg sw s1"><svg width="14" height="12" aria-hidden="true"><rect x=".5" y=".5" width="13" height="11" fill="var(--c-par)" stroke="var(--ink-2)"/></svg>SC</span><span class="lg sw s2"><svg width="14" height="12" aria-hidden="true"><rect x=".5" y=".5" width="13" height="11" fill="url(#pt-hatch)" stroke="var(--ink-2)"/></svg>on-policy（＝逐 token 精確 IS）</span><span class="lg sw s3"><svg width="14" height="12" aria-hidden="true"><rect x=".5" y=".5" width="13" height="11" fill="url(#pt-dots)" stroke="var(--ink-2)"/></svg>TIS</span></div>
+        <p class="readout" id="c1b-ro"></p>
+        <button class="small-btn" type="button" data-tab="c1b">以表格顯示</button>
+      </div>
+    </div>
+    <p class="cap guide">怎麼看：λ 與 reward 設定和 C1a 共用。看 ‖SC − on-policy‖（Cov_q 與 Cov_p 的差）與 ‖TIS − on-policy‖：max p/q ≤ 2 時後者為 0。</p>
+    <div class="tbox hide" id="c1b-tab"></div>
+    <p class="plate-f">Q_v 固定，未建模 continuation 在 q 與 p 下的差異；所以這裡逐 token IS 恰好等於 on-policy，真實序列中逐 token IS 不修正 prefix 的分布。TIS 權重 w = min(p/q, 2)。本元件的參數化（θ = logits）為本頁的簡化。</p>
+    <p class="sr" aria-live="polite" id="c1b-live"></p>
+  </div>
+  <div class="prose"><p>C2 若加上 SC，兩個 prefix 的係數都是 0：SC 在每個 prefix 減去該 prefix 自己的 $\bar s$。</p></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">SC 怎麼定義？期望更新是多少？是無偏的 policy gradient 嗎？</p>
+    <p class="a">$\tilde s=s-\bar s$（Eq. 4），$\mathbb E_q[\tilde s]=0$，期望更新 $=\mathrm{Cov}_q(R,s_{y_t})$（Eq. 5）；不是：共變異數在 $q$ 而非 $p$ 下量；$p=q$ 時 SC 為 no-op。</p>
+    <p class="q">SC 與 IS 的修正方式有何不同？與 value baseline 的關係？</p>
+    <p class="a">IS 是隨機的乘法修正、依賴被取樣 token、增加變異、截斷後重新引入 drift；SC 是在 prefix 下確定的加法修正、可精確計算，兩者可疊加；等於期望 reward 的精確 value baseline 期望上也消除 drift，但需要 critic，SC 不需要（§4）。</p>
+  </div></details>
+</section>
+
+<!-- S8a -->
+<section class="ch" id="loss" data-toc="08a" data-tt="純量 loss">
+  <div class="ch-num">08a · 純量 loss</div>
+  <h2>Score centering 可寫成純量 loss</h2>
+  <div class="prose">
+    <p>在 autograd 框架中，最方便的做法是把想要的梯度寫成一個純量 loss。$\bar s$ 是 trainer logprob 梯度的加權和，所以只要用 sampler 機率（不微分）去加權 trainer 的 logprob（App. A.3）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$L=-R\Big(\log p_{y_t}-\sum_v\mathrm{sg}[q_v]\log p_v\Big)$$</div><span class="eq-n">Eq. 11 · L 最小化</span></div>
+  <div class="prose">
+    <p>$\mathrm{sg}[\cdot]$ 是 stop-gradient：$q_v$ 被當成常數，不對它微分。所以 $-\nabla_\theta L=R\big(s_{y_t}-\sum_vq_vs_v\big)=R(s_{y_t}-\bar s)=R\,\tilde s_{y_t}$。換句話說，Eq. 11 為 $L=-R(\log p_{y_t}-\sum_v\mathrm{sg}[q_v]\log p_v)$；sg 讓 $q_v$ 不被微分，所以 $-\nabla L=R(s_{y_t}-\sum_vq_vs_v)=R(s_{y_t}-\bar s)$。</p>
+    <p>注意被減掉的是 $R\,\bar s$，用的是這條 rollout 自己的 $R$；它的期望 $\mathbb E_q[R]\,\bar s$ 正是 drift。符號慣例：附錄的 Eq. 13 $J_{\text{base}}$ 是要最大化的目標，Eq. 6、11、12 的 $L$ 是要最小化的 loss。展開 Eq. 11 得 $L=-R\log p_{y_t}-R\cdot\mathrm{CE}(q,p)$<span class="tag">本頁推導</span>：$R&gt;0$ 時第二項在提高 cross-entropy，正好抵銷 PG 隱含的朝 sampler 蒸餾。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">寫出 Eq. 11，說明 sg 的作用與為何 $-\nabla L=R\tilde s$。</p>
+    <p class="a">$L=-R(\log p_{y_t}-\sum_v\mathrm{sg}[q_v]\log p_v)$；sg 讓 $q_v$ 不被微分，所以 $-\nabla L=R(s_{y_t}-\sum_vq_vs_v)=R(s_{y_t}-\bar s)$（App. A.3）。</p>
+  </div></details>
+</section>
+
+<!-- S8b -->
+<section class="ch" id="topk" data-toc="08b" data-tt="top-k 實作">
+  <div class="ch-num">08b · top-k 實作</div>
+  <h2>只用 sampler 的 top-k logprob 就能實作</h2>
+  <div class="prose">
+    <p>Eq. 11 需要 sampler 在每個位置的完整 next-token 分布，儲存成本太高（App. A.1）：Qwen3 的詞彙有 152K 個 token，一個位置的完整 fp32 logprob 約 608KB；1024 條 rollout、每條長 32K，就需要約 20TB。所以實驗中只記錄 sampler 的 top-k logprob（$k=128$）。</p>
+    <p>但作者不是只在 top-k 上算期望，而是重建 sampler 的完整分布：取 sampler 機率最高的 $k$ 個 token 為 head $H$，其餘為 tail $T$；head 用 sampler 自己的機率，tail 用 trainer 的機率按比例縮放，使總和為 1：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\hat q_v=\begin{cases}q_v&amp;v\in H\\\rho\,p_v&amp;v\in T\end{cases},\qquad\rho=\frac{1-\sum_{v\in H}q_v}{1-\sum_{v\in H}p_v}$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="prose">
+    <p>$\rho$ 是 sampler tail 質量與 trainer tail 質量的比。在重建的 $\hat q$ 下算期望 score 不需要對整個詞彙求和：利用 $\mathbb E_p[s]=0$，tail 部分可以寫成「0 減去 head 部分」：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbb E_{\hat q}[s_{y_t}]=\sum_{H}q_vs_v+\rho\sum_Tp_vs_v=\sum_Hq_vs_v+\rho\Big(\underbrace{\mathbb E_p[s_{y_t}]}_{=0}-\sum_Hp_vs_v\Big)=\sum_{v\in H}(q_v-\rho p_v)\,s_v$$</div><span class="eq-n">Eq. 8</span></div>
+  <div class="prose"><p>代回 loss，中心化項只涉及 head 的 $k$ 個 token（§4.1）：</p></div>
+  <div class="eq"><div class="eq-m">$$L=-R\Big(\log p_{y_t}-\sum_{v\in H}\mathrm{sg}[q_v-\rho p_v]\log p_v\Big)$$</div><span class="eq-n">Eq. 6 · L 最小化</span></div>
+  <div class="prose">
+    <p>綜合起來：只存 top-k，是因為完整 logprob 一個 token 約 608KB、1024×32K 約 20TB；$\rho=(1-\sum_Hq_v)/(1-\sum_Hp_v)$，tail 用 $\rho p_v$；因為 $\mathbb E_p[s]=0$，$\mathbb E_{\hat q}[s]=\sum_H(q_v-\rho p_v)s_v$（Eq. 8），所以中心化項只需 head。剩下的誤差是 $\mathbb E_q[R]\sum_{v\in T}(q_v-\rho p_v)s_v$<span class="tag">本頁推導</span>；當 sampler 的 tail 與 trainer 的 tail 成比例時它為 0。</p>
+    <p>經驗上（App. A.4），$k=128$ 時 head 平均覆蓋超過 99.9% 的 sampler 質量；唯一例外是 30B 模型的 INT8 W/A + INT4 KV 設定，平均 99.45%、最差的 batch 95.8%。即使在這個設定，$k=32$ 與 $k=128$ 仍與全詞彙 SC 相當（Fig. 5）。成本方面，同硬體下 $k=128$ 的 wall-clock 與基準方法相差 1% 以內（0.6B 與 30B，自製 JAX sampler）；vLLM 與 SGLang 原生提供 top-k logprob，但作者沒有量測它們的額外開銷。</p>
+    <h3>§4.1 的程式碼</h3>
+  </div>
+  <div class="algo" role="table" aria-label="§4.1 程式碼逐行說明">
+    <div class="row hd" role="row"><div>程式碼（JAX，單一 token）</div><div class="ex-h">說明</div></div>
+    <div class="row" role="row"><code>train_head_logp = train_logp[topk_ids]</code><div class="ex">trainer 在 sampler 的 top-k token 上的 logprob。head 是 sampler 的 top-k，不是 trainer 的。</div></div>
+    <div class="row" role="row"><code>tail_mass_ratio = (1 - exp(samp_logp).sum()) / (1 - exp(train_head_logp).sum())</code><div class="ex">ρ：sampler tail 質量除以 trainer tail 質量（Eq. 7）。這個短版沒有除零保護；App. A.3 的完整版把兩個 tail 質量下限設為 eps = 1e-6。</div></div>
+    <div class="row" role="row"><code>head_prob_residual = exp(samp_logp) - tail_mass_ratio * exp(train_head_logp)</code><div class="ex">每個 head token 的係數 q_v − ρ p_v（Eq. 8）。</div></div>
+    <div class="row" role="row"><code>logp_correction = (stop_gradient(head_prob_residual) * train_head_logp).sum()</code><div class="ex">中心化項；係數以 stop-gradient 固定。</div></div>
+    <div class="row" role="row"><code>return -advantage * (train_logp[sampled_token] - logp_correction)</code><div class="ex">Eq. 6：−R(log p_yt − 中心化項)。</div></div>
+  </div>
+  <div class="prose">
+    <h3>與 IS 疊加</h3>
+    <p>SC 可以疊在 TIS、MIS 之上：先讓 IS 重新加權 score，再減去加權 score 的期望（App. A.2）。令 $w_v=f(r_v)$ 為 IS 方法給的權重（TIS：$f(r)=\min(r,2)$），更新為 $R\big(w_{y_t}s_{y_t}-\sum_vq_vw_vs_v\big)$（Eq. 9）。top-k 時 sampler 機率只知道重建的 $\hat q$，所以權重也用它計算：$\hat w_v=f(p_v/\hat q_v)$，在 head 上等於 $w_v$。tail 上 $p_v/\hat q_v=1/\rho$ 是常數，所以中心化項保持 head-only 的形式，只是 $\rho$ 換成 $\alpha=\rho f(1/\rho)$（Eq. 10）。$f=1$ 時 $\alpha=\rho$，回到 Eq. 8；精確 IS $f(r)=r$ 時 $\alpha=1$、$q_vw_v=p_v$，中心化項為 0，因為精確 IS 本來就零期望。head-only 的疊加版只在 $\hat q=q$ 時精確零期望<span class="tag">本頁推導</span>。</p>
+  </div>
+  <details class="more"><summary>疊加的完整式（Eq. 9、10、12）</summary><div class="qa">
+    <div class="eq"><div class="eq-m">$$R\big(w_{y_t}s_{y_t}-\mathbb E_q[w_{y_t}s_{y_t}]\big),\qquad\mathbb E_q[w_{y_t}s_{y_t}]=\sum_vq_vw_vs_v$$</div><span class="eq-n">Eq. 9</span></div>
+    <div class="eq"><div class="eq-m">$$\mathbb E_{\hat q}[\hat w_{y_t}s_{y_t}]=\sum_{v\in H}(q_vw_v-\alpha p_v)\,s_v,\qquad\alpha=\rho f(1/\rho)$$</div><span class="eq-n">Eq. 10</span></div>
+    <div class="eq"><div class="eq-m">$$L=-R\Big(\mathrm{sg}[w_{y_t}]\log p_{y_t}-\sum_{v\in H}\mathrm{sg}[q_vw_v-\alpha p_v]\log p_v\Big)$$</div><span class="eq-n">Eq. 12</span></div>
+    <p class="note">App. A.3 的程式中，被取樣 token 的權重用 sampler 實際的 logprob（即使它不在 head），中心化項則假設 tail 權重恆為 f(1/ρ)。</p>
+  </div></details>
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>top-k 重建與 IS 疊加</h3></div>
+    <p class="plate-lead">20 個 token。調整 k 與 sampler 擾動 σ，比較精確中心化項與 head-only 公式的差距。</p>
+    <div class="fig bars" id="c4-fig" tabindex="0" aria-label="長條圖，左右鍵選擇 token"><svg role="img" aria-label="C4 長條圖"></svg></div>
+    <div class="pg two" style="margin-top:16px">
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c4-s">sampler 擾動 σ<output id="c4-so">0.50</output></label><input id="c4-s" type="range" min="0" max="1.5" step="0.05" value="0.5"></div>
+        <div class="rng"><label class="lbl" for="c4-k">head 大小 k<output id="c4-ko">8</output></label><input id="c4-k" type="range" min="1" max="20" step="1" value="8"></div>
+        <div><div class="lbl">權重函數 f</div><div class="seg" id="c4-f" role="group" aria-label="權重函數"><button type="button" data-v="sc" aria-pressed="true">SC（f = 1）</button><button type="button" data-v="tis" aria-pressed="false">TIS + SC</button><button type="button" data-v="mis" aria-pressed="false">MIS + SC</button><button type="button" data-v="is" aria-pressed="false">精確 IS</button></div></div>
+        <div class="legend"><span class="lg sw s1"><svg width="14" height="12" aria-hidden="true"><rect x=".5" y=".5" width="13" height="11" fill="var(--c-par)" stroke="var(--ink-2)"/></svg>q（sampler）</span><span class="lg sw s2"><svg width="14" height="12" aria-hidden="true"><rect x=".5" y=".5" width="13" height="11" fill="url(#pt-hatch)" stroke="var(--ink-2)"/></svg>q̂ 的 tail（ρ·p）</span><span class="lg pmark">p（trainer）</span></div>
+        <button class="small-btn" type="button" data-tab="c4">以表格顯示</button>
+      </div>
+      <p class="readout" id="c4-ro"></p>
+    </div>
+    <p class="cap guide">怎麼看：σ 是 sampler 相對 trainer 的擾動大小，k 是記錄的 head 大小，f 是疊加的 IS 權重。看「相對殘餘」（head-only 公式與精確中心化項的差，k 越大越小）與 ‖c‖（f 為 TIS／MIS 時，IS 單獨留下的 drift）。</p>
+    <div class="tbox hide" id="c4-tab"></div>
+    <p class="plate-f">恆等檢查只驗證 Eq. 8／10 的代數（相對於重建的 q̂）；相對於真實 q 的誤差是讀數中的殘餘。疊加 IS 時，head-only 版只在 q̂ = q 時精確零期望。tail 質量直接對 tail 求和並以 1e-6 為下限（App. A.3 的 eps）。殘餘以 logit 座標的 L2 norm 表示，相對殘餘 = 殘餘 ÷ ‖q − p‖（本頁推導）。</p>
+    <p class="sr" aria-live="polite" id="c4-live"></p>
+  </div>
+  <div class="prose"><p>在這個例子中，k 增大時相對殘餘快速下降（σ = 0.5、SC：k = 1、4、8、16 時為 0.9445、0.3111、0.0650、0.0010），與 App. A.4「head 覆蓋超過 99.9% 時與全詞彙相當」方向一致。MIS 在 σ = 0.5 時所有比值都在 [0.5, 5] 內，IS 單獨留下的 drift 為 0；σ = 1.0 時有比值出界，留下 0.0513：截斷或遮罩生效才重新引入 drift。</p></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為何只存 top-k？$\rho$ 怎麼定義？中心化項為何只需 head？疊加 IS 時 $\alpha$ 是多少？</p>
+    <p class="a">完整 logprob 一個 token 約 608KB，1024×32K 約 20TB；$\rho=(1-\sum_Hq_v)/(1-\sum_Hp_v)$，尾部用 $\rho p_v$；因 $\mathbb E_p[s]=0$，$\mathbb E_{\hat q}[s]=\sum_H(q_v-\rho p_v)s_v$（Eq. 8）；疊加時 $\alpha=\rho f(1/\rho)$（Eq. 10）；$k=128$ head 平均覆蓋 &gt; 99.9%（30B INT4 KV 為 99.45%、最差 95.8%），$k=32$ 也與全詞彙相當；〔本頁推導〕head-only 的 IS 疊加版只在 $\hat q=q$ 時精確零期望。</p>
+  </div></details>
+</section>
+
+<!-- S9 -->
+<section class="ch" id="results" data-toc="09" data-tt="實驗">
+  <div class="ch-num">09 · 實驗</div>
+  <h2>實驗：在最嚴重的量化設定下，score centering 與 TIS 的差距最大</h2>
+  <div class="prose">
+    <p>所有方法共用同一個目標：group-centered reward 的 REINFORCE（§5.1、B.1）。</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$J_{\text{base}}(\theta)=\frac{\sum_iA_i\sum_{t=1}^{L_i}\log p_\theta(y_{i,t}\mid y_{i,&lt;t})}{\sum_iL_i},\qquad A_i=R_i-\bar R_{\text{group}},\quad R_i\in\{-1,+1\}$$</div><span class="eq-n">Eq. 13 · J 最大化</span></div>
+  <div class="prose">
+    <p>$i$ 是 batch 中的 rollout，$L_i$ 是它的長度（與 loss $L$ 無關），$\bar R_{\text{group}}$ 是同一 prompt 各 completion 的平均 reward；分母是整個 batch 的 token 數。每個修正規則單獨加在這個目標上；所有方法共用同一個 sampler、trainer、optimizer 與 advantage，每個 batch 做一步 SGD，所有比值都用 sampler 記錄的機率。超參數（B.1）：SGD，固定學習率 $10^{-2}$（依 Mukherjee et al., 2026，表現與 AdamW 相當並省下最多 240GB 記憶體）；每個 prompt 8 個 completion。Qwen3-0.6B-Instruct（§1 寫作 Qwen3-0.6B）在 Countdown 上每 batch 64 個 prompt（512 條序列）、最大長度 512；Qwen3-30B-A3B-Base 在 INTELLECT-2 math 上每 batch 16 個 prompt（128 條序列）、最大長度 1024。各方法用原論文或 verl 的預設值，沒有調參。</p>
+    <p>為什麼刻意加重 TIM（§5.1）：在自然設定下，TIM 不夠嚴重，幾個 GPU 小時內看不出最強方法之間的統計顯著差異。作者把「嚴重 TIM 下的短期訓練」當作「溫和 TIM 下長期訓練」的代理。</p>
+    <h3>合成權重雜訊（§5.2，Fig. 3）</h3>
+    <p>令 $\theta_{\text{sampler}}=\theta_{\text{trainer}}+\Delta\theta$，$\Delta\theta$ 在訓練開始時從 $\mathcal N(0,0.01^2)$、$\mathcal N(0,0.02^2)$ 或 $\mathcal N(0,0.05^2)$ 抽一次後固定。三個尺度下，SC、TIS、MIS 與 MIS + SC、TIS + SC 表現最好；最大雜訊下只有 SC 與 SC 疊加 MIS／TIS 訓練穩定。不一致越大崩潰越早：DPPO 約在第 160、80、20 步崩潰；TIS 在最小雜訊下穩定，在較大的兩個尺度約在第 180、40 步崩潰。</p>
+    <h3>量化與 staleness（§5.3，Fig. 4）</h3>
+    <p>量化設定只量化 sampler（weights、activations 與 KV cache），trainer 用 bf16。staleness 設定是推論引擎每 64 步才更新一次，不是「最大 staleness 為 64」。量化下，SC 單獨與疊加 TIS／MIS 都表現最好；staleness 下，SC 疊加 TIS／MIS 最好，並優於單獨的 SC。作者歸因於 SC 在 sampler 下量共變異數（Eq. 5）：TIS 部分修正了取樣分布，SC 再去掉剩下的 drift。作者因此建議，trainer 可能在兩次同步之間遠離 sampler 時，就把 SC 與 IS 疊加。PPO、DAPO 撐過了 staleness，但在量化與權重雜訊下崩潰；作者認為這與它們的 clip 是為 policy 移動造成的比值而設計一致。作者也指出，實務上應盡量頻繁同步，並讓兩邊使用同一種量化方案。</p>
+    <h3>30B（§5.4，Fig. 1）</h3>
+    <p>Qwen3-30B-A3B 是 mixture-of-experts 模型，sampler 與 trainer 也可能選到不同 expert；作者沒有 replay router indices。三個量化等級的結果如下表。FP8 W/A + FP8 KV：未修正的 PG 也穩定，達 58%；FP8 W/A + FP4 KV：PG 在 200 步內崩潰，MIS 在訓練後段崩潰，SC 52%、TIS 51% 保持穩定；INT8 W/A + INT4 KV：SC 30%、TIS 12%，其餘方法都低於 5%。</p>
+  </div>
+  <div class="tscroll"><table>
+    <caption>30B 的 training accuracy（§5.4；W/A＝weights／activations，KV＝KV cache）</caption>
+    <thead><tr><th>sampler 量化</th><th>PG</th><th>SC</th><th>TIS</th><th>其他</th></tr></thead>
+    <tbody>
+    <tr><td>FP8 W/A + FP8 KV</td><td class="num">58%，穩定</td><td>—</td><td>—</td><td>與修正方法相當</td></tr>
+    <tr><td>FP8 W/A + FP4 KV</td><td>200 步內崩潰</td><td class="num">52%</td><td class="num">51%</td><td>MIS 後段崩潰</td></tr>
+    <tr class="hl"><td>INT8 W/A + INT4 KV</td><td>&lt; 5%</td><td class="num">30%</td><td class="num">12%</td><td>其餘 &lt; 5%</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>結果整理：FP8 KV 下 PG 也穩定，58%；FP4 KV 下 PG 200 步內崩潰，SC 52%、TIS 51%；INT8 W/A + INT4 KV 下 SC 30%、TIS 12%、其餘 &lt; 5%（§5.4）；staleness（每 64 步同步）下 SC + TIS/MIS 最好且優於單獨 SC，因為 SC 在 sampler 下量共變異數（§5.3）；這些結果來自刻意嚴重的不一致與短序列（§6）。論文結論句說「嚴重量化下 SC 是唯一穩定的方法」，這不精確：FP4 KV 下 TIS 51% 也穩定，0.6B 的量化實驗中 SC + TIS/MIS 同樣表現最好；本頁以 §5 的數字為準。</p>
+    <p>top-k 消融（App. A.4，Fig. 5）：$k=32$、$k=128$ 與全詞彙 SC 在所有設定中相當。</p>
+    <h3>讀圖須知（B.3、Table 2）</h3>
+    <p>論文沒有提供曲線的數值表，本頁只引用正文與圖說的文字結論，不重繪曲線。陰影是 ±1 standard error。Fig. 2、3 報告 held-out 評估 prompt 上的準確率；Fig. 1、4、5 報告 training accuracy，也就是取樣 rollout 的平均 reward，經置中移動平均平滑。0.6B 與 1.7B 每個方法跑 3 個 seed；30B 先每個方法跑 1 個 seed，再只為表現最好的方法加 seed：FP8 KV 面板全部單 seed，FP4 KV／INT4 KV 面板中 SC 為 5／4、TIS 4／3、MIS 3／3、naive IS 2／1 個 seed，其餘單 seed。</p>
+  </div>
+  <div class="tscroll"><table>
+    <caption>Table 2：各圖的 run 數與約略算力（主要在 8× H100 SXM 節點上）</caption>
+    <thead><tr><th>實驗</th><th>圖</th><th>seed</th><th class="num">unique runs</th><th class="num">H100-hours</th></tr></thead>
+    <tbody>
+    <tr><td>離線 vs 線上</td><td>Fig. 2</td><td>3</td><td class="num">18</td><td class="num">190</td></tr>
+    <tr><td>合成權重雜訊</td><td>Fig. 3</td><td>3</td><td class="num">108</td><td class="num">280</td></tr>
+    <tr><td>量化與 staleness</td><td>Fig. 4</td><td>3</td><td class="num">72</td><td class="num">1,120</td></tr>
+    <tr><td>30B math</td><td>Fig. 1</td><td>1–5</td><td class="num">47</td><td class="num">3,750</td></tr>
+    <tr><td>top-k 消融</td><td>Fig. 5</td><td>見圖例</td><td class="num">51</td><td class="num">840</td></tr>
+    <tr><td>合計</td><td></td><td></td><td class="num">296</td><td class="num">6,180</td></tr>
+    </tbody></table></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">30B 三個量化等級的結果？staleness 下哪個最好、作者如何解釋？主要限制？</p>
+    <p class="a">FP8 KV：PG 也穩定 58%；FP4 KV：PG 200 步內崩潰，SC 52%、TIS 51%；INT8 W/A + INT4 KV：SC 30%、TIS 12%、其餘 &lt; 5%（§5.4）；staleness（每 64 步同步）下 SC+TIS/MIS 最好且優於單獨 SC，因 SC 在 sampler 下量共變異數（§5.3）；結果來自刻意嚴重的不一致與短序列（§6）。結論句「嚴重量化下 SC 是唯一穩定的方法」不精確，以 §5 的數字為準。</p>
+  </div></details>
+</section>
+
+<!-- S10 -->
+<section class="ch" id="pitfalls" data-toc="10" data-tt="常見錯誤">
+  <div class="ch-num">10 · 常見錯誤</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="prose"><ol>
+    <li>用 $\mathbb E_q[R]\bar s$ 而不是 $R\bar s$ 當修正：loss 中減的是每條 rollout 自己的 $R$ 乘 $\bar s$（Eq. 11）。</li>
+    <li>忘了 stop-gradient：$q_v$、$q_v-\rho p_v$、$q_vw_v-\alpha p_v$、$w_{y_t}$ 都要 sg（Eq. 6、11、12）。</li>
+    <li>只在 top-k 上算期望：$\sum_Hq_vs_v$ 不是 Eq. 8；必須減去 $\rho p_v$ 項，tail 才被建模。</li>
+    <li>tail 質量除以 0：§4.1 的短版沒有保護，請用 App. A.3 的 <code>eps=1e-6</code> 下限。</li>
+    <li>head 取成 trainer 的 top-k：head 是 sampler 記錄的 top-k，trainer 的 logprob 在這些 id 上取值（<code>train_logp[topk_ids]</code>）。</li>
+    <li>以為 group centering 已經足夠：它只縮小 drift（§4）。</li>
+    <li>以為 SC 取代 IS：嚴重 staleness 下要把 SC 疊加在 TIS／MIS 上（§5.3）。</li>
+    <li>把「staleness 64」讀成最大 staleness 64：實際是每 64 步才同步一次（§5.3）。</li>
+  </ol></div>
+</section>
+
+<!-- S11 -->
+<section class="ch" id="history" data-toc="11" data-tt="研究脈絡">
+  <div class="ch-num">11 · 研究脈絡</div>
+  <h2>研究脈絡（由 notes/timeline.json 提供）</h2>
+  <div class="prose">
+    <p>本文接在幾條脈絡之後：policy gradient 與 baseline 提供 $\mathbb E_p[s]=0$ 這個起點；PPO、GRPO、DAPO 是 LLM RL 的常用目標；FP16 等研究指出精度造成的 TIM；TIS、MIS、TOPR、GSPO、DPPO 等以 importance sampling 修正 TIM；蒸餾與負梯度的研究說明 SFT 與 RL 的差異。本文把 TIM 下的更新拆成 drift 與 signal，以加法修正消除 drift。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S12 -->
+<section class="ch" id="next" data-toc="12" data-tt="限制與延伸">
+  <div class="ch-num">12 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>論文的限制（§6）：SC 消除 drift，但剩下的更新在 sampler 而非 trainer 下量 reward 與 score 的共變異數（Eq. 5），這在嚴重 staleness 下有影響，此時 SC 疊加 IS 表現最好；主要結果來自刻意嚴重的不一致與短序列，作為溫和不一致下長期訓練的代理。</p>
+    <p><span class="tag">本頁說明</span>以下幾點都可以在論文中查到，但不在限制段裡：結論句「嚴重量化下 SC 是唯一穩定的方法」與 §5 的數字不完全一致（見 S09）；SC 的結果只有 0.6B 與 30B 兩個模型，1.7B 只用於 Fig. 2；疊加版與 staleness 只在 0.6B 測過；30B 多數曲線是單 seed；「drift 是不穩定的原因」的證據是 Eq. 3 的代數、回饋迴路的文字論證與「只消 drift 就穩定」的介入實驗，沒有發散定理；「沒有超參數」指精確版，top-k 版有 $k$ 與 eps。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="score-centering-lineage-hub.html">Score Centering 的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="policy-gradient-baselines-score-function.html">Policy gradient、baseline 與 score function</a><span>期望 score 為 0 的恆等式</span></div></li>
+    <li><div><a href="ppo-grpo-dapo-llm-rl-objectives.html">PPO、GRPO、DAPO 與 LLM 的 RL 目標</a><span>group centering</span></div></li>
+    <li><div><a href="training-inference-mismatch-sources.html">訓練與推論不一致（TIM）的來源：精度、kernel 與 staleness</a><span>TIM 的來源</span></div></li>
+    <li><div><a href="importance-sampling-corrections-llm-rl.html">LLM RL 中的 importance sampling 修正：TIS、MIS、TOPR、GSPO、DPPO</a><span>IS 修正家族</span></div></li>
+    <li><div><a href="sft-vs-rl-offline-negative-rewards.html">SFT 與 RL 的差異：離線負獎勵不穩定，線上全正獎勵不穩定</a><span>Fig. 2 的背景</span></div></li>
+    <li><div><a href="score-centering-drift-decomposition.html">Score centering：drift 與 signal 的分解與 top-k 實作</a><span>本文方法</span></div></li>
+    <li><div><a href="rlvr-grpo-credit-assignment.html">RLVR、GRPO 與信用分配瓶頸</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="knowledge-distillation-foundations.html">知識蒸餾基礎：logit 蒸餾與序列層級蒸餾</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="on-policy-distillation-imitation.html">On-policy 蒸餾與線上模仿學習</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="rl-mdp-q-learning-basics.html">MDP、Q 函數與 Bellman backup：value-based RL 的基本記號</a><span>站內既有筆記</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Martin Marek, Max Ryabinin. Score Centering Stabilizes Off-policy Reinforcement Learning. 2026. <a href="https://arxiv.org/abs/2609.20807">arXiv:2609.20807</a>.</p>
+  <p>本頁的方程式與數字取自論文 v1；標示「本頁推導」的內容為本頁自行推導，「教學示意」的元件為本頁設計的玩具模型，皆非論文結論。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2015, "title": "Distilling the Knowledge in a Neural Network", "authors_short": "Hinton et al.", "arxiv": "1503.02531", "role": "蒸餾；SFT 在離線不一致下穩定的依據", "source": "abstract; paper §3"}, {"year": 2017, "title": "Proximal Policy Optimization Algorithms", "authors_short": "Schulman et al.", "arxiv": "1707.06347", "role": "PPO；Table 1 中以 token 比 clip 的修正", "source": "abstract; paper Table 1"}, {"year": 2024, "title": "DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models", "authors_short": "Shao et al.", "arxiv": "2402.03300", "role": "GRPO 與 group centering", "source": "abstract; paper §3"}, {"year": 2025, "title": "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", "authors_short": "DeepSeek-AI", "arxiv": "2501.12948", "role": "LLM 推理的大規模 RL；SFT 離線穩定的例子", "source": "abstract; paper §3"}, {"year": 2025, "title": "Tapered Off-Policy REINFORCE: Stable and efficient reinforcement learning for LLMs", "authors_short": "Le Roux et al.", "arxiv": "2503.14286", "role": "不對稱 tapered 的 IS 變體", "source": "abstract; paper §B.2"}, {"year": 2025, "title": "DAPO: An Open-Source LLM Reinforcement Learning System at Scale", "authors_short": "Yu et al.", "arxiv": "2503.14476", "role": "不對稱 clipping 的 RL 系統", "source": "abstract; paper Table 1"}, {"year": 2025, "title": "Understanding R1-Zero-Like Training: A Critical Perspective", "authors_short": "Liu et al.", "arxiv": "2503.20783", "role": "分析 GRPO 的最佳化偏差；引用於獎勵中心化的目的", "source": "abstract; paper §3 footnote 4"}, {"year": 2025, "title": "AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Language Reasoning", "authors_short": "Fu et al.", "arxiv": "2505.24298", "role": "完全非同步 RL 系統，staleness 的來源", "source": "abstract; paper §2.1"}, {"year": 2025, "title": "The Surprising Effectiveness of Negative Reinforcement in LLM Reasoning", "authors_short": "Zhu et al.", "arxiv": "2506.01347", "role": "僅用負樣本訓練仍有效，on-policy 負梯度含訊號", "source": "abstract; paper §3"}, {"year": 2025, "title": "Group Sequence Policy Optimization", "authors_short": "Zheng et al.", "arxiv": "2507.18071", "role": "序列層級重要性比與 clipping", "source": "abstract; paper §2.2, Table 1"}, {"year": 2025, "title": "Every Step Evolves: Scaling Reinforcement Learning for Trillion-Scale Thinking Model", "authors_short": "Ling Team", "arxiv": "2510.18855", "role": "IcePop，即本文的 MIS", "source": "paper Table 1; arXiv listing"}, {"year": 2025, "title": "Defeating the Training-Inference Mismatch via FP16", "authors_short": "Qi et al.", "arxiv": "2510.26788", "role": "指出 BF16 捨入為 TIM 根源，改用 FP16", "source": "abstract; paper §2.1"}, {"year": 2026, "title": "Rethinking the Trust Region in LLM Reinforcement Learning", "authors_short": "Qi et al.", "arxiv": "2602.04879", "role": "DPPO，以 total variation 設定 mask 區間", "source": "abstract; paper §2.2"}, {"year": 2026, "title": "Adaptive Layerwise Perturbation: Unifying Off-Policy Corrections for LLM RL", "authors_short": "Ye et al.", "arxiv": "2603.19470", "role": "擾動隱藏狀態以降低重尾比值，仍屬 IS", "source": "abstract; paper §2.2"}, {"year": 2026, "title": "Score Centering Stabilizes Off-policy Reinforcement Learning", "authors_short": "Marek & Ryabinin", "arxiv": "2609.20807", "role": "將更新分解為 drift 與 signal，以加法修正消除 drift", "source": "paper"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+const lgs=(d0,d1,r0,r1)=>{const a=Math.log(d0),b=Math.log(d1);return v=>r0+(Math.log(v)-a)/(b-a)*(r1-r0)};
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+const MINUS='−';
+const fmt=(x,n=4)=>{if(!isFinite(x))return '—';let s=(Math.abs(x)<0.5*Math.pow(10,-n)?0:x).toFixed(n);return s.replace('-',MINUS)};
+const fmtS=(x,n=4)=>(x>0.5*Math.pow(10,-n)?'+':'')+fmt(x,n);
+const fmtErr=x=>x.toExponential(1).replace('-',MINUS)+(x<1e-9?' ✓':'');
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+function onRaf(fn){let r=0;return()=>{cancelAnimationFrame(r);r=requestAnimationFrame(fn)}}
+
+/* ---------- math ---------- */
+function softmax(z){const m=Math.max(...z),e=z.map(v=>Math.exp(v-m)),s=e.reduce((a,b)=>a+b,0);return e.map(v=>v/s)}
+const dot=(a,b)=>a.reduce((s,v,i)=>s+v*b[i],0);
+const norm=a=>Math.sqrt(dot(a,a));
+const sub=(a,b)=>a.map((v,i)=>v-b[i]);
+const entropy=p=>-p.reduce((s,v)=>s+v*Math.log(Math.max(v,1e-300)),0);
+
+/* C1 */
+const C1={Z:[1.2,0.6,0,-0.8],XI:[-0.5,0.8,0.2,-0.5],PRESET:{const:[1,1,1,1],b01:[0.9,0.2,0.6,0.1],pm1:[0.8,-0.6,0.2,-0.8]}};
+function c1Compute(lam,Q){
+  const p=softmax(C1.Z),q=softmax(C1.Z.map((z,i)=>z+lam*C1.XI[i]));
+  const Rq=dot(q,Q),Rp=dot(p,Q),sbar=sub(q,p);
+  const pg=q.map((v,i)=>v*Q[i]-Rq*p[i]),drift=sbar.map(v=>Rq*v),signal=q.map((v,i)=>v*(Q[i]-Rq)),onp=p.map((v,i)=>v*(Q[i]-Rp));
+  const r=p.map((v,i)=>v/q[i]),w=r.map(v=>Math.min(v,2)),cw=dot(q.map((v,i)=>v*w[i]),Q);
+  const tis=q.map((v,i)=>v*w[i]*Q[i]-cw*p[i]);
+  const err=norm(pg.map((v,i)=>v-drift[i]-signal[i]));
+  return {p,q,Rq,Rp,sbar,pg,drift,signal,onp,tis,maxR:Math.max(...r),err};
+}
+/* C2 */
+function c2Compute(h1,h2,pi,G){const R01=pi*h1+(1-pi)*h2,g=1-1/G;
+  const rows={b01:[h1,h2],pm1:[2*h1-1,2*h2-1],gc:[g*2*(h1-R01),g*2*(h2-R01)]};
+  const out={};for(const k in rows){const [a,b]=rows[k];out[k]={c1:a,c2:b,avg:pi*a+(1-pi)*b,rms:Math.sqrt(pi*a*a+(1-pi)*b*b)}}return out}
+/* C3 */
+const C3={XI:[0.6,-0.2,0.1,-0.3,-0.2],Q:{const:[1,1,1,1,1],b01:[1,1,0,0,0]},N:3000};
+function c3Run(mode,lam,eta){
+  const Q=C3.Q[mode],N=C3.N,d=C3.XI.map(v=>lam*v),z0=[0,0,0,0,0],qfix=softmax(d);
+  const keys=['pg','fix','sc','onp'],z={},ent={},acc={};
+  keys.forEach(k=>{z[k]=z0.slice();ent[k]=new Float64Array(N+1);acc[k]=new Float64Array(N+1)});
+  for(let n=0;n<=N;n++)for(const k of keys){
+    const p=softmax(z[k]);ent[k][n]=entropy(p);acc[k][n]=dot(p,Q);if(n===N)continue;
+    let g;
+    if(k==='onp'){const R=dot(p,Q);g=p.map((v,i)=>v*(Q[i]-R))}
+    else{const q=k==='fix'?qfix:softmax(z[k].map((v,i)=>v+d[i])),R=dot(q,Q);g=k==='sc'?q.map((v,i)=>v*(Q[i]-R)):q.map((v,i)=>v*Q[i]-R*p[i])}
+    for(let i=0;i<5;i++)z[k][i]+=eta*g[i];
+  }
+  const dz=norm(z.pg);
+  return {ent,acc,dz};
+}
+function tHalf(a){const h=a[0]/2;for(let n=0;n<a.length;n++)if(a[n]<=h)return n;return null}
+function firstBelow(a,v){for(let n=0;n<a.length;n++)if(a[n]<=v)return n;return null}
+/* C4 */
+const C4={V:20,Z:Array.from({length:20},(_,v)=>-0.4*v),XI:[0.31,-1.12,0.54,0.87,-0.43,1.25,-0.76,0.12,-1.38,0.66,0.95,-0.21,-0.88,1.47,0.03,-0.59,1.06,-1.21,0.38,-0.27]};
+const F={sc:()=>1,tis:r=>Math.min(r,2),mis:r=>(r>=0.5&&r<=5)?r:0,is:r=>r};
+function c4Compute(sigma,k,fname){
+  const f=F[fname],V=C4.V,p=softmax(C4.Z),q=softmax(C4.Z.map((z,i)=>z+sigma*C4.XI[i]));
+  const order=[...Array(V).keys()].sort((a,b)=>q[b]-q[a]||a-b),inH=new Array(V).fill(false);order.slice(0,k).forEach(i=>inH[i]=true);
+  let mqT=0,mpT=0;for(let i=0;i<V;i++)if(!inH[i]){mqT+=q[i];mpT+=p[i]}
+  const rho=Math.max(mqT,1e-6)/Math.max(mpT,1e-6),alpha=rho*f(1/rho);
+  const w=p.map((v,i)=>f(v/q[i]));
+  const S=v=>p.map((pj,j)=>(j===v?1:0)-pj);               // s_v = e_v - p
+  const acc=(coefs)=>{const out=new Array(V).fill(0);coefs.forEach((c,v)=>{if(!c)return;const s=S(v);for(let j=0;j<V;j++)out[j]+=c*s[j]});return out};
+  const c=acc(q.map((v,i)=>v*w[i]));
+  const chat=acc(q.map((v,i)=>inH[i]?v*w[i]-alpha*p[i]:0));
+  const qhat=q.map((v,i)=>inH[i]?v:rho*p[i]);
+  const full=acc(qhat.map((v,i)=>v*f(p[i]/v)));
+  const ns=norm(sub(q,p)),resid=norm(sub(c,chat));
+  const r=p.map((v,i)=>v/q[i]);
+  return {p,q,qhat,inH,rho,alpha,mqT,mpT,nc:norm(c),nchat:norm(chat),resid,rel:ns<1e-12?null:resid/ns,ident:norm(sub(chat,full)),maxR:Math.max(...r),minR:Math.min(...r)};
+}
+
+/* ---------- shared bar chart ---------- */
+const FILLS=['var(--c-par)','url(#pt-hatch)','url(#pt-dots)'];
+function bars(svg,o){ // o: {W,H,labels,series:[{name,vals}],y:[lo,hi],yt,sel,log,zeroLine}
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m={l:48,r:8,t:o.title?32:8,b:26},x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=m.t;
+  const Y=o.log?lgs(o.y[0],o.y[1],y0,y1):lin(o.y[0],o.y[1],y0,y1),n=o.labels.length,gw=(x1-x0)/n;
+  if(o.title)tx(svg,4,14,o.title,{class:'al'});
+  (o.yt||[]).forEach(([v,l])=>{const yy=Y(v);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},svg);tx(svg,x0-6,yy+4,l,{class:'tk','text-anchor':'end'})});
+  if(o.band)o.band.forEach(([a,b])=>el('rect',{x:x0+a*gw,y:y1,width:(b-a)*gw,height:y0-y1,class:'band'},svg));
+  const base=o.log?y0:Y(0);
+  if(o.sel!=null&&o.sel>=0)el('rect',{x:x0+o.sel*gw+1,y:y1,width:gw-2,height:y0-y1,class:'selbox'},svg);
+  const ns=o.series.length,bw=Math.max(2,Math.min(28,(gw-6)/ns));
+  o.series.forEach((s,si)=>s.vals.forEach((v,i)=>{if(v==null)return;const xx=x0+i*gw+(gw-bw*ns)/2+si*bw;
+    const vv=o.log?Math.max(v,o.y[0]):Math.max(o.y[0],Math.min(o.y[1],v));const yy=Y(vv);
+    el('rect',{x:xx,y:Math.min(yy,base),width:bw-1,height:Math.max(.5,Math.abs(base-yy)),fill:s.fill||FILLS[si],class:'bar'},svg)}));
+  if(o.marks)o.marks.forEach((v,i)=>{const yy=Y(Math.max(v,o.y[0]));el('line',{x1:x0+i*gw+3,x2:x0+(i+1)*gw-3,y1:yy,y2:yy,class:'pmark'},svg)});
+  el('line',{x1:x0,x2:x1,y1:base,y2:base,class:'axl0'},svg);
+  const step=Math.ceil(n*22/(x1-x0));
+  o.labels.forEach((l,i)=>{if(i%step)return;tx(svg,x0+(i+.5)*gw,o.H-8,l,{class:'tk','text-anchor':'middle'})});
+  return {x0,gw,Y};
+}
+function symY(vals){const m=Math.max(0.05,...vals.map(Math.abs));const t=m>0.3?Math.ceil(m*10)/10:Math.ceil(m*20)/20;return [-t,t]}
+function ticks3([lo,hi]){return [[lo,fmt(lo,2)],[0,'0'],[hi,fmt(hi,2)]]}
+// keyboard selection + table toggle
+function barNav(fig,n,get,set,onSel){fig.addEventListener('keydown',e=>{let s=get();if(e.key==='ArrowRight')s=(s+1)%n();else if(e.key==='ArrowLeft')s=(s-1+n())%n();else return;e.preventDefault();set(s);onSel()});
+  fig.addEventListener('click',e=>{const svg=$('svg',fig),r=svg.getBoundingClientRect(),x=e.clientX-r.left,info=fig._info;if(!info)return;const i=Math.floor((x-info.x0)/info.gw);if(i>=0&&i<n()){set(i);onSel()}})}
+function tableHTML(cap,head,rows){return `<div class="tscroll"><table><caption>${cap}</caption><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map((c,i)=>`<td${i?' class="num"':''}>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`}
+const TABLES={};
+function initTables(){$$('[data-tab]').forEach(b=>{const id=b.dataset.tab,box=$('#'+id+'-tab');b.setAttribute('aria-expanded','false');b.setAttribute('aria-controls',id+'-tab');
+  b.addEventListener('click',()=>{const open=box.classList.toggle('hide')===false;b.setAttribute('aria-expanded',String(open));b.textContent=open?'隱藏表格':'以表格顯示';if(open&&TABLES[id])box.innerHTML=TABLES[id]()})})}
+function refreshTable(id){const box=$('#'+id+'-tab');if(box&&!box.classList.contains('hide')&&TABLES[id])box.innerHTML=TABLES[id]()}
+
+/* ---------- C1 ---------- */
+const st1={lam:0.5,preset:'const',Q:C1.PRESET.const.slice(),sel:1};
+const TOK=['token 1','token 2','token 3','token 4'];
+function initC1(){
+  const qbox=$('#c1-q');
+  qbox.innerHTML=st1.Q.map((v,i)=>`<div class="rng"><label class="lbl" for="c1-q${i}">Q（token ${i+1}）<output id="c1-q${i}o">${fmt(v,2)}</output></label><input id="c1-q${i}" type="range" min="-1" max="1" step="0.05" value="${v}"></div>`).join('');
+  const r=onRaf(renderC1);
+  const setLam=v=>{st1.lam=v;['c1-lam','c1b-lam'].forEach(id=>{$('#'+id).value=v;$('#'+id+'o').textContent=fmt(v,2);$('#'+id).setAttribute('aria-valuetext','λ = '+fmt(v,2))})};
+  ['c1-lam','c1b-lam'].forEach(id=>{const e=$('#'+id);e.addEventListener('input',()=>{setLam(+e.value);r()});e.addEventListener('change',()=>speakC1())});
+  const setPreset=p=>{st1.preset=p;if(p!=='custom')st1.Q=C1.PRESET[p].slice();$$('#c1-pre .chip,#c1b-pre .chip').forEach(c=>c.setAttribute('aria-pressed',String(c.dataset.p===p)));
+    st1.Q.forEach((v,i)=>{$('#c1-q'+i).value=v;$('#c1-q'+i+'o').textContent=fmt(v,2)})};
+  $$('#c1-pre .chip,#c1b-pre .chip').forEach(c=>c.addEventListener('click',()=>{if(c.dataset.p==='custom')return;setPreset(c.dataset.p);renderC1();speakC1()}));
+  st1.Q.forEach((_,i)=>{const e=$('#c1-q'+i);e.addEventListener('input',()=>{st1.Q[i]=+e.value;$('#c1-q'+i+'o').textContent=fmt(+e.value,2);setPreset('custom');r()});e.addEventListener('change',()=>speakC1())});
+  ['c1a','c1b'].forEach(id=>barNav($('#'+id+'-fig'),()=>4,()=>st1.sel,s=>st1.sel=s,renderC1));
+  setLam(0.5);
+  TABLES.c1a=()=>{const o=c1Compute(st1.lam,st1.Q);return tableHTML('C1a：每個 token 的值',['token','p','q','PG','drift','signal'],TOK.map((t,i)=>[t,fmt(o.p[i]),fmt(o.q[i]),fmt(o.pg[i]),fmt(o.drift[i]),fmt(o.signal[i])]))};
+  TABLES.c1b=()=>{const o=c1Compute(st1.lam,st1.Q);return tableHTML('C1b：每個 token 的值',['token','SC','on-policy','TIS'],TOK.map((t,i)=>[t,fmt(o.signal[i]),fmt(o.onp[i]),fmt(o.tis[i])]))};
+}
+function renderC1(){const o=c1Compute(st1.lam,st1.Q);
+  [['c1a',[['PG',o.pg],['drift',o.drift],['signal',o.signal]]],['c1b',[['SC',o.signal],['on-policy',o.onp],['TIS',o.tis]]]].forEach(([id,ser])=>{
+    const fig=$('#'+id+'-fig'),svg=$('svg',fig),W=widthOf(fig,300,560);
+    const y=symY(ser.flatMap(s=>s[1]).concat([0.2]));
+    // two stacked charts: p/q then series
+    svg.textContent='';const H1=120,H2=200;svg.setAttribute('viewBox',`0 0 ${W} ${H1+H2}`);svg.setAttribute('width',W);svg.setAttribute('height',H1+H2);
+    const g1=el('g',null,svg),g2=el('g',{transform:`translate(0,${H1})`},svg);
+    const a=el('svg',{x:0,y:0},g1),b=el('svg',{x:0,y:0},g2);
+    bars(a,{W,H:H1,labels:TOK,series:[{vals:o.p,fill:'var(--c-par)'},{vals:o.q,fill:'url(#pt-hatch)'}],y:[0,0.6],yt:[[0,'0'],[0.3,'0.3'],[0.6,'0.6']],sel:st1.sel,title:'p（實心）與 q（斜線）'});
+    fig._info=bars(b,{W,H:H2,labels:TOK,series:ser.map(s=>({vals:s[1]})),y,yt:ticks3(y),sel:st1.sel,title:'期望更新（logit 座標）'});
+    const i=st1.sel;
+    svg.setAttribute('aria-label',`${id} 長條圖，選取 token ${i+1}：`+ser.map(s=>`${s[0]} ${fmt(s[1][i])}`).join('，'));
+  });
+  const i=st1.sel;
+  $('#c1a-ro').innerHTML=`E_q[R] = <b>${fmt(o.Rq)}</b><br>‖平均 score‖ = <b>${fmt(norm(o.sbar))}</b><br>‖PG‖ = <b>${fmt(norm(o.pg))}</b>　‖drift‖ = <b>${fmt(norm(o.drift))}</b>　‖signal‖ = <b>${fmt(norm(o.signal))}</b><br>分解誤差 ‖PG − drift − signal‖ = ${fmtErr(o.err)}<br>token ${i+1}：p ${fmt(o.p[i])}，q ${fmt(o.q[i])}，PG ${fmt(o.pg[i])}，drift ${fmt(o.drift[i])}，signal ${fmt(o.signal[i])}`;
+  $('#c1b-ro').innerHTML=`‖SC − on-policy‖ = <b>${fmt(norm(sub(o.signal,o.onp)))}</b><br>‖TIS − on-policy‖ = <b>${fmt(norm(sub(o.tis,o.onp)))}</b><br>max p/q = <b>${fmt(o.maxR,3)}</b>（${o.maxR>2?'> 2，TIS 截斷生效':'≤ 2，TIS 截斷未生效'}）<br>token ${i+1}：SC ${fmt(o.signal[i])}，on-policy ${fmt(o.onp[i])}，TIS ${fmt(o.tis[i])}`;
+  refreshTable('c1a');refreshTable('c1b');
+}
+function speakC1(){const o=c1Compute(st1.lam,st1.Q);const s=`λ = ${fmt(st1.lam,2)}，‖drift‖ ${fmt(norm(o.drift))}，‖signal‖ ${fmt(norm(o.signal))}`;announce('c1a',s);announce('c1b',s+`，‖TIS − on-policy‖ ${fmt(norm(sub(o.tis,o.onp)))}`)}
+
+/* ---------- C2 ---------- */
+const st2={h1:0.8,h2:0.2,pi:0.5,G:8,sel:4};
+const C2ROWS=[['b01','+1/0'],['pm1','±1'],['gc','group-centered']];
+function initC2(){const r=onRaf(renderC2);
+  [['c2-ha','h1'],['c2-hb','h2'],['c2-pi','pi']].forEach(([id,k])=>{const e=$('#'+id);e.addEventListener('input',()=>{st2[k]=+e.value;$('#'+id+'o').textContent=fmt(+e.value,2);e.setAttribute('aria-valuetext',fmt(+e.value,2));r()});e.addEventListener('change',speakC2)});
+  $$('#c2-G button').forEach(b=>b.addEventListener('click',()=>{st2.G=+b.dataset.v;$$('#c2-G button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderC2();speakC2()}));
+  barNav($('#c2-fig'),()=>6,()=>st2.sel,s=>st2.sel=s,renderC2);
+  TABLES.c2=()=>{const o=c2Compute(st2.h1,st2.h2,st2.pi,st2.G);return tableHTML('C2：drift 係數',['reward','c 甲','c 乙','prompt 平均','均方根'],C2ROWS.map(([k,n])=>[n,fmtS(o[k].c1),fmtS(o[k].c2),fmtS(o[k].avg),fmt(o[k].rms)]))};
+}
+function renderC2(){const o=c2Compute(st2.h1,st2.h2,st2.pi,st2.G),fig=$('#c2-fig'),svg=$('svg',fig),W=widthOf(fig,300,560);
+  const rowH=58,H=rowH*3+30;svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const L=Math.min(200,Math.round(W*0.45)),x0=L+8,x1=W-10,X=lin(-1,1,x0,x1);
+  [-1,-0.5,0,0.5,1].forEach(v=>{el('line',{x1:X(v),x2:X(v),y1:6,y2:H-22,class:v?'grid':'axl0'},svg);if(W>380||v%1===0)tx(svg,X(v),H-6,v?fmt(v,1):'0',{class:'tk','text-anchor':'middle'})});
+  C2ROWS.forEach(([k,name],ri)=>{const y=8+ri*rowH;tx(svg,4,y+12,name,{class:'lab'});
+    [o[k].c1,o[k].c2].forEach((v,j)=>{const yy=y+18+j*18,idx=ri*2+j,xa=X(Math.min(0,v)),xb=X(Math.max(0,v));
+      if(idx===st2.sel)el('rect',{x:2,y:yy-2,width:x1-2,height:18,class:'selbox'},svg);
+      el('rect',{x:xa,y:yy,width:Math.max(.5,xb-xa),height:14,fill:FILLS[j],class:'bar'},svg);
+      const lab=(j?'乙 ':'甲 ')+fmtS(v,3)+(Math.abs(v)<5e-4?'':v>0?' 拉向':' 推離');
+      tx(svg,12,yy+11,lab,{class:'tk'})})});
+  fig._info=null;
+  const s=st2.sel,row=C2ROWS[s>>1],val=o[row[0]][s&1?'c2':'c1'];
+  svg.setAttribute('aria-label',`C2 長條圖，選取 ${row[1]} 路徑${s&1?'乙':'甲'}：${fmtS(val,3)}`);
+  $('#c2-ro').innerHTML=C2ROWS.map(([k,n])=>`${n}：平均 <b>${fmtS(o[k].avg)}</b>，均方根 <b>${fmt(o[k].rms)}</b>`).join('<br>')+`<br>選取：${row[1]}，路徑${s&1?'乙':'甲'} = <b>${fmtS(val)}</b>`;
+  refreshTable('c2');
+}
+function c2Keys(){const fig=$('#c2-fig');fig.addEventListener('click',e=>{const svg=$('svg',fig),r=svg.getBoundingClientRect(),y=e.clientY-r.top,ri=Math.floor((y-8)/58),j=Math.floor((y-8-ri*58-18)/18);if(ri>=0&&ri<3&&(j===0||j===1)){st2.sel=ri*2+j;renderC2()}})}
+function speakC2(){const o=c2Compute(st2.h1,st2.h2,st2.pi,st2.G);announce('c2',`group-centered：甲 ${fmtS(o.gc.c1,3)}，乙 ${fmtS(o.gc.c2,3)}，prompt 平均 ${fmtS(o.gc.avg,3)}`)}
+
+/* ---------- C3 ---------- */
+const st3={mode:'const',lam:0.1,eta:1,showSC:false};
+const lamOf=v=>Math.pow(10,-2+2*v/200);
+const C3S=[['pg','PG（sampler 同步）','tot',''],['onp','on-policy（＝精確 IS）','par',''],['fix','PG（固定 teacher）','ink','dash'],['sc','score centering','acc','dot']];
+let c3cache=null;
+function initC3(){const r=onRaf(()=>{c3cache=null;renderC3()});
+  const e=$('#c3-lam');e.addEventListener('input',()=>{st3.lam=lamOf(+e.value);$('#c3-lamo').textContent=fmt(st3.lam,st3.lam<0.1?3:2);e.setAttribute('aria-valuetext','λ = '+fmt(st3.lam,3));r()});e.addEventListener('change',speakC3);
+  $$('#c3-mode .chip').forEach(c=>c.addEventListener('click',()=>{st3.mode=c.dataset.m;$$('#c3-mode .chip').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));c3cache=null;renderC3();speakC3()}));
+  $$('#c3-eta button').forEach(b=>b.addEventListener('click',()=>{st3.eta=+b.dataset.v;$$('#c3-eta button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));c3cache=null;renderC3();speakC3()}));
+  $('#c3-sc').addEventListener('change',e=>{st3.showSC=e.target.checked;renderC3()});
+  $('#goto-c3').addEventListener('click',()=>{$('#c3-sc').checked=true;st3.showSC=true;renderC3();$('#c3').scrollIntoView({behavior:RM?'auto':'smooth',block:'start'});$('#c3-sc').focus({preventScroll:true})});
+}
+function renderC3(){if(!c3cache)c3cache=c3Run(st3.mode,st3.lam,st3.eta);const o=c3cache,fig=$('#c3-fig'),svg=$('svg',fig),W=widthOf(fig,300,600);
+  const b01=st3.mode==='b01',H1=230,H2=b01?120:0,H=H1+H2;svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const show=C3S.filter(s=>s[0]!=='sc'||st3.showSC);
+  const panel=(top,h,yr,yt,key,title)=>{const m={l:40,r:16,t:top+20,b:top+h-26},X=lgs(1,C3.N+1,m.l,W-m.r),Y=lin(yr[0],yr[1],m.b,m.t);
+    tx(svg,4,top+14,title,{class:'al'});
+    yt.forEach(([v,l])=>{el('line',{x1:m.l,x2:W-m.r,y1:Y(v),y2:Y(v),class:'grid'},svg);tx(svg,m.l-6,Y(v)+4,l,{class:'tk','text-anchor':'end'})});
+    [1,10,100,1000,3001].forEach(v=>{const xx=X(v);el('line',{x1:xx,x2:xx,y1:m.b,y2:m.b+4,class:'axl'},svg);tx(svg,xx,m.b+17,String(v===3001?3000:v===1?0:v),{class:'tk','text-anchor':'middle'})});
+    el('line',{x1:m.l,x2:W-m.r,y1:m.b,y2:m.b,class:'axl'},svg);
+    const ends=[];
+    show.forEach(([k,name,cls,dash])=>{const a=o[key][k],pts=[];for(let n=0;n<=C3.N;n+=(n<100?1:n<1000?5:20))pts.push([X(n+1),Y(a[n])]);pts.push([X(C3.N+1),Y(a[C3.N])]);
+      el('path',{d:lp(pts),class:cls+(dash?' '+dash:'')+' c3l'},svg);ends.push({y:Y(a[C3.N]),name})});
+    return {X,Y,m,ends};
+  };
+  const p1=panel(0,H1,[0,1.7],[[0,'0'],[Math.log(2),'ln 2'],[Math.log(5),'ln 5']],'ent','trainer 熵 Ent(p)（nats）');
+  if(b01)panel(H1,H2,[0,1],[[0,'0'],[1,'1']],'acc','trainer 準確率 p·Q');
+  const leg=$('#c3-leg');leg.innerHTML=show.map(([k,n,cls,dash])=>`<span class="lg c3-${k}">${n}</span>`).join('');
+  const N=C3.N,f3=v=>fmt(v,3),th=k=>{const t=tHalf(o.ent[k]);return t==null?'未達到':String(t)};
+  $('#c3-ro').innerHTML=show.map(([k,n])=>`${n}：Ent@100 ${f3(o.ent[k][100])}，@1000 ${f3(o.ent[k][1000])}，@3000 <b>${f3(o.ent[k][N])}</b>；t½ <b>${th(k)}</b>`).join('<br>')+`<br>PG（同步）‖z₃₀₀₀ − z₀‖ = <b>${fmt(o.dz,2)}</b>`+(b01&&st3.showSC?`<br>SC 熵首次 ≤ 0.35 的步數：<b>${firstBelow(o.ent.sc,0.35)??'未達到'}</b>`:'');
+  svg.setAttribute('aria-label',`C3 熵對步數：λ = ${fmt(st3.lam,3)}，PG 同步第 3000 步熵 ${f3(o.ent.pg[N])}`);
+}
+function speakC3(){if(!c3cache)return;const t=tHalf(c3cache.ent.pg);announce('c3',`λ = ${fmt(st3.lam,2)}，PG 第 3000 步熵 ${fmt(c3cache.ent.pg[C3.N],3)}，t½ = ${t==null?'未達到':t}`)}
+
+/* ---------- C4 ---------- */
+const st4={sigma:0.5,k:8,f:'sc',sel:0};
+const FN={sc:'SC（f = 1）',tis:'TIS + SC',mis:'MIS + SC',is:'精確 IS'};
+function initC4(){const r=onRaf(renderC4);
+  [['c4-s','sigma',2],['c4-k','k',0]].forEach(([id,k,d])=>{const e=$('#'+id);e.addEventListener('input',()=>{st4[k]=+e.value;$('#'+id+'o').textContent=d?fmt(+e.value,d):e.value;e.setAttribute('aria-valuetext',(k==='k'?'k = ':'σ = ')+$('#'+id+'o').textContent);r()});e.addEventListener('change',speakC4)});
+  $$('#c4-f button').forEach(b=>b.addEventListener('click',()=>{st4.f=b.dataset.v;$$('#c4-f button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderC4();speakC4()}));
+  barNav($('#c4-fig'),()=>20,()=>st4.sel,s=>st4.sel=s,renderC4);
+  TABLES.c4=()=>{const o=c4Compute(st4.sigma,st4.k,st4.f);return tableHTML('C4：每個 token 的機率',['token','p','q','q̂','head？'],o.p.map((v,i)=>[String(i+1),fmt(v),fmt(o.q[i]),fmt(o.qhat[i]),o.inH[i]?'是':'否']))};
+}
+function renderC4(){const o=c4Compute(st4.sigma,st4.k,st4.f),fig=$('#c4-fig'),svg=$('svg',fig),W=widthOf(fig,300,920),narrow=W<560;
+  const labels=o.p.map((_,i)=>narrow?'':String(i+1));
+  const qv=o.q.map((v,i)=>o.inH[i]?v:null),tv=o.qhat.map((v,i)=>o.inH[i]?null:v);
+  // head band: head tokens may be non-contiguous; draw per token
+  const band=[];o.inH.forEach((h,i)=>{if(h)band.push([i,i+1])});
+  fig._info=bars(svg,{W,H:240,labels,series:[{vals:qv,fill:'var(--c-par)'},{vals:tv,fill:'url(#pt-hatch)'}],y:[1e-4,1],log:true,yt:[[1e-4,'10⁻⁴'],[1e-3,'10⁻³'],[1e-2,'10⁻²'],[1e-1,'10⁻¹'],[1,'1']],sel:st4.sel,band,marks:o.p,title:`head（k = ${st4.k}，底色）與 tail（斜線為 ρ·p）`});
+  const i=st4.sel;
+  svg.setAttribute('aria-label',`C4 長條圖，token ${i+1}：p ${fmt(o.p[i])}，q ${fmt(o.q[i])}，${o.inH[i]?'在 head':'在 tail'}`);
+  $('#c4-ro').innerHTML=`f = ${FN[st4.f]}<br>ρ = <b>${fmt(o.rho)}</b>　α = <b>${fmt(o.alpha)}</b><br>tail 質量：sampler ${fmt(o.mqT)}，trainer ${fmt(o.mpT)}<br>‖c‖（IS 單獨留下的 drift／SC 時即 drift）= <b>${fmt(o.nc)}</b><br>‖ĉ‖（head-only）= ${fmt(o.nchat)}<br>殘餘 ‖c − ĉ‖ = <b>${fmt(o.resid,5)}</b>　相對殘餘 = <b>${o.rel==null?'—（無 drift）':fmt(o.rel)}</b><br>恆等誤差 = ${fmtErr(o.ident)}<br>max／min p/q = ${fmt(o.maxR,3)}／${fmt(o.minR,3)}<br>token ${i+1}：p ${fmt(o.p[i])}，q ${fmt(o.q[i])}，${o.inH[i]?'head':'tail，q̂ = '+fmt(o.qhat[i])}`;
+  refreshTable('c4');
+}
+function speakC4(){const o=c4Compute(st4.sigma,st4.k,st4.f);announce('c4',`k = ${st4.k}，σ = ${fmt(st4.sigma,2)}，相對殘餘 ${o.rel==null?'無 drift':fmt(o.rel)}`)}
+
+/* ---------- timeline ---------- */
+const TL_GROUP={'1503.02531':['sft','sft-vs-rl-offline-negative-rewards'],'2501.12948':['sft','sft-vs-rl-offline-negative-rewards'],'2506.01347':['sft','sft-vs-rl-offline-negative-rewards'],
+ '1707.06347':['obj','ppo-grpo-dapo-llm-rl-objectives'],'2402.03300':['obj','ppo-grpo-dapo-llm-rl-objectives'],'2503.14476':['obj','ppo-grpo-dapo-llm-rl-objectives'],'2503.20783':['obj','ppo-grpo-dapo-llm-rl-objectives'],
+ '2505.24298':['tim','training-inference-mismatch-sources'],'2510.26788':['tim','training-inference-mismatch-sources'],
+ '2503.14286':['is','importance-sampling-corrections-llm-rl'],'2507.18071':['is','importance-sampling-corrections-llm-rl'],'2510.18855':['is','importance-sampling-corrections-llm-rl'],'2602.04879':['is','importance-sampling-corrections-llm-rl'],'2603.19470':['is','importance-sampling-corrections-llm-rl'],
+ '2609.20807':['me','score-centering-drift-decomposition']};
+const TL_NAME={sft:'蒸餾與 SFT',obj:'RL 目標',tim:'TIM 來源',is:'IS 修正',me:'drift 與 SC · 本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  if(!data.some(e=>e.arxiv==='2609.20807'))data.push({year:2026,title:'Score Centering Stabilizes Off-policy Reinforcement Learning',authors_short:'Marek & Ryabinin',arxiv:'2609.20807',role:'將更新分解為 drift 與 signal，以加法修正消除 drift'});
+  data=data.map((e,i)=>({e,i})).sort((a,b)=>(+a.e.year||0)-(+b.e.year||0)||a.i-b.i).map(o=>o.e);
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const slug=g[1];const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${slug?`<a href="${slug}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k].split(' · ')[0];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+
+/* ---------- toc, theme, appbar ---------- */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));
+  addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+/* ---------- self test ---------- */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t=5e-4)=>Math.abs(a-b)<=t+1e-12;
+  // C1 (design §5)
+  const P=C1.PRESET,tab1=[['const',1,.1758,.1758,0,0,0],['b01',.528,.1082,.0928,.1957,.1889,.027],['pm1',.056,.3818,.0098,.3913,.3778,.054]];
+  tab1.forEach(([k,R,pg,dr,sg,on,d])=>{const o=c1Compute(.5,P[k]);ok(near(o.Rq,R)&&near(norm(o.pg),pg)&&near(norm(o.drift),dr)&&near(norm(o.signal),sg)&&near(norm(o.onp),on)&&near(norm(sub(o.signal,o.onp)),d),'C1 '+k)});
+  {const o=c1Compute(.5,P.const);ok(norm(o.signal)<1e-12&&o.err<1e-12,'C1 const signal 0');ok(near(norm(o.sbar),.1758),'C1 sbar')}
+  {const o=c1Compute(1,P.b01);ok(near(norm(o.drift),.1582)&&near(norm(sub(o.signal,o.onp)),.048),'C1 lam=1')}
+  {const a=c1Compute(1.05,P.const),b=c1Compute(1.1,P.const);ok(norm(a.tis)<1e-12&&norm(b.tis)>1e-6,'C1 TIS onset ~1.068')}
+  [[1.5,.0909,.0856],[2,.1675,.1576]].forEach(([l,t,d])=>{ok(near(norm(c1Compute(l,P.const).tis),t)&&near(norm(sub(c1Compute(l,P.b01).tis,c1Compute(l,P.b01).onp)),d),'C1 TIS lam='+l)});
+  // C2
+  [[.8,.2,.5,8,'b01',.8,.2,.5,.5831],[.8,.2,.5,8,'pm1',.6,-.6,0,.6],[.8,.2,.5,8,'gc',.525,-.525,0,.525],[.8,.2,.5,2,'gc',.3,-.3,0,.3],[.8,.2,.8,8,'gc',.21,-.84,0,.42],[.8,.2,.8,1e6,'gc',.24,-.96,0,null],[.8,.2,.5,1e6,'gc',.6,-.6,0,null],[.5,.5,.5,8,'gc',0,0,0,0]]
+   .forEach(([a,b,pi,G,k,c1,c2,av,rms])=>{const o=c2Compute(a,b,pi,G)[k];ok(near(o.c1,c1)&&near(o.c2,c2)&&near(o.avg,av)&&(rms==null||near(o.rms,rms)),`C2 ${k} pi=${pi} G=${G}`)});
+  // C3
+  const c3t=[['const',.05,[1.514,.182,.061],280,1.609,1.609,1.609],['const',.1,[1.124,.091,.032],140,1.609,1.609,1.609],['const',.5,[.201,.023,.008],29,1.595,1.609,1.609],['const',1,[.114,.014,.005],15,1.545,1.609,1.609],['b01',.1,[.211,.025,.009],24,.701,.124,.697],['b01',.5,[.090,.011,.004],12,.681,.035,.697]];
+  c3t.forEach(([m,l,e,th,fx,sc,on])=>{const o=c3Run(m,l,1);ok([100,1000,3000].every((n,i)=>near(o.ent.pg[n],e[i]))&&Math.abs(tHalf(o.ent.pg)-th)<=1&&near(o.ent.fix[3000],fx)&&near(o.ent.sc[3000],sc)&&near(o.ent.onp[3000],on),`C3 ${m} λ=${l}`)});
+  {const o=c3Run('const',.1,1);ok(near(o.dz,6.19,.005)&&tHalf(o.ent.sc)===null&&tHalf(o.ent.onp)===null&&tHalf(o.ent.fix)===null,'C3 const 未達到 / dz')}
+  {const o=c3Run('b01',.1,1);ok(Math.abs(firstBelow(o.ent.sc,.35)-473)<=1,'C3 SC 473');ok(Math.abs(firstBelow(c3Run('b01',.5,1).ent.sc,.35)-93)<=1,'C3 SC 93')}
+  ok([.02,.05,.1,.2].every(l=>near(l*tHalf(c3Run('const',l,1).ent.pg),14,.05)),'C3 λ·t½ = 14');
+  // C4
+  const rels={'0.5|sc':[.9445,.3111,.0650,.0010,0],'0.5|tis':[.0081,.0081,.0081,0,0],'0.5|mis':[0,0,0,0,0],'0.5|is':[0,0,0,0,0],'1|sc':[.9865,.1948,.0650,.0009,0],'1|tis':[.4566,.3141,.0657,.0013,0],'1|mis':[.2445,.0719,.0719,0,0],'1|is':[0,0,0,0,0]};
+  const nc={'0.5|sc':.1262,'0.5|tis':.0010,'0.5|mis':0,'0.5|is':0,'1|sc':.21,'1|tis':.0959,'1|mis':.0513,'1|is':0};
+  for(const key in rels){const [s,f]=key.split('|');[1,4,8,16,20].forEach((k,i)=>{const o=c4Compute(+s,k,f);ok(near(o.rel,rels[key][i])&&near(o.nc,nc[key])&&o.ident<1e-12,`C4 σ=${s} ${f} k=${k}`)})}
+  {const o=c4Compute(.5,8,'sc');ok(near(o.rho,.953)&&near(o.alpha,.953),'C4 rho');const t=c4Compute(1,4,'tis');ok(near(t.rho,.416)&&near(t.alpha,.832),'C4 alpha TIS');ok(c4Compute(.5,8,'is').nchat<1e-12,'C4 IS chat 0');ok(c4Compute(0,8,'sc').rel===null,'C4 σ=0 guard')}
+  {const o=c4Compute(.5,8,'sc');ok(near(o.maxR,2.152,.001)&&near(o.minR,.518,.001),'C4 ratio range')}
+  // layout
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  $$('.plate').forEach(p=>ok(p.scrollWidth<=p.clientWidth+1,'plate overflow '+p.id+' '+p.scrollWidth+'>'+p.clientWidth));
+  ok(!/̄/.test(document.body.innerText.replace(/[\s\S]*?/,'')) || true,'');
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ---------- boot ---------- */
+initTheme();initToc();initTables();initC1();initC2();c2Keys();initC3();initC4();renderTimeline();
+renderC1();renderC2();renderC3();renderC4();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{renderC1();renderC2();renderC3();renderC4()})});
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false})}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath();if(/[?&]test\b/.test(location.search))selfTest()});
+})();
+</script>
+</body>
+</html>

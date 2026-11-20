@@ -11,7 +11,7 @@ related: ["r1-lineage-hub", "r1-rlhf-ppo-background", "r1-grpo-outcome-rewards",
 # 過程監督與 PRM：結果與步驟回饋的比較
 
 **問題設定。** 推理任務的回饋可以只看最終結果（outcome supervision），也可以對每個中間步驟給回饋（process supervision）。
-- Uesato 等（2022，arXiv 2211.14275）摘要：提出此問題，比較結果式與過程式監督。
+- Uesato 等（2022，arXiv 2211.14275）摘要：提出此問題，比較結果式與過程式監督，並稱之為在自然語言任務上第一個全面的比較。
 - Lightman 等（2023，arXiv 2305.20050）摘要：同樣比較兩種監督，並強調人類回饋成本高；其訓練的 process reward model 見 [RLVR、GRPO 與信用分配瓶頸](rlvr-grpo-credit-assignment.html)。
 - Wang 等（2023，arXiv 2312.08935，Math-Shepherd）摘要：以自動建構的過程監督資料訓練對每一步給分的 PRM，不依賴人工標註，用於驗證（重排序）與強化學習。
 

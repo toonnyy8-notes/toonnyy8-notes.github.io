@@ -1,0 +1,1275 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SOAR 互動教學：讓模型為自己出題</title>
+<meta name="description" content="圖解 SOAR（arXiv 2601.18778）：同一個模型分成老師與學生，老師出練習題，獎勵是學生之後在 fail@128 難題上的正確率進步；雙層 RLOO、學生晉升、grounded 與可學習性獎勵的比較。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+
+/* ---- No. 447 additions ---- */
+:root{--c-ref:var(--c-par)}
+details.more{max-width:760px;margin:16px 0 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.more>summary{cursor:pointer;list-style:none;padding:12px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px;color:var(--ink-2)}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.more[open]>summary::before{transform:rotate(45deg)}
+details.more>.tscroll{margin:0 12px 12px}
+details.more.mini{margin:0;border-radius:10px}
+details.more.mini>summary{font-size:13px;padding:8px 14px}
+details.more.mini .readout{margin:0 8px 8px}
+.lg.sq::before{width:9px;height:9px;border:2px solid var(--ink);border-radius:1px}
+.lg.ring::before{width:12px;height:12px;border:2px solid var(--accent);border-radius:50%}
+.lg.dia::before{width:9px;height:9px;border:2px solid var(--ink);transform:rotate(45deg)}
+.lg.cref::before{border-top:3px dashed var(--c-ref)}
+.lg.samp::before{border-top:1.5px solid var(--ink-2)}
+.quote{padding:10px 16px;border:1px solid var(--line);background:var(--surface);border-radius:10px}
+.note.small{font-size:13px;margin:-6px 0 0;line-height:1.55}
+.hero-strip{max-width:520px;margin:8px 0 0}
+.hero-strip .cap{font-size:13px;color:var(--ink-3)}
+svg .samp{stroke:var(--ink-2);stroke-width:1.2;fill:none;opacity:.7}
+svg .cref{stroke:var(--c-ref);stroke-width:3;fill:none;stroke-dasharray:7 5}
+svg .plan{stroke:var(--accent);stroke-width:3;fill:none}
+svg .plan0{stroke:var(--ink-2);stroke-width:1.6;fill:none}
+svg .mk{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .mk-acc{fill:none;stroke:var(--accent);stroke-width:2.5}
+svg .cell{stroke:var(--line);stroke-width:.5}
+svg .cur-col{fill:none;stroke:var(--ink);stroke-width:2}
+svg .frame{fill:none;stroke:var(--line)}
+svg .warn{font:500 14px var(--f-body);fill:var(--accent)}
+.warm{max-width:760px;margin:12px 0 24px;display:flex;flex-direction:column;gap:12px;padding:18px 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+.lane{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lane-h{font:500 12px/1 var(--f-mono);color:var(--ink-3);width:4.5em}
+.nd{padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);font-size:14px;line-height:1.3}
+.nd.acc{border-color:var(--accent);background:var(--accent-soft)}
+.ar{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-2)}
+.ar::before{content:"";width:22px;border-top:2px solid var(--ink-2)}
+.ar::after{content:"";width:0;height:0;border-left:6px solid var(--ink-2);border-top:4px solid transparent;border-bottom:4px solid transparent;margin-left:-6px}
+.ar.dash::before{border-top-style:dashed}
+.plate .readout{white-space:pre-line}
+@media (max-width:599px){.lane-h{width:100%}}
+/* ---- shared additions (copied from No. 131 css_add.css) ---- */
+:root{--c-1:var(--c-par);--c-2:var(--c-perp)}
+pre.code{background:var(--surface-2);border-radius:10px;padding:12px 14px;overflow-x:auto;font:400 13px/1.6 var(--f-mono);color:var(--ink);max-width:860px}
+dl.ro{display:grid;grid-template-columns:auto auto;gap:4px 14px;margin:0;font:400 13px/1.6 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px}
+dl.ro dt{color:var(--ink-3)}dl.ro dd{margin:0;color:var(--ink);text-align:right;font-variant-numeric:tabular-nums}
+dl.ro .acc{color:var(--accent);font-weight:600}
+.two-col{display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
+.two-col dl.ro{grid-template-columns:auto auto}
+table.mini td,table.mini th{font-size:14px}
+svg .c1{stroke:var(--c-1);stroke-width:2.5;fill:none}
+svg .c2{stroke:var(--c-2);stroke-width:2.5;fill:none;stroke-dasharray:7 4}
+svg .c1-f{fill:var(--c-1)}svg .c2-f{fill:var(--c-2)}
+svg .acc-s{stroke:var(--accent);stroke-width:2.5;fill:none}
+svg .edge{stroke:var(--ink-3);stroke-width:1.5;fill:none}
+svg .node{fill:var(--surface);stroke:var(--ink-2);stroke-width:1.5}
+svg .leaf{fill:var(--surface-2);stroke:var(--ink-3);stroke-width:1}
+svg .on-path{stroke:var(--accent);stroke-width:3}
+svg .pos{fill:var(--c-1)}svg .neg{fill:var(--c-2)}
+svg .axis0{stroke:var(--ink-3);stroke-width:1}
+svg .hatch-ln{stroke:var(--c-1);stroke-width:2}
+svg .hatch2-ln{stroke:var(--c-2);stroke-width:2}
+svg .dot-c{fill:var(--accent)}
+svg .halo{paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round}
+.lg.c1::before{border-top:2.5px solid var(--c-1)}
+.lg.c2::before{border-top:2.5px dashed var(--c-2)}
+.lg.acc::before{border-top:2.5px solid var(--accent)}
+.lg.box::before{width:14px;height:12px;border:0;border-radius:2px}
+.lg.solid1::before{background:var(--c-1)}
+.lg.hat1{--hc:var(--c-1)}.lg.hat1::before{background:var(--c-1);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='5'%3E%3Cpath d='M-1 6L6 -1M-1 1L1 -1M4 6L6 4' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E") 0 0/5px 5px;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='5'%3E%3Cpath d='M-1 6L6 -1M-1 1L1 -1M4 6L6 4' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E") 0 0/5px 5px;box-shadow:inset 0 0 0 1px var(--c-1)}
+.lg.solid2::before{background:var(--c-2)}
+.lg.hat2{--hc:var(--c-2)}.lg.hat2::before{background:var(--c-2);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='5'%3E%3Cpath d='M-1 6L6 -1M-1 1L1 -1M4 6L6 4' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E") 0 0/5px 5px;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='5'%3E%3Cpath d='M-1 6L6 -1M-1 1L1 -1M4 6L6 4' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E") 0 0/5px 5px;box-shadow:inset 0 0 0 1px var(--c-2)}
+.lg.dots::before{background:radial-gradient(var(--accent) 1.4px,transparent 1.6px) 0 0/4px 4px;outline:1px solid var(--accent)}
+.lg.hollow::before{background:transparent;outline:2px solid var(--ink-2);outline-offset:-2px}
+.mono-sm{font:400 13px/1.6 var(--f-mono);color:var(--ink-2)}
+.okline{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);margin:0}
+.okline b{color:var(--ink);font-weight:500}
+.katex-display{position:relative}
+/* ---- No. 127 additions ---- */
+:root{--c-a:var(--c-par);--c-b:var(--c-perp)}
+.symbols{max-width:700px;margin:0 0 18px;padding:10px 14px;border:1px solid var(--line);background:var(--surface);border-radius:10px;font-size:14px;line-height:1.7;color:var(--ink-2)}
+.symbols b{font-weight:600;color:var(--ink);margin-right:6px}
+.tabs{display:flex;gap:4px;margin:6px 0 16px}
+.tabs button{min-height:44px;padding:0 16px;border:0;border-bottom:2px solid var(--line);background:transparent;color:var(--ink-2);font:500 14px/1 var(--f-body);cursor:pointer}
+.tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--accent)}
+table.grid4 th,table.grid4 td{padding:6px 6px;text-align:center}
+table.grid4 td.num{text-align:right}
+table.grid4 input{width:46px;min-height:40px;padding:0 6px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--ink);font:500 14px/1 var(--f-mono);text-align:right}
+table.grid4 input[aria-invalid=true]{border:2px solid var(--accent)}
+table.grid4 td.sel input{outline:2px solid var(--accent);outline-offset:1px}
+table.grid4 tr.sel th{color:var(--accent)}
+.err{margin:6px 0 0;font-size:13px;color:var(--accent);min-height:1em}
+.c3-steps{margin:12px 0;padding-left:1.4em;font-size:14px;line-height:1.7;color:var(--ink-2)}
+.c3-steps code{color:var(--ink)}
+.verdict{margin:0;padding:10px 14px;border-radius:10px;border:1px solid var(--line);font:500 14px/1.6 var(--f-body);color:var(--ink)}
+.verdict.on{border-color:var(--accent);background:var(--accent-soft)}
+dl.ro.two{grid-template-columns:auto 1fr;margin-top:12px}
+dl.ro.two dd{text-align:left;word-break:break-word}
+#c2-rows .srow{display:grid;grid-template-columns:4.5em 5.5em minmax(0,1fr);gap:8px;align-items:center;margin:6px 12px}
+#c2-rows select{min-height:40px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--ink);font:500 14px/1 var(--f-mono);padding:0 6px}
+#c2-custom{max-width:none}
+#c2-custom>p,#c2-custom>.ctl-row{margin:6px 12px}
+.c4-ctl{margin:0 0 16px;gap:10px}
+.c4-row{display:block;width:100%;text-align:left;border:0;background:transparent;padding:0;cursor:pointer;color:var(--ink);border-radius:8px}
+.c4-row:hover{background:var(--surface-2)}
+.c4-row[aria-pressed=true]{background:var(--accent-soft)}
+.c4-row svg{display:block}
+.c4-grp{font:600 12px/1 var(--f-body);color:var(--ink-3);margin:14px 0 4px;letter-spacing:.04em}
+.c4-gnote{font-size:12px;line-height:1.5;color:var(--ink-3);margin:2px 0 6px}
+.lg.mk-f::before,.lg.mk-o::before,.lg.mk-d::before{width:10px;height:10px;border:0;border-radius:50%}
+.lg.mk-f::before{background:var(--accent)}
+.lg.mk-o::before{box-shadow:inset 0 0 0 2px var(--ink-2)}
+.lg.mk-d::before{background:var(--c-a);border-radius:1px;transform:rotate(45deg) scale(.85)}
+svg .lbl13{font:400 13px var(--f-body);fill:var(--ink-2)}
+svg .lbl12{font:400 12px var(--f-body);fill:var(--ink-3)}
+svg .box{fill:var(--surface);stroke:var(--ink-2);stroke-width:1.5}
+svg .box-in{fill:var(--surface-2);stroke:none}
+svg .dash{fill:none;stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:5 4}
+svg .arr{stroke:var(--ink-2);stroke-width:1.5;fill:none}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;stroke-dasharray:5 4;fill:none}
+svg .cb{stroke:var(--c-b);stroke-width:2.5;fill:none;stroke-dasharray:2 4;stroke-linecap:round}
+svg .fill-acc{fill:var(--accent)}svg .fill-ink3{fill:var(--ink-3)}svg .fill-b{fill:var(--c-b)}svg .fill-a{fill:var(--c-a)}
+svg .shade{fill:var(--accent-soft)}
+.lg.light1::before{background:var(--c-a);opacity:.35}
+svg .ref2{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:1 3;fill:none}
+table.grid4 th,table.grid4 td{white-space:nowrap}
+@media (max-width:479px){table.grid4 th,table.grid4 td{padding:6px 3px}table.grid4 input{width:42px;padding:0 4px}}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 127</span>
+  <span class="ttl">讓模型為自己出題（SOAR）</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- §0 -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 127</b> · 互動教學 · arXiv 2601.18778 · 2026</div>
+  <h1>讓模型為自己出題：在可學習性的邊界上訓練推理</h1>
+  <p class="dek">同一個模型分成老師與學生。老師出練習題，獎勵是學生之後在真難題上的進步。</p>
+  <p class="byline">Shobhita Sundaram、John Quan、Ariel Kwiatkowski、Kartik Ahuja、Yann Ollivier、Julia Kempe（MIT、Meta FAIR、NYU）〈Teaching Models to Teach Themselves: Reasoning at the Edge of Learnability〉</p>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 問題</span><p>模型對一道題取樣 128 次全錯，就無法從答對的經驗中學習；本文研究的就是這種題目。</p></div>
+    <div class="fact"><span class="n">02 · 方法</span><p>同一個模型複製成老師與學生：老師出練習題，學生練習後在難題上答對越多，老師的獎勵越高。老師從沒看過難題。</p></div>
+    <div class="fact"><span class="n">03 · 結果</span><p>在 MATH 的這類難題上，取樣 32 次至少答對一次的比例由 9.6% 提高到 18.9%（加入老師累積的題目後重新訓練，Table 4）。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2601.18778">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-127">在關聯圖中查看</a>
+    <a class="btn" href="soar-lineage-hub.html">研究筆記總覽</a>
+  </div>
+</section>
+
+<!-- §1a -->
+<section class="ch" id="sparse" data-toc="01" data-tt="全錯的題目">
+  <div class="ch-num">01 · 全錯的題目</div>
+  <h2>模型全部答錯的題目無法提供訓練訊號</h2>
+  <aside class="symbols"><b>本節符號</b> $p$：模型單次取樣答對某道難題的機率（本頁使用）；pass@$k$：取樣 $k$ 次至少答對一次的比例。</aside>
+  <div class="prose">
+    <p>以可驗證獎勵做強化學習（RLVR，reinforcement learning with verifiable rewards）的做法是：讓語言模型對一道數學題產生完整的解答，由程式檢查最後的答案是否與標準答案相同，答對就給獎勵，再依獎勵調整模型參數，使得到獎勵的解答更常出現。模型每次產生解答都帶有隨機性（溫度 1.0 的取樣），所以同一題可以取樣多次。<b>pass@$k$</b> 是「每題取樣 $k$ 次、至少有一次答對」的題目比例。</p>
+    <p>這種方法只能從模型「偶爾答對」的題目學到東西。作者用 Llama-3.2-3B-Instruct 對 MATH、HARP、OlympiadBench 三個數學題庫的每一題取樣 128 次（token 上限 1024、溫度 1.0），只保留 128 次全錯的題目，稱為 <b>fail@128</b> 子集，再隨機對半切成訓練集 $D_{train}$ 與測試集 $D_{test}$（Sec. 4.1、App. B.5）。題數因此大幅減少：MATH 的 5000 題中只有 359 + 360 = 719 題留下，HARP 4768 題留下 714 + 714 題，OlympiadBench 674 題留下 158 + 158 題（Table 2）。MATH 只從官方的 5000 題測試集取題，因為模型在官方訓練集與測試集上的零樣本正確率是 60% 對 37%，作者懷疑模型看過訓練題。作者說 128 是「實用但嚴格」的門檻：在這個門檻下，直接訓練只有邊際改善。</p>
+    <p>0/128 不等於「永遠答不對」<span class="tag">本頁推導</span>。如果某題單次答對的機率是 $p$、各次取樣獨立，128 次全錯的機率是 $(1-p)^{128}$。取 $p=0.002$（依 Table 4 基礎模型 pass@1 = 0.3% 選的示範值）<span class="tag">示範值</span>，通過 0/128 篩選的機率是 $(1-p)^{128}=0.774$，而這題的 pass@32 是 $1-(1-p)^{32}=0.062$。所以 0/128 的題目仍可能偶爾答對；篩選留下的不一定是 $p=0$ 的題目。論文對「基礎模型在 fail@128 測試集上 pass@32 仍有 7.5%（MATH）」的解釋是：推論時用的隨機種子和篩選時不同（Sec. 5.1）。本頁的單題模型只是另一種描述方式，不是論文的主張。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="soar-rlvr-sparse-reward-plateau.html">RLVR 在低成功率資料上的停滯</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$p=0.002$ 時，題目通過 0/128 篩選的機率與 pass@32 各是多少？</p>
+    <p class="a">$(1-p)^{128}=0.774$；pass@32 $=1-(1-p)^{32}=0.062$（本頁推導，p 為示範值），所以 0/128 的題目仍可能偶爾答對。</p>
+  </div></details>
+</section>
+
+<!-- §1b -->
+<section class="ch" id="rloo" data-toc="02" data-tt="RLOO">
+  <div class="ch-num">02 · RLOO</div>
+  <h2>RLOO 以群組內比較產生優勢</h2>
+  <aside class="symbols"><b>本節符號</b> 全頁三個容易混淆的數：$G$＝每題取樣的解答數，$g$＝老師每步產生的資料集數，$r$＝每個資料集訓練的學生數。$G$：同一題取樣的解答數（學生群組大小）；$R(z_i)$：第 $i$ 個解答的獎勵；$A(z_i)$：優勢。</aside>
+  <div class="prose">
+    <p>策略梯度方法的基本元件是：每個解答 $z$ 的 log 機率梯度 $\nabla\ln\pi(z)$ 指出「怎麼調參數才能讓這個解答更常出現」。把它乘上一個稱為<b>優勢</b>（advantage）的數，比平均好的解答（優勢為正）會變得更常出現，比平均差的（優勢為負）會變得更少出現。</p>
+    <p>RLOO（REINFORCE Leave-One-Out，Ahmadian et al., 2024）對同一題取樣 $G$ 個解答，用「其他 $G-1$ 個解答的平均獎勵」當比較基準：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$A(z_i)=R(z_i)-\frac1{G-1}\sum_{j\ne i}R(z_j),\qquad \text{更新方向}=\sum_{i=1}^{G}A(z_i)\,\nabla\ln\pi(z_i)$$</div><span class="eq-n">Eq. 4（群組大小記為 G）</span></div>
+  <div class="prose">
+    <p>同一式可以改寫成 $A(z_i)=\frac{G}{G-1}\big(R(z_i)-\bar R\big)$，$\bar R$ 是群組平均 <span class="tag">本頁推導</span>，因此一個群組的優勢總和永遠是 0。學生的群組大小是 $G=32$（Table 3）。</p>
+    <p><b>二元獎勵下，全錯的群組沒有梯度</b> <span class="tag">本頁推導</span>。論文把這個情形稱為「稀疏的二元獎勵」（Sec. 1、Sec. 4.1）。如果獎勵只有答對（1）與答錯（0）兩種，一組解答全部答錯時獎勵全為 0，代入 Eq. 4 得到每個 $A(z_i)=0$，更新方向是 0，模型完全沒有被推動。群組內同時有對有錯的機率是 $1-(1-p)^G-p^G$；$G=32$、$p=0.002$ 時是 0.062，也就是約 94% 的題目在一次取樣中不提供「往答對方向」的梯度（這個 94% 是二元獎勵模型下的數字）。</p>
+    <p>論文實際使用的學生獎勵不是二元的（App. B.3，用 Math-Verify 套件比對答案，數字照原文印刷）：有 <code>\boxed{}</code> 且答案正確給 120.0；有 boxed、答案錯但標準答案出現在答案字串中給 20.0；有 boxed、答案錯且不含標準答案給 10.0；其他給 0.0。所以實際上全錯的群組，獎勵通常仍有 0、10、20 的差別，梯度不為 0；但這些差別只教「用 boxed 寫出答案」的格式，不教如何答對。</p>
+  </div>
+
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>成功率 p 決定訓練訊號</h3><span class="tag">本頁推導</span><span class="tag">示範值</span></div>
+    <p class="plate-lead">本圖假設同一題每次答對的機率固定為 p、每次取樣獨立，且獎勵只有對與錯兩種（論文的實際獎勵另有格式分數）。論文沒有估計個別題目的 p；預設 p = 0.002 是依 pass@1 = 0.3% 選的示範值。</p>
+    <div class="pg side">
+      <div class="fig"><div id="c1-fig"><svg role="img" aria-label="三條曲線對 p 的關係"></svg></div>
+        <div class="legend"><span class="lg ref">通過 0/128 篩選（圓）</span><span class="lg acc">pass@k（方）</span><span class="lg c2">群組有梯度，二元獎勵（三角）</span></div>
+        <p class="note small" id="c1-note"></p></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1-p">log₁₀ p <output id="c1-po"></output></label><input type="range" id="c1-p" min="-4" max="0" step="0.01" value="-2.699"></div>
+        <div><div class="lbl">學生群組大小 G</div><div class="seg" id="c1-G" role="radiogroup" aria-label="學生群組大小 G"></div></div>
+        <div><div class="lbl">k</div><div class="seg" id="c1-k" role="radiogroup" aria-label="pass@k 的 k"></div></div>
+        <dl class="ro" id="c1-read"></dl>
+        <p class="sr" id="c1-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依 (1 − p)^128、1 − (1 − p)^k、1 − (1 − p)^G − p^G 即時計算（用 log1p／expm1 避免小 p 的相消）。參照線 7.5% 是 Table 4 基礎模型在 MATH fail@128 測試集上的平均 pass@32，不是單題的 p。</p>
+  </div>
+  <div class="prose">
+    <p>預設值下（p = 0.002、G = 32、k = 8），通過篩選的機率是 0.7739，pass@8 是 0.0159，群組有梯度的機率是 0.0621，每 100 題約有 93.8 題的群組全錯。把 G 從 32 改成 128（Hard-Only 的加量版本），有梯度的比例變成 0.2261。</p>
+  </div>
+  <details class="more"><summary>全頁符號表</summary>
+    <div class="tscroll" tabindex="0" role="region" aria-label="符號表，可橫向捲動"><table class="cards"><thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td>$\pi_\phi^T$、$\pi_\theta^S$</td><td>老師、學生；初始化時兩者都是同一個預訓練模型</td></tr>
+      <tr><td>$D_{train}$、$D_{test}$</td><td>fail@128 題目對半切分出的訓練集與測試集</td></tr>
+      <tr><td>$G$</td><td>學生 RLOO 的群組大小（32；Hard-Only 另有 128）</td></tr>
+      <tr><td>$g$、$n$</td><td>老師每步產生的資料集數（4）、每個資料集的題數（64）</td></tr>
+      <tr><td>$d$、$\mathcal X_d$</td><td>資料集索引與第 $d$ 個合成資料集</td></tr>
+      <tr><td>$r$、$j$</td><td>每個資料集平行訓練的學生數（4）、學生索引</td></tr>
+      <tr><td>$Q_R$</td><td>每個外層步從 $D_{train}$ 抽出的 64 道獎勵題</td></tr>
+      <tr><td>$R_{d,j}$、$R_d$</td><td>第 $j$ 個學生的獎勵；$r$ 個學生的平均</td></tr>
+      <tr><td>$\tau$</td><td>晉升門檻 0.01</td></tr>
+      <tr><td>$D_{best}$</td><td>觸發晉升的資料集聯集；第 08 章起稱為 PQ</td></tr>
+      <tr><td>$\pi_0$、$S_{acc}$、$\pi_c$</td><td>Prop. 1 的提議分布、接受集合、限制在 $S_{acc}$ 上的分布（第 07 章）</td></tr>
+      <tr><td>$\bar s_i$、$u_i$</td><td>學生在合成題 $i$ 上的平均成功率；可學習性獎勵（論文記為 $r_i$）</td></tr>
+    </tbody></table></div></details>
+  <p class="read">延伸閱讀：<a href="rlvr-grpo-credit-assignment.html">RLVR、GRPO 與信用分配瓶頸</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">什麼是 fail@128？在二元獎勵下，為什麼 RLOO 對這些題目幾乎沒有梯度？論文的實際獎勵有什麼不同？</p>
+    <p class="a">fail@128 是目標模型取樣 128 次（溫度 1.0）全錯的題目；二元獎勵下全錯群組的 $A_i=R_i-\frac1{G-1}\sum_{j\ne i}R_j$ 全為 0，梯度為 0（本頁推導）；論文的學生獎勵是 120／20／10／0 的格式分級，全錯群組通常仍有差別，但只教格式。</p>
+  </div></details>
+</section>
+
+<!-- §2 -->
+<section class="ch" id="question" data-toc="03" data-tt="研究問題">
+  <div class="ch-num">03 · 研究問題</div>
+  <h2>研究問題是模型能否為自己產生合成練習題</h2>
+  <div class="prose">
+    <p>由易到難排序題目來訓練的課程學習（curriculum learning）有效，但需要人工設計與整理好的中間資料集（Sec. 1）。另一條路是<b>非對稱自我對弈</b>（asymmetric self-play）：一方出題、一方解題，例如 Sukhbaatar et al.（2018）的 Alice–Bob 架構。近期「不用資料」的 LLM 自我對弈系統（Absolute Zero、R-Zero、LSP、SeRL、SQLM）用內在或代理獎勵訓練出題者，例如多數決、可學習性、獎勵模型偏好或梯度大小（App. A.2）。作者引用文獻指出，這類目標容易漂移到退化或學不會的題目，容易發生獎勵駭客（reward hacking：模型提高訓練獎勵，卻沒有完成真正的任務），長時間訓練還可能突然崩潰（Sec. 2）。</p>
+    <p>本文問：模型能不能為自己做不出的題目，產生一批合成練習題，讓自己之後能在原本的難題上進步？作者稱這類題目為「墊腳石」（stepping stones）；本頁的字面定義是：<b>難度介於學生目前會解的題目與目標難題之間的合成題</b>，以下稱為合成題目。作者的假設是：預訓練模型看過大量簡單題，即使解不出一題微積分，也可能寫得出相關的連鎖律練習題（Sec. 1）。</p>
+    <p>作者提出 <b>SOAR</b>（Self-Optimization via Asymmetric RL）。老師與學生都從同一個預訓練模型初始化。老師寫題目與答案，看不到難題；學生用這些題目訓練。老師的獎勵是學生訓練後，在一批從 $D_{train}$ 抽出的真實難題 $Q_R$ 上的正確率進步（Sec. 3）。也就是說，老師只透過「學生有沒有進步」這個數字得知題目好不好。</p>
+    <p>論文列出四項貢獻（Sec. 1）：(1) 教與解分離：產生有效合成題目的能力，和解題能力是兩回事；基礎模型本來就能偶爾產生好題目，meta-RL 讓它更常產生。作者稱這為「銳化」（sharpening），本頁的字面定義是：提高原本機率很低的有效輸出的機率。(2) SOAR 的概念驗證：摘要寫 MATH 上 pass@1 為 4 倍（與 Table 4 算出的 3.40 倍不同，本頁以表格為準，見下段）、pass@32 為 2 倍，HARP 上 pass@1 為 2 倍、pass@32 為 1.5 倍；合成題目也能轉移到沒有拿來最佳化的資料集。(3) 以真實表現為依據的獎勵（grounded reward）比內在獎勵穩定，也不會讓題目多樣性崩塌。(4) 題目結構與難度校準比答案正確更重要。實驗超過 600 次執行。</p>
+    <p>倍數的對照 <span class="tag">本頁推導</span>：用 Table 4–5 的 PQ 列（第 08 章定義）相對 Hard-Only 計算，MATH pass@1 為 1.7 ± 1.0 對 0.5 ± 0.1，倍數 3.40 ± 2.11（以一階誤差傳遞估計標準差），pass@32 為 1.97；HARP pass@1 為 0.7 ± 0.3 對 0.4 ± 0.1，倍數 1.75 ± 0.87，pass@32 為 1.50。摘要的「4×」無法由 PQ 列得出（表格算得 3.40 倍），本頁以表格為準；pass@1 的倍數主要受雜訊影響。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="soar-asymmetric-self-play-origins.html">非對稱 self-play 的來源</a>、<a href="soar-curriculum-and-environment-design.html">課程學習與非監督環境設計</a>、<a href="soar-llm-data-free-self-play.html">LLM 資料自由 self-play 與自我獎勵的崩潰</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">老師與學生從哪裡來？老師看得到難題嗎？老師的獎勵是什麼？</p>
+    <p class="a">兩者都從同一個預訓練模型初始化；老師寫題目與答案，看不到難題；獎勵是學生用這些題目訓練後，在難題 $Q_R$ 上的正確率進步（Sec. 3）。</p>
+  </div></details>
+</section>
+
+<!-- §3 -->
+<section class="ch" id="bilevel" data-toc="04" data-tt="雙層最佳化">
+  <div class="ch-num">04 · 雙層最佳化</div>
+  <h2>出題可以寫成雙層最佳化</h2>
+  <div class="prose">
+    <p>作者把出題寫成兩層的最佳化問題（Sec. 3.1）：內層是學生在合成資料集 $\mathcal X$ 上做 RL，得到更新後的參數 $\theta'(\mathcal X)=\text{RL-update}(\theta,\mathcal X)$；外層是老師要讓更新後的學生在 $D_{train}$ 上的表現 $R$ 最大：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\max_\phi\ \mathbb E_{\mathcal X\sim\pi_\phi^T}\Big[R\big(\pi^S_{\theta'(\mathcal X)},\,D_{train}\big)\Big]$$
+  $$\text{s.t.}\quad\theta'(\mathcal X)=\text{RL-update}(\theta,\mathcal X)$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="prose">
+    <p>這類目標有先例：meta-learning（MAML、Reptile）、超參數學習，以及資料集蒸餾（dataset distillation：外層最佳化一個小資料集，讓內層訓練在目標上表現好；作者說這部分啟發了本文）。一般做法要把內層的多步訓練展開，做「穿過梯度下降的反向傳播」（BPTT），內層步數多時算不動（Sec. 2、App. A.3）。</p>
+    <p>SOAR 把 Eq. 1 實作成巢狀 meta-RL：外層用 RLOO 訓練老師，內層用 RLVR（同樣是 RLOO）訓練學生，學生在 $D_{train}$ 上的進步量是給老師的<b>黑箱獎勵</b>。策略梯度只需要獎勵的數值，不需要對內層求導，所以外層用 RLOO、學生進步只當黑箱獎勵，就避開了穿過內層的反向傳播（App. A.3 稱這是 LLM 自我對弈中第一個「double meta-RL loop」）。作者不假設能自動驗證題目或答案。作者認為，只獎勵「讓學生在真題上進步」的題目，可以把出題綁在真實的學習進度上，也隱含地懲罰退化題目與獎勵駭客（Sec. 3.1）。</p>
+  </div>
+  <div class="fig" id="f0" style="max-width:860px"><svg role="img" aria-label="SOAR 的兩層迴圈：老師產生 g 個合成資料集；每個資料集訓練 r 個學生 10 步；在 64 道獎勵題上測正確率得到資料集獎勵；用 RLOO 更新老師。老師看不到難題。"></svg></div>
+  <p class="read">延伸閱讀：<a href="soar-bilevel-meta-learning-dataset-distillation.html">雙層最佳化：meta-learning 與 dataset distillation</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 1 的內層與外層各是什麼？SOAR 如何避免穿過內層反向傳播？</p>
+    <p class="a">內層 $\theta'(\mathcal X)=$ RL-update$(\theta,\mathcal X)$；外層最大化 $\mathbb E_{\mathcal X\sim\pi_\phi^T}[R(\pi^S_{\theta'(\mathcal X)},D_{train})]$；外層用 RLOO，學生進步只當黑箱獎勵，不對內層求導（Eq. 1、App. A.3）。</p>
+  </div></details>
+</section>
+
+<!-- §4 -->
+<section class="ch" id="reward" data-toc="05" data-tt="老師的獎勵">
+  <div class="ch-num">05 · 老師的獎勵</div>
+  <h2>老師的獎勵是學生在難題上的正確率進步</h2>
+  <aside class="symbols"><b>本節符號</b> $g$：每步的資料集數（4）；$n$：每個資料集的題數（64）；$d$：資料集索引；$r$：每個資料集的學生數（4）；$Q_R$：64 道獎勵題。</aside>
+  <div class="prose">
+    <p>每個外層步，老師取樣 $g\cdot n=256$ 個輸出，依序分成 $g=4$ 個資料集 $\mathcal X_1,\dots,\mathcal X_4$，每個 64 題。每個輸出要解析成一組題目與答案，格式不符就重抽（App. B.2）。重抽讓老師的輸出分布從 $\pi_0$ 變成截斷後的 $\pi$，多出的梯度項正比於優勢總和；RLOO 的優勢總和為 0，所以更新不偏（細節見選讀的第 07 章）。接著從 $D_{train}$ 抽 64 道獎勵題 $Q_R$，對每個資料集訓練學生固定步數，資料集獎勵是（Sec. 3.2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$R(\mathcal X_d)=\mathrm{Acc}\big(\pi^S_{\theta'_d}(Q_R)\big)-\mathrm{Acc}\big(\pi^S_\theta(Q_R)\big)$$</div><span class="eq-n">Sec. 3.2</span></div>
+  <div class="prose">
+    <p>這裡的 Acc 是<b>貪婪解碼</b>（每一步取機率最高的 token）的正確率，作者用它來降低學生獎勵的雜訊（App. B.7）；$\pi^S_\theta$ 是內層開始時的基準學生。在 64 題上，單一學生的正確率差一定是 1/64 ≈ 0.0156 的整數倍，比後面的門檻 τ = 0.01 還大 <span class="tag">本頁推導</span>。</p>
+    <p>減去基準正確率，是為了讓不同外層步的獎勵可以互相比較；下一章的晉升機制需要這一點（Sec. 3.2）。為了降低變異，每個資料集平行訓練 $r=4$ 個學生，取平均 $R_d=\frac1r\sum_jR_{d,j}$，資料集 $\mathcal X_d$ 裡的每個輸出都拿到這個 $R_d$ 作為獎勵（Sec. 3.2、App. B.3）。總結：老師的獎勵是 $R(\mathcal X_d)=\mathrm{Acc}(\pi^S_{\theta'_d}(Q_R))-\mathrm{Acc}(\pi^S_\theta(Q_R))$，用貪婪解碼在 64 道 $Q_R$ 上計算，減基準讓不同步的獎勵可比，平均 $r=4$ 個學生降低變異。</p>
+    <p>老師的提示詞每一步都相同（App. B.1）：列出允許的主題（Algebra、Counting and Probability、Geometry、Intermediate Algebra、Number Theory、Prealgebra、Precalculus）與輸出格式，要求原創、至少 2–3 步推理、只出一題。提示詞<b>不給範例題</b>：作者在初步實驗中觀察到，給範例題時題目多樣性大幅下降，老師常直接照抄範例。</p>
+  </div>
+  <details class="more"><summary>老師提示詞原文（App. B.1）</summary>
+<pre class="code">You are generating a new math problem for a math assistant.
+Allowed topics: Algebra, Counting and Probability, Geometry, Intermediate Algebra,
+Number Theory, Prealgebra, or Precalculus.
+Output rules (follow EXACTLY):
+ - Provide the final formatted problem in this structure:
+   &lt;question&gt;[full math question]&lt;question&gt;&lt;answer&gt;\\boxed{[answer]}&lt;/answer&gt;
+ - Any explanations, steps, or reasoning about the problem goes OUTSIDE the
+   &lt;question&gt; and &lt;answer&gt; tags.
+Constraints:
+ - The problem must be original, challenging, and require at least 2--3 steps of reasoning.
+ - Output exactly ONE problem. You MUST follow the specified format EXACTLY.
+Begin now:</pre></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$R(\mathcal X_d)$ 怎麼算？為什麼減基準？$r$ 的作用？</p>
+    <p class="a">$\mathrm{Acc}(\pi^S_{\theta'_d}(Q_R))-\mathrm{Acc}(\pi^S_\theta(Q_R))$，用貪婪解碼，$Q_R$ 為 64 題；減基準讓不同步的獎勵可比，晉升需要這一點；平均 $r=4$ 個學生以降低變異（Sec. 3.2、App. B.3）。</p>
+  </div></details>
+</section>
+
+<!-- §5 -->
+<section class="ch" id="promotion" data-toc="06" data-tt="學生晉升">
+  <div class="ch-num">06 · 學生晉升</div>
+  <h2>晉升把進步累積到新的基準學生</h2>
+  <aside class="symbols"><b>本節符號</b> 步平均：$g$ 個資料集獎勵 $R_d$ 的平均；移動平均：最近 3 個步平均的平均；$\tau=0.01$：晉升門檻；$D_{best}$：累積題庫。</aside>
+  <div class="prose">
+    <p>內層：學生在 $\mathcal X_d$ 上用 RLOO 訓練 10 步（batch size 8），作者說這樣足以產生可測量的變化，計算量又小。每次內層結束，學生<b>回到基準策略</b>，下一個外層步重新從基準出發（Sec. 3.3）。App. B.7 寫：基準學生被更新之後，內層訓練稍微延長，多 5 步；論文沒有說明是每次晉升都再加 5 步，還是只由 10 步改為 15 步。</p>
+    <p>只靠「每次都回到基準」，學生的進步無法累積，老師也無法跟著變強的學生調整。因此作者加入<b>晉升</b>（promotion，字面意思是「更換基準學生」）：追蹤老師獎勵的移動平均，3 步移動平均超過 $\tau=0.01$ 時，先選獎勵最高的資料集 $\mathcal X_{d^*}$，再從這個資料集的 $r$ 個學生中選獎勵為中位數的那一個，把它設成新的基準學生；之後的獎勵都相對新基準計算（Sec. 3.3、Sec. 4.2）。觸發晉升的資料集加入累積題庫 $D_{best}$，所以 $D_{best}$ 是所有觸發晉升的資料集的聯集。沒有晉升時，基準不變，這一步訓練出的學生全部丟棄，學生每次內層後回到基準。論文只寫了「選中位數學生」的做法，沒寫理由。實際最多觀察到 4 次晉升（Sec. 4.3）。</p>
+    <p>下表是 Alg. 1 的全文與逐行說明（符號 $k$ 改記為 $d$）。</p>
+  </div>
+  <div class="algo" role="table" aria-label="Alg. 1 逐行對照">
+    <div class="row hd" role="row"><div role="columnheader">Alg. 1 原文</div><div class="ex-h" role="columnheader">說明</div></div>
+    <div class="row" role="row"><code role="cell">0  Input: π_φ^T, π_θ^S, τ, g, n, r, MA window m</code><div class="ex" role="cell">輸入：初始老師與學生、晉升門檻、資料集數、每資料集題數、每資料集學生數、移動平均窗口。</div></div>
+    <div class="row" role="row"><code role="cell">1  t ← 0, R̄_0 ← 0, D_best ← ∅</code><div class="ex" role="cell">初始化步數、移動平均與累積題庫。</div></div>
+    <div class="row" role="row"><code role="cell">2  while t &lt; T do</code><div class="ex" role="cell">外層迴圈，論文 T = 200。</div></div>
+    <div class="row" role="row"><code role="cell">3    // 1. Teacher generation</code><div class="ex" role="cell">第 1 部分：老師出題。</div></div>
+    <div class="row" role="row"><code role="cell">4    Sample g·n QA pairs {(q_i, a_i)} ~ π_φ^T</code><div class="ex" role="cell">取樣 g·n 組題目與答案；格式不符就重抽。</div></div>
+    <div class="row" role="row"><code role="cell">5    Partition into g datasets X_d = {(q_j, a_j)}, j = n(d−1)+1 … nd</code><div class="ex" role="cell">依序切成 g 個資料集，每個 n 題。</div></div>
+    <div class="row" role="row"><code role="cell">6    Sample reward questions Q_R = {(q_j, a_j)}, j = 1…M ~ D_train</code><div class="ex" role="cell">從難題訓練集抽獎勵題（M = 64）。</div></div>
+    <div class="row" role="row"><code role="cell">7    // 2. Inner Loop</code><div class="ex" role="cell">第 2 部分：內層。</div></div>
+    <div class="row" role="row"><code role="cell">8    for d = 1 to g do</code><div class="ex" role="cell">對每個資料集。</div></div>
+    <div class="row" role="row"><code role="cell">9      for j = 1 to r do</code><div class="ex" role="cell">平行訓練 r 個學生。</div></div>
+    <div class="row" role="row"><code role="cell">10       θ'_{d,j} ← RLOO-Update(θ, X_d)</code><div class="ex" role="cell">從目前的基準學生出發，用 RLOO 訓練 10 步。</div></div>
+    <div class="row" role="row"><code role="cell">11       R_{d,j} ← Acc(θ'_{d,j}, Q_R) − Acc(θ, Q_R)</code><div class="ex" role="cell">這個學生在獎勵題上的貪婪正確率進步。</div></div>
+    <div class="row" role="row"><code role="cell">12     end for</code><div class="ex" role="cell"></div></div>
+    <div class="row" role="row"><code role="cell">13     R_d ← (1/r) Σ_j R_{d,j}</code><div class="ex" role="cell">資料集獎勵是 r 個學生的平均。</div></div>
+    <div class="row" role="row"><code role="cell">14   end for</code><div class="ex" role="cell"></div></div>
+    <div class="row" role="row"><code role="cell">15   // 3. Check for student promotion</code><div class="ex" role="cell">第 3 部分：檢查是否晉升。</div></div>
+    <div class="row" role="row"><code role="cell">16   R̂_t ← (1/g) Σ_d R_d</code><div class="ex" role="cell">步平均。</div></div>
+    <div class="row" role="row"><code role="cell">17   R̄_t ← MA(R̂_{t−m}, …, R̂_t)</code><div class="ex" role="cell">移動平均（本頁約定：最近 3 項）。</div></div>
+    <div class="row" role="row"><code role="cell">18   if R̄_t &gt; τ then</code><div class="ex" role="cell">超過門檻才晉升。</div></div>
+    <div class="row" role="row"><code role="cell">19     d* ← argmax_d R_d</code><div class="ex" role="cell">選獎勵最高的資料集。</div></div>
+    <div class="row" role="row"><code role="cell">20     find j* s.t. R_{d*,j*} is the median of {R_{d*,j}}</code><div class="ex" role="cell">在該資料集的 r 個學生中，選獎勵為中位數者。</div></div>
+    <div class="row" role="row"><code role="cell">21     θ ← θ'_{d*,j*}</code><div class="ex" role="cell">更換基準學生。</div></div>
+    <div class="row" role="row"><code role="cell">22     D_best ← D_best ∪ X_{d*}</code><div class="ex" role="cell">把這個資料集加入累積題庫。</div></div>
+    <div class="row" role="row"><code role="cell">23   end if</code><div class="ex" role="cell">沒有晉升時，基準學生不變，所有 θ' 丟棄。</div></div>
+    <div class="row" role="row"><code role="cell">24   // 4. Teacher Policy Update (Outer-loop)</code><div class="ex" role="cell">第 4 部分：外層更新老師。</div></div>
+    <div class="row" role="row"><code role="cell">25   φ ← RLOO-Update(φ, {(X_d, R_d)})</code><div class="ex" role="cell">每個輸出以所屬資料集的 R_d 為獎勵，用 RLOO 更新老師。</div></div>
+    <div class="row" role="row"><code role="cell">26   t ← t + 1</code><div class="ex" role="cell"></div></div>
+    <div class="row" role="row"><code role="cell">27 end while</code><div class="ex" role="cell"></div></div>
+    <div class="row" role="row"><code role="cell">28 return D_best, π_θ^S</code><div class="ex" role="cell">輸出累積題庫與最後的基準學生。</div></div>
+  </div>
+  <div class="prose">
+    <p>三個論文沒有說清楚的地方，本頁用自己的約定處理 <span class="tag">本頁約定</span>，可能和論文的實作不同：(1) 第 17 行字面上有 $m+1$ 項，但 Sec. 4.2 寫「3-step moving average」，本頁取最近 3 項，前兩步取現有項的平均；(2) $r=4$ 時中位數不唯一，本頁取排序後第 2 小的值；(3) 晉升後是否重設移動平均沒有說明，本頁不重設。第 25 行中 RLOO 的比較基準取自哪一組，論文也沒有寫；下方 C3a 用「其他 3 個資料集的平均」，同樣是本頁約定。</p>
+    <p>訓練動態（App. E，Fig. 19，HARP 上的一條代表性曲線）：獎勵先上下震盪，在第 18–27 步穩定上升並觸發第一次晉升；晉升後因為基準學生變強，獎勵下降、再度震盪，之後在第 80–86 步上升並觸發第二次晉升。作者把這個循環稱為「搜尋與利用」（search and exploitation），字面上是：老師的獎勵先在低點波動，然後連續數步上升到門檻以上。超參數在初步實驗中掃描過：學習率 {1e-6, 5e-6, 1e-5, 5e-5}、$n$ {8, 16, 32, 64}、$\tau$ {0.01, 0.015, 0.02}、移動平均窗口 {1, 3}（App. B.7）。</p>
+  </div>
+
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>晉升判斷</h3><span class="tag">示範值</span><span class="tag">本頁約定</span></div>
+    <div class="tabs" role="tablist" aria-label="C3 分頁">
+      <button type="button" role="tab" id="c3-tab-a" aria-controls="c3a" aria-selected="true">單步計算</button>
+      <button type="button" role="tab" id="c3-tab-b" aria-controls="c3b" aria-selected="false" tabindex="-1">雜訊與門檻</button>
+    </div>
+    <div role="tabpanel" id="c3a" aria-labelledby="c3-tab-a">
+      <p class="plate-lead">每格輸入一個學生在 64 道獎勵題上的淨增答對題數 c（獎勵 R = c/64）。數值是示範值；論文沒有提供單步數據。老師優勢的分組方式是本頁約定。</p>
+      <div class="pg side">
+        <div class="fig">
+          <div class="tscroll" tabindex="0" role="region" aria-label="學生獎勵輸入格"><table class="grid4" id="c3-grid"><caption>淨增答對題數 c（列：資料集 d；欄：學生 j）</caption></table></div>
+          <p class="err" id="c3-err" role="alert"></p>
+          <ol class="c3-steps" id="c3-steps"></ol>
+          <div id="c3-adv"><svg role="img" aria-label="老師的 RLOO 優勢"></svg></div>
+        </div>
+        <div class="ctl">
+          <div class="rng"><label class="lbl" for="c3-p1">前第 2 步的步平均 <output id="c3-p1o"></output></label><input type="range" id="c3-p1" min="-0.02" max="0.03" step="0.001" value="0.010"></div>
+          <div class="rng"><label class="lbl" for="c3-p2">前一步的步平均 <output id="c3-p2o"></output></label><input type="range" id="c3-p2" min="-0.02" max="0.03" step="0.001" value="0.014"></div>
+          <div class="ctl-row"><button class="small-btn" type="button" id="c3-reset">還原示範值</button></div>
+          <dl class="ro" id="c3-read"></dl>
+          <p class="verdict" id="c3-verdict"></p>
+          <p class="sr" id="c3-live" aria-live="polite"></p>
+        </div>
+      </div>
+    </div>
+    <div role="tabpanel" id="c3b" aria-labelledby="c3-tab-b" hidden>
+      <p class="plate-lead">假設每個學生的獎勵 = 真實進步 μ + 本步共同雜訊（標準差 σ_c，因為同一步的學生共用 64 道獎勵題與同一個基準）+ 個別雜訊（標準差 σ），各步之間獨立。實際獎勵是 1/64 的整數倍，這裡以常態近似。論文沒有報告 σ、σ_c；預設值是示範值。σ_c = 0 時算出的機率是下界。</p>
+      <div class="pg side">
+        <div class="fig"><div id="c3b-fig"><svg role="img" aria-label="移動平均的常態分布與門檻"></svg></div>
+          <div class="tscroll" tabindex="0" role="region" aria-label="四種組合的誤晉升機率"><table class="mini" id="c3b-tab"><caption>每步誤晉升機率（τ = 0.01，g = 4）</caption></table></div></div>
+        <div class="ctl">
+          <div class="rng"><label class="lbl" for="c3-mu">真實進步 μ <output id="c3-muo"></output></label><input type="range" id="c3-mu" min="-0.01" max="0.02" step="0.001" value="0"></div>
+          <div class="rng"><label class="lbl" for="c3-sd">個別雜訊 σ <output id="c3-sdo"></output></label><input type="range" id="c3-sd" min="0.005" max="0.06" step="0.001" value="0.02"></div>
+          <div class="rng"><label class="lbl" for="c3-sc">共同雜訊 σ_c <output id="c3-sco"></output></label><input type="range" id="c3-sc" min="0" max="0.02" step="0.001" value="0.005"></div>
+          <div><div class="lbl">每個資料集的學生數 r</div><div class="seg" id="c3-r" role="radiogroup" aria-label="學生數 r"></div></div>
+          <div><div class="lbl">移動平均窗口 m</div><div class="seg" id="c3-m" role="radiogroup" aria-label="窗口 m"></div></div>
+          <dl class="ro" id="c3b-read"></dl>
+          <p class="sr" id="c3b-live" aria-live="polite"></p>
+        </div>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依 Alg. 1 第 13–25 行（單步計算）與常態近似 P = ½·erfc((τ − μ)/(σ_MA·√2))、σ_MA = √((σ_c² + σ²/(g·r))/m)（雜訊與門檻）即時計算 <span class="tag">本頁推導</span>。198 步是第 3 到第 200 步。</p>
+  </div>
+  <div class="prose">
+    <p>預設的單步計算中，四個資料集的獎勵是 (0.015625, −0.003906, 0, 0.023438)，本步平均 0.008789 本身低於 τ，但加上前兩步（0.010、0.014）後移動平均是 0.010930，超過 0.01，所以晉升：選資料集 4，再選它的中位數學生 2。把前兩步改成 0.002、0.006，移動平均變成 0.005596，不晉升。</p>
+    <p>雜訊與門檻分頁 <span class="tag">本頁推導</span>：在上述常態假設下，增加 $r$ 只能壓低個別雜訊，共同雜訊只能靠窗口 $m$ 平均。σ = 0.02、σ_c = 0 時，論文設定（r = 4、m = 3）的每步誤晉升機率是 2.66e-4，r = 1、m = 1 時是 0.159；但 σ_c = 0.005 時論文設定也有 7.15e-3（200 步中期望約 1.4 次），σ_c = 0.01 時是 0.061。所以論文設定的誤晉升機率取決於 σ_c，而論文沒有報告這個量。論文自己的說法只是「平均多個學生以降低獎勵變異」（Sec. 3.2）。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="soar-teacher-student-rloo-method.html">SOAR：以 RLOO 訓練的 teacher–student 迴圈</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">何時晉升？選哪個學生？$D_{best}$ 是什麼？沒有晉升時怎麼辦？</p>
+    <p class="a">3 步移動平均超過 $\tau=0.01$ 時；選獎勵最高的資料集，再選該資料集 $r$ 個學生中獎勵為中位數者；$D_{best}$ 是觸發晉升的資料集聯集；沒有晉升時，學生每次內層後回到基準（Sec. 3.3、Alg. 1）。</p>
+  </div></details>
+</section>
+
+<!-- §6 -->
+<section class="ch" id="prop1" data-toc="07" data-tt="選讀：Prop. 1">
+  <div class="ch-num">07 · 選讀：Prop. 1 <span class="tag">選讀</span></div>
+  <h2>重抽格式錯誤的輸出不影響 RLOO 更新</h2>
+  <aside class="symbols"><b>本節符號</b> $\pi_0$：模型本身的輸出分布；$S_{acc}$：格式正確（被接受）的輸出集合；$\pi_c$：限制在 $S_{acc}$ 上並重新正規化的分布。</aside>
+  <div class="prose">
+    <p>這一章不影響前後文的理解，可以跳過。老師的輸出要通過三個檢查（App. B.2）：題目與答案的開閉標籤都有；有 boxed；boxed 的內容能被符號數學驗證器解析。不符合就重抽，直到湊滿 $g\cdot n$ 題。問題是：重抽等於從截斷分布 $\pi(z)=\pi_0(z)\mathbb 1_{z\in S_{acc}}/\pi_0(S_{acc})$（Eq. 2）取樣，但能求梯度的只有 $\pi_0$。</p>
+    <p>Prop. 1 的前提是 $\pi_0(S_{acc})>0$，且 $R(z)$ 是輸出 $z$ 的獎勵函數。結論是：對 $\pi$ 取樣得到的任意 $g$ 元組，</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\sum_{i=1}^gA(z_i)\nabla\ln\pi(z_i)=\sum_{i=1}^gA(z_i)\nabla\ln\pi_0(z_i)$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="prose">
+    <p>證明：$z\in S_{acc}$ 時 $\ln\pi(z)=\ln\pi_0(z)-\ln\pi_0(S_{acc})$，所以左式比右式多出 $-\big(\sum_iA(z_i)\big)\nabla\ln\pi_0(S_{acc})$（Eq. 5–6）。RLOO 的優勢總和為 0，這一項就消失（Eq. 7）。論文明寫：這對單純的 REINFORCE 不成立，因為 REINFORCE 的優勢總和不為 0，這一項會留下。在 SOAR 中，同一資料集的輸出共用 $R_d$；證明只需要群組內優勢總和為 0，所以仍然成立。實證上，拒絕取樣比「格式獎勵」與「先抽題目再抽答案」都好（App. B.2），多輪出題的消融也比較差（App. D.3）。</p>
+    <p>顯式的形式 <span class="tag">本頁推導</span>：令 $\pi_0=\mathrm{softmax}(\theta)$，則 $\nabla_\theta\ln\pi_0(z)=e_z-\pi_0$（$e_z$ 是第 $z$ 個分量為 1 的單位向量；這是交叉熵損失梯度的負號），而 $\nabla_\theta\ln\pi_0(S_{acc})=\pi_c-\pi_0$。因此左式減右式等於 $\big(\sum_iA_i\big)(\pi_0-\pi_c)$。在被拒絕的輸出 $j\notin S_{acc}$ 上 $\pi_c(j)=0$，左式為 0，右式是 $-\big(\sum_iA_i\big)\pi_0(j)$：$\sum A>0$ 時這些輸出被壓低，$\sum A\lt 0$ 時被抬高。</p>
+  </div>
+
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>RLOO 優勢與拒絕取樣</h3><span class="tag">本頁推導</span><span class="tag">示範值</span></div>
+    <p class="plate-lead">玩具：老師只有 6 種可能的輸出 z = 1…6，π₀ = softmax(θ)；θ、獎勵與樣本都是示範值。下方長條是更新方向對 θ₁…θ₆ 各分量的梯度（e_z − π，也就是交叉熵梯度的負號）。</p>
+    <div class="ctl-row"><div class="seg" id="c2-est" role="radiogroup" aria-label="優勢的算法"></div>
+      <button class="small-btn" type="button" id="c2-zero">全部獎勵設為 0</button><button class="small-btn" type="button" id="c2-flip">獎勵全部變號</button></div>
+    <details class="more" id="c2-custom"><summary>自訂接受集合與樣本</summary>
+      <p class="note small">勾選的輸出構成接受集合 S_acc；未勾選的輸出格式錯誤，會被重抽。</p>
+      <div class="ctl-row" id="c2-S" role="group" aria-label="接受集合 S_acc"></div>
+      <div id="c2-rows"></div>
+    </details>
+    <div class="fig"><div id="c2-fig"><svg role="img" aria-label="π₀ 與 π_c、以及兩種梯度的長條圖"></svg></div>
+      <div class="legend"><span class="lg box solid1">π_c（限制在 S_acc）</span><span class="lg box light1">π₀（淺色）</span><span class="lg box solid2">L：對 π 的梯度</span><span class="lg hollow">Q：對 π₀ 的梯度</span></div></div>
+    <dl class="ro two" id="c2-read"></dl>
+    <p class="verdict" id="c2-verdict"></p>
+    <p class="sr" id="c2-live" aria-live="polite"></p>
+    <p class="plate-f">讀數由本頁依 Eq. 3–4 與 softmax 梯度 e_z − π 即時計算；「L − Q = (ΣA)(π₀ − π_c)」<span class="tag">本頁推導</span>。</p>
+  </div>
+  <div class="prose">
+    <p>預設值下 π₀(S_acc) = 0.6341，平均要抽 1.577 次才得到一個格式正確的輸出。RLOO 的優勢是 (0.01333, −0.02667, −0.01333, 0.02667)，總和 0，兩式相同。切換成 REINFORCE（優勢直接取獎勵）後 ΣA = +0.04，右式在被拒絕的輸出 5、6 上是 −0.00945 與 −0.00519，被壓低；把獎勵全部變號後，這兩個分量變成 +0.00945、+0.00519，被抬高。獎勵全部為 0 時，兩種方法的更新都是 0。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼重抽格式錯誤的輸出不會使 RLOO 更新有偏？前提是什麼？REINFORCE 為何不行？</p>
+    <p class="a">前提 $\pi_0(S_{acc})>0$；$\ln\pi(z)=\ln\pi_0(z)-\ln\pi_0(S_{acc})$，多出的項乘上 $\sum_iA(z_i)$，RLOO 的優勢總和為 0 所以消失；REINFORCE 的總和不為 0，這一項留下（Prop. 1、Eq. 5–7）。</p>
+  </div></details>
+</section>
+
+<!-- §7 -->
+<section class="ch" id="eval" data-toc="08" data-tt="評估方式">
+  <div class="ch-num">08 · 評估方式</div>
+  <h2>評估把題目的價值與學生的軌跡分開</h2>
+  <div class="prose">
+    <p>SOAR 在 MATH 與 HARP 上各訓練 200 個外層步，OlympiadBench 不參與訓練。評估時間點是老師獎勵開始趨平的位置：MATH 取第 200 步、HARP 取第 170 步（Sec. 4.3）。從第 06 章的累積題庫 $D_{best}$ 起，本頁改稱為 <b>PQ</b>（Promotion Questions，晉升題目）。作者用兩種方式評估（Sec. 4.3）：</p>
+    <ul>
+      <li><b>PS</b>（Promoted Student）：在有多次晉升的執行中，取驗證表現最好的晉升學生（以 $D_{train}$ 貪婪正確率判斷），直接在測試集上推論。最多 4 次晉升，所以 PS 訓練過 128、192 或 256 題。</li>
+      <li><b>PQ</b>：用標準 RLOO 從頭訓練一個新的基礎學生，資料是 PQ＋fail@128 訓練集。目的是把「題目的價值」與「某一條幸運的學生訓練軌跡」分開。</li>
+    </ul>
+    <p>合成題與真題的混合方式（App. B.6）：MATH 用<b>課程訓練</b>，先用合成題訓練 64 步再換成真題；HARP 與 OlympiadBench 用<b>混合訓練</b>，全程混在一起（課程訓練在這兩者出現早期突升後驟降，Fig. 8）。選擇依據是基準方法 Base-T 的表現。</p>
+    <p>比較的基準（Sec. 4.3）：<b>Hard-Only</b> 直接用 fail@128 訓練集訓練，群組大小 $G=32$；MATH 另外跑 $G=128$（論文在這裡把學生群組大小寫成 g = 128，與本頁的 $g$＝資料集數衝突，所以本頁寫 $G$），取樣量是 4 倍，用來檢查收益是否只是多用了計算。<b>Intrinsic-T</b> 流程與超參數相同，只把老師獎勵換成可學習性（第 10 章），取樣 128 題訓練新學生。<b>SeRL</b> 是以 fail@128 訓練集為種子、自我演化課程的方法。<b>MATH train (Full)</b> 用完整的 MATH 訓練集 6750 題加 fail@128 訓練集，論文稱為上界參考。指標是 fail@128 測試集上的 pass@k，$k\in\{1,4,8,16,32\}$，每題 32 個樣本，報告 6–12 個種子的平均與標準差。總結：PS 直接用晉升學生推論；PQ 用 PQ＋fail@128 訓練集從頭訓練新學生，以分開題目的價值與幸運的訓練軌跡；$G=128$ 用 4 倍取樣量檢查收益是否只是多用了計算。</p>
+  </div>
+  <div class="fig" id="f2" style="max-width:860px"><svg role="img" aria-label="四條評估路徑：PS 直接推論；PQ 加 fail@128 訓練集從頭訓練新學生；Hard-Only 只用 fail@128 訓練集；老師取樣 128 題加 fail@128 訓練集訓練新學生；最後都在 fail@128 測試集上測 pass@k。"></svg></div>
+  <details class="more"><summary>早停與種子的細節（App. B.6、B.8）</summary><div class="prose">
+    <p>新學生最多訓練 1500 步。把平均訓練獎勵做 25 步置中移動平均，計算正規化斜率，取斜率首次低於最大值 15% 的步數，測試表現取之後 200 步的平均（門檻在 10%–20% 之間結果幾乎不變）；OlympiadBench 固定取第 50 步。種子：MATH、HARP 各訓練 4 個老師；Intrinsic-T 與無晉升版各 3 個；Hard-Only 至少 6 個學生種子；PQ 至少 6 個；PS 3 個推論種子；老師取樣實驗至少 8 個。</p></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">PQ 與 PS 的評估差在哪？Hard-Only（$G=128$）要排除什麼解釋？</p>
+    <p class="a">PS 直接用晉升學生推論；PQ 用 PQ＋fail@128 訓練集從頭訓練新學生，以分開題目的價值與幸運的訓練軌跡；$G=128$ 用 4 倍取樣量，檢查收益是否只是多用了計算（Sec. 4.3）。</p>
+  </div></details>
+</section>
+
+<!-- §8 -->
+<section class="ch" id="results" data-toc="09" data-tt="主要結果">
+  <div class="ch-num">09 · 主要結果</div>
+  <h2>用合成題目訓練的學生在 fail@128 測試集上表現較好</h2>
+  <div class="prose">
+    <p>MATH 上（Table 4，pass@32），Hard-Only 是 9.6 ± 2.6%，PQ 是 18.9 ± 5.3%，PS 18.1 ± 2.4%，從 SOAR 老師取樣的 Grounded-T 19.1 ± 3.7%，Intrinsic-T 14.1 ± 7.5%，SeRL（step 100）12.4 ± 1.0%，Hard-Only（$G=128$）12.4 ± 7.4%，MATH train (Full) 22.0 ± 2.4%。論文內文寫 PQ 比 Hard-Only 高「+9.3%」（Sec. 5.1）；這是<b>百分點</b>，也就是 18.9 − 9.6 = 9.3，而不是相對增加 9.3%。同樣地，PS 高 +8.5（MATH）與 +3.6（HARP）個百分點；PQ 在 HARP 上內文寫 +4.2，由 Table 5 算是 12.3 − 8.2 = 4.1 <span class="tag">本頁推導</span>。$G=128$ 的 Hard-Only 只高 2.8 個百分點，Hard-Only 從 1500 步延長到 6500 步（HARP）也沒有進步（Fig. 10），作者以此說明多出的計算量不能取代 meta-RL。百分點差距隨 k 變大；倍數反而隨 k 變小（MATH PQ 由 pass@1 的 3.40 倍降到 pass@32 的 1.97 倍）。</p>
+    <p>與真實題目比較：PQ-MATH 回收了 MATH train (Full) 收益的 75%，PQ-HARP 回收 50%（Sec. 5.1）。回收比例 <span class="tag">本頁推導</span> 是 (PQ − Hard-Only)/(MATH train (Full) − Hard-Only)，分母兩者都用 MATH train (Full)：MATH 為 (18.9 − 9.6)/(22.0 − 9.6) = 0.75；HARP 為 (12.3 − 8.2)/(16.2 − 8.2) = 0.51。MATH train (Full) 並不是最大值：Table 4 中 128 題真實 HARP 題是 23.0，Table 6 中 128 題真實 MATH 題是 14.6，高於 Full 的 13.1。HARP 上 PQ（12.3）高於 128 題真實 HARP（8.7），與 128 題真實 MATH（11.9）相近（Table 5）。MATH 上，PQ 在合成題階段（64 步）結束、換成真題後仍持續進步（Fig. 9），作者解讀為合成題讓真難題變得可學。轉移到 OlympiadBench（Table 6，pass@32）：Hard-Only 6.9，PQ (MATH) 10.6，PQ (HARP) 12.0，Intrinsic-T 9.1；作者推測 HARP 與 Olympiad 有較多共同結構。</p>
+    <p><b>教與解分離</b>：用訓練後的老師直接解 fail@128 測試題，MATH pass@32 是 8.3%，基礎模型是 7.5%；HARP 是 6.8% 對 6.4%（Table 4–5）。沒有改善，作者據此認為出題能力與解題能力大致獨立。</p>
+  </div>
+
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>結果瀏覽器：Table 4–6</h3></div>
+    <p class="plate-lead">點選任一列看它與 Hard-Only 的差。數字照錄 Table 4–6；差、倍數、回收比例由本頁計算。</p>
+    <div class="ctl-row c4-ctl">
+      <div class="seg" id="c4-ds" role="radiogroup" aria-label="資料集"></div>
+      <div class="seg" id="c4-k" role="radiogroup" aria-label="pass@k 的 k"></div>
+      <div class="seg" id="c4-mode" role="radiogroup" aria-label="顯示方式"></div>
+    </div>
+    <div class="pg side">
+      <div class="fig"><div id="c4-fig"></div>
+        <div class="legend"><span class="lg mk-f">SOAR（實心圓）</span><span class="lg mk-o">其他方法（空心圓）</span><span class="lg mk-d">真實題目參照（菱形）</span><span class="lg ref">Hard-Only 參考線</span></div>
+        <details class="more"><summary>以表格顯示</summary><div class="tscroll" tabindex="0" role="region" aria-label="結果表格，可橫向捲動"><table class="mini" id="c4-table"></table></div></details>
+      </div>
+      <div class="ctl"><div class="lbl" id="c4-sel"></div><dl class="ro" id="c4-read"></dl><p class="note small" id="c4-note"></p><p class="sr" id="c4-live" aria-live="polite"></p></div>
+    </div>
+    <p class="plate-f">論文文字中的「+9.3%」是百分點。回收比例的分母是 MATH train (Full)，論文稱為上界參考，但它不是最大值；OlympiadBench 的回收比例是本頁延伸 <span class="tag">本頁推導</span>。「區間是否重疊」只描述 ± SD 區間，不是顯著性檢定。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="soar-curriculum-and-environment-design.html">課程學習與非監督環境設計</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">MATH 上 PQ 與 Hard-Only 的 pass@32？「+9.3%」的單位？回收 75% 怎麼算？</p>
+    <p class="a">18.9% 對 9.6%，差 9.3 個百分點；(18.9 − 9.6)/(22.0 − 9.6) = 0.75，分母為 MATH train (Full)；$G=128$ 只高 2.8 個百分點（Table 4、Sec. 5.1）。</p>
+    <p class="q">訓練後的老師直接解 fail@128 題，表現如何？</p>
+    <p class="a">MATH pass@32 為 8.3%，基礎模型 7.5%；HARP 6.8% 對 6.4%；沒有改善，作者據此認為出題與解題能力大致獨立（Table 4–5）。</p>
+  </div></details>
+</section>
+
+<!-- §9 -->
+<section class="ch" id="grounded" data-toc="10" data-tt="獎勵比較">
+  <div class="ch-num">10 · 獎勵比較</div>
+  <h2>以真實進步為獎勵的老師較穩定且保持多樣性</h2>
+  <aside class="symbols"><b>本節符號</b> $\bar s_i$：學生在合成題 $i$ 上 32 次取樣的平均成功率；$u_i$：可學習性獎勵（論文記為 $r_i$）；$s$：本頁用的單次成功率。</aside>
+  <div class="prose">
+    <p>作者比較三種老師（Sec. 5.2）：Grounded-T（SOAR 訓練的老師）、Intrinsic-T（以可學習性為獎勵訓練）、Base-T（未訓練的基礎模型）。各取樣 128 題，訓練 2–3 個新學生；Grounded-T 每個資料集 4 個種子，Intrinsic-T 3 個種子。</p>
+    <p><b>可學習性獎勵</b>（App. B.4）對 $\mathcal X_d$ 的每一題取 32 個學生解答，得到平均成功率 $\bar s_i$；若 $\bar s_i=0$ 則 $u_i=0$，否則 $u_i=1-\bar s_i$；資料集獎勵是 $R_d=\frac1n\sum_iu_i$。$\bar s_i>0$ 時，$u_i$ 隨 $\bar s_i$ 單調下降；只有「0 次答對」被截成 0。這個獎勵只看題目對學生的難度，與難題訓練集 $D_{train}$ 無關。</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$u_i=\begin{cases}0,&\bar s_i=0\\1-\bar s_i,&\text{otherwise}\end{cases}$$</div><span class="eq-n">Eq. 8（論文記為 r_i）</span></div>
+  <div class="prose">
+    <p>期望值 <span class="tag">本頁推導</span>：若學生對某道合成題的單次成功率為 $s$、32 次取樣獨立，$\mathbb E[u]=(1-s)-(1-s)^{32}$，在 $s^*=1-32^{-1/31}\approx0.106$ 時最大（0.866）。這裡的 $s$ 是合成題的成功率，與第 01 章難題的 $p$ 不是同一個量。峰值完全來自 32 次取樣與「0 次答對給 0」的截斷。</p>
+  </div>
+  <div class="fig" id="f1" style="max-width:640px"><svg role="img" aria-label="可學習性獎勵的期望值對合成題成功率 s 的曲線，峰值在 s = 0.106，值 0.866"></svg>
+    <p class="note small">本頁推導：假設 32 次取樣獨立、成功率固定為 s。橫軸是合成題的成功率 s，不是第 01 章難題的 p。</p></div>
+  <div class="prose">
+    <p><b>銳化</b>：Grounded-T 的學生曲線落在 Base-T 各次執行的上緣，MATH 上變異較小（Fig. 5 左）。作者的解讀是：Base-T 也有成功的執行，所以好題目本來就潛藏在基礎模型中，meta-RL 提高了產生這些題目的機率。OlympiadBench 上兩者重疊較多。<b>內在獎勵的脆弱</b>：不同種子的 Grounded-T 訓練出的學生軌跡很接近；Intrinsic-T 平均較差、變異較大，三個種子中有一個在所有資料集上崩潰，學生幾乎沒有進步（Fig. 5 右、Fig. 14）。</p>
+    <p><b>多樣性</b>（Table 1）用 Vendi Score 衡量（Qwen3-8B 的嵌入，以 bootstrap 標準化到 128 題、重複 100 次）：Base-T 34.91，Grounded-T (HARP) 34.66，Grounded-T (MATH) 31.99，PQ 28.33，Intrinsic-T 10.82。論文說 Vendi Score 代表「有效的獨特語意概念數」。Sec. 5.2 內文寫 PQ 為 31.75，與 Table 1 的 28.33 不同，本頁以表格為準。Vendi Score 的定義來自 Friedman &amp; Dieng（2023）<span class="tag">外部定義</span>：相似度矩陣 $K/n$ 的特徵值 $\lambda_i$ 的 $\exp(-\sum_i\lambda_i\ln\lambda_i)$；$n$ 題完全相同時為 1，兩兩正交時為 $n$ <span class="tag">本頁推導</span>。App. E（Fig. 20）顯示 Intrinsic-T 的獎勵平滑上升，同時老師輸出的多樣性下降；Grounded-T 全程保持原模型的多樣性。</p>
+    <p>總結：可學習性獎勵 $u_i$ 在 $\bar s_i=0$ 時為 0、否則為 $1-\bar s_i$（32 個樣本）；Intrinsic-T 的 Vendi Score 是 10.82，Base-T 是 34.91（Grounded-T 為 31.99 與 34.66）；Intrinsic-T 三個種子中有一個在所有資料集上崩潰。</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="Table 1，可橫向捲動"><table class="mini"><caption>Table 1　合成資料集的語意多樣性（Vendi Score，128 題）</caption><thead><tr><th>老師</th><th class="num">Vendi Score</th><th class="num">σ</th></tr></thead><tbody>
+    <tr><td>Base-T</td><td class="num">34.91</td><td class="num">1.74</td></tr><tr><td>Grounded-T (HARP)</td><td class="num">34.66</td><td class="num">1.74</td></tr><tr><td>Grounded-T (MATH)</td><td class="num">31.99</td><td class="num">1.54</td></tr><tr><td>PQ</td><td class="num">28.33</td><td class="num">1.55</td></tr><tr><td>Intrinsic-T</td><td class="num">10.82</td><td class="num">1.01</td></tr></tbody></table></div>
+  <p class="read">延伸閱讀：<a href="soar-intrinsic-vs-grounded-reward.html">內在獎勵與接地獎勵</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">可學習性獎勵的定義？Intrinsic-T 與 Base-T 的 Vendi Score？Intrinsic-T 的失敗模式？</p>
+    <p class="a">$u_i=0$ 若 $\bar s_i=0$，否則 $1-\bar s_i$（32 個樣本）；10.82 對 34.91（Grounded-T 為 31.99／34.66）；三個種子中有一個在所有資料集上崩潰（Eq. 8、Table 1、Sec. 5.2）。</p>
+  </div></details>
+</section>
+
+<!-- §10 -->
+<section class="ch" id="structure" data-toc="11" data-tt="適切與正確">
+  <div class="ch-num">11 · 適切與正確</div>
+  <h2>題目是否適切比答案是否正確更重要</h2>
+  <div class="prose">
+    <p>作者用 Claude-4.5-Sonnet 當判定者，把合成題分類（Sec. 5.3、App. C.4）：題目是否<b>適切</b>（well-posed：數學上完整、可解）、答案是否正確、錯誤類型（算術、邏輯謬誤、不可能、模糊）。PQ 只有 32.8% 的題目答案完全正確，適切的比例是 64.6%（Table 7；內文寫 63%）。Intrinsic-T 的正確率較高（55.5%），表現卻較差；作者推測原因是多樣性不足（Table 7 說明文字用「potentially」）。meta-RL 主要減少「模糊」錯誤（Base 42.4% → Grounded 21.3%），算術錯誤持平或略增。App. C.4 有一句把 Grounded 與 PQ 的正確率寫成「32.8% and 36.5% respectively」，順序與 Table 7 相反，本頁以表格為準。</p>
+    <p>受控實驗（App. C.5，Fig. 15）：從 PQ-HARP 中取答案正確的子集 Correct-only（82 題），對比題目適切的子集 Well-posed（144 題，包含 Correct-only 與「題目適切但答案錯」的題目）。在 Correct-only（82 題）對 Well-posed（144 題）的比較中，加入答案錯但題目適切的題目後表現提高；各組學生的格式符合率都在約 50 步內達到 100%，所以格式不是主要原因。這個實驗有限制：Well-posed 多了 62 題（1.75 倍），題數與正確性混在一起；只在 HARP 上做，3 個種子。</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="Table 7，可橫向捲動"><table class="mini stack"><caption>Table 7　合成題的正確性與錯誤類型（類別可能不互斥，各欄加總不等於 100%）</caption><thead><tr><th>類別</th><th class="num">Base</th><th class="num">Intrinsic</th><th class="num">Grounded</th><th class="num">PQ</th></tr></thead><tbody>
+    <tr><td>適切</td><td class="num" data-h="Base">53.6%</td><td class="num" data-h="Intrinsic">63.5%</td><td class="num" data-h="Grounded">70.0%</td><td class="num" data-h="PQ">64.6%</td></tr>
+    <tr><td>正確</td><td class="num" data-h="Base">23.2%</td><td class="num" data-h="Intrinsic">55.5%</td><td class="num" data-h="Grounded">36.5%</td><td class="num" data-h="PQ">32.8%</td></tr>
+    <tr><td>算術錯誤</td><td class="num" data-h="Base">23.7%</td><td class="num" data-h="Intrinsic">5.7%</td><td class="num" data-h="Grounded">29.0%</td><td class="num" data-h="PQ">25.0%</td></tr>
+    <tr><td>邏輯錯誤</td><td class="num" data-h="Base">5.7%</td><td class="num" data-h="Intrinsic">2.3%</td><td class="num" data-h="Grounded">6.9%</td><td class="num" data-h="PQ">6.5%</td></tr>
+    <tr><td>不可能</td><td class="num" data-h="Base">4.7%</td><td class="num" data-h="Intrinsic">2.9%</td><td class="num" data-h="Grounded">8.2%</td><td class="num" data-h="PQ">4.7%</td></tr>
+    <tr><td>模糊</td><td class="num" data-h="Base">42.4%</td><td class="num" data-h="Intrinsic">33.6%</td><td class="num" data-h="Grounded">21.3%</td><td class="num" data-h="PQ">31.3%</td></tr>
+    <tr><td>樣本數</td><td class="num" data-h="Base">384</td><td class="num" data-h="Intrinsic">384</td><td class="num" data-h="Grounded">375</td><td class="num" data-h="PQ">384</td></tr></tbody></table></div>
+  <div class="prose">
+    <p>Fig. 6 列出 HARP 上一次 SOAR 執行在兩個晉升階段的老師題目（英文照錄）。第 1 階段是文字應用題，例如「What is the area of the path that is added around a rectangular garden with dimensions 15 meters by 8 meters when a 1-meter-wide garden path is built?」（老師的答案 50）；第 2 階段是簡短的方程式題，例如「Given the polynomial f(x) = x³ − 6x² + 11x − 6, factorize and solve for its roots.」（老師的答案 (2, 3, 1)）。作者指出許多有效的題目附的是錯誤答案。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">PQ 中答案正確與題目適切的比例？哪個實驗把兩者分開？有什麼限制？</p>
+    <p class="a">正確 32.8%、適切 64.6%（內文寫 63%）；Intrinsic-T 正確 55.5% 但表現較差；Correct-only（82 題）對 Well-posed（144 題）實驗中，加入答案錯但題目適切的題目後表現提高；限制是題數不同、只有 HARP、3 個種子（Sec. 5.3、App. C.5）。</p>
+  </div></details>
+</section>
+
+<!-- §11 -->
+<section class="ch" id="impl" data-toc="12" data-tt="消融與實作">
+  <div class="ch-num">12 · 消融與實作</div>
+  <h2>消融、實作設定與常見錯誤</h2>
+  <div class="prose">
+    <p>消融：不做晉升的 Grounded-T 較差（App. C.3）。從 MATH 老師取 32、64、128 題，表現隨題數增加，128 題的平均與 64 題相近但誤差明顯較小；在所有題數下，真實 MATH 題都相近或更好（App. D.1）。$\tau\in\{0.01,0.015\}$、$n\in\{32,64\}$ 中，預設的 $n=64,\tau=0.01$ 最好（App. D.2）。多輪出題（先抽題目、再抽答案，兩者的 log 機率相加）的老師獎勵很快停滯、最多晉升一次，所有設定都比單輪差（App. D.3、Table 8）。Llama-3.1-8B-Instruct 沿用 3B 的超參數時沒有晉升，但 Grounded-T 的 pass@32 13.7 ± 2.7 仍高於 Hard-Only 9.1 ± 3.2（App. D.4、Table 9）。</p>
+    <p>計算量（App. B.9）：每次 SOAR 訓練用 4 個節點（每個節點 8 張 H200 或 H100），約 48–60 小時；每次評估（訓練一個新學生）用 1 個節點約 12 小時。</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="Table 3，可橫向捲動"><table class="mini stack"><caption>Table 3　超參數</caption><thead><tr><th>項目</th><th>老師</th><th>學生</th></tr></thead><tbody>
+    <tr><td>最佳化器／KL 係數／排程</td><td data-h="老師">AdamW／0.001／cosine decay</td><td data-h="學生">同左</td></tr>
+    <tr><td>學習率／溫度</td><td data-h="老師">1e-5／1.0</td><td data-h="學生">同左</td></tr>
+    <tr><td>warmup 步數</td><td data-h="老師">20</td><td data-h="學生">0/20</td></tr>
+    <tr><td>batch size／group size</td><td data-h="老師">2／4</td><td data-h="學生">8／32</td></tr>
+    <tr><td>最大生成 token</td><td data-h="老師">512</td><td data-h="學生">1024</td></tr>
+    <tr><td>τ／移動平均窗口／n／r</td><td data-h="老師">0.01／3／64／4</td><td data-h="學生">—</td></tr>
+    <tr><td>評估最大步數／課程訓練合成暖身步數</td><td data-h="老師">—</td><td data-h="學生">1500／64</td></tr></tbody></table></div>
+  <div class="prose">
+    <h3>常見錯誤</h3>
+    <ol>
+      <li>重抽格式錯誤的輸出，卻用 REINFORCE 而不是 RLOO：因為 REINFORCE 的優勢總和不為 0，重抽造成的額外項會留下來，Prop. 1 不成立（第 07 章）。</li>
+      <li>給老師範例題：作者觀察到多樣性下降、老師抄題（App. B.1）。</li>
+      <li>老師獎勵不減基準正確率：不同步的獎勵不可比，晉升門檻失去意義（Sec. 3.2）。</li>
+      <li>內層學生沒有回到基準：只有晉升時才更新基準（Sec. 3.3）。</li>
+      <li>用取樣解碼評估 $Q_R$：論文用貪婪解碼降低雜訊（App. B.7）。</li>
+      <li>只用 r = 1 與窗口 1 判斷晉升：雜訊容易造成誤晉升（C3 的推導 <span class="tag">本頁推導</span>）。</li>
+      <li>評估 PQ 時用錯混合方式：MATH 用課程訓練，HARP／Olympiad 用混合訓練（App. B.6）。</li>
+    </ol>
+  </div>
+</section>
+
+<!-- §12 -->
+<section class="ch" id="history" data-toc="13" data-tt="研究脈絡">
+  <div class="ch-num">13 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>SOAR 結合了五條脈絡：課程學習（依難度安排題目）；非對稱自我對弈（Alice–Bob 架構與其在機器人上的延伸）；雙層最佳化（MAML、資料集蒸餾，啟發了以學生進步為獎勵的設計）；RLVR 與 RLOO（問題背景與兩層迴圈使用的演算法）；以及近期以代理獎勵訓練出題者的 LLM 自我對弈（Absolute Zero、R-Zero）與其崩潰問題。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- §13 -->
+<section class="ch" id="next" data-toc="14" data-tt="限制與延伸">
+  <div class="ch-num">14 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>作者寫出的主要限制是雙層 RL 的計算成本：內層雖然只有 10–20 步，但需要平行訓練多個學生來穩定獎勵。Table 4 與 Fig. 10 顯示，把多出的計算量用在直接訓練難題上，回收不了 meta-RL 的收益。作者稱本文是概念驗證，更有效率的獎勵代理與 3–8B 以上的規模留待未來（Sec. 6）。Sec. 6 的「North Star」段落是作者的思想實驗：Riemann 猜想的證明可能潛藏在預訓練資料中，能否學會取決於能否找回正確的中間引理序列；這是展望，不是結果。本頁另外整理的限制 <span class="tag">本頁推導</span>：標準差很大（MATH PQ 18.9 ± 5.3）；論文內文與表格有數處數字不一致（倍數、+4.2、Vendi 31.75、適切 63%）；Alg. 1 有幾處未說明的細節（移動平均項數、中位數、是否重設）。</p>
+  </div>
+  <div class="prose"><h3>研究筆記（依閱讀順序）</h3></div>
+  <ol class="rl">
+    <li><div><a href="soar-lineage-hub.html">SOAR 的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="soar-rlvr-sparse-reward-plateau.html">RLVR 在低成功率資料上的停滯</a><span>問題設定</span></div></li>
+    <li><div><a href="soar-asymmetric-self-play-origins.html">非對稱 self-play 的來源</a><span>背景</span></div></li>
+    <li><div><a href="soar-curriculum-and-environment-design.html">課程學習與非監督環境設計</a><span>背景</span></div></li>
+    <li><div><a href="soar-llm-data-free-self-play.html">LLM 資料自由 self-play 與自我獎勵的崩潰</a><span>比較對象</span></div></li>
+    <li><div><a href="soar-bilevel-meta-learning-dataset-distillation.html">雙層最佳化：meta-learning 與 dataset distillation</a><span>方法來源</span></div></li>
+    <li><div><a href="soar-intrinsic-vs-grounded-reward.html">內在獎勵與接地獎勵</a><span>獎勵設計</span></div></li>
+    <li><div><a href="soar-teacher-student-rloo-method.html">SOAR：以 RLOO 訓練的 teacher–student 迴圈</a><span>本論文</span></div></li>
+    <li><div><a href="rlvr-grpo-credit-assignment.html">RLVR、GRPO 與信用分配瓶頸</a><span>站內既有</span></div></li>
+    <li><div><a href="r1-lineage-hub.html">DeepSeek-R1 的研究脈絡總覽</a><span>站內既有</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Shobhita Sundaram, John Quan, Ariel Kwiatkowski, Kartik Ahuja, Yann Ollivier, Julia Kempe. Teaching Models to Teach Themselves: Reasoning at the Edge of Learnability. 2026. <a href="https://arxiv.org/abs/2601.18778">arXiv:2601.18778</a>.</p>
+  <p>本頁的方程式與數字取自論文 v3；標示「本頁推導」的內容為本頁自行推導，「示範值」為本頁為了示範而選的數值，「本頁約定」為論文未規定、本頁自行選定的做法，皆非論文結論。元件讀數在瀏覽器中即時計算，不重現論文的實驗。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2009, "title": "Curriculum learning", "authors_short": "Bengio et al.", "arxiv": null, "role": "課程學習的起點", "source": "paper §2 引用（無 arXiv 版本）"}, {"year": 2015, "title": "Gradient-based Hyperparameter Optimization through Reversible Learning", "authors_short": "Maclaurin et al.", "arxiv": "1502.03492", "role": "對訓練過程反向傳播的雙層先例", "source": "paper §3.1; arXiv API"}, {"year": 2016, "title": "RL²: Fast Reinforcement Learning via Slow Reinforcement Learning", "authors_short": "Duan et al.", "arxiv": "1611.02779", "role": "meta-RL 較早研究", "source": "paper §A.3; arXiv API"}, {"year": 2017, "title": "Model-Agnostic Meta-Learning for Fast Adaptation of Deep Networks", "authors_short": "Finn et al.", "arxiv": "1703.03400", "role": "內外層 meta-learning", "source": "paper §3.1; arXiv API"}, {"year": 2017, "title": "Intrinsic Motivation and Automatic Curricula via Asymmetric Self-Play", "authors_short": "Sukhbaatar et al.", "arxiv": "1703.05407", "role": "Alice–Bob 非對稱 self-play", "source": "paper §A.2; arXiv API"}, {"year": 2017, "title": "Mastering Chess and Shogi by Self-Play with a General Reinforcement Learning Algorithm", "authors_short": "Silver et al.", "arxiv": "1712.01815", "role": "self-play 範例（Science 2018 版為本文所引）", "source": "paper §2; arXiv API"}, {"year": 2018, "title": "Dataset Distillation", "authors_short": "Wang et al.", "arxiv": "1811.10959", "role": "雙層資料集最佳化，啟發 SOAR", "source": "paper §2; arXiv API"}, {"year": 2020, "title": "Emergent Complexity and Zero-shot Transfer via Unsupervised Environment Design", "authors_short": "Dennis et al.", "arxiv": "2012.02096", "role": "非監督環境設計；minimax 退化", "source": "paper §A.1; arXiv API"}, {"year": 2021, "title": "Asymmetric self-play for automatic goal discovery in robotic manipulation", "authors_short": "OpenAI et al.", "arxiv": "2101.04882", "role": "機器人上的非對稱 self-play", "source": "paper §A.2; arXiv API"}, {"year": 2024, "title": "Back to Basics: Revisiting REINFORCE Style Optimization for Learning from Human Feedback in LLMs", "authors_short": "Ahmadian et al.", "arxiv": "2402.14740", "role": "RLOO，SOAR 內外層使用", "source": "paper §3.2; arXiv API"}, {"year": 2025, "title": "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", "authors_short": "DeepSeek-AI", "arxiv": "2501.12948", "role": "RLVR 推理能力，問題背景", "source": "paper §1; arXiv API"}, {"year": 2025, "title": "Absolute Zero: Reinforced Self-play Reasoning with Zero Data", "authors_short": "Zhao et al.", "arxiv": "2505.03335", "role": "資料自由 self-play，代理獎勵", "source": "paper §2; arXiv API"}, {"year": 2025, "title": "R-Zero: Self-Evolving Reasoning LLM from Zero Data", "authors_short": "Huang et al.", "arxiv": "2508.05004", "role": "資料自由 challenger–solver", "source": "paper §2; arXiv API"}, {"year": 2025, "title": "Can Large Reasoning Models Self-Train?", "authors_short": "Shafayat et al.", "arxiv": "2505.21444", "role": "自我獎勵的崩潰", "source": "paper §2; arXiv API"}, {"year": 2026, "title": "Teaching Models to Teach Themselves: Reasoning at the Edge of Learnability", "authors_short": "Sundaram et al.", "arxiv": "2601.18778", "role": "本文：以 student 進步量為獎勵的 meta-RL teacher", "source": "本文"}]</script>
+<script type="application/json" id="results-data">{"MATH": [{"name": "Base Model Inference", "vals": [[0.3, 0.1], [1.0, 0.2], [2.0, 0.4], [3.9, 0.8], [7.5, 1.3]]}, {"name": "Hard-Only", "vals": [[0.5, 0.1], [1.7, 0.4], [3.2, 0.8], [5.7, 1.5], [9.6, 2.6]]}, {"name": "Hard-Only (g = 128)", "vals": [[1.4, 1.0], [3.9, 2.6], [6.1, 3.9], [8.9, 5.5], [12.4, 7.4]]}, {"name": "SeRL (step 50)", "vals": [[0.5, 0.1], [1.9, 0.3], [3.7, 0.4], [6.9, 0.7], [12.2, 0.7]]}, {"name": "SeRL (step 100)", "vals": [[0.5, 0.0], [2.1, 0.0], [4.0, 0.0], [7.3, 0.2], [12.4, 1.0]]}, {"name": "SOAR-PQ (Ours)", "vals": [[1.7, 1.0], [5.3, 2.6], [8.5, 3.7], [13.0, 4.8], [18.9, 5.3]]}, {"name": "SOAR-PS (Ours)", "vals": [[1.0, 0.2], [3.8, 0.6], [6.8, 1.1], [11.5, 1.6], [18.1, 2.4]]}, {"name": "Grounded-T (Ours)", "vals": [[1.6, 0.5], [5.1, 1.4], [8.4, 2.1], [13.1, 2.9], [19.1, 3.7]]}, {"name": "Intrinsic-T", "vals": [[1.0, 0.6], [3.3, 2.1], [5.7, 3.5], [9.2, 5.3], [14.1, 7.5]]}, {"name": "Inference with Grounded-T", "vals": [[0.3, 0.0], [1.1, 0.2], [2.2, 0.3], [4.4, 0.6], [8.3, 1.1]]}, {"name": "HARP train (128)", "vals": [[2.4, 1.0], [7.2, 2.4], [11.3, 3.1], [16.5, 3.6], [23.0, 3.9]]}, {"name": "MATH train (128)", "vals": [[2.1, 0.0], [6.6, 0.1], [10.5, 0.3], [15.7, 0.5], [21.8, 0.9]]}, {"name": "MATH train (Full)", "vals": [[2.7, 0.2], [7.6, 0.7], [11.5, 1.2], [16.4, 1.8], [22.0, 2.4]]}], "HARP": [{"name": "Base Model Inference", "vals": [[0.2, 0.0], [0.9, 0.0], [1.7, 0.0], [3.4, 0.0], [6.4, 0.0]]}, {"name": "Hard-Only", "vals": [[0.4, 0.1], [1.4, 0.2], [2.6, 0.4], [4.7, 0.6], [8.2, 1.0]]}, {"name": "SeRL (step 50)", "vals": [[0.4, 0.0], [1.4, 0.1], [2.7, 0.3], [5.3, 0.5], [9.7, 0.9]]}, {"name": "SeRL (step 100)", "vals": [[0.5, 0.0], [1.9, 0.1], [3.6, 0.2], [6.5, 0.3], [10.9, 0.4]]}, {"name": "SOAR-PQ (Ours)", "vals": [[0.7, 0.3], [2.5, 0.8], [4.5, 1.3], [7.7, 1.7], [12.3, 2.0]]}, {"name": "SOAR-PS (Ours)", "vals": [[0.6, 0.1], [2.1, 0.3], [3.9, 0.6], [7.0, 0.9], [11.8, 1.2]]}, {"name": "Grounded-T (Ours)", "vals": [[0.5, 0.2], [2.0, 0.5], [3.8, 0.9], [6.7, 1.3], [11.2, 1.7]]}, {"name": "Intrinsic-T", "vals": [[0.4, 0.1], [1.6, 0.5], [3.1, 0.8], [5.6, 1.4], [9.6, 2.1]]}, {"name": "Inference with Grounded-T", "vals": [[0.2, 0.0], [0.9, 0.1], [1.9, 0.2], [3.6, 0.4], [6.8, 0.7]]}, {"name": "HARP train (128)", "vals": [[0.4, 0.0], [1.4, 0.1], [2.8, 0.2], [5.0, 0.5], [8.7, 1.1]]}, {"name": "MATH train (128)", "vals": [[0.6, 0.1], [2.1, 0.4], [4.0, 0.7], [7.1, 0.9], [11.9, 0.9]]}, {"name": "MATH train (Full)", "vals": [[1.7, 0.2], [5.1, 0.4], [8.1, 0.4], [11.7, 0.3], [16.2, 0.4]]}], "OLYMP": [{"name": "Base Model Inference", "vals": [[0.2, 0.0], [0.8, 0.1], [1.6, 0.3], [3.1, 0.5], [5.8, 1.0]]}, {"name": "Hard-Only", "vals": [[0.3, 0.1], [1.1, 0.3], [2.1, 0.6], [3.9, 1.3], [6.9, 2.7]]}, {"name": "SOAR-PQ (MATH) (Ours)", "vals": [[0.5, 0.1], [1.9, 0.5], [3.6, 0.9], [6.4, 1.6], [10.6, 2.7]]}, {"name": "SOAR-PQ (HARP) (Ours)", "vals": [[0.5, 0.1], [2.0, 0.5], [3.8, 1.0], [7.0, 1.8], [12.0, 3.0]]}, {"name": "SOAR-PS (MATH) (Ours)", "vals": [[0.6, 0.1], [2.1, 0.5], [3.7, 0.8], [6.2, 1.3], [9.9, 2.2]]}, {"name": "SOAR-PS (HARP) (Ours)", "vals": [[0.5, 0.1], [2.0, 0.4], [3.8, 0.7], [6.9, 1.1], [11.7, 1.6]]}, {"name": "Grounded-T (MATH) (Ours)", "vals": [[0.4, 0.2], [1.6, 0.8], [2.9, 1.4], [5.3, 2.4], [9.0, 4.0]]}, {"name": "Grounded-T (HARP) (Ours)", "vals": [[0.5, 0.2], [1.9, 0.6], [3.6, 1.1], [6.5, 1.8], [11.1, 2.9]]}, {"name": "Intrinsic-T", "vals": [[0.4, 0.3], [1.7, 1.2], [3.1, 2.0], [5.5, 3.4], [9.1, 5.2]]}, {"name": "HARP train (128)", "vals": [[0.5, 0.1], [2.0, 0.2], [3.6, 0.4], [6.5, 0.8], [10.6, 1.7]]}, {"name": "MATH train (128)", "vals": [[1.0, 0.1], [3.4, 0.1], [5.9, 0.1], [9.6, 0.4], [14.6, 1.4]]}, {"name": "MATH train (Full)", "vals": [[0.9, 0.0], [3.2, 0.1], [5.6, 0.3], [8.8, 0.7], [13.1, 0.9]]}]}</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+const UNDEF='undef';
+function fmt(v,n=4){if(v===UNDEF)return'未定義';if(v===Infinity)return'∞';if(v===-Infinity)return'−∞';if(!Number.isFinite(v))return'—';if(Math.abs(v)<5*10**-(n+1))v=0;return v.toFixed(n).replace('-','−')}
+const norm=(v,n)=>Number((+v).toFixed(n));
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+function segInit(box,opts,cur,label,onPick){box.textContent='';opts.forEach(o=>{const b=document.createElement('button');b.type='button';b.setAttribute('role','radio');
+    b.textContent=label?label(o):String(o);b.dataset.v=String(o);box.appendChild(b)});
+  const sync=v=>$$('button',box).forEach(b=>{const on=b.dataset.v===String(v);b.setAttribute('aria-checked',String(on));b.setAttribute('aria-pressed',String(on));b.tabIndex=on?0:-1});sync(cur);
+  box.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const v=opts.find(o=>String(o)===b.dataset.v);sync(v);onPick(v)});
+  box.addEventListener('keydown',e=>{const bs=$$('button',box),i=bs.findIndex(b=>b.tabIndex===0);let j=i;if(e.key==='ArrowRight'||e.key==='ArrowDown')j=(i+1)%bs.length;else if(e.key==='ArrowLeft'||e.key==='ArrowUp')j=(i-1+bs.length)%bs.length;else return;e.preventDefault();bs[j].focus();bs[j].click()});
+  return sync}
+function dl(box,rows){box.innerHTML=rows.map(([k,v,c])=>`<dt>${k}</dt><dd${c?' class="acc"':''}>${v}</dd>`).join('')}
+function slider(id,lab,min,max,step,val,ndec){return `<div class="rng"><label class="lbl" for="${id}">${lab} <output id="${id}o"></output></label><input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}"></div>`}
+
+
+/* ================= shared math (mirrors verify/check.py) ================= */
+const log1mPow=(p,k)=>p>=1?(k>0?0:1):Math.exp(k*Math.log1p(-p));
+const passK=(p,k)=>p>=1?1:-Math.expm1(k*Math.log1p(-p));
+const nonzeroG=(p,G)=>p>=1?0:passK(p,G)-Math.pow(p,G);
+function softmax(th){const m=Math.max(...th),e=th.map(t=>Math.exp(t-m)),Z=e.reduce((a,b)=>a+b,0);return e.map(v=>v/Z)}
+function erfcc(x){ // Numerical Recipes; fractional error < 1.2e-7
+  const z=Math.abs(x),t=1/(1+0.5*z);
+  const r=t*Math.exp(-z*z-1.26551223+t*(1.00002368+t*(0.37409196+t*(0.09678418+
+    t*(-0.18628806+t*(0.27886807+t*(-1.13520398+t*(1.48851587+t*(-0.82215223+t*0.17087277)))))))));
+  return x>=0?r:2-r}
+const sgn=v=>v<0?'−'+String(-v):'+'+String(v);
+function fmtSig(x,n=4){if(x===0)return'0';if(!Number.isFinite(x))return'—';const a=Math.abs(x);if(a<1e-3||a>=1e5)return x.toExponential(n-1).replace('-','−');return x.toPrecision(n).replace('-','−')}
+const fx=(v,n)=>{if(Math.abs(v)<0.5*10**-n)v=0;return v.toFixed(n).replace('-','−')};
+function svgBox(id,min,max,H){const box=$('#'+id),W=widthOf(box,min,max),svg=box.querySelector('svg');svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);return{svg,W,H}}
+
+/* ---------------- C1 ---------------- */
+const c1={lp:Math.log10(.002),G:32,k:8};
+function c1Vals(s){const p=10**s.lp;return{p,F:log1mPow(p,128),pk:passK(p,s.k),nz:nonzeroG(p,s.G),allw:100*log1mPow(p,s.G)}}
+function c1Draw(){const {svg,W,H}=svgBox('c1-fig',300,620,230),L=40,R=W-10,T=12,B=H-30;const X=lin(-4,0,L,R),Y=lin(0,1,B,T);const s=c1,v=c1Vals(s);
+  [0,.25,.5,.75,1].forEach(y=>{el('line',{x1:L,x2:R,y1:Y(y),y2:Y(y),class:'grid'},svg);tx(svg,L-6,Y(y)+4,String(y),{class:'lbl12','text-anchor':'end'})});
+  (W<480?[-4,-2,0]:[-4,-3,-2,-1,0]).forEach(e=>tx(svg,X(e),B+18,'1e'+(e===0?'0':'−'+(-e)),{class:'lbl12','text-anchor':'middle'}));
+  tx(svg,R,B+18+0,'',{});
+  el('line',{x1:L,x2:R,y1:Y(.075),y2:Y(.075),class:'ref2'},svg);tx(svg,R-4,Y(.075)-5,'Table 4 基礎模型 pass@32 = 7.5%（MATH 平均）',{class:'lbl12 halo','text-anchor':'end'});
+  const pts=f=>{const a=[];for(let i=0;i<=200;i++){const e=-4+4*i/200;a.push([X(e),Y(f(10**e))])}return lp(a)};
+  el('path',{d:pts(p=>log1mPow(p,128)),class:'ref',style:'stroke-width:2'},svg);
+  el('path',{d:pts(p=>passK(p,s.k)),class:'acc-s'},svg);
+  el('path',{d:pts(p=>nonzeroG(p,s.G)),class:'cb'},svg);
+  const xp=X(s.lp);el('line',{x1:xp,x2:xp,y1:T,y2:B,class:'axis0'},svg);
+  el('circle',{cx:xp,cy:Y(v.F),r:5,class:'fill-ink3'},svg);el('rect',{x:xp-4.5,y:Y(v.pk)-4.5,width:9,height:9,class:'fill-acc'},svg);
+  const ty=Y(v.nz);el('path',{d:`M${xp} ${ty-6}L${xp+6} ${ty+5}L${xp-6} ${ty+5}Z`,class:'fill-b'},svg);
+  tx(svg,(L+R)/2,H-2,'',{});
+  $('#c1-po').textContent=`${fx(s.lp,2)}（p = ${fmtSig(v.p,4)}）`;$('#c1-p').setAttribute('aria-valuetext',`p = ${fmtSig(v.p,4)}`);
+  dl($('#c1-read'),[['p',fmtSig(v.p,4)],['通過 0/128 篩選',fx(v.F,4)],[`pass@${s.k}`,fx(v.pk,4),1],[`群組有梯度（G = ${s.G}）`,fx(v.nz,4)],['每 100 題全錯',fx(v.allw,1)+' 題']]);
+  $('#c1-note').textContent=v.p>=1?'全部答對時優勢也全為 0，群組同樣沒有梯度。':(s.k===s.G?`此時 pass@k 與群組有梯度的曲線幾乎重合（只差 p^${s.G}）。`:'');
+  svg.setAttribute('aria-label',`p = ${fmtSig(v.p,4)}：通過篩選 ${fx(v.F,4)}，pass@${s.k} ${fx(v.pk,4)}，群組有梯度 ${fx(v.nz,4)}`);
+  announce('c1',`p = ${fmtSig(v.p,3)}，pass@${s.k} = ${fx(v.pk,4)}，群組有梯度 ${fx(v.nz,4)}`)}
+function initC1(){const sl=$('#c1-p');sl.value=c1.lp;sl.addEventListener('input',()=>{c1.lp=+sl.value;c1Draw()});
+  segInit($('#c1-G'),[32,128],c1.G,null,g=>{c1.G=g;c1Draw()});segInit($('#c1-k'),[1,4,8,16,32],c1.k,null,k=>{c1.k=k;c1Draw()});c1Draw()}
+
+/* ---------------- C2 ---------------- */
+const TH2=[1.0,0.5,0.0,-0.5,0.8,0.2];
+const C2DEF={S:[1,1,1,1,0,0],z:[0,1,1,3],R:[.02,-.01,0,.03],est:'rloo'};
+const c2=JSON.parse(JSON.stringify(C2DEF));
+function computeC2(s){const pi0=softmax(TH2),pS=pi0.reduce((a,p,i)=>a+(s.S[i]?p:0),0),pic=pi0.map((p,i)=>s.S[i]?p/pS:0),g=s.z.length;
+  const sumR=s.R.reduce((a,b)=>a+b,0),A=s.est==='rloo'?s.R.map(r=>r-(sumR-r)/(g-1)):s.R.slice();
+  const L=[0,1,2,3,4,5].map(j=>A.reduce((a,ai,i)=>a+ai*((s.z[i]===j?1:0)-pic[j]),0)),Q=[0,1,2,3,4,5].map(j=>A.reduce((a,ai,i)=>a+ai*((s.z[i]===j?1:0)-pi0[j]),0));
+  const sumA=A.reduce((a,b)=>a+b,0),diff=Math.max(...L.map((l,j)=>Math.abs(l-Q[j])));return{pi0,pS,pic,A,L,Q,sumA,diff}}
+function c2Verdict(s,o){const rej=[0,1,2,3,4,5].filter(j=>!s.S[j]).map(j=>j+1);const same=o.diff<1e-12?'兩式相同。':`兩式不同，最大差 ${fmtSig(o.diff,4)}。`;
+  if(!rej.length)return same+'目前沒有被拒絕的輸出。';
+  const sA=Math.abs(o.sumA)<=1e-12?'ΣA = 0，沒有偏差。':(o.sumA>0?'ΣA > 0，這些輸出被壓低。':'ΣA < 0，這些輸出被抬高。');
+  return `${same}被拒絕的輸出 ${rej.join('、')} 在 Q 中的分量是 −(ΣA)π₀(j)；${sA}`}
+function c2Draw(){const s=c2,o=computeC2(s),{svg,W,H}=svgBox('c2-fig',300,900,316);const L=36,R=W-6,gw=(R-L)/6;
+  const top={T:20,B:110},bot={T:150,B:280};const Yt=lin(0,.5,top.B,top.T);const m=Math.max(.02,...o.L.map(Math.abs),...o.Q.map(Math.abs))*1.15,Yb=lin(-m,m,bot.B,bot.T);
+  tx(svg,L,12,'機率 π₀ 與 π_c',{class:'lbl12'});tx(svg,L,bot.T-8,'對 θ_j 的梯度分量（上方＝提高 θ_j）',{class:'lbl12'});
+  el('line',{x1:L,x2:R,y1:top.B,y2:top.B,class:'axis0'},svg);el('line',{x1:L,x2:R,y1:Yb(0),y2:Yb(0),class:'axis0'},svg);
+  const bw=Math.min(18,gw*.32);
+  for(let j=0;j<6;j++){const cx=L+gw*(j+.5);
+    el('rect',{x:cx-bw-1,y:Yt(o.pi0[j]),width:bw,height:top.B-Yt(o.pi0[j]),class:'fill-a',opacity:.35},svg);
+    if(s.S[j])el('rect',{x:cx+1,y:Yt(o.pic[j]),width:bw,height:top.B-Yt(o.pic[j]),class:'fill-a'},svg);
+    else tx(svg,cx+1+bw/2,top.B-4,'×',{class:'lbl12','text-anchor':'middle'});
+    const bar=(v,x,cls)=>{const y0=Yb(0),y1=Yb(v);return el('rect',Object.assign({x,y:Math.min(y0,y1),width:bw,height:Math.max(.5,Math.abs(y1-y0))},cls),svg)};
+    bar(o.L[j],cx-bw-1,{class:'fill-b'});bar(o.Q[j],cx+1,{fill:'none',stroke:'var(--ink-2)','stroke-width':1.6});
+    tx(svg,cx,bot.B+16,`z=${j+1}`,{class:'lbl12','text-anchor':'middle'});if(!s.S[j])tx(svg,cx,bot.B+30,'拒絕',{class:'lbl12','text-anchor':'middle'})}
+  dl($('#c2-read'),[['π₀',o.pi0.map(v=>fx(v,4)).join(', ')],['接受率 π₀(S)',fx(o.pS,4)],['平均抽幾次',fx(1/o.pS,3)],['優勢 A',o.A.map(v=>fx(v,5)).join(', ')],['ΣA',fx(o.sumA,5),1],['L（對 π）',o.L.map(v=>fx(v,5)).join(', ')],['Q（對 π₀）',o.Q.map(v=>fx(v,5)).join(', ')]]);
+  const vt=c2Verdict(s,o);$('#c2-verdict').textContent=vt;$('#c2-verdict').classList.toggle('on',o.diff>=1e-12);svg.setAttribute('aria-label',vt);announce('c2',vt)}
+function c2BuildCustom(){const S=$('#c2-S');S.textContent='';for(let j=0;j<6;j++){const l=document.createElement('label');l.className='chk';l.innerHTML=`<input type="checkbox" ${c2.S[j]?'checked':''} data-j="${j}">輸出 ${j+1} 格式正確`;S.appendChild(l)}
+  S.onchange=e=>{const j=+e.target.dataset.j;const nx=c2.S.slice();nx[j]=e.target.checked?1:0;if(!nx.some(Boolean)){e.target.checked=true;announce('c2','至少要保留一個格式正確的輸出');return}c2.S=nx;
+    const first=nx.findIndex(Boolean);c2.z=c2.z.map(z=>nx[z]?z:first);c2Rows();c2Draw()};c2Rows()}
+function c2Rows(){const box=$('#c2-rows');box.textContent='';c2.z.forEach((z,i)=>{const d=document.createElement('div');d.className='srow';
+  d.innerHTML=`<span class="lbl">樣本 ${i+1}</span><select aria-label="樣本 ${i+1} 的輸出 z">${[0,1,2,3,4,5].filter(j=>c2.S[j]).map(j=>`<option value="${j}" ${j===z?'selected':''}>z = ${j+1}</option>`).join('')}</select>`+slider(`c2-r${i}`,'獎勵 R',-0.04,0.04,0.001,c2.R[i]);
+  box.appendChild(d);d.querySelector('select').addEventListener('change',e=>{c2.z[i]=+e.target.value;c2Draw()});
+  const sl=d.querySelector('input[type=range]'),out=d.querySelector('output');const upd=()=>{out.textContent=fx(c2.R[i],3);sl.setAttribute('aria-valuetext','R = '+fx(c2.R[i],3))};upd();
+  sl.addEventListener('input',()=>{c2.R[i]=+sl.value;upd();c2Draw()})})}
+function initC2(){const syncEst=segInit($('#c2-est'),['rloo','reinforce'],c2.est,k=>k==='rloo'?'RLOO':'REINFORCE（A = R）',k=>{c2.est=k;c2Draw()});
+  $('#c2-zero').addEventListener('click',()=>{c2.R=[0,0,0,0];c2Rows();c2Draw()});$('#c2-flip').addEventListener('click',()=>{c2.R=c2.R.map(r=>-r||0);c2Rows();c2Draw()});
+  c2BuildCustom();c2Draw()}
+
+/* ---------------- C3 ---------------- */
+const C3DEF=[[1,2,0,1],[-1,0,1,-1],[0,1,-1,0],[2,1,3,0]];
+const c3={C:C3DEF.map(r=>r.slice()),prev:[.010,.014],tau:.01,mu:0,sd:.02,sc:.005,r:4,m:3};
+function computeC3a(C,prev,tau){const Rdj=C.map(r=>r.map(c=>c/64)),Rd=Rdj.map(r=>r.reduce((a,b)=>a+b,0)/r.length),Rhat=Rd.reduce((a,b)=>a+b,0)/Rd.length;
+  const MA=(prev.reduce((a,b)=>a+b,0)+Rhat)/(prev.length+1),promote=MA>tau;let ds=0;Rd.forEach((v,d)=>{if(v>Rd[ds])ds=d});
+  const js=[0,1,2,3].sort((a,b)=>Rdj[ds][a]-Rdj[ds][b]||a-b)[1];const sum=Rd.reduce((a,b)=>a+b,0),A=Rd.map(v=>v-(sum-v)/(Rd.length-1));return{Rdj,Rd,Rhat,MA,promote,ds,js,A}}
+function computeC3b(mu,sd,sc,r,m,g=4,tau=.01){const sMA=Math.sqrt((sc*sc+sd*sd/(g*r))/m),P=.5*erfcc((tau-mu)/(sMA*Math.SQRT2));return{sMA,P,E:198*P}}
+function c3Grid(){const t=$('#c3-grid');t.innerHTML=t.querySelector('caption').outerHTML+'<thead><tr><th>d</th>'+[1,2,3,4].map(j=>`<th>學生 ${j}</th>`).join('')+'<th class="num">R_d</th></tr></thead><tbody>'+
+  c3.C.map((row,d)=>`<tr><th>${d+1}</th>`+row.map((c,j)=>`<td><input type="number" inputmode="numeric" min="-64" max="64" step="1" value="${c}" data-d="${d}" data-j="${j}" aria-label="資料集 ${d+1}，學生 ${j+1} 的淨增答對題數" aria-describedby="c3-err"></td>`).join('')+`<td class="num" id="c3-rd${d}"></td></tr>`).join('')+'</tbody>';
+  t.oninput=e=>{const i=e.target;if(i.tagName!=='INPUT')return;const v=Number(i.value),okv=i.value.trim()!==''&&Number.isInteger(v)&&v>=-64&&v<=64;i.setAttribute('aria-invalid',String(!okv));
+    c3.C[+i.dataset.d][+i.dataset.j]=okv?v:0;$('#c3-err').textContent=$$('input[aria-invalid=true]',t).length?'請輸入 −64 到 64 的整數（無效的格子以 0 計算）。':'';c3aDraw()}}
+function c3aDraw(){const o=computeC3a(c3.C,c3.prev,c3.tau);o.Rd.forEach((v,d)=>{$('#c3-rd'+d).textContent=fx(v,6)});
+  $$('#c3-grid tbody tr').forEach((tr,d)=>{tr.classList.toggle('sel',o.promote&&d===o.ds);$$('td',tr).forEach((td,j)=>td.classList.toggle('sel',o.promote&&d===o.ds&&j===o.js))});
+  $('#c3-p1o').textContent=fx(c3.prev[0],3);$('#c3-p2o').textContent=fx(c3.prev[1],3);
+  $('#c3-steps').innerHTML=[`第 13 行：R_d = (${o.Rd.map(v=>fx(v,6)).join(', ')})`,`第 16 行：步平均 = ${fx(o.Rhat,6)}`,`第 17 行：移動平均 = (${fx(c3.prev[0],3)} + ${fx(c3.prev[1],3)} + ${fx(o.Rhat,6)}) / 3 = ${fx(o.MA,6)}`,
+    `第 18 行：${fx(o.MA,6)} ${o.MA>c3.tau?'>':'≤'} τ = ${c3.tau}`+(o.promote?`；第 19–20 行：d* = ${o.ds+1}，j* = ${o.js+1}（c = ${c3.C[o.ds][o.js]}）`:''),`第 25 行：老師優勢 A_d = (${o.A.map(v=>fx(v,6)).join(', ')})，ΣA = ${fx(o.A.reduce((a,b)=>a+b,0),6)}`].map(s=>`<li>${s}</li>`).join('');
+  dl($('#c3-read'),[['步平均',fx(o.Rhat,6)],['移動平均',fx(o.MA,6),1],['τ',String(c3.tau)]]);
+  const v=$('#c3-verdict');v.classList.toggle('on',o.promote);v.textContent=o.promote?`✓ 晉升：資料集 ${o.ds+1}、學生 ${o.js+1}；D_best 增加 64 題。`:'✗ 不晉升：學生回到基準。';
+  const {svg,W,H}=svgBox('c3-adv',260,560,120),L=60,R=W-50,mid=(L+R)/2,mx=Math.max(.005,...o.A.map(Math.abs)),X=lin(-mx,mx,L,R);el('line',{x1:mid,x2:mid,y1:4,y2:H-4,class:'axis0'},svg);
+  o.A.forEach((a,d)=>{const y=8+d*27;el('rect',{x:Math.min(mid,X(a)),y,width:Math.max(1,Math.abs(X(a)-mid)),height:16,class:a>=0?'fill-acc':'fill-b'},svg);tx(svg,4,y+12,`A_${d+1}`,{class:'lbl12'});tx(svg,W-4,y+12,fx(a,4),{class:'lbl12','text-anchor':'end'})});
+  svg.setAttribute('aria-label','老師的 RLOO 優勢：'+o.A.map((a,d)=>`資料集 ${d+1} ${fx(a,4)}`).join('，'));
+  announce('c3',v.textContent+` 移動平均 ${fx(o.MA,6)}。`);return o}
+function c3bDraw(){const s=c3,o=computeC3b(s.mu,s.sd,s.sc,s.r,s.m);['mu','sd','sc'].forEach(k=>{$(`#c3-${k}o`).textContent=fx(s[k],3);$(`#c3-${k}`).setAttribute('aria-valuetext',`${k} = ${fx(s[k],3)}`)});
+  const {svg,W,H}=svgBox('c3b-fig',300,620,200),L=14,R=W-14,T=14,B=H-30,lo=Math.min(s.mu-4*o.sMA,-.01),hi=Math.max(s.mu+4*o.sMA,.03),X=lin(lo,hi,L,R),pk=1/(o.sMA*Math.sqrt(2*Math.PI)),Y=lin(0,pk*1.08,B,T);
+  const pdf=x=>Math.exp(-.5*((x-s.mu)/o.sMA)**2)*pk;const pts=[],sh=[[X(Math.max(.01,lo)),B]];for(let i=0;i<=240;i++){const x=lo+(hi-lo)*i/240;pts.push([X(x),Y(pdf(x))]);if(x>=.01)sh.push([X(x),Y(pdf(x))])}sh.push([X(hi),B]);
+  el('path',{d:lp(sh)+'Z',class:'shade'},svg);el('path',{d:lp(pts),class:'acc-s'},svg);el('line',{x1:L,x2:R,y1:B,y2:B,class:'axis0'},svg);
+  el('line',{x1:X(.01),x2:X(.01),y1:T,y2:B,class:'ref'},svg);tx(svg,X(.01)+4,T+10,'τ = 0.01',{class:'lbl12'});
+  [lo,s.mu,hi].forEach((v,i)=>tx(svg,X(v),B+18,fx(v,3),{class:'lbl12','text-anchor':['start','middle','end'][i]}));
+  dl($('#c3b-read'),[['移動平均標準差',fx(o.sMA,5)],['每步誤晉升機率',o.P<1e-12?'< 1e-12':fmtSig(o.P,4),1],['200 步中期望次數',fx(o.E,3)]]);
+  const combos=[[1,1],[4,1],[1,3],[4,3]];$('#c3b-tab').innerHTML=$('#c3b-tab caption').outerHTML+'<thead><tr><th>r</th><th>m</th><th class="num">P（目前 σ_c）</th><th class="num">P（σ_c = 0，下界）</th></tr></thead><tbody>'+
+    combos.map(([r,m])=>{const a=computeC3b(s.mu,s.sd,s.sc,r,m).P,b=computeC3b(s.mu,s.sd,0,r,m).P;return`<tr${r===s.r&&m===s.m?' class="hl"':''}><td>${r}</td><td>${m}</td><td class="num">${fmtSig(a,3)}</td><td class="num">${fmtSig(b,3)}</td></tr>`}).join('')+'</tbody>';
+  svg.setAttribute('aria-label',`移動平均的分布，τ 右側面積 = 每步誤晉升機率 ${fmtSig(o.P,3)}`);announce('c3b',`每步誤晉升機率 ${fmtSig(o.P,3)}，200 步期望 ${fx(o.E,2)} 次`)}
+function initC3(){c3Grid();c3aDraw();
+  [['c3-p1',0],['c3-p2',1]].forEach(([id,i])=>{const sl=$('#'+id);sl.addEventListener('input',()=>{c3.prev[i]=+sl.value;sl.setAttribute('aria-valuetext',fx(c3.prev[i],3));c3aDraw()})});
+  $('#c3-reset').addEventListener('click',()=>{c3.C=C3DEF.map(r=>r.slice());c3.prev=[.010,.014];$('#c3-p1').value=.01;$('#c3-p2').value=.014;$('#c3-err').textContent='';c3Grid();c3aDraw()});
+  ['mu','sd','sc'].forEach(k=>{const sl=$('#c3-'+k);sl.addEventListener('input',()=>{c3[k]=+sl.value;c3bDraw()})});
+  segInit($('#c3-r'),[1,2,4,8],c3.r,null,v=>{c3.r=v;c3bDraw()});segInit($('#c3-m'),[1,3],c3.m,null,v=>{c3.m=v;c3bDraw()});
+  const tabs=$$('#c3 [role=tab]');const pick=i=>{tabs.forEach((t,j)=>{t.setAttribute('aria-selected',String(i===j));t.tabIndex=i===j?0:-1;$('#'+t.getAttribute('aria-controls')).hidden=i!==j});if(i===1)c3bDraw()};
+  tabs.forEach((t,i)=>{t.addEventListener('click',()=>pick(i));t.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowLeft'){e.preventDefault();const j=(i+1)%2;pick(j);tabs[j].focus()}})});c3bDraw()}
+
+/* ---------------- C4 ---------------- */
+const RES=JSON.parse($('#results-data').textContent);
+const DSN={MATH:'MATH',HARP:'HARP',OLYMP:'OlympiadBench'};
+const DEFROW={MATH:'SOAR-PQ (Ours)',HARP:'SOAR-PQ (Ours)',OLYMP:'SOAR-PQ (HARP) (Ours)'};
+const REAL=new Set(['HARP train (128)','MATH train (128)','MATH train (Full)']);
+const grpOf=n=>REAL.has(n)?2:(/Ours|Intrinsic|Inference with/.test(n)?1:0);
+const GRPN=['推論與直接訓練','SOAR 與老師取樣','真實題目參照'];
+const disp=n=>n.replace('Hard-Only (g = 128)','Hard-Only（G = 128；原文 g = 128）');
+const c4={ds:'MATH',ki:4,mode:'abs',sel:'SOAR-PQ (Ours)'};
+const KS=[1,4,8,16,32];
+function rowOf(ds,n){return RES[ds].find(r=>r.name===n)}
+function deriveC4(ds,ki,name){const [m,sd]=rowOf(ds,name).vals[ki],[ho,hsd]=rowOf(ds,'Hard-Only').vals[ki],full=rowOf(ds,'MATH train (Full)').vals[ki][0];
+  const den=full-ho,rec=den>0?(m-ho)/den:null;return{m,sd,ho,hsd,dpp:m-ho,ratio:m/ho,rec,overlap:(m-sd)<=(ho+hsd)&&(ho-hsd)<=(m+sd),
+    s:{dpp:(m-ho>=0?'+':'−')+Math.abs(m-ho).toFixed(1),ratio:(m/ho).toFixed(2)+'×',rec:rec===null?'—':rec.toFixed(2).replace('-','−')}}}
+function c4Draw(){const s=c4,rows=RES[s.ds],box=$('#c4-fig');const W=widthOf(box,280,640),L=8,R=W-8;const hoV=rowOf(s.ds,'Hard-Only').vals[s.ki][0];
+  const val=r=>{const [m,sd]=r.vals[s.ki];return s.mode==='abs'?[m,sd]:[m-hoV,sd]};let lo=s.mode==='abs'?0:Math.min(0,...rows.map(r=>val(r)[0]-val(r)[1])),hi=Math.max(...rows.map(r=>val(r)[0]+val(r)[1]))*1.05;
+  const X=lin(lo,hi,L,R);box.textContent='';let g=-1;
+  rows.forEach(r=>{const gr=grpOf(r.name);if(gr!==g){g=gr;const h=document.createElement('div');h.className='c4-grp';h.textContent=GRPN[gr];box.appendChild(h);
+      if(gr===0){const nn=document.createElement('p');nn.className='c4-gnote';nn.textContent='Hard-Only (g = 128)：論文在這裡用 g 表示學生群組大小，與本頁的 g（資料集數）衝突，所以本頁寫 G。';box.appendChild(nn)}
+      if(gr===2){const nn=document.createElement('p');nn.className='c4-gnote';nn.textContent='論文稱 MATH train (Full) 為上界參考，但它不是最大值：MATH 上 HARP train (128) 23.0 > 22.0；OlympiadBench 上 MATH train (128) 14.6 > 13.1。';box.appendChild(nn)}}
+    const b=document.createElement('button');b.type='button';b.className='c4-row';b.setAttribute('aria-pressed',String(r.name===s.sel));const [m,sd]=val(r),raw=r.vals[s.ki];
+    b.setAttribute('aria-label',`${disp(r.name)}：${raw[0]} ± ${raw[1]}`);b.innerHTML=`<span class="lbl" style="padding:4px 8px 0">${disp(r.name)}<output>${raw[0].toFixed(1)} ± ${raw[1].toFixed(1)}</output></span>`;
+    const svg=el('svg',{width:W,height:22,viewBox:`0 0 ${W} 22`,'aria-hidden':'true'});b.appendChild(svg);
+    el('line',{x1:X(s.mode==='abs'?hoV:0),x2:X(s.mode==='abs'?hoV:0),y1:0,y2:22,class:'ref'},svg);
+    el('line',{x1:X(Math.max(lo,m-sd)),x2:X(m+sd),y1:11,y2:11,stroke:'var(--ink-2)','stroke-width':2},svg);
+    const cx=X(m);if(gr===2)el('rect',{x:cx-5,y:6,width:10,height:10,transform:`rotate(45 ${cx} 11)`,class:'fill-a'},svg);
+    else if(/Ours/.test(r.name))el('circle',{cx,cy:11,r:5.5,class:'fill-acc'},svg);else el('circle',{cx,cy:11,r:5,fill:'var(--surface)',stroke:'var(--ink-2)','stroke-width':2},svg);
+    b.addEventListener('click',()=>{s.sel=r.name;c4Draw()});box.appendChild(b)});
+  const ax=el('svg',{width:W,height:20,viewBox:`0 0 ${W} 20`,'aria-hidden':'true'});[lo,(lo+hi)/2,hi].forEach((v,i)=>tx(ax,X(v),14,fx(v,1)+(s.mode==='abs'?'%':' pp'),{class:'lbl12','text-anchor':['start','middle','end'][i]}));box.appendChild(ax);
+  const o=deriveC4(s.ds,s.ki,s.sel);$('#c4-sel').textContent=`${disp(s.sel)}｜${DSN[s.ds]}｜pass@${KS[s.ki]}`;
+  dl($('#c4-read'),[['平均 ± SD',`${o.m.toFixed(1)} ± ${o.sd.toFixed(1)}`],['Hard-Only',`${o.ho.toFixed(1)} ± ${o.hsd.toFixed(1)}`],['差（百分點）',o.s.dpp,1],['倍數',o.s.ratio],['回收比例'+(s.ds==='OLYMP'?'（本頁延伸）':''),o.s.rec],['± SD 區間重疊',o.overlap?'是':'否']]);
+  $('#c4-note').textContent=(s.ds==='OLYMP'?'OlympiadBench 的回收比例是本頁延伸，分母 MATH train (Full) 不是最大值。':'回收比例 = (方法 − Hard-Only) / (MATH train (Full) − Hard-Only)。')+'區間重疊只是描述，不是顯著性檢定。';
+  $('#c4-table').innerHTML=`<caption>${DSN[s.ds]} pass@k（%）</caption><thead><tr><th>方法</th>${KS.map(k=>`<th class="num">k=${k}</th>`).join('')}</tr></thead><tbody>`+rows.map(r=>`<tr${r.name===s.sel?' class="hl"':''}><td>${disp(r.name)}</td>${r.vals.map(([m,sd])=>`<td class="num">${m.toFixed(1)} ± ${sd.toFixed(1)}</td>`).join('')}</tr>`).join('')+'</tbody>';
+  announce('c4',`${disp(s.sel)}，pass@${KS[s.ki]}：差 ${o.s.dpp} 百分點，倍數 ${o.s.ratio}，回收比例 ${o.s.rec}`);return o}
+function initC4(){segInit($('#c4-ds'),['MATH','HARP','OLYMP'],c4.ds,k=>DSN[k],k=>{c4.ds=k;c4.sel=DEFROW[k];c4Draw()});
+  segInit($('#c4-k'),[0,1,2,3,4],c4.ki,i=>'k='+KS[i],i=>{c4.ki=i;c4Draw()});segInit($('#c4-mode'),['abs','pp'],c4.mode,m=>m==='abs'?'絕對值':'相對 Hard-Only',m=>{c4.mode=m;c4Draw()});c4Draw()}
+
+/* ---------------- static figures ---------------- */
+function boxT(svg,x,y,w,h,lines,cls){el('rect',{x,y,width:w,height:h,rx:10,class:cls||'box'},svg);lines.forEach((s,i)=>tx(svg,x+w/2,y+h/2+(i-(lines.length-1)/2)*17+5,s,{class:'lbl13','text-anchor':'middle'}))}
+function arrow(svg,x1,y1,x2,y2){el('path',{d:`M${x1} ${y1}L${x2} ${y2}`,class:'arr','marker-end':'url(#ah)'},svg)}
+function defs(svg){const d=el('defs',{},svg),m=el('marker',{id:'ah',viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:7,markerHeight:7,orient:'auto-start-reverse'},d);el('path',{d:'M0 0L10 5L0 10Z',fill:'var(--ink-2)'},m)}
+function drawF0(){const box=$('#f0'),W=widthOf(box,300,860),svg=box.querySelector('svg');svg.textContent='';defs(svg);
+  if(W>=600){const H=250;svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);const bw=(W-60)/5,y=70,h=64;
+    const labs=[['老師'],['g 個合成資料集','（各 n 題）'],['每個資料集訓練','r 個學生（10 步）'],['在 64 道獎勵題上','測正確率'],['資料集獎勵','R_d']];
+    labs.forEach((l,i)=>{const x=6+i*(bw+12);boxT(svg,x,y,bw,h,l,i===0?'box':'box');if(i<4)arrow(svg,x+bw+1,y+h/2,x+bw+11,y+h/2)});
+    el('rect',{x:6+2*(bw+12)-6,y:y-22,width:2*bw+24,height:h+44,rx:12,class:'dash'},svg);tx(svg,6+2*(bw+12),y-28,'內層：學生 RLOO',{class:'lbl12'});
+    const xr=6+4*(bw+12)+bw/2,xl=6+bw/2;el('path',{d:`M${xr} ${y+h}C${xr} ${y+h+70} ${xl} ${y+h+70} ${xl} ${y+h+2}`,class:'arr','marker-end':'url(#ah)'},svg);tx(svg,(xl+xr)/2,y+h+66,'外層：RLOO 更新老師',{class:'lbl13','text-anchor':'middle'});
+    tx(svg,6,24,'老師看不到難題訓練集（只收到資料集獎勵這個數字）',{class:'lbl12'})}
+  else{const bw=Math.min(W-40,300),x=(W-bw)/2,h=52,gap=26,H=6*(h+gap)+30;svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+    const labs=[['老師'],['g 個合成資料集（各 n 題）'],['每個資料集訓練 r 個學生','（10 步，內層 RLOO）'],['在 64 道獎勵題上測正確率'],['資料集獎勵 R_d'],['外層：RLOO 更新老師']];
+    labs.forEach((l,i)=>{const y=24+i*(h+gap);boxT(svg,x,y,bw,h,l,i===2||i===3?'box':'box');if(i<5)arrow(svg,W/2,y+h+1,W/2,y+h+gap-2)});
+    tx(svg,x,14,'老師看不到難題訓練集',{class:'lbl12'})}}
+function drawF1(){const {svg,W,H}=svgBox('f1',300,640,210),L=40,R=W-10,T=14,B=H-24,X=lin(0,1,L,R),Y=lin(0,1,B,T);const Er=s=>s>=1?0:(1-s)-log1mPow(s,32);
+  [0,.5,1].forEach(y=>{el('line',{x1:L,x2:R,y1:Y(y),y2:Y(y),class:'grid'},svg);tx(svg,L-6,Y(y)+4,String(y),{class:'lbl12','text-anchor':'end'})});
+  [0,.25,.5,.75,1].forEach(x=>tx(svg,X(x),B+16,String(x),{class:'lbl12','text-anchor':'middle'}));
+  const pts=[];for(let i=0;i<=400;i++){const s=i/400;pts.push([X(s),Y(Er(s))])}el('path',{d:lp(pts),class:'acc-s'},svg);
+  const ss=1-Math.pow(32,-1/31);el('circle',{cx:X(ss),cy:Y(Er(ss)),r:5,class:'fill-acc'},svg);tx(svg,X(ss)+8,Y(Er(ss))-6,`s* = ${fx(ss,3)}，E[u] = ${fx(Er(ss),3)}`,{class:'lbl13'})}
+function drawF2(){const box=$('#f2'),W=widthOf(box,300,860),svg=box.querySelector('svg');svg.textContent='';defs(svg);
+  const P=[['PS','SOAR 訓練中的晉升學生','直接推論'],['PQ','PQ＋fail@128 訓練集','從頭訓練新學生'],['Hard-Only','fail@128 訓練集','新學生（G = 32 或 128）'],['老師取樣','老師取樣 128 題＋fail@128 訓練集','新學生']];
+  if(W>=600){const rh=50,H=P.length*rh+40;svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);const c=[90,(W-90)*.42,(W-90)*.33];
+    P.forEach((p,i)=>{const y=10+i*rh;tx(svg,4,y+24,p[0],{class:'lbl13',style:'font-weight:600'});let x=90;boxT(svg,x,y,c[1]-12,38,[p[1]]);arrow(svg,x+c[1]-11,y+19,x+c[1]-1,y+19);x+=c[1];boxT(svg,x,y,c[2]-12,38,[p[2]]);arrow(svg,x+c[2]-11,y+19,x+c[2]-1,y+19);x+=c[2];boxT(svg,x,y,W-x-4,38,['測試集 pass@k'],'box')});
+    tx(svg,4,H-6,'所有路徑都在 fail@128 測試集上，以每題 32 個樣本計算 pass@k。',{class:'lbl12'})}
+  else{const bw=W-8,bh=34,H=P.length*(3*bh+44)+10;svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+    P.forEach((p,i)=>{let y=6+i*(3*bh+44);tx(svg,4,y+12,p[0],{class:'lbl13',style:'font-weight:600'});y+=18;[p[1],p[2],'測試集 pass@k'].forEach((s,j)=>{boxT(svg,4,y,bw,bh-8,[s]);if(j<2)arrow(svg,W/2,y+bh-7,W/2,y+bh-1);y+=bh})})}}
+
+/* ================= timeline ================= */
+const TL_GROUP={'Curriculum learning':['cl','soar-curriculum-and-environment-design'],'2012.02096':['cl','soar-curriculum-and-environment-design'],
+ '1502.03492':['bi','soar-bilevel-meta-learning-dataset-distillation'],'1611.02779':['bi','soar-bilevel-meta-learning-dataset-distillation'],'1703.03400':['bi','soar-bilevel-meta-learning-dataset-distillation'],'1811.10959':['bi','soar-bilevel-meta-learning-dataset-distillation'],
+ '1703.05407':['sp','soar-asymmetric-self-play-origins'],'1712.01815':['sp','soar-asymmetric-self-play-origins'],'2101.04882':['sp','soar-asymmetric-self-play-origins'],
+ '2402.14740':['rl','soar-rlvr-sparse-reward-plateau'],'2501.12948':['rl','soar-rlvr-sparse-reward-plateau'],
+ '2505.03335':['llm','soar-llm-data-free-self-play'],'2508.05004':['llm','soar-llm-data-free-self-play'],'2505.21444':['llm','soar-llm-data-free-self-play'],
+ '2601.18778':['me','soar-teacher-student-rloo-method']};
+const TL_NAME={cl:'課程學習',bi:'雙層最佳化',sp:'非對稱自我對弈',rl:'RLVR 與 RLOO',llm:'LLM 自我對弈',me:'本文',other:'其他'};
+const tlKey=e=>e.arxiv||e.title;
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  data=data.map((e,i)=>[e,i]).sort((a,b)=>((Number(a[0].year)||0)-(Number(b[0].year)||0))||a[1]-b[1]).map(x=>x[0]);
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[tlKey(e)]||['other',null];if(!TL_GROUP[tlKey(e)])console.warn('timeline: ungrouped',tlKey(e));used.add(g[0]);const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${g[1]?`<a href="${g[1]}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}});return data}
+
+/* ================= toc, theme ================= */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+
+/* ================= self test (design.md section 5) ================= */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t=1e-4)=>Math.abs(a-b)<=t+1e-15,nearv=(a,b,t=1e-4)=>a.length===b.length&&a.every((v,i)=>near(v,b[i],t));
+  // C1
+  {const v=c1Vals({lp:Math.log10(.002),G:32,k:8});ok(near(v.F,.7739)&&near(v.pk,.0159)&&near(v.nz,.0621)&&near(v.allw,93.8,.05),'C1 default')}
+  {const v=c1Vals({lp:Math.log10(.002),G:128,k:32});ok(near(v.pk,.0621)&&near(v.nz,.2261),'C1 G=128')}
+  {const v=c1Vals({lp:-2,G:32,k:32});ok(near(v.F,.2763)&&near(v.pk,.2750),'C1 p=0.01')}
+  ok(Math.abs(passK(1e-4,1)/1e-4-1)<1e-9,'C1 expm1');ok(Math.abs(nonzeroG(.5,32)-(1-2*.5**32))<1e-12,'C1 p=0.5');ok(passK(1,8)===1&&nonzeroG(1,32)===0&&log1mPow(1,128)===0,'C1 p=1 guard');
+  // C2
+  {const o=computeC2(C2DEF);ok(near(o.pS,.6341)&&Math.abs(o.sumA)<1e-12&&o.diff<1e-12&&nearv(o.L,[.01333,-.04,0,.02667,0,0],1e-5),'C2 RLOO default')}
+  {const s=Object.assign({},C2DEF,{est:'reinforce'}),o=computeC2(s);ok(near(o.sumA,.04,1e-12)&&near(o.Q[4],-.00945,1e-5)&&near(o.Q[5],-.00519,1e-5)&&near(o.diff,.00945,1e-5)&&/壓低/.test(c2Verdict(s,o))&&/5、6/.test(c2Verdict(s,o)),'C2 REINFORCE default')}
+  {const s=Object.assign({},C2DEF,{est:'reinforce',R:C2DEF.R.map(r=>-r)}),o=computeC2(s);ok(near(o.Q[4],.00945,1e-5)&&near(o.Q[5],.00519,1e-5)&&/抬高/.test(c2Verdict(s,o)),'C2 flipped')}
+  {const s={S:[1,0,1,1,1,0],z:[0,2,3,4],R:[.03,-.02,.01,.015],est:'reinforce'},o=computeC2(s),pi0=o.pi0;ok(o.L.every((l,j)=>Math.abs(l-o.Q[j]-o.sumA*(pi0[j]-o.pic[j]))<1e-15)&&/2、6/.test(c2Verdict(s,o)),'C2 identity, custom S')}
+  {const s={S:[1,1,1,1,1,1],z:[0,1,1,3],R:C2DEF.R,est:'reinforce'};ok(/沒有被拒絕/.test(c2Verdict(s,computeC2(s))),'C2 no rejected')}
+  // C3
+  {const o=computeC3a(C3DEF,[.010,.014],.01);ok(nearv(o.Rd,[.015625,-.003906,0,.023438],1e-6)&&near(o.Rhat,.008789,1e-6)&&near(o.MA,.010930,1e-6)&&o.promote&&o.ds===3&&o.js===1&&Math.abs(o.A.reduce((a,b)=>a+b,0))<1e-15,'C3a default')}
+  {const o=computeC3a(C3DEF,[.002,.006],.01);ok(near(o.MA,.005596,1e-6)&&!o.promote,'C3a no promotion')}
+  {const a=computeC3b(0,.02,.005,4,3),b=computeC3b(0,.02,0,4,3),c=computeC3b(0,.02,0,1,1),d=computeC3b(.01,.02,.005,4,3);
+   ok(Math.abs(a.P/7.153e-3-1)<1e-3&&near(a.E,1.416,2e-3),'C3b shared');ok(Math.abs(b.P/2.660e-4-1)<1e-3&&near(b.E,.053,1e-3),'C3b lower bound');ok(Math.abs(c.P/.15866-1)<1e-4&&near(c.E,31.41,.01),'C3b r=1 m=1');ok(near(d.P,.5,1e-7),'C3b mu=tau')}
+  // C4
+  ok(RES.MATH.length===13&&RES.HARP.length===12&&RES.OLYMP.length===12,'C4 row counts');
+  {const t=(ds,ki,n,dp,ra,rc,ov)=>{const o=deriveC4(ds,ki,n);ok(o.s.dpp===dp&&o.s.ratio===ra&&o.s.rec===rc&&(ov===undefined||o.overlap===ov),`C4 ${ds} k${KS[ki]} ${n}: ${o.s.dpp} ${o.s.ratio} ${o.s.rec}`)};
+   t('MATH',4,'SOAR-PQ (Ours)','+9.3','1.97×','0.75',false);t('MATH',0,'SOAR-PQ (Ours)','+1.2','3.40×','0.55');t('HARP',4,'SOAR-PQ (Ours)','+4.1','1.50×','0.51');
+   t('OLYMP',4,'SOAR-PQ (HARP) (Ours)','+5.1','1.74×','0.82',true);t('MATH',4,'Hard-Only (g = 128)','+2.8','1.29×','0.23',true)}
+  ok(!!rowOf('OLYMP',DEFROW.OLYMP)&&!!rowOf('MATH',DEFROW.MATH)&&!!rowOf('HARP',DEFROW.HARP),'C4 default rows exist');
+  // F1 + ratio SD
+  {const ss=1-Math.pow(32,-1/31);ok(near(ss,.1058)&&near((1-ss)-log1mPow(ss,32),.8663),'F1 peak')}
+  {const r=(m,s,h,hs)=>[m/h,m/h*Math.hypot(s/m,hs/h)];const a=r(1.7,1,.5,.1),b=r(.7,.3,.4,.1);ok(near(a[0],3.40,.005)&&near(a[1],2.11,.005)&&near(b[0],1.75,.005)&&near(b[1],.87,.005),'pass@1 ratio SDs')}
+  ok(Math.abs(erfcc(1)-0.157299207)<5e-8&&Math.abs(erfcc(-1)-1.842700793)<5e-8,'erfcc');
+  // DOM
+  ok($$('details.check').length===11,'check boxes: '+$$('details.check').length);
+  ok(['c1','c2','c3','c4','f0','f1','f2'].every(id=>!!$('#'+id)),'plates/figures present');
+  ok($$('.algo .row').length===30,'Alg. 1 rows: '+$$('.algo .row').length);
+  {const tl=JSON.parse($('#timeline-data').textContent);ok(tl.length===15&&tl.every(e=>TL_GROUP[tlKey(e)]),'timeline groups')}
+  ok(!!document.querySelector('.katex')||typeof katex==='undefined','KaTeX rendered');
+  ok(!document.querySelector('.katex-error'),'no KaTeX errors');
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ================= boot ================= */
+initTheme();initToc();initC1();initC3();initC2();initC4();drawF0();drawF1();drawF2();renderTimeline();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{c1Draw();c2Draw();c3aDraw();if(!$('#c3b').hidden)c3bDraw();c4Draw();drawF0();drawF1();drawF2()})});
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg','option'],throwOnError:false})}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath()});
+if(/[?&]test\b/.test(location.search))addEventListener('load',()=>setTimeout(selfTest,50));
+})();
+</script>
+</body>
+</html>

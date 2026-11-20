@@ -6,16 +6,14 @@ kind: topic
 tags: [on-policy-distillation, failure-modes, style-drift, information-leakage]
 arxiv: ["2608.13040", "2604.00626", "2603.25562", "2604.13016", "2606.11709", "2604.03128", "2605.23493", "2604.10674"]
 sources: ["arXiv abstract 2604.00626", "arXiv abstract 2603.25562", "arXiv abstract 2604.13016", "arXiv abstract 2606.11709", "arXiv abstract 2604.03128", "arXiv abstract 2605.23493", "arXiv abstract 2604.10674", "2608.13040 §3"]
-related: ["on-policy-distillation-imitation", "lopd-privileged-context-substrates", "lopd-method-learnable-context-and-margin"]
+related: ["on-policy-distillation-imitation", "odd-recent-opd-studies-2026", "lopd-privileged-context-substrates", "lopd-method-learnable-context-and-margin"]
 ---
 # OPD 與 OPSD 的失敗模式與穩定化
 
 先備：[On-policy 蒸餾與線上模仿學習](on-policy-distillation-imitation.html)。
 
 ## OPD 的一般問題
-- Song & Zheng（2026, arXiv:2604.00626）：OPD 的綜述，以學生生成的狀態、老師資訊與策略更新三者建立統一觀點。LOPD 論文以它與 Li et al. 為 OPD 的引用依據。
-- Fu et al.（2026, arXiv:2603.25562）：摘要指出常見實作把分布匹配簡化為取樣 token 的 log-ratio，在長 rollout 上訊號脆弱，並分析 token 層級 OPD 相對序列層級 reverse KL 的偏差與變異。
-- Li et al.（2026, arXiv:2604.13016）：摘要指出 OPD 成敗取決於兩個條件：師生思考模式相容，且老師要有學生未見過的新能力。
+- LOPD 論文以 Song & Zheng（2026, arXiv:2604.00626，OPD 綜述）與 Li et al.（2026, arXiv:2604.13016，OPD 成敗條件）為 OPD 的引用依據，兩者以及 Fu et al.（arXiv:2603.25562）的內容見 [2026 年的 on-policy 蒸餾研究](odd-recent-opd-studies-2026.html)。
 
 ## OPSD 特有的問題
 - RLCSD（Pan et al., 2026, arXiv:2606.11709）：摘要稱有特權脈絡的模型與無脈絡的模型之間的分布差距集中在風格 token 而非任務 token，稱為 privilege-induced style drift，並使輸出變短。

@@ -6,7 +6,7 @@ kind: hub
 tags: [decision-transformer, offline-rl, sequence-modeling, lineage]
 arxiv: ["2106.01345", "1706.03762", "2005.14165", "1912.02877", "1912.13465", "2006.04779", "2106.02039"]
 sources: ["2106.01345 §1, §6", "arXiv abstract 1706.03762", "arXiv abstract 2005.14165", "arXiv abstract 1912.02877", "arXiv abstract 1912.13465", "arXiv abstract 2006.04779", "arXiv abstract 2106.02039"]
-related: ["rl-mdp-q-learning-basics", "offline-rl-distribution-shift", "dt-transformer-lm-background", "return-conditioned-sequence-modeling", "dt-offline-rl-baselines-datasets", "dt-credit-assignment-lineage", "dt-transformers-in-rl-and-trajectory-transformer", "dt-method-and-results"]
+related: [rl-mdp-q-learning-basics, offline-rl-distribution-shift, dt-transformer-lm-background, return-conditioned-sequence-modeling, dt-offline-rl-baselines-datasets, dt-credit-assignment-lineage, sequence-modeling-offline-rl, dt-method-and-results]
 ---
 # Decision Transformer 的研究脈絡總覽
 
@@ -19,7 +19,7 @@ Decision Transformer（arXiv 2106.01345）把強化學習改寫成條件式序�
 3. [離線 RL 基準方法與資料集](dt-offline-rl-baselines-datasets.html)：論文比較的 TD 方法（BCQ、BEAR、BRAC、REM、CQL）與 D4RL、Atari 資料。
 4. [以報酬為條件的監督式學習](return-conditioned-sequence-modeling.html)：上下顛倒 RL、Reward-Conditioned Policies 與目標條件模仿，是 Decision Transformer 最直接的前身。
 5. [信用分配的相關研究](dt-credit-assignment-lineage.html)：RUDDER、HCA 等方法，以及論文 Key-to-Door 實驗的來源。
-6. [RL 中的 Transformer 與 Trajectory Transformer](dt-transformers-in-rl-and-trajectory-transformer.html)：把 Transformer 當成元件的先前工作，與同期提出的 Trajectory Transformer。
+6. [RL 中的 Transformer 與 Trajectory Transformer](sequence-modeling-offline-rl.html)：把 Transformer 當成元件的先前工作，與同期提出的 Trajectory Transformer。
 7. [Decision Transformer 的方法與實驗結果](dt-method-and-results.html)：returns-to-go 表示法、訓練與推論流程、主要結果。
 
 時間軸見 timeline.json。

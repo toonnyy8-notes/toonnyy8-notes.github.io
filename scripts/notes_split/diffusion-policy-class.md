@@ -37,6 +37,5 @@ Wang, Hunt, Zhou（ICLR 2023，arXiv 2208.06193）把策略 `π_θ(a|s)` 直接�
 
 ## 與其他擴散式決策方法的差別
 
-- Diffuser 對整段軌跡做擴散，屬 model-based 規劃；本論文只對單一動作做擴散，屬 model-free，見 [擴散模型在 RL 中的同期與前驅工作](diffusion-in-rl-concurrent-work.html)。
-- Pearce et al.（2023，arXiv 2301.10677）以擴散模型模仿人類行為；Ajay et al.（2022，arXiv 2211.15657）論述條件生成模型用於決策。論文引用這兩者作為相關工作。
+- 與 Diffuser（軌跡層級、model-based）、Pearce et al.（arXiv 2301.10677）、Ajay et al.（arXiv 2211.15657）的差別，見 [擴散模型在 RL 中的同期與前驅工作](diffusion-in-rl-concurrent-work.html)。
 - 此策略類別如何加入 Q 值項見 [Diffusion-QL 的損失耦合](diffusion-ql-loss-coupling.html)。

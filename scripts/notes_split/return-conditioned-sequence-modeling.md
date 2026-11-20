@@ -6,7 +6,7 @@ kind: topic
 tags: [upside-down-rl, reward-conditioned-policies, behavior-cloning, hindsight, goal-conditioned]
 arxiv: ["2106.01345", "1912.02877", "1912.13465", "1912.06088", "2012.02419", "2106.02039"]
 sources: ["2106.01345 §6.2, §5.1", "arXiv abstract 1912.02877", "arXiv abstract 1912.13465", "arXiv abstract 1912.06088", "arXiv abstract 2012.02419"]
-related: ["dt-lineage-overview", "dt-method-and-results", "dt-transformers-in-rl-and-trajectory-transformer", "rl-mdp-q-learning-basics"]
+related: [dt-lineage-overview, dt-method-and-results, sequence-modeling-offline-rl, rl-mdp-q-learning-basics]
 ---
 # 以報酬為條件的監督式學習與序列建模
 
@@ -25,4 +25,4 @@ related: ["dt-lineage-overview", "dt-method-and-results", "dt-transformers-in-rl
 
 與行為複製的關係見 §5.1：論文提出 Percentile BC（%BC），只複製依 episode 報酬排序的前 X% 時間步。資料充足的 D4RL 上 %BC 可與其他離線 RL 方法持平或更好；Atari 的 1% 資料量下 %BC 較弱，DT 較佳。
 
-與同期 Trajectory Transformer 的比較見 [RL 中的 Transformer 與 Trajectory Transformer](dt-transformers-in-rl-and-trajectory-transformer.html)。方法細節見 [Decision Transformer 的方法與實驗結果](dt-method-and-results.html)。
+與同期 Trajectory Transformer 的比較見 [RL 中的 Transformer 與 Trajectory Transformer](sequence-modeling-offline-rl.html)。方法細節見 [Decision Transformer 的方法與實驗結果](dt-method-and-results.html)。

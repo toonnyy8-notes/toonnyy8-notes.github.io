@@ -34,5 +34,5 @@ x_k(τ) := (s_t, s_{t+1}, ..., s_{t+H-1})_k
 - 推論時為 receding-horizon 迴圈（Algorithm 1）：觀察狀態、在歷史 C 個狀態的約束下取樣未來狀態序列、由 x_0(τ) 取 (s_t, s_{t+1})、執行 a_t = f_φ(s_t, s_{t+1})，再重複。
 
 ## 實驗證據
-- 表 2（Hopper）：DD 在 Med-Expert、Medium、Med-Replay 分別為 111.8、79.3、100；CondDiffuser（同時擴散狀態與動作，使用無分類器引導）分別為 111.3、66.3、76.5。論文結論是學習逆動力學是擴散動作的一個好替代。
+- 表 2（Hopper）：數字見 [Decision Diffuser 的實驗結果與消融](dd-experiments-and-ablations.html)。論文結論是學習逆動力學是擴散動作的一個好替代（CondDiffuser 同時擴散狀態與動作，使用無分類器引導）。
 - 附錄 F（Block Push）：位置控制的動作軌跡平滑，DD 與 CondDiffuser 表現相近；力矩控制的動作軌跡含較高頻成分，CondDiffuser 較差。這與論文的動機一致。

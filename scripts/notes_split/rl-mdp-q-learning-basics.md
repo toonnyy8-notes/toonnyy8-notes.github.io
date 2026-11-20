@@ -6,7 +6,7 @@ kind: topic
 tags: [MDP, Q-learning, Bellman-operator, actor-critic, policy-evaluation]
 arxiv: ["2006.04779", "1312.5602", "1802.09477", "1801.01290"]
 sources: ["arXiv:2006.04779 §2 Preliminaries", "arXiv abstract 1312.5602", "arXiv abstract 1802.09477", "arXiv abstract 1801.01290"]
-related: ["offline-rl-distribution-shift"]
+related: ["offline-rl-distribution-shift", "ddpg-td3-actor-critic"]
 ---
 # MDP、Q 函數與 Bellman backup
 
@@ -30,6 +30,6 @@ related: ["offline-rl-distribution-shift"]
 
 用來產生資料的策略稱為行為策略 `π_β`，`D` 取自 `d^{π_β}(s) π_β(a|s)`。
 
-**與本論文相關的 online 演算法。** CQL 的實驗以 SAC（arXiv:1801.01290，off-policy actor-critic）為底；TD3（arXiv:1802.09477）處理 actor-critic 中的函數近似誤差。DQN（arXiv:1312.5602）是以深度網路實作 Q-learning 的早期工作。這三項的內容僅依其 abstract 與 CQL 的描述。
+**與本論文相關的 online 演算法。** CQL 的實驗以 SAC（arXiv:1801.01290）為底；TD3（arXiv:1802.09477）與 SAC 的內容見 [DDPG 到 TD3](ddpg-td3-actor-critic.html)。DQN（arXiv:1312.5602）是以深度網路實作 Q-learning 的早期工作。這三項的內容僅依其 abstract 與 CQL 的描述。
 
 這套記號在 offline 設定下遇到的問題見 [Offline RL 的分布偏移](offline-rl-distribution-shift.html)。

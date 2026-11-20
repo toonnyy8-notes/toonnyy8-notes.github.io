@@ -6,7 +6,7 @@ kind: topic
 tags: [OnPD, OffPD, rollout-policy, distillation]
 arxiv: ["2609.35259", "1503.02531", "1606.07947", "2306.13649", "2410.11325"]
 sources: ["2609.35259 §2-3", "arXiv abstract 2306.13649", "arXiv abstract 2410.11325", "arXiv abstract 1606.07947"]
-related: ["odd-lineage-hub", "knowledge-distillation-foundations", "on-policy-distillation-imitation", "odd-token-kl-direction-gradients", "odd-token-kl-direction-gradients"]
+related: ["odd-lineage-hub", "knowledge-distillation-foundations", "on-policy-distillation-imitation", "odd-token-kl-direction-gradients"]
 ---
 # OnPD 與 OffPD 的定義
 
@@ -19,8 +19,8 @@ related: ["odd-lineage-hub", "knowledge-distillation-foundations", "on-policy-di
 - 為了計算可行，論文把取樣得到的軌跡視為固定，不對取樣過程求導（論文引 Agarwal et al., 2023 與 Tang and Munos, 2025）。
 
 ## 前身
-- Hinton et al.（arXiv:1503.02531）：以輸出分布傳遞教師知識；Kim and Rush（arXiv:1606.07947）：序列層級知識蒸餾。論文以兩者描述 OffPD 的基礎。
-- Agarwal et al.（arXiv:2306.13649）：學生用自己產生的輸出，並取得教師回饋。論文以此作為 OnPD 的定義來源。實作脈絡見 [On-policy 蒸餾與線上模仿學習](on-policy-distillation-imitation.html)，蒸餾損失見 [知識蒸餾基礎](knowledge-distillation-foundations.html)。
+- Hinton et al.（arXiv:1503.02531）與 Kim and Rush（arXiv:1606.07947）：論文以兩者描述 OffPD 的基礎，內容見 [知識蒸餾基礎](knowledge-distillation-foundations.html)。
+- Agarwal et al.（arXiv:2306.13649）：論文以此作為 OnPD 的定義來源，內容見 [On-policy 蒸餾與線上模仿學習](on-policy-distillation-imitation.html)。
 - Xu et al.（arXiv:2410.11325）Speculative Knowledge Distillation：摘要指出監督式蒸餾有訓練與推論的分布不一致，on-policy 蒸餾可能因學生樣本品質低而讓教師回饋不準，並提出學生與教師交錯取樣。論文將這類方法歸為在兩個策略的混合軌跡上訓練的混合式變體。
 
 ## 本論文的切入點

@@ -6,7 +6,7 @@ kind: topic
 tags: [iql, implicit-policy, expectile, quantile, convex-loss, actor-critic]
 arxiv: ["2304.10573", "2110.06169", "2301.02328", "2303.15810"]
 sources: ["arXiv:2304.10573 §3, §4.1, 附錄 B、C", "arXiv:2110.06169 摘要（IQL 的 expectile 價值學習）"]
-related: ["expectile-regression-value-learning", "awr-advantage-weighted-policy-extraction", "in-sample-implicit-value-regularization-eql-ivr", "diffusion-behavior-model-policy-extraction", "idql-evaluation-and-online-finetuning"]
+related: [expectile-regression-value-learning, advantage-weighted-bc-methods, in-sample-implicit-value-regularization-eql-ivr, diffusion-behavior-model-policy-extraction, idql-evaluation-and-online-finetuning]
 ---
 # 廣義 IQL 的隱含 actor 與 critic 損失選擇
 
@@ -36,7 +36,7 @@ V*(s) = argmin_V E_{a~μ(a|s)}[ f(Q(s,a) − V(s)) ]，μ 為資料集的行為�
 | Quantile：|τ − 1(u<0)|·|u| | |τ − 1(Q < V_τ)| / |Q − V_τ| | τ 增加，外推程度增加；樣本聚集在分位數附近 |
 | Exponential（linex）：α·exp(u) − αu | α·|exp(α(Q − V)) − 1| / |Q − V| | α 平衡匹配行為策略與最佳化 critic |
 
-指數型的解為 V_exp(s) = (1/α) log Σ_a exp(αQ(s,a) + log μ(a|s))，是 AWR 策略 π_awr ∝ exp(αQ + log μ) 的正規化項，等同於施加 KL 散度限制（見 [Advantage-weighted regression 與策略抽取](awr-advantage-weighted-policy-extraction.html)）。此目標與 Garg et al. 及 Xu et al. 的 critic 目標相同，見 [EQL 與 IVR](in-sample-implicit-value-regularization-eql-ivr.html)。
+指數型的解為 V_exp(s) = (1/α) log Σ_a exp(αQ(s,a) + log μ(a|s))，是 AWR 策略 π_awr ∝ exp(αQ + log μ) 的正規化項，等同於施加 KL 散度限制（見 [Advantage-weighted regression 與策略抽取](advantage-weighted-bc-methods.html)）。此目標與 Garg et al. 及 Xu et al. 的 critic 目標相同，見 [EQL 與 IVR](in-sample-implicit-value-regularization-eql-ivr.html)。
 
 ## 三種隱含 actor 的差異
 

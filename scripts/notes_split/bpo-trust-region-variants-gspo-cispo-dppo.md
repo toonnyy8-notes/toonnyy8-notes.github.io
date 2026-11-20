@@ -6,11 +6,11 @@ kind: topic
 tags: [GSPO, CISPO, DPPO, trust-region, baselines]
 arxiv: ["2507.18071", "2506.13585", "2602.04879", "2609.15987"]
 sources: ["arXiv abstract 2602.04879", "2609.15987 §1, §4, App. B", "2609.15987 reference list [7], [8], [13]"]
-related: [bpo-lineage-hub, bpo-ppo-grpo-ratio-clipping, bpo-derivation-and-results]
+related: [bpo-lineage-hub, ppo-grpo-dapo-llm-rl-objectives, bpo-derivation-and-results]
 ---
 # GSPO、CISPO、DPPO：GRPO 之後的 trust region 變體
 
-屬於 [BPO 的研究脈絡總覽](bpo-lineage-hub.html)。BPO 論文把這三者與 GRPO-ClipHigher 作為實驗基線（[PPO、GRPO 與 ratio clipping](bpo-ppo-grpo-ratio-clipping.html)）。
+屬於 [BPO 的研究脈絡總覽](bpo-lineage-hub.html)。BPO 論文把這三者與 GRPO-ClipHigher 作為實驗基線（[PPO、GRPO 與 ratio clipping](ppo-grpo-dapo-llm-rl-objectives.html)）。
 
 ## 脈絡
 - GSPO（Zheng et al., 2025，「Group Sequence Policy Optimization」，arXiv:2507.18071）：BPO 論文將其列為基線，clipping 區間為 [1 − 3×10⁻³, 1 + 5×10⁻³]（依該文消融結果設定）。本筆記未讀取 GSPO 摘要，其方法內容不另述。
