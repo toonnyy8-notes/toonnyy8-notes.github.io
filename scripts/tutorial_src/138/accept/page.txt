@@ -1,0 +1,659 @@
+GPPO：散度與估計器
+
+跳到內容
+
+ No. 138
+ GPPO：以散度與估計器統一剪裁規則
+
+00 摘要01 重要性比值02 TRPO 下界03 PPO 剪裁04 f-散度05 Vajda 界06 Thm 307 估計器08 校準09 4 × 3 格子10 µ 與區間11 實驗結果12 實作13 研究脈絡14 限制與延伸
+
+00摘要
+01重要性比值
+02TRPO 下界
+03PPO 剪裁
+04f-散度
+05Vajda 界
+06Thm 3
+07估計器
+08校準
+094 × 3 格子
+10µ 與區間
+11實驗結果
+12實作
+13研究脈絡
+14限制與延伸
+
+ No. 138 · 互動教學 · arXiv 2610.13015 · 2026
+
+ GPPO：以散度與估計器統一 LLM 強化學習的剪裁規則
+
+ 這篇論文把 PPO 的剪裁讀成對 TV 散度單樣本估計的限制，再把散度與估計器換掉，得到 4 × 3 的設計空間。
+
+ Zhicheng Cai、Xinyuan Guo、Hanlin Wu、Weinan Dai、Yuyan Zhou、Wei-Ying Ma、Ya-Qin Zhang、Hao Zhou（2026）〈Generalized Proximal Policy Optimization: Unifying LLM RL Algorithms from the Perspective of Divergence〉
+
+ 01 · 剪裁是一種距離限制PPO 要求每個 token 在新策略與舊策略下的機率比值 r 落在 [0.8, 1.2]。論文指出，|r − 1| 是兩個策略總變差距離（忽略常數 2）的單樣本估計。
+
+ 02 · 12 格的設計空間把總變差換成 χ²、KL 或 Hellinger，再把單樣本估計換成另外兩種估計方式，共得到 12 格；按本頁校準，其中 11 種剪裁規則彼此不同。DAPO、DPPO、RIPO 是其中三格。
+
+ 03 · 結果與不確定性在 Qwen3-8B-Base 上，最好的一格數學平均 41.5、程式 59.7，GRPO 為 27.7 與 52.4。論文沒有報告多次訓練的變異。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · 重要性比值
+
+ 重要性比值讓舊策略的樣本可以評估新策略
+
+ 以強化學習（reinforcement learning, RL）訓練大型語言模型時，模型每次產生一個 token。本頁沿用論文的記號：前文稱為狀態 s $s$ ，下一個 token 稱為動作 a $a$ ，模型對下一個 token 的機率分布稱為策略。產生訓練資料（rollout）的是舊策略 μ $\mu$ ，稱為行為策略；正在更新的是新策略 π $\pi$ ，稱為目標策略。
+
+ 同一批 rollout 會被用來更新好幾次，所以資料來自 μ $\mu$ ，要改進的卻是 π $\pi$ 。兩者之間以重要性比值（importance ratio）連接：
+
+ r(s,a)=π(a∣s)μ(a∣s) $r(s,a)=\frac{\pi(a\mid s)}{\mu(a\mid s)}$ π(a∣s)​
+§2.1
+
+ 只要 μ>0 $\mu>0$ 的地方涵蓋 π>0 $\pi>0$ 的地方，就有 Ea∼μ[r]=∑aμ⋅π/μ=∑aπ=1 $\mathbb E_{a\sim\mu}[r]=\sum_a\mu\cdot\pi/\mu=\sum_a\pi=1$ ​[r]=∑a​μ⋅π/μ=∑a​π=1。同理，對任何函數 A(s,a) $A(s,a)$ ，Eμ[rA]=∑aμ⋅πμA=Eπ[A] $\mathbb E_\mu[rA]=\sum_a\mu\cdot\frac{\pi}{\mu}A=\mathbb E_\pi[A]$ ​[rA]=∑a​μ⋅μπ​A=Eπ​[A]，所以用 μ $\mu$ 抽的樣本乘上 r $r$ ，就能估計 π $\pi$ 下的期望。這是 PPO 系列方法能重複使用舊資料的原因。下表是一個 3 個 token 的算例。
+
+ 3 個 token 的算例（本頁數字）
+ tokenµπr = π/µµ·rA
+
+ 10.60.50.8330.51
+
+ 20.30.310.30
+
+ 30.10.220.2−1
+
+ 合計11—1E_µ[rA] = 0.3 = E_π[A]
+
+ 符號表
+符號意義
+
+ s $s$ 、a $a$ 狀態（前文）、動作（下一個 token）
+
+ μ $\mu$ 、π $\pi$ 行為策略（舊）、目標策略（新）
+
+ μ(a∣s) $\mu(a|s)$ 舊策略給動作 a 的機率；Atomic 與 Binary 公式（第 07 章）中的 µ 就是這個值
+
+ r=π/μ $r=\pi/\mu$ 重要性比值；Eμ[r]=1 $\mathbb E_\mu[r]=1$ ​[r]=1
+
+ η(π) $\eta(\pi)$ 、γ $\gamma$ 期望折扣回報、折扣因子
+
+ Aμ $A^\mu$ 、A^ $\hat A$ 、ξ $\xi$ 優勢函數、它的估計值、ξ=max⁡∣Aμ∣ $\xi=\max|A^\mu|$ ∣
+
+ ρμ $\rho_\mu$ ​、Lμ(π) $L_\mu(\pi)$ ​(π)µ 的狀態分布、代理目標 E[rAμ] $\mathbb E[rA^\mu]$ ]
+
+ DTV $D_{TV}$ ​、Df $D_f$ ​全變差、f-散度（第 02、04 章）
+
+ ϵ $\epsilon$ 、δ $\delta$ PPO 的剪裁寬度、trust-region 半徑
+
+ V $V$ 、β $\beta$ 、Lf $L_f$ ​、Cf $C_f$ ​Vajda 界的 TV 值、輔助質量、下界、二次常數（第 05 章）
+
+ D^f $\hat D_f$ f​、R^f(δ) $\hat R_f(\delta)$ f​(δ)散度估計值、剪裁區間（第 06 章）
+
+ 延伸閱讀：LLM RL 中的重要性取樣修正、MDP、Q 函數與 Bellman backup
+
+ 02 · TRPO 下界
+
+ TRPO 的下界限制新舊策略的 TV 距離
+
+ 策略的好壞以期望折扣回報 η(π) $\eta(\pi)$ 衡量，γ∈[0,1) $\gamma\in[0,1)$ 是折扣因子。優勢函數 Aμ(s,a) $A^\mu(s,a)$ (s,a) 表示在狀態 s $s$ 選 a $a$ 比照 μ $\mu$ 平均行動好多少；ξ=max⁡s,a∣Aμ∣ $\xi=\max_{s,a}|A^\mu|$ ​∣Aμ∣ 是它的最大絕對值；ρμ $\rho_\mu$ ​ 是 μ $\mu$ 造訪狀態的（折扣）分布。代理目標（surrogate objective）是 Lμ(π)=Es∼ρμ,a∼μ[r Aμ] $L_\mu(\pi)=\mathbb E_{s\sim\rho_\mu,a\sim\mu}[r\,A^\mu]$ ​(π)=Es∼ρμ​,a∼μ​[rAμ]。
+
+ 兩個分布 P,Q $P,Q$ 的全變差（total variation, TV）是 DTV(P∥Q)=12∑x∣p(x)−q(x)∣ $D_{TV}(P\|Q)=\tfrac12\sum_x|p(x)-q(x)|$ ​(P∥Q)=21​∑x​∣p(x)−q(x)∣，介於 0 與 1 之間。DTVmax⁡(π∥μ) $D^{\max}_{TV}(\pi\|\mu)$ max​(π∥μ) 是對所有狀態取最大的 DTV(π(⋅∣s)∥μ(⋅∣s)) $D_{TV}(\pi(\cdot|s)\|\mu(\cdot|s))$ ​(π(⋅∣s)∥μ(⋅∣s))。Schulman et al.（2015）證明了下面的下界，論文直接引用為 Thm 1：
+
+ η(π)−η(μ) ≥ 11−γ Lμ(π)−4ξγ(1−γ)2 DTVmax⁡(π∥μ)2 $\eta(\pi)-\eta(\mu)\ \ge\ \frac{1}{1-\gamma}\,L_\mu(\pi)-\frac{4\xi\gamma}{(1-\gamma)^2}\,D^{\max}_{TV}(\pi\|\mu)^2$ 1​Lμ​(π)−(1−γ)24ξγ​DTVmax​(π∥μ)2
+Eq. 1
+
+ η(π)−η(μ) ≥ 11−γ Lμ(π)−4ξγ(1−γ)2 DTVmax⁡(π∥μ)2 $\begin{aligned}\eta(\pi)-\eta(\mu)\ \ge\ &\tfrac{1}{1-\gamma}\,L_\mu(\pi)\\&-\tfrac{4\xi\gamma}{(1-\gamma)^2}\,D^{\max}_{TV}(\pi\|\mu)^2\end{aligned}$ ​1−γ1​Lμ​(π)−(1−γ)24ξγ​DTVmax​(π∥μ)2​
+Eq. 1
+
+ 右邊是收益項 11−γLμ(π) $\frac1{1-\gamma}L_\mu(\pi)$ 1​Lμ​(π) 減懲罰項 4ξγ(1−γ)2DTVmax⁡(π∥μ)2 $\frac{4\xi\gamma}{(1-\gamma)^2}D^{\max}_{TV}(\pi\|\mu)^2$ 4ξγ​DTVmax​(π∥μ)2。若右邊大於 0，就保證 η(π)≥η(μ) $\eta(\pi)\ge\eta(\mu)$ ：新策略的回報不低於舊策略，這稱為單調改進。懲罰項隨 TV 距離的平方增加，所以 TRPO 的作法是在 trust-region 半徑 δ $\delta$ 內最大化代理目標：
+
+ max⁡π Lμ(π)s.t.DTVmax⁡(π∥μ)≤δ $\max_\pi\ L_\mu(\pi)\quad\text{s.t.}\quad D^{\max}_{TV}(\pi\|\mu)\le\delta$ max​ Lμ​(π)s.t.DTVmax​(π∥μ)≤δ
+Eq. 2
+
+ 延伸閱讀：TRPO：trust region 與單調改進下界
+
+ 03 · PPO 剪裁
+
+ PPO 的剪裁限制的是 TV 的單樣本估計
+
+ TRPO 的限制式最佳化需要二階方法，在 LLM 的規模下太貴。PPO（Schulman et al., 2017）改用一階的剪裁（clip）目標：
+
+ JPPO(π)=Es,a∼μ[min⁡(rA^, clip(r,1−ϵ,1+ϵ) A^)] $J_{\rm PPO}(\pi)=\mathbb E_{s,a\sim\mu}\Big[\min\big(r\hat A,\ \mathrm{clip}(r,1-\epsilon,1+\epsilon)\,\hat A\big)\Big]$ ​(π)=Es,a∼μ​[min(rA^, clip(r,1−ϵ,1+ϵ)A^)]
+Eq. 3
+
+ A^ $\hat A$ 是優勢的估計值，ϵ $\epsilon$ 是剪裁寬度（常用 0.2）。GRPO 用同一題 8 個 rollout 的相對獎勵當作 A^ $\hat A$ （group-relative advantage），剪裁規則沿用 PPO。論文把剪裁和 TV 連在一起（§2.2）：
+
+ DTV(π(⋅∣s)∥μ(⋅∣s))=12 Ea∼μ[∣r(s,a)−1∣] $D_{TV}(\pi(\cdot|s)\|\mu(\cdot|s))=\tfrac12\,\mathbb E_{a\sim\mu}\big[|r(s,a)-1|\big]$ ​(π(⋅∣s)∥μ(⋅∣s))=21​Ea∼μ​[∣r(s,a)−1∣]
+Eq. 4
+
+ 由 Eq. 4，DTV=12Eμ∣r−1∣ $D_{TV}=\tfrac12\mathbb E_\mu|r-1|$ ​=21​Eμ​∣r−1∣，所以 ∣r−1∣ $|r-1|$ 是 2DTV $2D_{TV}$ ​ 的單樣本 Monte Carlo（MC）估計（論文寫「ignore the constant coefficiency」）；剪裁 r∈[1−ϵ,1+ϵ] $r\in[1-\epsilon,1+\epsilon]$ 等於要求每個樣本 ∣r−1∣≤ϵ $|r-1|\le\epsilon$ 。這是重新詮釋，不是定理。論文由此指出兩個缺陷：TV 的生成函數二階導數為 0 而且對稱（作者稱為「geometrically degenerate」）；PPO 只限制單一樣本的估計值，不限制定義 TV 的期望值。作者認為這兩點造成「premature clipping」（過早剪裁）與「exploration collapse」（探索崩潰）。
+
+ 剪裁並不是兩端都作用 本頁推導：min⁡ $\min$ 取的是兩項中較小的一項。A^>0 $\hat A>0$ >0 的 token 只有在 r>1+ϵ $r>1+\epsilon$ 時才選到剪裁項，這時梯度為 0；A^<0 $\hat A<0$ <0 的 token 只有在 r<1−ϵ $r<1-\epsilon$ 時梯度為 0。也就是說，正優勢 token 只受上界影響，負優勢 token 只受下界影響。下面的 C1 可以直接看到這件事。
+
+ C1PPO-Clip 的目標與梯度
+
+ 切換 Â 的正負號並拖動 r：斜線區是梯度為 0 的範圍，只出現在使目標值較小的一側。
+
+ 剪裁後的目標 L(r)未剪裁 r·Â梯度為 0
+
+ Â 的符號
+Â > 0Â < 0
+
+ 剪裁寬度 ε 0.20
+
+ 比值 r 1.00
+
+ L(r)1.00∂L/∂r1作用中的界無
+ r = 1.00，未剪裁，梯度 1
+
+ 讀數由本頁依 Eq. 3 即時計算（|Â| = 1）；滑桿值以整數百分位比較，邊界點算未剪裁。「只在一側作用」為本頁推導。
+
+ 延伸閱讀：PPO-Clip 作為 TV 散度的單樣本代理、PPO、GRPO、DAPO 與 LLM 的 RL 目標、RLVR、GRPO 與信用分配瓶頸
+
+ 04 · f-散度
+
+ f-散度用一個凸函數描述分布差異
+
+ 凸函數的字面定義是：圖形上任兩點的連線都在圖形上方，即 f(tx+(1−t)y)≤tf(x)+(1−t)f(y) $f(tx+(1-t)y)\le tf(x)+(1-t)f(y)$ 。給定一個凸函數 f $f$ ，並要求 f(1)=0 $f(1)=0$ ，f-散度定義為
+
+ Df(P∥Q)=∑xq(x) f ⁣(p(x)q(x)),Df(π∥μ)=Ea∼μ[f(r)] $D_f(P\|Q)=\sum_x q(x)\,f\!\Big(\frac{p(x)}{q(x)}\Big),\qquad D_f(\pi\|\mu)=\mathbb E_{a\sim\mu}[f(r)]$ ​(P∥Q)=x∑​q(x)f(q(x)p(x)​),Df​(π∥μ)=Ea∼μ​[f(r)]
+§3.1–3.2
+
+ 本文取 P=π $P=\pi$ 、Q=μ $Q=\mu$ ，所以 f-散度就是比值 r $r$ 經過 f $f$ 之後對 μ $\mu$ 的期望。論文使用四個 f（Eq. 14–17）。本頁另外定義 TV2(r)=∣r−1∣=2fTV(r) $\mathrm{TV2}(r)=|r-1|=2f_{TV}(r)$ ​(r)，只在需要 δ = 0.2 的元件中使用；其他地方寫「TV」都是 Eq. 14 的 12∣r−1∣ $\tfrac12|r-1|$ 1​∣r−1∣。
+
+ 四個生成函數（Eq. 14–17）散度f(r)f′(r)f″(r)論文的描述
+
+ TV12∣r−1∣ $\tfrac12|r-1|$ 1​∣r−1∣12sign(r−1) $\tfrac12\mathrm{sign}(r-1)$ 1​sign(r−1)0（r≠1 $r\ne1$ =1）polyhedral，分段線性
+
+ Pearson χ²(r−1)2 $(r-1)^2$ 2(r−1) $2(r-1)$ 2ellipsoidal
+
+ KL−log⁡r $-\log r$ −1/r $-1/r$ 1/r2 $1/r^2$ 不對稱、log-warped
+
+ Hellinger(r−1)2 $(\sqrt r-1)^2$ ​−1)21−1/r $1-1/\sqrt r$ ​12r−3/2 $\tfrac12r^{-3/2}$ 1​r−3/2sqrt-warped
+
+ 局部等價（Eq. 12–13）。把 f $f$ 在 r=1 $r=1$ 泰勒展開，f(r)=f′(1)(r−1)+12f′′(1)(r−1)2+o((r−1)2) $f(r)=f'(1)(r-1)+\tfrac12f''(1)(r-1)^2+o((r-1)^2)$ (1)(r−1)+21​f′′(1)(r−1)2+o((r−1)2)。泰勒展開後，一次項取期望為 f′(1)Eμ[r−1]=0 $f'(1)\mathbb E_\mu[r-1]=0$ (1)Eμ​[r−1]=0，所以
+
+ Df(π∥μ)=f′′(1)2 Ea∼μ[(r−1)2]+o(∥r−1∥2) $D_f(\pi\|\mu)=\frac{f''(1)}{2}\,\mathbb E_{a\sim\mu}\big[(r-1)^2\big]+o\big(\|r-1\|^2\big)$ ​(π∥μ)=2f′′(1)​Ea∼μ​[(r−1)2]+o(∥r−1∥2)
+Eq. 13
+
+ 因此 f′′(1)>0 $f''(1)>0$ (1)>0 的平滑 f-散度在 r≈1 $r\approx1$ 只差一個比例常數 f′′(1)/2 $f''(1)/2$ (1)/2；差異出現在有限的偏移。TV 在 r=1 $r=1$ 不可微，不適用。要注意一次項只在取期望後消失：單一樣本的 f(r) $f(r)$ 仍含 f′(1)(r−1) $f'(1)(r-1)$ (1)(r−1)本頁推導。例如 KL 的 −log⁡r $-\log r$ 在 r>1 $r>1$ 時是負的。
+
+ 同一個散度有不同的 f。因為 Eμ[r−1]=0 $\mathbb E_\mu[r-1]=0$ ​[r−1]=0，f $f$ 與 f+c(r−1) $f+c(r-1)$ 給出同一個散度本頁推導。例如 −log⁡r $-\log r$ 與 r−1−log⁡r $r-1-\log r$ 生成同一個 KL，但單一樣本的 f(r) $f(r)$ 值不同。第 07、08 章會看到這會改變剪裁區間。
+
+ KL 的方向。依本文慣例，f=−log⁡r $f=-\log r$ 給出 Eμ[log⁡(μ/π)]=DKL(μ∥π) $\mathbb E_\mu[\log(\mu/\pi)]=D_{KL}(\mu\|\pi)$ ​[log(μ/π)]=DKL​(μ∥π)，不是論文寫的 DKL(π∥μ) $D_{KL}(\pi\|\mu)$ ​(π∥μ)（後者需要 f=rlog⁡r $f=r\log r$ ）本頁推導。後面用到的不等式對兩個方向都成立，定理不受影響；本頁一律寫 DKL(μ∥π) $D_{KL}(\mu\|\pi)$ ​(μ∥π)。
+
+ 作者的曲率敘述（§3.2）。作者認為 χ² 的懲罰隨 ∣r−1∣ $|r-1|$ 二次增加（「penalty grows quadratically」）；KL 的「contraction r → 0 is increasingly penalized, while expansion toward large r faces diminishing marginal resistance」，因此有利於探索；Hellinger 的曲率往 r→0 $r\to0$ 增大。這裡的「阻力」指 f′′ $f''$ ：KL 的 f′′=1/r2 $f''=1/r^2$ =1/r2 隨 r $r$ 遞減，這個敘述成立；−log⁡r $-\log r$ 與 r−1−log⁡r $r-1-\log r$ 的 f′′ $f''$ 相同，只有 f′ $f'$ 的正負號不同。
+
+ 延伸閱讀：f-散度幾何與 proximal region
+
+ 05 · Vajda 界
+
+ Vajda 界把任意 f-散度連到 TV 的平方
+
+ TRPO 的懲罰項用的是 TV 的平方。若要改用別的散度，需要知道「f-散度至少是 TV 平方的幾倍」。論文引用 Vajda 的緊下界（Thm 2）：令 V=DTV(P∥Q) $V=D_{TV}(P\|Q)$ ​(P∥Q)，則
+
+ Df(P∥Q) ≥ Lf(V):=inf⁡β∈[0,1−V][βf(1+Vβ)+(1−β)f(1−V1−β)] $D_f(P\|Q)\ \ge\ L_f(V):=\inf_{\beta\in[0,1-V]}\Big[\beta f\big(1+\tfrac V\beta\big)+(1-\beta)f\big(1-\tfrac V{1-\beta}\big)\Big]$ ​(P∥Q) ≥ Lf​(V):=β∈[0,1−V]inf​[βf(1+βV​)+(1−β)f(1−1−βV​)]
+Eq. 5
+
+ 括號內的式子是「兩點分布」的 f-散度：Pβ=(β+V, 1−β−V) $P_\beta=(\beta+V,\,1-\beta-V)$ ​=(β+V,1−β−V)、Qβ=(β, 1−β) $Q_\beta=(\beta,\,1-\beta)$ ​=(β,1−β)。它們的 TV 正好是 V $V$ 。Thm 2 說：所有 TV 等於 V $V$ 的分布對中，散度最小的可以只用兩點分布達到，所以 Lf(V) $L_f(V)$ ​(V) 是只依賴 V $V$ 的最好下界。這裡 inf 是「一組數的最大下界」，可以理解為對 β $\beta$ 取最小值。
+
+ 推導（App. A，Eq. 21–33）
+
+ Jensen 不等式：凸函數在平均點的值，不大於函數值的平均，即 f(EX)≤Ef(X) $f(\mathbb E X)\le\mathbb E f(X)$ 。
+
+ 1. 取 A={x:p(x)≥q(x)} $A=\{x:p(x)\ge q(x)\}$ ，得 V=P(A)−Q(A) $V=P(A)-Q(A)$ （Eq. 21–23）。
+
+ 2. 令 β=Q(A) $\beta=Q(A)$ ，則 P(A)=β+V $P(A)=\beta+V$ 、P(Ac)=1−β−V $P(A^c)=1-\beta-V$ )=1−β−V、Q(Ac)=1−β $Q(A^c)=1-\beta$ )=1−β（Eq. 24–25）；機率非負，所以 β∈[0,1−V] $\beta\in[0,1-V]$ 。
+
+ 3. 在 A $A$ 與 Ac $A^c$ 上各用一次 Jensen（Eq. 27–29），相加得 Eq. 30：Df≥Q(A)f(P(A)/Q(A))+Q(Ac)f(P(Ac)/Q(Ac)) $D_f\ge Q(A)f(P(A)/Q(A))+Q(A^c)f(P(A^c)/Q(A^c))$ ​≥Q(A)f(P(A)/Q(A))+Q(Ac)f(P(Ac)/Q(Ac))。這就是 data-processing 不等式：把空間合併成兩類，散度不會變大。代入 β、V 得到 Eq. 31。
+
+ 4. Eq. 31 只對這一對 (P,Q) $(P,Q)$ 自己的 β=Q(A) $\beta=Q(A)$ 成立；對 β $\beta$ 取 inf 之後，才是對所有分布都成立的界（Eq. 32）。兩點分布 Pβ,Qβ $P_\beta,Q_\beta$ ​,Qβ​ 讓等號成立（Eq. 33），所以界是緊的。
+
+ 註：論文 Eq. 41/47 寫「對每個固定的 β，Df≥gβ(V) $D_f\ge g_\beta(V)$ ​≥gβ​(V)」，嚴格說只對 β=Q(A) $\beta=Q(A)$ 成立；結論 Eq. 50 不受影響。
+
+ 要得到「平方」形式，論文定義最佳二次常數
+
+ CfVajda:=inf⁡0<V≤1Lf(V)V2⟹DTV(P∥Q)2≤1CfVajda Df(P∥Q) $C_f^{\rm Vajda}:=\inf_{0<V\le1}\frac{L_f(V)}{V^2}\quad\Longrightarrow\quad D_{TV}(P\|Q)^2\le\frac{1}{C_f^{\rm Vajda}}\,D_f(P\|Q)$ Vajda​:=0<V≤1inf​V2Lf​(V)​⟹DTV​(P∥Q)2≤CfVajda​1​Df​(P∥Q)
+Eq. 6–7
+
+ CfVajda $C_f^{\rm Vajda}$ Vajda​ 是對所有分布都成立的最大常數（App. A，Eq. 37–39）。在 V→0 $V\to0$ 的局部，係數是 Cflocal=2f′′(1) $C_f^{\rm local}=2f''(1)$ local​=2f′′(1)（Eq. 48），而且 CfVajda≤2f′′(1) $C_f^{\rm Vajda}\le2f''(1)$ Vajda​≤2f′′(1)（Eq. 50）。論文沒有給任何一個 f 的 Cf $C_f$ ​ 數值。本頁以格點計算得到：TV 1、χ² 4、KL 2、Hellinger 1本頁推導。這四個值是格點數值計算的結果，不是解析推導；讀後面的內容只需要知道 Thm 3 的使用條件 Cf>0 $C_f>0$ ​>0。CfVajda $C_f^{\rm Vajda}$ Vajda​ 的定義是 inf⁡0<V≤1Lf(V)/V2 $\inf_{0<V\le1}L_f(V)/V^2$ ​Lf​(V)/V2，使 DTV2≤Df/Cf $D_{TV}^2\le D_f/C_f$ 2​≤Df​/Cf​。TV（½|r−1|）的 Lf(V)=V $L_f(V)=V$ ​(V)=V，inf 在 V→1 $V\to1$ 取到，所以 DTV2≤DTV $D_{TV}^2\le D_{TV}$ 2​≤DTV​，是一個平凡的界；χ²、KL、Hellinger 的常數都等於 2f′′(1) $2f''(1)$ (1)。KL 的 2 與 Pinsker 不等式 DTV2≤12DKL $D_{TV}^2\le\tfrac12D_{KL}$ 2​≤21​DKL​ 一致（論文 §2.1 引用 Pinsker 作為改用 KL 的依據）。
+
+ C3Vajda 下界與二次常數
+
+ 圓點是隨機的分布對 (P, Q)；實線是 L_f(V)；菱形是兩點分布。所有圓點都在實線上方，按「取最佳 β」後菱形碰到實線。
+
+ 隨機分布對Vajda 下界 L_fC_f·V²兩點分布
+
+ 計算中…
+
+ f
+TVχ²KLHellinger
+
+ 字母表大小 K
+236
+
+ 重新抽樣取最佳 β
+
+ V 0.30
+
+ β 0.50
+
+ C_f（格點）…取到的 V…L_f(V)0.36000g_β(V)0.36000違反數…懲罰倍率 1/C_f…
+
+ L_f 以 β 內點格點（J = 1000）計算；C_f 為 V = i/500 上的最小值，格點值與理論值（TV 1、χ² 4、KL 2、H 1）的差是格點誤差；以上為本頁推導。隨機分布對由 mulberry32 與 Dirichlet(1) 產生（N = 400）。KL 用 −log r，即 D_KL(Q‖P)。縱軸為對數。重計算在 Web Worker 中進行。
+
+ 06 · Thm 3 與剪裁目標
+
+ 廣義下界只保證限制式問題，不保證剪裁目標
+
+ 把 Eq. 7 逐狀態代入 Eq. 1 的懲罰項，再對狀態取最大，就得到論文的 Thm 3。它的前提是 CfVajda>0 $C_f^{\rm Vajda}>0$ Vajda​>0：
+
+ η(π)−η(μ) ≥ 11−γLμ(π)−4ξγCfVajda(1−γ)2 Dfmax⁡(π∥μ) $\eta(\pi)-\eta(\mu)\ \ge\ \frac1{1-\gamma}L_\mu(\pi)-\frac{4\xi\gamma}{C_f^{\rm Vajda}(1-\gamma)^2}\,D_f^{\max}(\pi\|\mu)$ 1​Lμ​(π)−CfVajda​(1−γ)24ξγ​Dfmax​(π∥μ)
+Eq. 8
+
+ η(π)−η(μ) ≥ 11−γLμ(π)−4ξγCfVajda(1−γ)2 Dfmax⁡(π∥μ) $\begin{aligned}\eta(\pi)-\eta(\mu)\ \ge\ &\tfrac1{1-\gamma}L_\mu(\pi)\\&-\tfrac{4\xi\gamma}{C_f^{\rm Vajda}(1-\gamma)^2}\,D_f^{\max}(\pi\|\mu)\end{aligned}$ ​1−γ1​Lμ​(π)−CfVajda​(1−γ)24ξγ​Dfmax​(π∥μ)​
+Eq. 8
+
+ Thm 3 的前提是 CfVajda>0 $C_f^{\rm Vajda}>0$ Vajda​>0，懲罰項是 4ξγCf(1−γ)2Dfmax⁡ $\frac{4\xi\gamma}{C_f(1-\gamma)^2}D_f^{\max}$ ​(1−γ)24ξγ​Dfmax​，對 Dfmax⁡ $D_f^{\max}$ max​ 是一次方（Eq. 1 對 DTV $D_{TV}$ ​ 是平方）。代入第 05 章的常數，懲罰係數 4ξγ/(1−γ)2 $4\xi\gamma/(1-\gamma)^2$ 分別乘上 1（TV）、¼（χ²）、½（KL）、1（Hellinger）本頁推導。由 Eq. 8 得到限制式問題：
+
+ max⁡π Lμ(π)s.t.Dfmax⁡(π∥μ)≤δ $\max_\pi\ L_\mu(\pi)\quad\text{s.t.}\quad D_f^{\max}(\pi\|\mu)\le\delta$ max​ Lμ​(π)s.t.Dfmax​(π∥μ)≤δ
+Eq. 9
+
+ （記號註：論文 Thm 3 的定義行寫成 Dfmax⁡(μ∥π):=max⁡sDf(π(⋅∣s)∥μ(⋅∣s)) $D_f^{\max}(\mu\|\pi):=\max_sD_f(\pi(\cdot|s)\|\mu(\cdot|s))$ max​(μ∥π):=maxs​Df​(π(⋅∣s)∥μ(⋅∣s))，左右引數順序相反。）直接解 Eq. 9 太貴，所以論文保留 PPO 的一階作法：選一個散度估計值 D^f(r) $\hat D_f(r)$ f​(r)（第 07 章定義三種），把剪裁區間定為它的 δ-sublevel set，也就是估計值不超過 δ 的所有 r $r$ ：
+
+ R^f(δ)={r>0:D^f(r)≤δ} $\hat R_f(\delta)=\{r>0:\hat D_f(r)\le\delta\}$ f​(δ)={r>0:D^f​(r)≤δ}
+Eq. 10
+
+ JGPPO(π)=Es,a∼μ[min⁡(rA^, clipR^f(δ)(r) A^)] $J_{\rm GPPO}(\pi)=\mathbb E_{s,a\sim\mu}\Big[\min\big(r\hat A,\ \mathrm{clip}_{\hat R_f(\delta)}(r)\,\hat A\big)\Big]$ ​(π)=Es,a∼μ​[min(rA^, clipR^f​(δ)​(r)A^)]
+Eq. 11
+
+ Thm 3 的單調改進保證不延伸到剪裁目標 Eq. 11
+
+ 保證只屬於 Eq. 8 與 Eq. 9：它要求所有狀態的真實 Df $D_f$ ​ 的最大值不超過 δ。Eq. 11 是逐樣本硬剪裁，只把出界樣本的梯度關掉，沒有強制任何散度上界；Eq. 9 到 Eq. 11 沒有定理，所以不保證演算法單調改進。論文摘要與貢獻條目把兩件事寫在同一句，容易讀成演算法有保證。
+
+ 07 · 估計器
+
+ 三種估計器對同一個散度給出不同的估計值
+
+ Eq. 10 的剪裁區間取決於怎麼估計散度。每次只抽到一個動作 a∼μ(⋅∣s) $a\sim\mu(\cdot|s)$ ，論文比較三種估計器（§3.3）：
+
+ D^fMC=f(r),D^fAtom=μ(a∣s) f(r),D^fBin=μf(r)+(1−μ) f ⁣(1−μr1−μ) $\hat D_f^{MC}=f(r),\qquad \hat D_f^{Atom}=\mu(a|s)\,f(r),\qquad \hat D_f^{Bin}=\mu f(r)+(1-\mu)\,f\!\Big(\frac{1-\mu r}{1-\mu}\Big)$ fMC​=f(r),D^fAtom​=μ(a∣s)f(r),D^fBin​=μf(r)+(1−μ)f(1−μ1−μr​)
+Eq. 18–20
+
+ 單樣本 Monte Carlo（MC）直接取抽到的動作的 f(r) $f(r)$ ，剪裁區間是 {f(r)≤δ} $\{f(r)\le\delta\}$ 。對合法的 f，Eμ[f(r)]=Df $\mathbb E_\mu[f(r)]=D_f$ ​[f(r)]=Df​，所以 MC 是無偏的（§3.3 原文「Although unbiased」）；但 TV 的 ∣r−1∣ $|r-1|$ 估計的是 2DTV $2D_{TV}$ ​，而第 08 章會出現的 ∣log⁡r∣ $|\log r|$ 不是散度的生成函數，對它不適用。
+
+ Atomic把 f(r) $f(r)$ 乘上舊機率 μ(a∣s) $\mu(a|s)$ ，也就是真實散度 ∑aμf(r) $\sum_a\mu f(r)$ ​μf(r) 中這個動作的那一項；剪裁區間是 {f(r)≤δ/μ} $\{f(r)\le\delta/\mu\}$ 。作者認為：低機率動作的大偏移，不一定是大的散度貢獻，所以可以避免過早剪裁稀有的探索動作。
+
+ Binary來自 Qi et al.（2026，即 DPPO）：把動作空間壓成「抽到的動作」與「其餘全部」兩類，第二項的引數 (1−μr)/(1−μ)=(1−π)/(1−μ) $(1-\mu r)/(1-\mu)=(1-\pi)/(1-\mu)$ 是其餘質量的比值。腳註 3 另外提到 Top-K 估計需要 O(K) 記憶體、門檻難調，只有一句結論，沒有數據。
+
+ App. B 的比較。令 h(a)=f(r) $h(a)=f(r)$ 。MC 的二階動差中，動作 a $a$ 的貢獻是 vMC(a)=μh2 $v_{MC}(a)=\mu h^2$ ​(a)=μh2（Eq. 55）；Atomic 是 vAtom(a)=μ3h2=μ2vMC(a)≤vMC(a) $v_{Atom}(a)=\mu^3h^2=\mu^2v_{MC}(a)\le v_{MC}(a)$ ​(a)=μ3h2=μ2vMC​(a)≤vMC​(a)（Eq. 58–59）。這只是「估計值整體乘上 µ ≤ 1」的直接結果。
+
+ Atomic 與 Binary 不是無偏估計 本頁推導
+
+ Atomic 估計的期望是 Eμ[μf(r)]=∑aμ2f(r)≠Df $\mathbb E_\mu[\mu f(r)]=\sum_a\mu^2f(r)\ne D_f$ ​[μf(r)]=∑a​μ2f(r)=Df​，所以 Atomic 與 Binary 都不是無偏估計。當 f≥0 $f\ge0$ 時，μf(r)≤D^fBin≤Df $\mu f(r)\le\hat D_f^{Bin}\le D_f$ fBin​≤Df​（後一個不等式是兩類合併的 data processing），兩者的期望都 ≤ Df $D_f$ ​；把它們限制在 δ 以下，推不出 Df≤δ $D_f\le\delta$ ​≤δ。論文 §3.3 寫「we prove in Appendix that atomic estimation offers an improved bias-variance trade-off」，但 App. B 只證明二階動差的逐動作貢獻 vAtom=μ2vMC $v_{Atom}=\mu^2v_{MC}$ ​=μ2vMC​（Eq. 59），沒有 bias 分析。
+
+ Binary 與 f 的寫法。μ(r−1)+(1−μ)(1−μr1−μ−1)=0 $\mu(r-1)+(1-\mu)\big(\frac{1-\mu r}{1-\mu}-1\big)=0$ 1−μr​−1)=0，所以 f $f$ 與 f+c(r−1) $f+c(r-1)$ 的 Binary 是同一個函數本頁推導：KL 的 Binary 不論用 −log⁡r $-\log r$ 或 r−1−log⁡r $r-1-\log r$ ，都等於兩個 Bernoulli 分布的 DKL(Bern(μ)∥Bern(π)) $D_{KL}(\mathrm{Bern}(\mu)\|\mathrm{Bern}(\pi))$ ​(Bern(μ)∥Bern(π))。但第 08 章的校準 δ = f(0.8) 隨寫法改變，所以校準後的區間仍然不同。
+
+ C5估計器的期望與二階動差
+本頁玩具
+
+ 6 個 token 的舊機率 µ 固定；λ 越大，新策略越把機率移到稀有 token。看三種估計器的期望與真實散度的差距。
+
+ f
+TVχ²KLHellinger
+
+ λ 0.30
+
+ E[Atomic] / D_f0.152E[Binary] / D_f0.273E[MC²]0.07706E[Atomic²]0.0002345Var MC0.07007Var Atomic0.00007375
+ λ = 0.30，D_f 0.08360，E[Atomic] 0.01268，E[Binary] 0.02279
+
+ 逐 token 值tokenµπrf(r)µ·f(r)Binaryv_MCv_Atom
+10.50.40060.80110.03950.01980.03950.0007820.000195
+20.250.24660.98630.0001870.00004680.00006238.74e-95.47e-10
+30.120.14751.22930.05260.006310.007170.0003320.00000477
+40.080.11111.38830.1510.01210.01310.001820.0000116
+50.040.06841.70920.5030.02010.02100.01010.0000162
+60.010.02592.59062.530.02530.02560.06400.00000640
+
+ 玩具分布：µ = (0.5, 0.25, 0.12, 0.08, 0.04, 0.01)，π ∝ µ^(1−λ)。TV 用 ½|r−1|；KL 用 r − 1 − log r（散度為 D_KL(µ‖π)）。讀數由本頁依 Eq. 18–20、Eq. 55–58 即時計算。
+
+ λ = 0.3、χ² 時，真實散度 0.08360，E[MC] 也是 0.08360；E[Atomic] 只有 0.01268，E[Binary] 0.02279。最稀有的 token（µ = 0.01）的 vMC $v_{MC}$ ​ 最大，vAtom $v_{Atom}$ ​ 小了 10⁴ 倍。二階動差變小是因為整個估計值乘上了 µ，不代表估得更準。
+
+ 延伸閱讀：散度估計器拓撲：MC、Atomic、Binary
+
+ 08 · 校準
+
+ 校準把 MC 區間的下界固定在 0.8
+
+ 四個散度的 δ 不能直接比較，所以論文不直接調 δ，而是固定 MC 區間的下界 rmin⁡=0.8 $r_{\min}=0.8$ ​=0.8（與 PPO 的 ε = 0.2 相同），令 δ = f(0.8)，上界由 f(rmax⁡)=δ $f(r_{\max})=\delta$ ​)=δ 決定（§4.1）。論文給的值是 δTV=0.2 $\delta_{TV}=0.2$ ​=0.2、δχ2=0.04 $\delta_{\chi^2}=0.04$ ​=0.04、δH≈0.01 $\delta_H\approx0.01$ ​≈0.01、δKL≈0.22 $\delta_{KL}\approx0.22$ ​≈0.22；Atomic 與 Binary 沿用同一個 δ。
+
+ TV 的 ½ 會改變結果：同樣取 δ = 0.2，用 Eq. 14 的 ½|r−1| 得到 MC 區間 [0.6, 1.4]，用 |r−1| 得到 [0.8, 1.2]。本頁採 |r−1|（記為 TV2），也就是 δ = f(0.8) 規則，與 PPO 的 [0.8, 1.2] 一致推定。
+
+ δ = f(0.8)（§4.1）。在本頁校準下，四個 MC 區間是：TV [0.8, 1.2]、χ² [0.8, 1.2]、Hellinger [0.8, 1.2223]、KL（|log r|）[0.8, 1.25]推定。在硬剪裁之下，MC 格子裡 f 的形狀只決定 [rmin⁡,rmax⁡] $[r_{\min},r_{\max}]$ ​,rmax​] 兩個數，區間內部的曲率不影響梯度本頁推導；曲率真正起作用的地方是 Atomic 與 Binary，它決定區間隨 µ 變小而放寬的速度（第 10 章）。
+
+ TV–MC 與 χ²–MC 是同一個區間
+
+ TV–MC 與 χ²–MC 區間相同（任何 rmin⁡ $r_{\min}$ ​ 下都是 [rmin⁡,2−rmin⁡] $[r_{\min},2-r_{\min}]$ ​,2−rmin​]），論文 §4.2 自己承認，Table 1 兩列數字也完全相同。所以按本頁校準，12 格只有 11 個不同演算法本頁推導。若照論文字面的 TV 值（½|r−1| 配 δ = 0.2），TV–MC 變成 [0.6, 1.4]，就與 χ²–MC 不同。
+
+ 論文內部不一致與本頁的選擇項目論文寫法問題本頁
+
+ TV 的 ½Eq. 14：½|r−1|；§4.1：δ_TV = 0.2½|r−1| 時 f(0.8) = 0.1。照字面（½|r−1| ≤ 0.2）MC 為 [0.6, 1.4]，Atomic 1 ± 0.4/µ，Binary 1 ± 0.2/µ；照 δ = f(0.8)（½|r−1| 下 δ_TV = 0.1）為 [0.8, 1.2]、1 ± 0.2/µ、1 ± 0.1/µ。兩者差兩倍，論文沒說實驗用哪一種δ = f(0.8)，以 TV2 = |r−1| 配 0.2 計算 推定；C4 可切換到字面值
+
+ KL 的 δ§3.4：δ = 0.23 → [0.8, 1.26]，「matching DAPO」；§4.1：δ ≈ 0.22精確值 [0.7945, 1.2586]；−log 0.8 = 0.2231 對應上界 1.25用 0.2231；不把 [0.8, 1.25] 稱為「對應 DAPO」
+
+ KL 的 sublevel setEq. 16：f = −log r；§3.4 用 |log r| ≤ δ−log r 單調遞減，{−log r ≤ δ} 沒有上界。|log r| 不是 Eq. 10 的 sublevel set，也不是凸函數（r > 1 時 log r 是凹的）。KL–Atomic 是否取絕對值沒寫MC、Atomic 用 |log r| 推定；Binary 用 −log r（Bernoulli KL）
+
+ Hellinger 的 δ≈ 0.01精確值 0.011146；兩者的 MC 區間為 [0.81, 1.21] 與 [0.8, 1.2223]用 0.011146 推定
+
+ DAPO 的 ε只說 [0.8, 1.26] 對應 DAPO 的 ε_low、ε_high沒有寫出 ε 的數值不寫 ε 數字
+
+ C2f 曲線與 MC 剪裁區間
+
+ 拖動 r_min：每條曲線除以自己的 δ，所以都在 r_min 處等於 1；水平線 y = 1 以下就是剪裁區間。
+
+ TV2 = |r−1|χ²HellingerKL
+
+ TV2 = |r−1|[0.8000, 1.2000]χ²[0.8000, 1.2000]Hellinger[0.8000, 1.2223]KL |log r|[0.8000, 1.2500]
+
+ r_min 0.80
+
+ KL 的寫法
+|log r|r − 1 − log r−log r
+
+ TV 與 χ² 的區間相同。
+
+ r_min = 0.80；上界 TV 1.2000、χ² 1.2000、Hellinger 1.2223、KL |log r| 1.2500
+
+ δ = f(r_min) 與 MC 區間fδr_minr_max
+TV2 = |r−1|0.2000000.80001.2000
+χ²0.0400000.80001.2000
+Hellinger0.0111460.80001.2223
+KL |log r|0.2231440.80001.2500
+
+ TV 列用 TV2 = |r−1|，δ = 1 − r_min；用 TV = ½|r−1| 時 δ 減半，區間相同。|log r| 是本頁對 §3.4 的讀法，不是 f-散度；r − 1 − log r 是同一個 KL 的合法凸 f；−log r 照 Eq. 16 字面沒有上界。讀數由本頁依 Eq. 10、18 即時計算。
+
+ 09 · 4 × 3 格子
+
+ PPO、DAPO、DPPO、RIPO 是 4 × 3 格子中的四格
+
+ 論文 §3.4 把既有方法放進 (f, T) 格子。DAPO 為 (KL, MC)，∣log⁡r∣≤δ $|\log r|\le\delta$ 給出 [e−δ,eδ] $[e^{-\delta},e^{\delta}]$ ,eδ]；DPPO 為 (TV, Binary)：代入 Eq. 20，1−μr1−μ−1=μ(1−r)1−μ $\frac{1-\mu r}{1-\mu}-1=\frac{\mu(1-r)}{1-\mu}$ 1−μr​−1=1−μμ(1−r)​，兩項合計 μ∣r−1∣=∣π−μ∣≤δ $\mu|r-1|=|\pi-\mu|\le\delta$ ，即 1±δ/μ $1\pm\delta/\mu$ （論文用 TV = ½|r−1|，所以這裡的 δ 是 TV 的 δ）；RIPO 為 (χ², Atomic)，μ(r−1)2≤δ $\mu(r-1)^2\le\delta$ ≤δ 給出 1±δ/μ $1\pm\sqrt{\delta/\mu}$ ​。PPO 與 GRPO 是 (TV, MC)；GSPO 與 GMPO 也是 (TV, MC)，只是以整條 rollout 為取樣單位。DPPO 區間 1±δ/μ $1\pm\delta/\mu$ ，代入本頁校準的 δTV=12∣0.8−1∣=0.1 $\delta_{TV}=\tfrac12|0.8-1|=0.1$ ​=21​∣0.8−1∣=0.1（TV = ½|r−1| 在 r = 0.8 校準），得 1±0.1/μ $1\pm0.1/\mu$ 。例：µ = 0.1 時 1±0.1/0.1=1±1 $1\pm0.1/0.1=1\pm1$ ，即 [0, 2]，下界 0 表示沒有下界；這就是第 10 章 C4 表中 TV–Binary 的 [0*, 2.0000]。若照論文字面的 δ_TV = 0.2 代入，則是 1±0.2/μ $1\pm0.2/\mu$ ，µ = 0.1 時為 [0, 3]（C4 的「論文字面值」）。
+
+ 下表中 RIPO 在 χ² 列、Atomic 欄；每格開頭以粗體寫出格子名稱與方法名稱。RIPO 的區間照論文 §3.4 是 1±δ/μ $1\pm\sqrt{\delta/\mu}$ ​，µ = 0.1、δ = 0.04 時為 [0.3675, 1.6325]。同一列 Binary 欄的 1±δ(1−μ)/μ $1\pm\sqrt{\delta(1-\mu)/\mu}$ ​ 是 χ²–Binary，不是 RIPO：Eq. 20 的第二項（其餘質量）使 χ²–Binary =μ(r−1)2/(1−μ) $=\mu(r-1)^2/(1-\mu)$ /(1−μ)，多出的 (1−μ) $(1-\mu)$ 就來自這一項；µ = 0.1 時為 [0.4, 1.6]本頁推導。TV 列一律以 TV = ½|r−1| 與 δTV=0.1 $\delta_{TV}=0.1$ ​=0.1 表示（與 |r−1| 配 0.2 是同一組區間）。
+
+ 剪裁區間公式（δ 為各散度校準後的值）散度MCAtomicBinary
+
+ TVTV–MC（PPO / GRPO）
+[1−2δ,1+2δ] $[1-2\delta,1+2\delta]$ 
+δ_TV = 0.1 → [0.8, 1.2]TV–Atomic
+1±2δ/μ $1\pm2\delta/\mu$ 
+δ_TV = 0.1 → 1 ± 0.2/µTV–Binary（DPPO）
+1±δ/μ $1\pm\delta/\mu$ 
+δ_TV = 0.1 → 1 ± 0.1/µ；µ = 0.1 時 [0, 2]
+
+ χ²χ²–MC
+1±δ $1\pm\sqrt\delta$ ​
+與 TV–MC 同一區間χ²–Atomic（RIPO）
+1±δ/μ $1\pm\sqrt{\delta/\mu}$ ​
+論文 §3.4；µ = 0.1 時 [0.3675, 1.6325]χ²–Binary（不是 RIPO）
+1±δ(1−μ)/μ $1\pm\sqrt{\delta(1-\mu)/\mu}$ ​
+本頁推導；µ = 0.1 時 [0.4, 1.6]
+
+ HellingerHellinger–MC
+r∈1±δ $\sqrt r\in1\pm\sqrt\delta$ ​∈1±δ​Hellinger–Atomic
+r∈1±δ/μ $\sqrt r\in1\pm\sqrt{\delta/\mu}$ ​∈1±δ/μ​
+本頁推導Hellinger–Binary
+二分法求解
+
+ KLKL–MC（DAPO）
+[e−δ,eδ] $[e^{-\delta},e^{\delta}]$ ,eδ]
+|log r|KL–Atomic
+[e−δ/μ,eδ/μ] $[e^{-\delta/\mu},e^{\delta/\mu}]$ ,eδ/μ]
+|log r|，本頁推導KL–Binary
+DKL(Bern(μ)∥Bern(π))≤δ $D_{KL}(\mathrm{Bern}(\mu)\|\mathrm{Bern}(\pi))\le\delta$ ​(Bern(μ)∥Bern(π))≤δ
+二分法求解
+
+ TV–Atomic(δ) 與 TV–Binary(2δ) 相同本頁推導：以 TV = ½|r−1| 計，Atomic 是 ½|π−µ|，Binary 是 |π−µ|，兩者是同一族，只差兩倍半徑。Table 1 中兩者數學 36.3 對 39.0、程式 54.9 對 53.8；這個差距可能只是 δ 差兩倍的效果，再加上論文沒有報告的隨機性。表中 TV–Binary 欄的 1±δ/μ $1\pm\delta/\mu$ 就是 DPPO 的區間，δ 是 TV 的 δTV=0.1 $\delta_{TV}=0.1$ ​=0.1，不再除以 2；½ 只在換算成 TV–Atomic（1±2δ/μ $1\pm2\delta/\mu$ ）時才有影響。
+
+ 延伸閱讀：GPPO 的設計空間、序列層級的比值：GSPO 與 GMPO、LLM RL 中的 clipping 變體
+
+ 10 · µ 與區間
+
+ 舊機率 µ 越小，Atomic 與 Binary 的區間越寬
+
+ MC 區間不依賴 µ；Atomic 與 Binary 的區間隨 µ 變小而放寬。因為 π ≤ 1，r ≤ 1/µ本頁推導：µ 大時，上界常常碰不到。
+
+ 論文另外對所有方法套用 dual clip：比值另外被限制在下界 0.5、上界 10 之間（§4.1，「apply dual clipping to the importance ratio with lower and upper bounds of 0.5 and 10」）。論文沒說 dual clip 如何與各格的區域組合。若把 [0.5, 10] 當作與區間取交集的假設性疊加，以 |log r| 讀法，KL–Atomic 的上界 eδ/μ $e^{\delta/\mu}$ 在 δ = 0.2231 時 µ < 0.0969、δ = 0.22 時 µ < 0.0955 超過 10本頁推導；下界 e−δ/μ $e^{-\delta/\mu}$ 在 µ < 0.3219（δ = 0.2231）時低於 0.5；χ²–Atomic 的上界在 µ < 0.000494 時才超過 10。這是假設性疊加，不是論文寫明的組合方式。
+
+ Binary 不一定比 MC 寬本頁推導：µ = 0.5 時 Hellinger–Binary 為 [0.7903, 1.2097]，比 MC 的 [0.8, 1.2223] 窄；χ²–Binary 在 µ > 0.5 時比 MC 窄。
+
+ C412 格剪裁區間隨 µ 的變化
+
+ 拖動 µ：主圖畫選定散度的三種估計器的上下界；下表列出目前 µ 下 12 格的區間。切換校準可對照論文字面值。
+
+ MCAtomicBinaryπ > 1，不可行
+
+ µ 0.100
+
+ 散度
+TVχ²HellingerKL
+
+ 校準
+本頁校準（推定）論文字面值
+
+ 疊加 dual clip [0.5, 10]（假設）
+ µ = 0.100，KL–Atomic 區間 [0.1074, 9.3132]
+
+ 目前 µ 下的 12 格區間散度MCAtomicBinary
+TVGRPO[0.8000, 1.2000]同一區間[0*, 3.0000]DPPO[0*, 2.0000]
+χ²[0.8000, 1.2000]同一區間RIPO[0.3675, 1.6325][0.4000, 1.6000]
+Hellinger[0.8000, 1.2223][0.4438, 1.7792][0.4599, 1.7179]
+KLDAPO[0.8000, 1.2500][0.1074, 9.3132][0.0433, 3.9748]
+
+ 由論文 Eq. 18–20 與 §4.1 的校準規則推出，非論文圖；KL 的 |log r| 是本頁讀法（推定）。本頁校準：TV2 = |r−1| 配 0.2（等同 TV = ½|r−1| 配 δ_TV = 0.1，所以 TV–Binary 為 1 ± 0.1/µ）、χ² 0.04、H 0.011146、KL 0.2231（Binary 為 Bernoulli KL）。論文字面值：TV ½|r−1| 配 0.2、χ² 0.04、H 0.01、KL −log r 配 0.22（MC、Atomic 沒有上界，記為 1/µ）。「0*」為無下界，「1/µ*」為上界碰不到。
+
+ 11 · 實驗結果
+
+ 實驗中 KL × Atomic 的平均分數最高
+
+ 所有方法都在 Qwen3-8B-Base 上訓練：數學用 DAPO-Math-17k，程式用 Eurus-Code-25k；評測集為 AIME24、AIME25、BRUMO25、SMT25 與 Codeforces、CodeContests、TACO、APPS。指標 Avg@8 是同一個模型評測 8 次取平均，不是 8 次獨立訓練。下面兩張表照錄 Table 1，括號內是論文寫的相對 GRPO 提升（%）。
+
+ Table 1（數學推理，Avg@8）格子／方法AIME24AIME25BRUMO25SMT25Avg.
+TV–MC（GRPO）34.620.833.321.927.7 (+0.00)
+TV–Binary（DPPO）46.732.542.534.239.0 (+40.79)
+TV–Atomic45.028.340.830.936.3 (+31.05)
+Hellinger–MC37.930.835.423.131.8 (+14.80)
+Hellinger–Binary42.132.937.529.035.4 (+27.80)
+Hellinger–Atomic42.932.543.329.036.9 (+33.21)
+χ²–MC34.620.833.321.927.7 (+0.00)
+χ²–Binary45.029.236.728.134.8 (+25.63)
+χ²–Atomic（RIPO）47.932.547.534.240.5 (+46.21)
+KL–MC（DAPO）45.027.537.528.534.6 (+24.91)
+KL–Binary47.129.642.929.037.2 (+34.30)
+KL–Atomic48.933.948.734.441.5 (+49.82)
+GSPO42.928.736.332.535.1 (+26.71)
+GMPO41.730.035.833.035.1 (+26.71)
+SAPO37.328.741.732.335.0 (+26.35)
+CISPO31.723.838.328.030.5 (+10.11)
+Clip-Cov36.322.936.630.231.5 (+13.72)
+Base Model3.83.315.010.88.2 (−70.40)
+
+ Table 1（程式生成，Avg@8）格子／方法CodeforcesCodeContestsTACOAPPSAvg.
+TV–MC（GRPO）61.957.436.254.252.4 (+0.00)
+TV–Binary（DPPO）63.558.637.655.653.8 (+2.67)
+TV–Atomic64.260.538.156.754.9 (+4.77)
+Hellinger–MC66.458.236.356.854.4 (+3.82)
+Hellinger–Binary66.360.239.257.755.9 (+6.68)
+Hellinger–Atomic68.263.740.360.358.1 (+10.88)
+χ²–MC61.957.436.254.252.4 (+0.00)
+χ²–Binary64.859.338.656.354.8 (+4.58)
+χ²–Atomic（RIPO）68.262.339.358.957.2 (+9.16)
+KL–MC（DAPO）64.059.137.456.854.3 (+3.63)
+KL–Binary66.461.438.357.355.9 (+6.68)
+KL–Atomic70.765.142.360.859.7 (+13.93)
+GSPO63.857.936.656.353.7 (+2.48)
+GMPO64.059.237.456.854.4 (+3.82)
+SAPO63.757.037.555.953.5 (+2.10)
+CISPO61.654.635.153.951.3 (−2.10)
+Clip-Cov62.957.436.055.553.0 (+1.15)
+Base Model32.332.116.532.128.3 (−45.99)
+
+ KL–Atomic 的數學平均 41.5 對 GRPO 的 27.7（+49.82%，+13.8 分），程式平均 59.7 對 52.4（+13.93%，+7.3 分）。論文摘要的「up to 50% and 14%」是相對提升，不是百分點。第二名是既有方法 RIPO（χ²–Atomic，40.5 / 57.2），KL–Atomic 只比它高 1.0 與 2.5 分。論文寫「every divergence equipped with an Atomic or Binary estimator outperforms the strongest baseline (GMPO)」，這不成立：χ²–Binary 數學 34.8 < 35.1，TV–Binary 程式 53.8 < 54.4。所有百分比都能由 Avg 欄相除重現本頁推導。
+
+ 論文主張核對（本頁推導，依 Table 1 計算）論文主張判定依據
+
+ 每個配 Atomic 或 Binary 的散度都勝過最強基線 GMPO不成立數學 χ²–Binary 34.8 < GMPO 35.1；程式 TV–Binary 53.8 < GMPO 54.4
+
+ 相對 GRPO 提升「up to 50% and 14%」成立（相對值）49.82% 與 13.93% 是平均分數的相對提升；絕對差 +13.8 與 +7.3 分
+
+ KL–Atomic 為 SOTA成立，差距小比第二名 RIPO 高 1.0（數學）與 2.5（程式）分
+
+ Atomic ranks first in every column of the code table成立KL–Atomic 在程式四欄（70.7、65.1、42.3、60.8）都是第一
+
+ Binary 比 MC 平均提升 21.3% / 3.2%，Atomic 28.3% / 7.7%成立，算法需註明這是四個散度各自相對提升的平均；用平均分數相除，數學 Binary 20.2%、Atomic 27.4%，程式 3.2%、7.7%
+
+ 結果穩定、增益一致無法判斷沒有報告 seed 數、標準差或信賴區間
+
+ 論文沒有報告 seed 數或變異
+
+ Table 1 每格只有一個數字，論文沒有報告訓練的 seed 數、標準差或信賴區間。例如本頁校準下 Hellinger–MC 與 TV–MC 只差上界 1.2 → 1.2223，分數卻差 27.7 → 31.8；沒有 seed 資訊，無法判斷這是效果還是雜訊。TV–MC 與 χ²–MC 兩列數字完全相同，表示同一個設定只報告了一次訓練。
+
+ Fig. 1 的圖說寫「Schematic」：它畫三個比值 (r1, r2, r3) 的三維形狀，是示意圖，不是實驗結果；實際每個 token 的剪裁區域是一維區間。Fig. 2 為四個散度各一欄、數學（400 步）與程式（600 步）各一列，實線是 training score，點劃線是 policy entropy。論文說 MC 的熵迅速趨近零、分數很早就持平，Atomic 與 Binary 維持中等的熵並持續進步。「This phenomenon follows directly from the estimator」是作者的解釋，沒有消融實驗支持；圖上是訓練分數，不是 Table 1 的測試分數。本頁無法從原文讀出曲線數值，因此只轉述論文的文字，不重繪曲線。
+
+ 12 · 實作
+
+ 實作設定與常見錯誤
+
+ 訓練設定（§4.1）項目值
+
+ 模型Qwen3-8B-Base
+
+ 訓練資料數學 DAPO-Math-17k；程式 Eurus-Code-25k
+
+ rollout每題 8 個（group size 8）；最長 20k tokens
+
+ 每次迭代1024 個 rollout、train batch 128、更新 8 次、mini-batch 16
+
+ 獎勵正確 1、錯誤 0
+
+ 損失聚合token-mean
+
+ 最佳化AdamW，固定學習率 1×10⁻⁶
+
+ 步數數學 400 步、程式 600 步
+
+ 框架與硬體VeRL；8×H20
+
+ 其他去掉 KL penalty；GRPO 式 group-relative advantage；dual clip 0.5 與 10
+
+ 剪裁只作用在使目標值較小的一側：調整 rmin⁡ $r_{\min}$ ​ 只影響負優勢的 token。
+
+ KL 的 −log⁡r $-\log r$ 照字面沒有上界。要改用 ∣log⁡r∣ $|\log r|$ （不是 f-散度）或 r−1−log⁡r $r-1-\log r$ ，並寫明用哪一個。
+
+ TV 的 ½ 要與 δ 一致：用 δ = f(0.8) 規則，區間就與 f 的縮放無關。
+
+ 依 δ = f(0.8) 校準時，三種估計器的區間都會隨 f 的寫法改變，因為 δ 會變。
+
+ µ 小時 Atomic 與 Binary 的區間很寬，上限受 r ≤ 1/µ 約束；dual clip 如何與它們組合，論文沒寫。
+
+ 不要把 Atomic 或 Binary 當成散度的無偏估計或上界估計：在 f ≥ 0 時，它們的期望都 ≤ Df $D_f$ ​。
+
+ 論文沒寫的項目：其他基線的超參數（只說「default」）、TV–Binary 用的 δ、dual clip 的組合方式、訓練中實際的 Df $D_f$ ​、剪裁比例與 µ 的分布。
+
+ 13 · 研究脈絡
+
+ 研究脈絡
+
+ GPPO 接在一條脈絡之後：TRPO 給出 TV 的改進下界；PPO 以剪裁取代限制式（論文稱為 TV–MC），GRPO 改用組內相對優勢；DAPO 的不對稱剪裁被讀成 KL–MC；GSPO、GMPO 改變取樣單位；DPPO 直接估計散度（TV–Binary）；RIPO 以等距更新（χ²–Atomic）。每張卡片連到對應的研究筆記。
+
+ 理論PPO / GRPO剪裁變體序列單位估計器本文
+
+ 2015理論Trust Region Policy Optimization
+Schulman et al.
+trust region 與單調改進下界，GPPO Theorem 1 的來源
+arXiv ↗筆記
+2015理論High-Dimensional Continuous Control Using Generalized Advantage Estimation
+Schulman et al.
+GAE 優勢估計，PPO 使用的優勢 Â
+arXiv ↗筆記
+2017PPO / GRPOProximal Policy Optimization Algorithms
+Schulman et al.
+一階 clipped 代理目標，GPPO 視為 TV 散度加單樣本 MC
+arXiv ↗筆記
+2024PPO / GRPODeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models
+Shao et al.
+提出 GRPO（group 相對優勢）
+arXiv ↗筆記
+2025PPO / GRPODeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning
+DeepSeek-AI
+以 RL 激發 LLM 推理，GPPO 的 LLM RL 背景
+arXiv ↗筆記
+2025剪裁變體DAPO: An Open-Source LLM Reinforcement Learning System at Scale
+Yu et al.
+不對稱 clipping 等技術，GPPO 解讀為 KL 加 MC
+arXiv ↗筆記
+2025剪裁變體The Entropy Mechanism of Reinforcement Learning for Reasoning Language Models
+Cui et al.
+策略熵崩潰與 Clip-Cov
+arXiv ↗筆記
+2025序列單位Group Sequence Policy Optimization
+Zheng et al.
+序列級比值與 clipping，保留 TV-MC
+arXiv ↗筆記
+2025序列單位Geometric-Mean Policy Optimization
+Zhao et al.
+以幾何平均抑制 token 獎勵離群值
+arXiv ↗筆記
+2025剪裁變體Soft Adaptive Policy Optimization
+Gao et al.
+以平滑 gate 取代 hard clipping
+arXiv ↗筆記
+2026估計器Rethinking the Trust Region in LLM Reinforcement Learning
+Qi et al.
+DPPO：以散度直接估計（Binary、Top-K）取代 clipping
+arXiv ↗筆記
+2026估計器Beyond Euclidean Clipping: Overcoming Exploration Collapse in LLM RL via Riemannian Isometric Policy Optimization
+Cai et al.
+RIPO：等距更新，GPPO 解讀為 χ² 加 Atomic
+arXiv ↗筆記
+2026本文Generalized Proximal Policy Optimization: Unifying LLM RL Algorithms from the Perspective of Divergence
+Cai et al.
+f-散度 trust region 理論與 Divergence × Estimator 設計空間
+arXiv ↗筆記
+
+ 14 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 論文 §5 沒有限制段落，以下由本頁整理：理論保證屬於限制式問題，不屬於實際演算法；Atomic 與 Binary 沒有偏差分析；實驗只有一個模型、每個設定一次訓練；「KL 利於探索」「Atomic 避免過早剪裁」是作者的解釋，論文沒有量測剪裁比例或 µ 的分布。
+
+ GPPO 的研究脈絡總覽總覽
+
+ TRPO：trust region 與單調改進下界理論起點
+
+ PPO-Clip 作為 TV 散度的單樣本 Monte Carlo 代理PPO
+
+ LLM RL 中的 clipping 變體：DAPO、DCPO、Clip-Cov、SAPO、CISPO剪裁變體
+
+ 序列層級的比值：GSPO 與 GMPO序列單位
+
+ f-散度幾何與 proximal region：Vajda 不等式與 Theorem 3理論
+
+ 散度估計器拓撲：Single-Sample MC、Atomic 與 Binary估計器
+
+ GPPO 的設計空間：把 PPO、DAPO、DPPO、RIPO 對應到 (f, T)本論文
+
+ MDP、Q 函數與 Bellman backup背景
+
+ RLVR、GRPO 與信用分配瓶頸背景
+
+ PPO、GRPO、DAPO 與 LLM 的 RL 目標背景
+
+ LLM RL 中的重要性取樣修正背景
+
+ Zhicheng Cai, Xinyuan Guo, Hanlin Wu, Weinan Dai, Yuyan Zhou, Wei-Ying Ma, Ya-Qin Zhang, Hao Zhou. Generalized Proximal Policy Optimization: Unifying LLM RL Algorithms from the Perspective of Divergence. 2026. arXiv:2610.13015。
+
+ 本頁的方程式與數字取自論文 v1；標示「本頁推導」的內容為本頁自行推導，「推定」為本頁在論文有歧義時選定的值，皆非論文結論。互動元件的數值在瀏覽器中即時計算；C5 使用本頁的玩具分布。
+
+ ← Paper Master
+ 教學與筆記
