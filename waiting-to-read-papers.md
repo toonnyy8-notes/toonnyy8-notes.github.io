@@ -63,6 +63,7 @@
    - [(How) Do Language Models Track State?](https://arxiv.org/abs/2503.02854)
    - [Proving and Improving the Platonic Representation Hypothesis with JEPAs](https://arxiv.org/abs/2610.39302)
    - [Interpretable Weight-Space Programming](https://www.alphaxiv.org/abs/2611.interpretable-weight-space-programming)
+   - [What drives the emergence of symbolic mechanisms in large language models?](https://arxiv.org/abs/2611.13270)（Li & Webb，NeurIPS 2026；符號機制的湧現主要來自資料多樣性，而非架構歸納偏置）
 
 6. JEPA 與表徵學習
    - [LLM-JEPA: Large Language Models Meet Joint Embedding Predictive Architectures](https://arxiv.org/abs/2509.14252)
