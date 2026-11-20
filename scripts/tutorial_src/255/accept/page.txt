@@ -1,0 +1,579 @@
+Reasoning with Sampling 互動教學
+
+跳到內容
+
+ No. 255
+ Reasoning with Sampling
+
+00 摘要01a 序列機率與溫度01b RL 與銳化假說02 冪分佈03a 兩 token 的例子03b 次方的和與和的次方04 Prop. 305a Metropolis-Hastings05b 隨機重取與 Z_t06 Algorithm 107 成本08 實驗結果09 未說明的設定10 研究脈絡11 限制與延伸
+
+00摘要
+01a序列機率與溫度
+01bRL 與銳化假說
+02冪分佈
+03a兩 token 的例子
+03b次方的和與和的次方
+04Prop. 3
+05aMetropolis-Hastings
+05b隨機重取與 Z_t
+06Algorithm 1
+07成本
+08實驗結果
+09未說明的設定
+10研究脈絡
+11限制與延伸
+
+ No. 255 · 互動教學 · arXiv 2510.14901 · 2025
+
+ 不訓練，只取樣：從 base model 的冪分佈取樣做推理
+
+ 這篇論文只用既有模型自己給的機率挑選回答，不再訓練，單次作答的準確率接近經過強化學習後訓練的模型（後文說明）。
+
+ Aayush Karan、Yilun Du（2025）〈Reasoning with Sampling: Your Base Model is Smarter Than You Think〉
+
+ 01 · 取樣目標base model 指作為取樣對象、不再訓練的既有語言模型，它對每條回答序列 x 給出機率 p(x)。本文的取樣目標是 p(x)α（α 是大於 1 的冪次，論文用 4），它使機率較高的回答得到更大的相對權重。
+
+ 02 · 和低溫取樣不同常用的低溫取樣在每一步把下一個 token 的機率取 α 次方再重新正規化。這和對整條序列的機率取 α 次方得到的分佈不同（03a 節用一個兩 token 的例子說明）。
+
+ 03 · 反覆重取直接從 p(x)α 取樣需要對所有可能序列加總，無法計算。作者改為反覆執行：隨機選一個位置，從該位置重新生成到目前區塊結尾，再依新舊序列的機率比值決定是否接受。這個方法的名稱、準確率與計算成本在後文說明。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01a · 序列機率與溫度
+
+ 語言模型逐 token 給出序列的機率
+
+ 語言模型（LLM）把文字切成 token，詞彙表 X $\mathcal X$ 是所有 token 的集合。一條序列寫成 x0:T=(x0,x1,…,xT) $x_{0:T}=(x_0,x_1,\dots,x_T)$ ​=(x0​,x1​,…,xT​)，T $T$ 是最後一個位置的索引；x<t $x_{\lt t}$ ​ 表示位置 t $t$ 之前的前綴，x>t $x_{>t}$ ​ 表示位置 t $t$ 之後的後綴（§3）。模型在每個位置給出下一個 token 的條件分佈 p(xt∣x<t) $p(x_t\mid x_{\lt t})$ ​∣x<t​)，稱為 next-token 分佈。
+
+ 序列機率如何由 next-token 分佈得到：整條序列的機率等於各位置條件機率的連乘，p(x0:T)=∏t=0Tp(xt∣x<t) $p(x_{0:T})=\prod_{t=0}^{T}p(x_t\mid x_{\lt t})$ ​)=∏t=0T​p(xt​∣x<t​)（式 1）。逐 token 取樣就是從這個聯合分佈取樣。一條序列的 p $p$ 值稱為它的 likelihood，取對數後的和稱為 log-likelihood；長序列的機率連乘可能低於浮點數下限，實作時一律用 log-likelihood 相加。低溫取樣做什麼：低溫取樣在每一步把 next-token 機率 p(xt∣x<t) $p(x_t\mid x_{\lt t})$ ​∣x<t​) 取 α $\alpha$ 次方再正規化，對應的溫度是 τ=1/α $\tau=1/\alpha$ （式 3）；τ $\tau$ 越小，每一步的分佈越集中在機率最高的 token。
+
+ p(x0:T)=∏t=0Tp(xt∣x<t),ptemp(xt∣x<t)=p(xt∣x<t)α∑xt′∈Xp(xt′∣x<t)α $p(x_{0:T})=\prod_{t=0}^{T}p(x_t\mid x_{\lt t}),\qquad p_{\text{temp}}(x_t\mid x_{\lt t})=\frac{p(x_t\mid x_{\lt t})^\alpha}{\sum_{x'_t\in\mathcal X}p(x'_t\mid x_{\lt t})^\alpha}$ ​)=t=0∏T​p(xt​∣x<t​),ptemp​(xt​∣x<t​)=∑xt′​∈X​p(xt′​∣x<t​)αp(xt​∣x<t​)α​
+式 (1)(3)
+
+ 本文的 base model 指作為取樣對象、不再訓練的既有模型。實驗用的 Qwen2.5-Math-7B 與 Qwen2.5-7B 是預訓練模型；Phi-3.5-mini-instruct 是 instruct 版，已經過後訓練（Abdin 2024），論文沒有說明細節，但仍稱它為 base model。
+
+ 符號表
+
+ x0:T $x_{0:T}$ ​、T $T$ token 序列；T $T$ 是最後一個位置的索引。成本一節寫「生成長度 T $T$ （平均 679）」。
+ p $p$ base model 的序列分佈；p(xt∣x<t) $p(x_t\mid x_{\lt t})$ ​∣x<t​) 是 next-token 分佈。
+ α $\alpha$ 、τ $\tau$ 冪次（α>1 $\alpha>1$ ，主實驗 4.0）、溫度（低溫取樣用 τ=1/α $\tau=1/\alpha$ ）。
+ ptemp $p_{\text{temp}}$ ​、ppow $p_{\text{pow}}$ ​低溫取樣、冪分佈的 next-token 條件分佈（03 節）。
+ F(x≤t) $F(x_{\le t})$ ​)未來修正項（03b 節，本頁推導）。
+ ε,ε′,N $\varepsilon,\varepsilon',N$ ,NProp. 3 的邊際權重與未來路徑數（04 節）。
+ q $q$ 、A $A$ 、pprop $p_{\text{prop}}$ ​提議分佈、接受率、提議用的 LLM（05 節）。鏈的第 i $i$ 個狀態寫上標 xi $x^i$ ，與 token 下標 xi $x_i$ ​ 不同。
+ Zt(x<t) $Z_t(x_{\lt t})$ ​(x<t​)∑vp(v∣x<t)α $\sum_v p(v\mid x_{\lt t})^\alpha$ ​p(v∣x<t​)α，低溫分佈的正規化常數（05b 節）。
+ B $B$ 、NMCMC $N_{\text{MCMC}}$ ​、πk $\pi_k$ ​、m $m$ 區塊長度、每區塊 MH 步數、中間目標、重取起點（06 節）。
+ TV總變差距離（06 節定義）。
+ x0 $x_0$ ​Example 1 中是第一個生成的 token；06 節玩具模型中是不重取的提示 token。
+
+ 01b · RL 與銳化假說
+
+ RL 後訓練與分佈銳化假說
+
+ RL 後訓練用強化學習繼續訓練語言模型：模型生成回答，自動驗證器（例如比對數學題的最終答案）給出獎勵，再依獎勵更新參數。這類方法稱為 RLVR（reinforcement learning with verifiable rewards）。GRPO（Group Relative Policy Optimization）是其中常用的一種演算法，它對同一題取樣一組回答，以組內標準化後的獎勵作為更新權重；本頁不需要它的數學細節，只把它當作比較基準。
+
+ 近期文獻問：RL 後訓練學到的是 base model 原本不會產生的推理方式，還是只把 base model 的分佈變得更集中（§1）？後者稱為分佈銳化（distribution sharpening）假說。支持後者的觀察有兩項：RL 後模型的輸出集中在 base model 的高 likelihood 區域（Yue 2025）；以多次作答評分時，作答次數多時 base model 的分數較高（He 2025、Song 2025；這個多次作答指標稱為 pass@k，08 節定義）。
+
+ 作者的推論是：如果 RL 後訓練只是銳化，那麼應該能直接寫出一個「銳化後」的目標分佈，從 base model 取樣而不必訓練。這是動機與假說，本文沒有證明 RL 只做銳化。
+
+ 延伸閱讀：RLVR 與 GRPO：本文要對照的 RL 基準、分布銳化之爭：RL 後訓練是否只讓 base model 變尖
+
+ 02 · 冪分佈
+
+ 冪分佈把高機率序列的相對權重放大
+
+ 作者選擇的目標是冪分佈（power distribution）pα $p^\alpha$ ：每條序列的權重是 p(x)α $p(x)^\alpha$ ，再對所有序列正規化（§4.1）。Eq. 2 說什麼：若 p(x)>p(x′) $p(x)>p(x')$ )，則 p(x)α/p(x′)α>p(x)/p(x′) $p(x)^\alpha/p(x')^\alpha>p(x)/p(x')$ /p(x′)α>p(x)/p(x′)，也就是高 likelihood 序列相對於低 likelihood 序列的權重比上升。本頁把「相對權重比依 Eq. 2 上升」稱為銳化。這個不等式需要 α>1 $\alpha>1$ ；論文寫的範圍是 α∈[1,∞] $\alpha\in[1,\infty]$ ，但在 α=1 $\alpha=1$ 時兩邊相等，嚴格不等號不成立。
+
+ p(x)>p(x′) ⟹ p(x)αp(x′)α>p(x)p(x′) $p(x)>p(x')\ \Longrightarrow\ \frac{p(x)^\alpha}{p(x')^\alpha}>\frac{p(x)}{p(x')}$ ) ⟹ p(x′)αp(x)α​>p(x′)p(x)​
+式 (2)
+
+ 論文勘誤 E1 · 式 (2)
+論文寫 α∈[1,∞] $\alpha\in[1,\infty]$ ；α=1 $\alpha=1$ 時兩邊相等，依嚴格不等號應為 α>1 $\alpha>1$ 。
+
+ pp⁴（正規化後）
+
+ 混合參數為本頁示範值 示範值；論文 Fig. 2 未給參數。p(y)=0.6 N(−1,0.62)+0.4 N(1.5,0.42) $p(y)=0.6\,\mathcal N(-1,0.6^2)+0.4\,\mathcal N(1.5,0.4^2)$ )+0.4N(1.5,0.42)。取 4 次方後，較高的峰占了大部分質量。
+
+ pα $p^\alpha$ 的未正規化值可以直接由 base model 算出：算出 log-likelihood 再乘以 α $\alpha$ 。困難在正規化：要從 pα $p^\alpha$ 取樣，需要對所有可能序列加總 p(x)α $p(x)^\alpha$ ，序列數隨長度指數增加，無法計算。05 節處理這個問題。統計物理稱 pα $p^\alpha$ 為退火（annealed）或回火（tempered）分佈（Neal 1998）。
+
+ 延伸閱讀：退火與回火取樣：從統計物理到擴散模型的推論時取樣
+
+ 03a · 兩 token 的例子
+
+ 兩個 token 的例子：低溫與冪分佈給出不同答案
+
+ 先固定用詞：本頁說「某取樣法偏好 token a」，意思是 a 在該取樣法下得到較大的相對權重。
+
+ Example 1（§4.1）：詞彙只有 a、b，序列只有兩個 token (x0,x1) $(x_0,x_1)$ ​,x1​)，此處 x0 $x_0$ ​ 是第一個生成的 token。四條序列的機率是 p(aa)=0.00 $p(aa)=0.00$ 、p(ab)=0.40 $p(ab)=0.40$ 、p(ba)=0.25 $p(ba)=0.25$ 、p(bb)=0.25 $p(bb)=0.25$ ，所以第一個 token 的邊際權重是 p(x0=a)=0.40 $p(x_0=a)=0.40$ ​=a)=0.40、p(x0=b)=0.50 $p(x_0=b)=0.50$ ​=b)=0.50。取 α=2.0 $\alpha=2.0$ 。
+
+ 冪分佈先對每條完整序列取平方再相加：a 開頭得到 0.002+0.402=0.160 $0.00^2+0.40^2=0.160$ +0.402=0.160，b 開頭得到 0.252+0.252=0.125 $0.25^2+0.25^2=0.125$ +0.252=0.125，所以冪分佈的 a 權重較大。低溫取樣先把同一開頭的序列機率相加，再取平方：a 得到 (0.00+0.40)2=0.160 $(0.00+0.40)^2=0.160$ =0.160，b 得到 (0.25+0.25)2=0.250 $(0.25+0.25)^2=0.250$ =0.250，所以低溫的 b 權重較大。α=2 時兩種取樣對 a、b 的權重因此是：冪分佈 0.160 對 0.125（a 的權重較大），低溫 0.160 對 0.250（b 的權重較大）。
+
+ 原因是兩個開頭的未來不同：a 之後只有一條未來 ab，機率 0.40；b 之後有兩條未來 ba、bb，各只有 0.25。低溫取樣把 b 的兩條未來先加總成 0.50，冪分佈則對每條未來分別取平方，兩條 0.25 的平方和小於一條 0.40 的平方。
+
+ 例子有什麼瑕疵：四個機率總和是 0.90，不是 1。因為兩種取樣都只比較相對權重，大小關係不受影響。正規化後（本頁推導），冪分佈 P(x0=a)=0.160/0.285=0.561 $P(x_0=a)=0.160/0.285=0.561$ ​=a)=0.160/0.285=0.561，低溫 0.160/0.410=0.390 $0.160/0.410=0.390$ 。冪分佈給 a 較大權重的條件是 0.4α>2⋅0.25α $0.4^\alpha>2\cdot0.25^\alpha$ >2⋅0.25α，即 α>ln⁡2/ln⁡1.6≈1.475 $\alpha>\ln2/\ln1.6\approx1.475$ （本頁推導，利用 p(aa)=0 $p(aa)=0$ 與 p(ba)=p(bb) $p(ba)=p(bb)$ ）。總和為 1 的版本 p(ab)=0.45 $p(ab)=0.45$ 、p(ba)=p(bb)=0.275 $p(ba)=p(bb)=0.275$ 得到相同的結論，翻轉點為 1.407。
+
+ 論文勘誤 E2 · Example 1
+四個機率 0.00、0.40、0.25、0.25 的總和是 0.90，不是 1。排序結論不受影響。
+
+ C1次方的和與和的次方：Example 1 計算器
+
+ 兩組機率表都滿足 p(aa) = 0、p(ba) = p(bb)，翻轉點 α* = ln 2 / ln(p(ab)/p(ba)) 只在這個條件下成立。拖動 α 看兩種取樣如何分配第一個 token 的權重。
+
+ ■ x₀ = a（實心）▨ x₀ = b（斜線）
+
+ 冪分佈 P(x₀ = a)（● 目前 α）低溫 P(x₀ = a)（■ 目前 α）0.5 參考線、α*
+
+ 機率表
+
+ 論文原例（總和 0.90）總和為 1 的版本
+
+ α 2.00
+
+ α = 2（論文）α = 4（主實驗）
+
+ α2.00冪分佈權重 a0.1600冪分佈權重 b0.1250低溫權重 a0.1600低溫權重 b0.2500冪分佈 ab0.5614冪分佈 ba = bb0.2193低溫 ab0.3902低溫 ba = bb0.3049
+ α = 2.00；冪分佈 a 0.1600 對 b 0.1250；低溫 a 0.1600 對 b 0.2500
+
+ 讀數由本頁依式 (7)(8) 即時計算；正規化機率、序列機率與翻轉點為 本頁推導。原例總和 0.90，第二個 token 的條件機率以各列和計算。
+
+ 03b · 次方的和與和的次方
+
+ 一般情形：冪分佈是次方的和，低溫是和的次方
+
+ Prop. 1 說低溫取樣不是從 pα $p^\alpha$ 取樣（§4.1）。固定前綴 x<t $x_{\lt t}$ ​，冪分佈的 next-token 條件分佈要把所有可能的後綴加總（式 4）；低溫取樣則可用條件機率的定義（論文稱為 Bayes rule，式 5）改寫成式 6。忽略正規化後，兩者的 next-token 相對權重各是：
+
+ ppow(xt∣x<t)∝∑x>tp(x0,…,xt,…,xT)α $p_{\text{pow}}(x_t\mid x_{\lt t})\propto\sum_{x_{>t}}p(x_0,\dots,x_t,\dots,x_T)^\alpha$ ​(xt​∣x<t​)∝x>t​∑​p(x0​,…,xt​,…,xT​)α
+式 (7)
+
+ ptemp(xt∣x<t)∝(∑x>tp(x0,…,xt,…,xT))α $p_{\text{temp}}(x_t\mid x_{\lt t})\propto\Big(\sum_{x_{>t}}p(x_0,\dots,x_t,\dots,x_T)\Big)^\alpha$ ​(xt​∣x<t​)∝(x>t​∑​p(x0​,…,xt​,…,xT​))α
+式 (8)
+
+ 冪分佈的權重是「次方的和」（式 7），低溫的權重是「和的次方」（式 8）。把聯合機率拆成 p(x<t) p(xt∣x<t) p(x>t∣x≤t) $p(x_{\lt t})\,p(x_t\mid x_{\lt t})\,p(x_{>t}\mid x_{\le t})$ ​)p(xt​∣x<t​)p(x>t​∣x≤t​)，前綴項對所有候選 token 相同，可以得到（本頁推導）：冪分佈 = 低溫權重 × F(x≤t) $F(x_{\le t})$ ​)，其中 F(x≤t)=∑x>tp(x>t∣x≤t)α $F(x_{\le t})=\sum_{x_{>t}}p(x_{>t}\mid x_{\le t})^\alpha$ ​)=∑x>t​​p(x>t​∣x≤t​)α。α>1 $\alpha>1$ 時 0<F≤1 $0\lt F\le1$ ，而且 F=1 $F=1$ 若且唯若選了 xt $x_t$ ​ 之後只剩一條未來；未來分散到越多條路徑，F $F$ 越小。低溫取樣等於把每個候選 token 的 F $F$ 都當成 1。
+
+ ppow(xt∣x<t)∝p(xt∣x<t)α⋅F(x≤t),F(x≤t)=∑x>tp(x>t∣x≤t)α $p_{\text{pow}}(x_t\mid x_{\lt t})\propto p(x_t\mid x_{\lt t})^\alpha\cdot F(x_{\le t}),\qquad F(x_{\le t})=\sum_{x_{>t}}p(x_{>t}\mid x_{\le t})^\alpha$ ​(xt​∣x<t​)∝p(xt​∣x<t​)α⋅F(x≤t​),F(x≤t​)=x>t​∑​p(x>t​∣x≤t​)α
+本頁推導
+
+ 用 Example 1 回驗：a 之後只有 ab，F(a)=12=1 $F(a)=1^2=1$ =1；b 之後 ba、bb 各占一半，F(b)=0.52+0.52=0.5 $F(b)=0.5^2+0.5^2=0.5$ +0.52=0.5。所以冪分佈 a 的權重是 0.42×1=0.160 $0.4^2\times1=0.160$ ×1=0.160，b 是 0.52×0.5=0.125 $0.5^2\times0.5=0.125$ ×0.5=0.125，與 03a 節的計算相同。
+
+ 兩者何時相同：α=1 $\alpha=1$ ；各候選 token 的 F $F$ 相同；或位於最後一個位置 t=T $t=T$ （沒有未來，F≡1 $F\equiv1$ ）。總結：冪分佈 ∝ ∑x>tp(x0:T)α $\sum_{x_{>t}}p(x_{0:T})^\alpha$ ​​p(x0:T​)α（次方的和，式 7），低溫 ∝ (∑x>tp(x0:T))α $(\sum_{x_{>t}}p(x_{0:T}))^\alpha$ ​​p(x0:T​))α（和的次方，式 8），冪分佈 = 低溫權重 × F(x≤t)=∑x>tp(x>t∣x≤t)α $F(x_{\le t})=\sum_{x_{>t}}p(x_{>t}\mid x_{\le t})^\alpha$ ​)=∑x>t​​p(x>t​∣x≤t​)α（本頁推導），在 α=1 $\alpha=1$ 、各 token 的 F $F$ 相同或 t=T $t=T$ 時兩者相同。
+
+ 論文勘誤 E3 · Prop. 1 的證明
+對一般 p $p$ 而言 Prop. 1 成立；但證明中「條件分佈在每個時間步都不同」在 t=T $t=T$ 不成立（兩者相同），α=1 $\alpha=1$ 或確定性的 p $p$ 時命題本身也不成立。
+
+ 延伸閱讀：冪次分布 p^α 與低溫取樣為何不同
+
+ 04 · Prop. 3
+
+ 冪分佈給「未來路徑少但機率高」的 token 較大權重
+
+ Obs. 1（§4.1）把 Example 1 推廣成一句話：冪分佈偏好未來路徑少、但每條未來機率高的 token；低溫取樣偏好未來路徑多、但每條未來機率低的 token。App. A.1 用一個極端的簡化模型把它寫成 Prop. 3。
+
+ 固定前綴，token xt $x_t$ ​ 的邊際權重是它所有未來的機率和（Def. 2）。正向 pivotal token 把全部權重 ε $\varepsilon$ 放在一條未來上（Def. 3）；負向 pivotal token 把權重 ε′ $\varepsilon'$ 平均分到 N $N$ 條未來，每條 ε′/N $\varepsilon'/N$ /N（Def. 4）。代入式 7 與式 8：冪分佈給兩者的權重是 εα $\varepsilon^\alpha$ 對 N(ε′/N)α=ε′α/Nα−1 $N(\varepsilon'/N)^\alpha=\varepsilon'^\alpha/N^{\alpha-1}$ /N)α=ε′α/Nα−1；低溫給兩者的權重是 εα $\varepsilon^\alpha$ 對 ε′α $\varepsilon'^\alpha$ 。
+
+ 先用 Example 1 代入：a 是正向 token（ε=0.4 $\varepsilon=0.4$ ），b 是負向 token（ε′=0.5 $\varepsilon'=0.5$ =0.5，N=2 $N=2$ ），α=2 $\alpha=2$ 。下界 ε′/N1−1/α=0.5/2=0.354 $\varepsilon'/N^{1-1/\alpha}=0.5/\sqrt2=0.354$ /N1−1/α=0.5/2​=0.354，而 0.354<0.4<0.5 $0.354\lt0.4\lt0.5$ 。一般情形就是下式。
+
+ ε′N1−1/α<ε<ε′,ε′N1−1/α>ε′N $\frac{\varepsilon'}{N^{1-1/\alpha}}\lt\varepsilon\lt\varepsilon',\qquad \frac{\varepsilon'}{N^{1-1/\alpha}}>\frac{\varepsilon'}{N}$ ε′​<ε<ε′,N1−1/αε′​>Nε′​
+式 (14)(15)
+
+ 在什麼條件下冪分佈給正向 pivotal token 較大權重，而低溫給負向 pivotal token 較大權重：當 ε′/N1−1/α<ε<ε′ $\varepsilon'/N^{1-1/\alpha}\lt\varepsilon\lt\varepsilon'$ /N1−1/α<ε<ε′（式 14）。右半 ε<ε′ $\varepsilon\lt\varepsilon'$ 使低溫給 xt′ $x'_t$ ′​ 較大權重；左半等價於 εα>ε′α/Nα−1 $\varepsilon^\alpha>\varepsilon'^\alpha/N^{\alpha-1}$ >ε′α/Nα−1，使冪分佈給 xt $x_t$ ​ 較大權重。再由式 15，ε>ε′/N $\varepsilon>\varepsilon'/N$ /N，也就是正向 token 的未來 likelihood 高於負向任一條未來。這需要 N>1 $N>1$ 且 α>1 $\alpha>1$ （本頁推導），否則區間為空。這證明了什麼：Prop. 3 只在「一條未來 vs N 條均勻未來」的極端模型下比較權重大小，沒有證明這樣選出的答案較正確。
+
+ 作者認為：這種權重差異對推理有用。少數 token 會決定答案對錯（pivotal token 或 critical window，Li 2025、Abdin 2024）；選到錯的 token 時，所有後續序列的 likelihood 都較低。作者稱冪分佈內含 "an implicit bias towards planning for future high likelihood tokens"（§4.1，作者用語）。
+
+ C2Prop. 3 的區間
+
+ 預設只調 ε 與 N；ε′ 與 α 在「進階」中。讀數只比較 x_t 與 x′_t 兩個 token。
+
+ ◆ 目前 ε△ ε′/N[ ] Eq. 14 區間
+
+ 冪分佈：只在 x_t 與 x′_t 兩者之間選時，選 x_t 的機率0.5614x_t 權重較大
+
+ 低溫：只在兩者之間選時，選 x_t 的機率0.3902x′_t 權重較大
+
+ 未來 likelihood：x_t 的唯一未來 對 x′_t 每條未來0.400 ＞ 0.250
+
+ Eq. 14 區間：(0.3536, 0.50)；ε 在區間內。
+
+ ε（正向 token 的邊際權重）0.40
+
+ N（負向 token 的未來數）2
+
+ 進階
+
+ ε′（負向 token 的邊際權重）0.50
+
+ α 2.00
+
+ 約束 ε + ε′ ≤ 1 是前綴為空（如 Example 1）的情形；一般前綴下上限是該前綴的機率。
+
+ Example 1（ε = 0.4、ε′ = 0.5、N = 2、α = 2）
+ ε = 0.40，N = 2：冪分佈選 x_t 的機率 0.561，低溫 0.390
+
+ 讀數由本頁依式 (14)(15) 與 App. A.1 的權重即時計算（對數空間）；「只在兩者之間選」的機率是成對正規化 本頁推導。
+
+ 05a · Metropolis-Hastings
+
+ Metropolis-Hastings 只需要未正規化的權重
+
+ 為何不能直接從 pα $p^\alpha$ 取樣：pα $p^\alpha$ 的正規化要對所有序列求和，不可計算（§4.2）。作者改用 Markov chain Monte Carlo（MCMC）中的 Metropolis-Hastings（MH）。Markov chain 是一串狀態 x0,x1,… $x^0,x^1,\dots$ ,x1,…，下一個狀態只依目前狀態隨機產生；若鏈走得夠久，狀態出現的頻率會趨近某個固定分佈，稱為平穩分佈。MH 的設計使平穩分佈正好是目標 pα $p^\alpha$ 。
+
+ 每一步，MH 用提議分佈（proposal distribution）q(x∣xi) $q(x\mid x^i)$ ) 從目前狀態 xi $x^i$ 產生候選 x $x$ ，以下列機率接受（xi+1=x $x^{i+1}=x$ =x），否則留在原地（xi+1=xi $x^{i+1}=x^i$ =xi）：
+
+ A(x,xi)=min⁡{1, pα(x) q(xi∣x)pα(xi) q(x∣xi)} $A(x,x^i)=\min\Big\{1,\ \frac{p^\alpha(x)\,q(x^i\mid x)}{p^\alpha(x^i)\,q(x\mid x^i)}\Big\}$ )=min{1, pα(xi)q(x∣xi)pα(x)q(xi∣x)​}
+式 (9)
+
+ MH 為何可行：MH 接受率式 9 只用 pα $p^\alpha$ 的比值，正規化常數在分子分母相消。平穩分佈成立的理由可以寫成一行（本頁推導）：pα(x) q(x′∣x) A(x′,x)=min⁡{pα(x)q(x′∣x), pα(x′)q(x∣x′)} $p^\alpha(x)\,q(x'\mid x)\,A(x',x)=\min\{p^\alpha(x)q(x'\mid x),\,p^\alpha(x')q(x\mid x')\}$ (x)q(x′∣x)A(x′,x)=min{pα(x)q(x′∣x),pα(x′)q(x∣x′)}，這個式子對 x $x$ 、x′ $x'$ 對稱（detailed balance），所以 pα $p^\alpha$ 是平穩分佈。
+
+ 收斂需要什麼：論文要求提議分佈不可約（irreducible，能到達 pα $p^\alpha$ 有質量的任何集合）且非週期（aperiodic）（Def. 1），收斂結果引用 Neal 1993，論文沒有證明。實際上還需要兩個論文略過的條件（本頁推導）：提議對 pα $p^\alpha$ 支撐內的序列給正機率，且雙向提議機率同時為正（q(x′∣x)>0 $q(x'\mid x)>0$ ∣x)>0 若且唯若 q(x∣x′)>0 $q(x\mid x')>0$ )>0），否則式 9 的比值沒有定義；非週期則來自拒絕時留在原地的自環。τ=1/α $\tau=1/\alpha$ 的全詞彙取樣滿足這些條件，greedy、top-k、top-p 等截斷取樣不一定滿足。
+
+ 延伸閱讀：Metropolis-Hastings 與自回歸 LLM 上的 MCMC 前作
+
+ 05b · 隨機重取與 Z_t
+
+ 隨機位置重取與接受率的化簡
+
+ 作者用的提議是隨機重取（random resampling，Fig. 3）：均勻選一個位置，保留它之前的前綴，用提議 LLM pprop $p_{\text{prop}}$ ​ 從該位置重新生成。在 06 節的 Algorithm 1 中，重新生成到目前區塊的結尾 L $L$ 為止。設重取起點為 m $m$ ，新舊序列在 m $m$ 之前相同，前綴的機率與選位置的機率 1/L $1/L$ 在比值中相消，式 9 的比值變成（本頁推導）：
+
+ pα(x′) q(x∣x′)pα(x) q(x′∣x)=∏t=mLp(xt′∣x<t′)α/pprop(xt′∣x<t′)p(xt∣x<t)α/pprop(xt∣x<t) $\frac{p^\alpha(x')\,q(x\mid x')}{p^\alpha(x)\,q(x'\mid x)}=\prod_{t=m}^{L}\frac{p(x'_t\mid x'_{\lt t})^\alpha/p_{\text{prop}}(x'_t\mid x'_{\lt t})}{p(x_t\mid x_{\lt t})^\alpha/p_{\text{prop}}(x_t\mid x_{\lt t})}$ (x)q(x′∣x)pα(x′)q(x∣x′)​=t=m∏L​p(xt​∣x<t​)α/pprop​(xt​∣x<t​)p(xt′​∣x<t′​)α/pprop​(xt′​∣x<t′​)​
+本頁推導
+
+ 論文在推理任務中用的提議是同一個 base model 配溫度 1/α $1/\alpha$ ，即 pprop(v∣x<t)=p(v∣x<t)α/Zt(x<t) $p_{\text{prop}}(v\mid x_{\lt t})=p(v\mid x_{\lt t})^\alpha/Z_t(x_{\lt t})$ ​(v∣x<t​)=p(v∣x<t​)α/Zt​(x<t​)，其中 Zt(x<t)=∑vp(v∣x<t)α $Z_t(x_{\lt t})=\sum_v p(v\mid x_{\lt t})^\alpha$ ​(x<t​)=∑v​p(v∣x<t​)α 是低溫分佈的正規化常數。代入後每個 token 自己的 pα $p^\alpha$ 全部相消。提議為同一 base model、未截斷、τ=1/α $\tau=1/\alpha$ 時，接受率化成（本頁推導）比值 =∏t=mLZt(x<t′)/Zt(x<t) $=\prod_{t=m}^{L}Z_t(x'_{\lt t})/Z_t(x_{\lt t})$ L​Zt​(x<t′​)/Zt​(x<t​)，Zt=∑vp(v∣x<t)α $Z_t=\sum_v p(v\mid x_{\lt t})^\alpha$ ​=∑v​p(v∣x<t​)α；Zt $Z_t$ ​ 越大，表示該步的 next-token 分佈越集中。
+
+ A=min⁡{1, ∏t=mLZt(x<t′)Zt(x<t)} $A=\min\Big\{1,\ \prod_{t=m}^{L}\frac{Z_t(x'_{\lt t})}{Z_t(x_{\lt t})}\Big\}$ ∏L​Zt​(x<t​)Zt​(x<t′​)​}
+本頁推導
+
+ 兩個推論。(a) 只重取區塊最後一個 token 時比值為 1 必接受：m=L $m=L$ 時唯一的一項 ZL $Z_L$ ​ 只依前綴，而前綴相同。(b) 因共同前綴上的 Zt $Z_t$ ​ 在比值中相消，同一對新舊序列不論 m $m$ 落在共同前綴的哪裡，比值都相同。這和 03b 節的 F $F$ 是同一件事：低溫提議乘上 Z $Z$ 的修正，就得到冪分佈。化簡只在提議與目標用同一模型、未截斷（無 top-k、top-p）且溫度正好是 1/α $1/\alpha$ 時成立；截斷提議（top-k、top-p）或 AlpacaEval 的 τ=0.5 $\tau=0.5$ 不適用。論文沒有說明提議是否截斷。
+
+ C3a單步 Metropolis-Hastings
+示範值
+
+ 小型語言模型（06 節說明其產生方式；這裡固定 3 個 token、seed 1、α = 4、長度 6，單一區塊）。每按一次執行 Fig. 3 的一步：選位置 m、從 m 重取到結尾、算 A = min{1, exp(Σ)}、抽 u，u ≤ A 則接受。
+
+ 目前序列b1a2c3a4b5b6
+
+按「下一步」執行一步 MH。
+
+ 提議溫度
+
+ 1/α（論文推理任務）1
+
+ 下一步重新開始
+
+ chainSeed = 3
+
+ 讀數由本頁依式 (9) 與 Z_t 化簡 本頁推導 即時計算；亂數為 mulberry32(chainSeed)。預設 chainSeed = 3 時，第 6–8 步的 m 不同但 A 都是 0.4335。
+
+ 06 · Algorithm 1
+
+ Algorithm 1 逐區塊執行 MH
+
+ 直接在整條長度上做 MH，每一步都要重新生成很長的序列；MCMC 還可能有指數級的混合時間（mixing time，鏈要走多少步才接近目標分佈），壞的初始化與高維狀態空間都會使它變長（§4.3）。作者利用自回歸結構，定義一串逐步變長的中間目標：
+
+ ∅→p(x0:B)α→p(x0:2B)α→⋯→p(x0:T)α,πk(x0:kB)∝p(x0:kB)α $\varnothing\to p(x_{0:B})^\alpha\to p(x_{0:2B})^\alpha\to\cdots\to p(x_{0:T})^\alpha,\qquad \pi_k(x_{0:kB})\propto p(x_{0:kB})^\alpha$ ​)α→p(x0:2B​)α→⋯→p(x0:T​)α,πk​(x0:kB​)∝p(x0:kB​)α
+式 (10)(11)
+
+ Algorithm 1（Power Sampling for Autoregressive Models）逐行行原文要點說明
+
+ 行 2for k ← 0 to ⌈T/B⌉ − 1共 ⌈T/B⌉ 個階段，每階段把序列延長 B 個 token。
+
+ 行 3用 pprop 延伸 xkB+1 … x(k+1)B新區塊的初始化；目標是 πk+1。
+
+ 行 4–5for n ← 1 to NMCMC：均勻抽 m ∈ {1, …, (k+1)B}m 可以落在之前的區塊。
+
+ 行 6保留 x0:m−1，從 m 重取到 (k+1)B重取到目前區塊結尾，不是整條序列結尾。
+
+ 行 7接受率 A(x′, x)，原文寫 πk應為 πk+1（勘誤 E4）。
+
+ 行 8u ≤ A 則接受u ∼ Uniform(0, 1)。
+
+ 行 10「fix the new prefix」只是下一階段的初始化；前綴不凍結。
+
+ 論文勘誤 E4 · Algorithm 1 第 7 行
+第 3 行說這一階段要取樣 πk+1 $\pi_{k+1}$ ​，第 7 行的接受率卻寫 πk $\pi_k$ ​；應為 πk+1 $\pi_{k+1}$ ​。本頁 C3 依 πk+1 $\pi_{k+1}$ ​ 計算。
+
+ Alg. 1 每一階段做什麼：每階段先用 pprop $p_{\text{prop}}$ ​ 延伸 B $B$ 個 token，再跑 NMCMC $N_{\text{MCMC}}$ ​ 步隨機位置重取 MH（重取到目前區塊結尾），目標是 πk+1∝p(x0:(k+1)B)α $\pi_{k+1}\propto p(x_{0:(k+1)B})^\alpha$ ​∝p(x0:(k+1)B​)α。第 7 行與第 10 行要注意什麼：第 7 行寫 πk $\pi_k$ ​ 是索引錯誤，應為 πk+1 $\pi_{k+1}$ ​；第 10 行不凍結前綴，因為第 5 行的 m $m$ 從 1 起抽，較早的 token 在後面的階段仍可能被重取。Output 一行寫輸出服從 pα $p^\alpha$ ，但只有 NMCMC→∞ $N_{\text{MCMC}}\to\infty$ ​→∞ 時輸出才是 pα $p^\alpha$ ；論文沒有 mixing 診斷，§5.3 自己說步數越少離目標越遠。中間目標 πk $\pi_k$ ​ 是「前綴機率的 α $\alpha$ 次方」，不是 pα $p^\alpha$ 在前綴上的邊際（03b 節的同一個差別，發生在區塊層級，本頁推導）；最後一個階段的目標是完整的 pα $p^\alpha$ ，所以漸近正確，有限步數下則是偏差來源。B 決定區塊數；下方 C3 中，輸出與 pα $p^\alpha$ 的 TV 隨 NMCMC $N_{\text{MCMC}}$ ​ 下降，但不同 B 之間沒有一致的大小順序。論文只說較大的 B 需要較大的 NMCMC $N_{\text{MCMC}}$ ​（§4.3）。
+
+ 為了看見「有限步數時離 pα $p^\alpha$ 多遠」，C3 用總變差距離（TV）比較兩個分佈：TV(P,Q)=12∑x∣P(x)−Q(x)∣ $\mathrm{TV}(P,Q)=\tfrac12\sum_x\lvert P(x)-Q(x)\rvert$ 1​∑x​∣P(x)−Q(x)∣，也就是兩個分佈差異的總量，0 表示相同、1 表示完全不重疊。C3 的模型小到可以列舉全部序列，所以它不是抽樣估計，而是把 Algorithm 1 的轉移機率精確地逐步相乘，得到輸出分佈本身。
+
+ C3小型語言模型上的 Algorithm 1 輸出分佈
+示範值
+
+ 本圖的 base model 是由亂數種子產生的小型語言模型〔示範值〕；它只檢驗 Algorithm 1 的輸出分佈是否趨近 p^α，不涉及答案正確性，也不代表哪一種取樣比較好。詞彙 2 或 3 個 token，生成 6 個 token；提示 token x₀ 固定，不進入模型。每個前綴的 next-token logit 是 3.0 × mulberry32(seed × 100003 + 前綴編號) 的均勻亂數。
+
+ 前 10 條序列（依 p^α 排序）
+
+ ○ base p▲ 低溫▬ 精確 p^α◆ Alg. 1 輸出
+
+ TV(Alg. 1 輸出, p^α) 對 N_MCMC
+
+ Alg. 1（● 清單上的 N，◇ 目前 N）參考：低溫、base
+
+ 詞彙大小 V
+23
+
+ α 4.0
+
+ 提議溫度
+1/α（論文推理任務）10.5
+
+ 區塊長度 B
+1236
+
+ N_MCMC 10
+
+ 換一個模型seed = 1
+
+ 計算中…（區塊 1/3）
+
+ 讀數由本頁依 Algorithm 1（第 7 行用 πk+1）在 Web Worker 中精確計算。N = 0 且提議溫度 1/α 時，輸出就是低溫分佈。TV 的下降速度依 B、α、提議溫度與模型而異。
+
+ 延伸閱讀：冪次取樣演算法 1、超參數、成本與實驗結果
+
+ 07 · 成本
+
+ 成本與生成長度的平方成正比
+
+ 取樣 πk $\pi_k$ ​ 時，每一步平均重取 kB/2 $kB/2$ 個 token，每階段 NMCMC $N_{\text{MCMC}}$ ​ 步。對所有階段求和，期望生成的 token 數是（§4.3）：
+
+ Etokens=NMCMC∑k=1⌈T/B⌉kB2≈NMCMCT24B $E_{\text{tokens}}=N_{\text{MCMC}}\sum_{k=1}^{\lceil T/B\rceil}\frac{kB}{2}\approx\frac{N_{\text{MCMC}}T^2}{4B}$ ​=NMCMC​k=1∑⌈T/B⌉​2kB​≈4BNMCMC​T2​
+式 (12)
+
+ 論文報告的成本倍數是多少：除以一般推論的 T $T$ 個 token，倍數是 NMCMCT/(4B)=10×679/(4×192)=8.84 $N_{\text{MCMC}}T/(4B)=10\times679/(4\times192)=8.84$ ​T/(4B)=10×679/(4×192)=8.84 倍（§5.3；T=679 $T=679$ 是 MATH500 上的平均生成長度）。精確照式 12 的和算呢（本頁推導）：K=⌈T/B⌉=4 $K=\lceil T/B\rceil=4$ ，精確求和為 10×96×(1+2+3+4)=9600 $10\times96\times(1+2+3+4)=9600$ token，是 14.14 倍；把最後一個區塊截到 679 個 token，得 9155 token，是 13.48 倍；再加上每個區塊初始化延伸的約 T $T$ 個 token，是 14.48 倍，所以約 13.5–14.5 倍。差異來自近似式相當於 (T/B)2/2=6.26 $(T/B)^2/2=6.26$ /2=6.26，而 K=4 $K=4$ 時精確和用 K(K+1)/2=10 $K(K+1)/2=10$ 。成本與 T2 $T^2$ 成正比，用平均長度代入會低估平均成本，因為 E[T2]≥E[T]2 $E[T^2]\ge E[T]^2$ ]≥E[T]2；T=3072 $T=3072$ （上限）時近似式給出 40 倍。
+
+ 作者認為：假設每題 8 個 rollout、資料集一樣大，power sampling 的推論成本約等於 GRPO 訓練一個 epoch；實際 GRPO 一個 epoch 通常更貴（16 個 rollout、訓練集大於 MATH500）。本頁補充：GRPO 是一次性的訓練成本，power sampling 每次查詢都要付；MH 的步驟是循序的，論文沒有報告延遲。
+
+ C4成本計算器
+
+ 近似 N·T/(4B)（論文）8.84×
+Eq. 12 精確和 本頁推導14.14×
+最後區塊截到 T 本頁推導13.48×
+截斷 + 初始化 本頁推導14.48×
+
+K = ⌈T/B⌉ = 4；精確和用 K(K+1)/2 = 10；近似相當於 (T/B)²/2 = 6.25。
+
+ 近似 N·T/(4B)截斷 + 初始化（● 目前 T）
+
+ N_MCMC 10
+
+ 生成長度 T 679
+
+ T 數值輸入
+ B 192
+
+ T = 679（平均）T = 3072（上限）B = 192
+
+ N = 10，T = 679，B = 192：近似 8.84 倍，Eq. 12 精確和 14.14 倍
+
+ 近似倍數依式 (12) 計算（論文 8.84×）；精確和、截斷與初始化三列為 本頁推導。
+
+ 08 · 實驗結果
+
+ 單次準確率接近 GRPO，部分基準較低
+
+ 設定（§5.1）。基準：MATH500（OpenAI 從 MATH 測試集抽出的 500 題競賽數學）、HumanEval（164 題程式題，平均 7.7 個單元測試）、GPQA Diamond（198 題研究所程度的科學選擇題）、AlpacaEval 2.0（805 個一般問題，由 GPT-4-turbo 評審，分數是長度校正後的勝率）。所有方法都以單一最終回答評分。模型：Qwen2.5-Math-7B、Qwen2.5-7B、Phi-3.5-mini-instruct；GRPO 用 Shao 2025 的實作在 MATH 訓練集上後訓練。Power sampling：Tmax⁡=3072 $T_{\max}=3072$ ​=3072（遇 EOS 可提早結束），B=3072/16=192 $B=3072/16=192$ ，α=4.0 $\alpha=4.0$ ，pprop $p_{\text{prop}}$ ​ 是 base model 配溫度 1/α $1/\alpha$ ；AlpacaEval 改用提議溫度 τ=0.5 $\tau=0.5$ 。NMCMC=10 $N_{\text{MCMC}}=10$ ​=10 只出現在 §5.3 的成本估計。
+
+ 訓練與基準數值無法在瀏覽器重現，本頁只照錄表格、以文字描述圖，不重繪曲線。
+
+ Table 1（照錄）。▲／▼：Power Sampling 高於／低於 GRPO模型・方法MATH500HumanEvalGPQAAlpacaEval 2.0
+
+ Qwen2.5-Math-7B・Base0.4960.3290.2781.61
+
+ Qwen2.5-Math-7B・Low-temperature0.6900.5120.3532.09
+
+ Qwen2.5-Math-7B・Power Sampling▼ 0.748▲ 0.573▼ 0.389▲ 2.88
+
+ Qwen2.5-Math-7B・GRPO (MATH)0.7850.5370.3992.38
+
+ Qwen2.5-7B・Base0.4980.3290.2787.05
+
+ Qwen2.5-7B・Low-temperature0.6280.5240.3035.29
+
+ Qwen2.5-7B・Power Sampling▼ 0.706▲ 0.622▼ 0.318▲ 8.59
+
+ Qwen2.5-7B・GRPO (MATH)0.7400.5610.3547.62
+
+ Phi-3.5-mini-instruct・Base（instruct 版，已後訓練）0.4000.2130.27314.82
+
+ Phi-3.5-mini-instruct・Low-temperature0.4780.5850.29318.15
+
+ Phi-3.5-mini-instruct・Power Sampling▲ 0.508▲ 0.732▲ 0.364▲ 17.65
+
+ Phi-3.5-mini-instruct・GRPO (MATH)0.4060.1340.35916.74
+
+ 量測結果（單次執行、無誤差棒）
+
+ Power sampling 在哪些格低於 GRPO：兩個 Qwen 模型在 MATH500（0.748 對 0.785、0.706 對 0.740）與 GPQA（0.389 對 0.399、0.318 對 0.354）都低於 GRPO；只有 Phi-3.5 在這兩欄較高。HumanEval 與 AlpacaEval 高於 GRPO，三個模型皆然。
+
+ 表中相對 base 的差值有多少比例低溫取樣列也有（本頁推導）：9 個推理格（3 個模型 × MATH500、HumanEval、GPQA）中，8 格的「低溫 − base」占「power − base」的 62%–77%（例外 Phi-3.5 GPQA 22%）。例如 Qwen2.5-Math 的 MATH500，base 到低溫增加 0.194，低溫到 power 再增加 0.058。這是表中數字的分解，不是因果歸因：power sampling 的提議本身就是 τ=1/α $\tau=1/\alpha$ 的取樣器，論文沒有做消融，也沒有誤差棒。GPQA 只有 198 題，差值只有數題：Qwen2.5-Math 為 base 55、低溫 70、power 77、GRPO 79 題；Qwen2.5-7B 為 55、60、63、70 題，也就是 power − base 8 題對低溫 − base 5 題；Phi-3.5 為 54、58、72、71 題。AlpacaEval 不適用這個比例：Qwen2.5-7B 的低溫（5.29）低於 base（7.05），Phi-3.5 的低溫（18.15）高於 power（17.65）。Base 與 Low-temperature 列用的溫度論文沒有寫（推測分別為 1 與 1/α $1/\alpha$ ）。論文的「+25.2%」「+51.9%」「+59.8%」是百分點差；+59.8 是對 Phi-3.5 的 GRPO 算的，而該 GRPO 的 HumanEval（0.134）低於 base（0.213）。
+
+ 作者認為：在 RL 的訓練領域 MATH500 上與 GRPO「on par」，在領域外的任務可以高於 GRPO，AlpacaEval 的結果顯示方法可推廣到無法自動驗證的領域（§5.2）。
+
+ 表中差值分解（本頁推導；分解，不是因果歸因）：比例 =（低溫 − base）／（power − base）模型MATH500HumanEvalGPQA（題數 base／低溫／power）
+
+ Qwen2.5-Math-7B比例 0.77比例 0.75比例 0.68（55／70／77 題）
+
+ Qwen2.5-7B比例 0.63比例 0.67比例 0.62（55／60／63 題）
+
+ Phi-3.5-mini-instruct比例 0.72比例 0.72比例 0.22（54／58／72 題）
+
+ Likelihood、confidence 與長度（Fig. 4，Qwen2.5-Math-7B，MATH500）
+
+ 論文沒有給 Fig. 4 的數值，以下只轉述，兩項分開。Log-likelihood（依長度平均，相對於 base model）：GRPO 的回答 "heavily concentrated at the highest likelihood peak"；power sampling 位於較高 likelihood 的區域，但 "maintains noticeable spread"。Confidence（式 13，每步 next-token 分佈的平均負熵，值 ≤ 0，越接近 0 表示每步越集中）：power sampling 與 GRPO 位於 "similarly high confidence regions"。平均回答長度：base 600、GRPO 671、power sampling 679 個 token；作者認為這是取樣過程「自然出現」的。
+
+ pass@k（Fig. 5、App. A.2）
+
+ pass@k 的定義：每題取 k 個樣本，只要至少一個正確就算解出。Fig. 5 內文說什麼：k>1 時 power sampling 高於 GRPO，大 k 時與 base 收斂（"supersedes that of the base model until finally converging"）。圖說的哪句話過度宣稱：圖說的「strictly better than both GRPO and the base model」不成立：k=1 時依 Table 1 GRPO 0.785 高於 0.748，且同一圖說寫大 k 時與 base 相同（"our pass rate at high k matches the base model"）。Fig. 5 的數值本頁沒有讀出，論文也沒有說明 Fig. 5 的 k=1 與 Table 1 是否同一設定。
+
+ 論文勘誤 E5 · Fig. 5 圖說
+圖說寫 power sampling「strictly better than both GRPO and the base model」。k=1 時依 Table 1 是 GRPO 較高（0.785 對 0.748）；同一圖說又寫大 k 時與 base 相同，所以對 base 也不是嚴格較高。
+
+ 作者判斷（App. A.2，無數值）：k>1 時 power sampling "near universally better performance than both GRPO and the base model"；HumanEval 的 pass@k 用 α=1.67 $\alpha=1.67$ ，因為 "this temperature exhibits slightly better results at earlier k"；HumanEval 上 GRPO "exhibits better pass@k than the base model until k = 16"，作者猜測原因是程式題可以有多個正確解。
+
+ 超參數（Fig. 6）
+
+ α=4.0 $\alpha=4.0$ 最好，α≥2.0 $\alpha\ge2.0$ 之後大致穩定（MATH500，§5.3）。NMCMC $N_{\text{MCMC}}$ ​ 增加到 10 之前準確率穩定上升，超過 10 大致持平（not plotted）；2 到 10 步的差「不超過 3–4%」，0 到 2 步的跳升卻寫成「substantial (3–4%)」，同一個數字一處說小、一處說大。α 的掃描用 MATH500（測試集）；NMCMC $N_{\text{MCMC}}$ ​ 掃描的圖說只寫 "Qwen models"，沒有寫基準。
+
+ 延伸閱讀：冪次取樣演算法 1、超參數、成本與實驗結果、以模型內部訊號作獎勵：自信心、自我熵與隨機獎勵
+
+ 09 · 未說明的設定
+
+ 論文未說明的設定與常見錯誤
+
+ 重現 Table 1 時缺哪些設定：Base 與 Low-temperature 列的溫度、Table 1 的 NMCMC $N_{\text{MCMC}}$ ​、AlpacaEval 的 α、HumanEval 在 Table 1 的 α、EOS 處理、GRPO 超參數細節、pass@k 樣本的產生方式、NMCMC $N_{\text{MCMC}}$ ​ 掃描的基準、提議是否截斷、誤差棒與種子數。逐條如下。
+
+ Base 列的取樣溫度（推測 1）。
+
+ Low-temperature 列的溫度（推測 1/α = 0.25）。
+
+ Table 1 主結果的 NMCMC（只在成本估計處出現 10）。
+
+ AlpacaEval 用的 α（只說提議溫度 τ = 0.5）。
+
+ HumanEval 在 Table 1 用哪個 α（§5.1 說推理任務用 4.0，App. A.2 的 pass@k 用 1.67）。
+
+ 區塊內遇到 EOS 如何處理、不同長度的序列如何比較 likelihood。
+
+ GRPO 的超參數只說沿用 Shao 2025（Qwen）與 Abdin 2024（Phi）。
+
+ pass@k 的 k 個樣本如何產生（是否 k 次獨立的 Algorithm 1）。
+
+ 沒有誤差棒、沒有種子數（GPQA 0.389 對 0.399 是 198 題中的 77 對 79 題）。
+
+ x₀ 是否代表 prompt。
+
+ Fig. 6 右圖 NMCMC 掃描用的基準。
+
+ 提議取樣是否截斷（top-k、top-p）。
+
+ 常見錯誤
+
+ 把低溫取樣當成從 p^α 取樣（Prop. 1）。
+
+ 第 7 行用 πk（應為 πk+1，勘誤 E4）。
+
+ 以為前面的區塊被凍結（第 5 行的 m 從 1 起抽）。
+
+ 只重取新區塊：不符合 Algorithm 1。
+
+ 直接把機率相乘：長序列會低於浮點數下限，要用 log 相加。
+
+ 以為需要額外的前向計算：生成新後綴時，同一份 logits 同時給出 p 與 pprop，目前狀態的值可以快取 本頁推導。
+
+ 把 τ = 0.5 的 AlpacaEval 設定或截斷提議套用 Z_t 化簡（不成立）。
+
+ 10 · 研究脈絡
+
+ 研究脈絡
+
+ 本文接在五條脈絡之後。RLHF 與 GRPO、DeepSeek-R1 等 RLVR 工作確立了以 RL 後訓練提升推理的做法；Yue 2025、He 2025、Song 2025 提出「RL 只是銳化」的觀察；另一批工作改用模型內部訊號（confidence、自我熵、甚至隨機獎勵）當作獎勵；twisted SMC 與 QUEST 等工作在 LLM 上做 MCMC／SMC 取樣；擴散模型領域則以退火分佈 pα $p^\alpha$ 提升樣本品質。本文把目標分佈完全交給 base model 自己的 likelihood。每張卡片連到對應的研究筆記。
+
+ RL 後訓練銳化之爭內部訊號獎勵MCMC／SMC退火／pivotal token本文
+
+ 2022RL 後訓練Training language models to follow instructions with human feedback
+Ouyang et al.
+RLHF：LLM 後訓練的起點
+arXiv ↗筆記
+2024MCMC／SMCProbabilistic Inference in Language Models via Twisted Sequential Monte Carlo
+Zhao et al.
+LLM 上的 SMC 取樣前作
+arXiv ↗筆記
+2024RL 後訓練DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models
+Shao et al.
+提出 GRPO，本文的 RL 基準
+arXiv ↗筆記
+2025RL 後訓練DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning
+DeepSeek-AI
+RLVR 推理模型代表
+arXiv ↗筆記
+2025退火／pivotal tokenBlink of an eye: a simple theory for feature localization in generative models
+Li, Karan, Chen
+critical windows 與推理失敗的關聯
+arXiv ↗筆記
+2025退火／pivotal tokenFeynman-Kac Correctors in Diffusion: Annealing, Guidance, and Product of Experts
+Skreta et al.
+擴散模型中以 α > 1 取樣冪次分布
+arXiv ↗筆記
+2025RL 後訓練Open-Reasoner-Zero: An Open Source Approach to Scaling Up Reinforcement Learning on the Base Model
+Hu et al.
+在 base model 上擴大 RLVR
+arXiv ↗筆記
+2025銳化之爭Does Reinforcement Learning Really Incentivize Reasoning Capacity in LLMs Beyond the Base Model?
+Yue et al.
+RL 後軌跡集中於 base model 高概似度區域
+arXiv ↗筆記
+2025內部訊號獎勵Maximizing Confidence Alone Improves Reasoning
+Prabhudesai et al.
+以信心作獎勵；本文採用其信心定義
+arXiv ↗筆記
+2025內部訊號獎勵Learning to Reason without External Rewards
+Zhao et al.
+以 self-entropy 類內部訊號作獎勵
+arXiv ↗筆記
+2025銳化之爭Rewarding the Unlikely: Lifting GRPO Beyond Distribution Sharpening
+He, Fried, Welleck
+分布銳化與 pass@k 的證據
+arXiv ↗筆記
+2025內部訊號獎勵Spurious Rewards: Rethinking Training Signals in RLVR
+Shao et al.
+隨機獎勵；本文的 GRPO 實作來源
+arXiv ↗筆記
+2025銳化之爭Outcome-based Exploration for LLM Reasoning
+Song, Kempe, Munos
+RL 後多樣性下降的證據
+arXiv ↗筆記
+2025本文Reasoning with Sampling: Your Base Model is Smarter Than You Think
+Karan, Du
+本文：以 MCMC 取樣冪次分布
+arXiv ↗筆記
+
+ 11 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 以下由本頁整理 本頁推導：高 likelihood 與正確推理之間的關係是 Fig. 4 的相關性，不是因果，§5.3 也說直接最大化 likelihood 不一定最好；Algorithm 1 在有限的 NMCMC $N_{\text{MCMC}}$ ​ 下只是近似，論文沒有量測輸出離 pα $p^\alpha$ 多遠；成本約為一般推論的 8.84 倍（論文）或 13.5–14.5 倍（照式 12 精確計算），而且每次查詢都要付；α 與 NMCMC $N_{\text{MCMC}}$ ​ 是在 MATH500 測試集上選的；結果來自單次執行，沒有誤差棒。
+
+ 研究筆記（依閱讀順序）
+
+ Reasoning with Sampling 的研究脈絡總覽總覽
+
+ RLVR 與 GRPO：本文要對照的 RL 基準背景
+
+ 分布銳化之爭：RL 後訓練是否只讓 base model 變尖動機
+
+ 以模型內部訊號作獎勵：自信心、自我熵與隨機獎勵相關方法
+
+ 冪次分布 p^α 與低溫取樣為何不同理論
+
+ Metropolis-Hastings 與自回歸 LLM 上的 MCMC 前作方法背景
+
+ 退火與回火取樣：從統計物理到擴散模型的推論時取樣方法背景
+
+ 冪次取樣演算法 1、超參數、成本與實驗結果本論文
+
+ Aayush Karan, Yilun Du. Reasoning with Sampling: Your Base Model is Smarter Than You Think. 2025. arXiv:2510.14901.
+
+ 本頁的方程式與數字取自論文 v1；標示「本頁推導」的內容為本頁自行推導，「示範值」為本頁為了示範而選的數值，皆非論文結論。C1–C4 的讀數在瀏覽器中即時計算，不重現論文的實驗。
+
+ ← Paper Master
+ 教學與筆記
