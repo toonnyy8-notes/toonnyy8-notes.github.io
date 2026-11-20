@@ -108,6 +108,7 @@
    - [KV Cache Transform Coding for Compact Storage in LLM Inference](https://arxiv.org/abs/2511.01815)
    - [Mamba-3: Improved Sequence Modeling using State Space Principles](https://arxiv.org/abs/2603.15569)
    - [TurboQuant: Redefining AI efficiency with extreme compression](https://share.google/HGnxpQwhssX4U9Kvf)（Google 分享連結）
+   - [Quantizing Recurrent Language Models Is Easier Than You Think（LoReS）](https://phnazari.github.io/blog/2026/lores/)（線性遞迴 / SSM 模型的權重、激活與遞迴狀態 PTQ；[arXiv 2611.01864](https://arxiv.org/abs/2611.01864)、[code](https://github.com/camail-official/LoReS)）
    - [MegaTrain: Full Precision Training of 100B+ Parameter Large Language Models on a Single GPU](https://arxiv.org/abs/2604.05091)
    - [Reducing Doom Loops with Final Token Preference Optimization](https://www.liquid.ai/blog/antidoom)（Liquid AI）
    - [A Few Gaussians Is All You Need: SSOG-Attention That Steers Instead of Scores](https://pisoni.ai/posts/ssog/)
