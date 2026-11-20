@@ -6,7 +6,7 @@ kind: topic
 tags: [ctmc, discrete-diffusion, sampler, discrete-flow-matching, sedd]
 arxiv: ["2602.21185", "2205.14987", "2310.16834", "2407.15595", "2402.04997", "2502.00234"]
 sources: ["arxiv.org/abs 摘要（2205.14987）", "paper:2602.21185 第 1、6 節對其餘各工作的描述", "arXiv API metadata（標題、作者、年份）"]
-related: [psi-samplers-lineage-hub, psi-predictor-corrector-gaussian-to-discrete, psi-superposition-posteriors-method, discrete-diffusion-foundations-d3pm]
+related: [psi-samplers-lineage-hub, duo-self-correction-and-correctors, psi-superposition-posteriors-method, discrete-diffusion-foundations-d3pm]
 ---
 # 連續時間離散擴散（CTMC）與其採樣器
 
