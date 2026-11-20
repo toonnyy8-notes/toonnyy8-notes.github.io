@@ -1,0 +1,856 @@
+潛在脈絡自蒸餾 LOPD
+
+跳到內容
+
+ No. 119
+ Latent On-Policy Self-Distillation（LOPD）
+
+00 摘要01 下一個 token02 軌跡與獎勵03 OPSD04 蒸餾損失05 Composer06 注入與凍結老師07 退化08 Privileged margin09 對偶更新10 理想化不動點11 消融12 主要結果13 效率與行為14 主張與證據15 實作與錯誤16 研究脈絡17 限制與延伸
+
+00摘要
+01下一個 token
+02軌跡與獎勵
+03OPSD
+04蒸餾損失
+05Composer
+06注入與凍結老師
+07退化
+08Privileged margin
+09對偶更新
+10理想化不動點
+11消融
+12主要結果
+13效率與行為
+14主張與證據
+15實作與錯誤
+16研究脈絡
+17限制與延伸
+
+ No. 119 · 互動教學 · arXiv 2608.13040 · 2026
+
+ LOPD：讓自蒸餾老師的特權脈絡可以訓練
+
+ 這篇論文從過去的成功解題紀錄找出相似的幾筆，轉成一串數字放進老師的輸入，並用最後的成績限制老師不要變得和學生一樣。
+
+ Guibin Zhang、Jiayang Lyu、Ran Sun、Xinlei Yu、Haoyu Zhao、Qibing Ren、Shuicheng Yan（2026）〈Latent On-Policy Self-Distillation〉
+
+ 01 · 自蒸餾自蒸餾（self-distillation）：同一個語言模型扮演兩個角色（這是 OPSD 的做法；LOPD 的老師權重是凍結的，見 06）。學生只看任務，自己寫出回答；老師多看一段額外資訊，在學生寫出的每個位置給出「下一個詞是什麼」的機率，學生學著讓自己的機率接近老師。詳見 03。
+
+ 02 · 可訓練的額外資訊LOPD 讓這段額外資訊可以訓練：從過去成功的解題紀錄中找出 3 筆最相似的，轉成 96 組數字（向量，不是文字）放進老師的輸入。老師的權重在訓練中不更新，只有產生這些數字的模組與學生在學。詳見 05、06。
+
+ 03 · 結果與強度論文報告：在工具使用與程式生成共 10 組比較中，每組評測題目的彙總分數都是 LOPD 最高；但程式題的差距多半只有 1–3 題，且論文沒有多次重複訓練的差異範圍。詳見 12。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 閱讀須知
+
+ 本論文沒有定理或證明；頁面中的梯度式、E[δ]=−KL $\mathbb E[\delta]=-\mathrm{KL}$ 、q∗∝p(1+βQ) $q^*\propto p(1+\beta Q)$ ∝p(1+βQ) 都是 本頁推導。（07–10）
+
+ 老師是凍結的 base checkpoint 加 latent 脈絡，不是與學生同權重的模型。（06）
+
+ 「latent 優於文字」與「retrieval alone is insufficient」缺少證據：論文沒有以文字放入檢索軌跡的 baseline。（14）
+
+ Table 1 與 Fig. 4 的 GRPO／Skill-SD 數字不一致；top-M 設計的引用來源前後矛盾。（13、04）
+
+ 「少於 30% rollout 預算」只對 Skill-SD 明確成立；論文未說明預算是否計入建經驗庫與冷啟動的額外 rollouts。（13）
+
+ 統計較弱：沒有多個 seed、程式類差距多為 1–3 題、K 與 nret $n_{ret}$ ​ 依測試集選定（m 的選法未說明）。（12）
+
+ Fig. 4、Fig. 5 的曲線沒有數值，本頁只列論文文字給出的點，不重畫。（13）
+
+ 01 · 下一個 token
+
+ 語言模型在每個位置輸出下一個 token 的分布
+
+ 語言模型把文字切成 token（詞或詞的片段），所有可能的 token 組成詞表 V $\mathcal V$ 。給定前面的文字，模型對詞表中每個 token v $v$ 輸出一個未正規化的分數 zv $z_v$ ​，稱為 logit。softmax 把 logit 轉成機率：p(v)=ezv/∑u∈Vezu $p(v)=e^{z_v}/\sum_{u\in\mathcal V}e^{z_u}$ ​/∑u∈V​ezu​，所有機率相加為 1。log⁡p(v) $\log p(v)$ 稱為該 token 的 log 機率，機率越小越負。
+
+ 生成文字時，模型依這個分布抽出下一個 token，接到前文後再預測下一個，如此反覆。溫度、top-k、top-p 是改變抽取方式的設定（例如 top-k 只在機率最高的 k 個 token 中抽）；本論文的設定值列在 15。
+
+ 本章符號
+
+ 符號意義
+
+ V $\mathcal V$ ；詞表
+
+ zv $z_v$ ​、logit；模型對 token v $v$ 的未正規化分數
+
+ p(v) $p(v)$ ；softmax 後的機率；log⁡p(v) $\log p(v)$ 為 log 機率
+
+ 02 · 軌跡與獎勵
+
+ 多輪代理人的一條軌跡只在結尾得到一個獎勵
+
+ 論文研究的是多輪代理人（agent）：收到任務 x $x$ 後，與環境（例如一組可呼叫的工具 API）來回互動。第 t $t$ 輪時，代理人看到的狀態 st=(x,o≤t,a<t) $s_t=(x,o_{\le t},a_{\lt t})$ ​=(x,o≤t​,a<t​) 包含任務、到目前為止的觀察 o≤t $o_{\le t}$ ​ 與之前的動作 a<t $a_{\lt t}$ ​（§3.1）。這一輪的動作 at=(at,1,…,at,Lt) $a_t=(a_{t,1},\dots,a_{t,L_t})$ ​=(at,1​,…,at,Lt​​) 是一串 token，長度 Lt $L_t$ ​；at,n $a_{t,n}$ ​ 是第 n $n$ 個 token，at,<n $a_{t,\lt n}$ ​ 是它之前的前綴（prefix）。所有輪次串起來是一條軌跡 τ $\tau$ ，共 ∣τ∣ $|\tau|$ 輪。
+
+ 軌跡結束後，驗證器給一個結果獎勵 r(τ)∈[0,1] $r(\tau)\in[0,1]$ ：工具類資料集 EnvScaler 給完成子任務的比例，程式類資料集 TACO 全部測試通過給 1、否則 0（App. B.2）。只用這個數字訓練模型的做法稱為 RLVR（reinforcement learning with verifiable rewards）：一條可能有上千個 token 的軌跡只得到一個數，哪些 token 該負責並不清楚。論文的 RLVR 基線是 GRPO：同一題取 G 條軌跡，以每條獎勵相對於組內平均的高低加權更新（App. B.1，G = 4）。
+
+ 本章符號
+
+ 符號意義
+
+ x $x$ 、o≤t $o_{\le t}$ ​、a<t $a_{\lt t}$ ​、st $s_t$ ​；任務、觀察、之前的動作、第 t $t$ 輪的狀態
+
+ at,n $a_{t,n}$ ​、at,<n $a_{t,\lt n}$ ​、Lt $L_t$ ​；第 t $t$ 輪第 n $n$ 個 token、它之前的前綴、該輪動作長度
+
+ τ $\tau$ 、r(τ) $r(\tau)$ ；軌跡、結果獎勵（0 到 1）
+
+ 延伸閱讀：RLVR、GRPO 與信用分配瓶頸
+
+ 03 · OPSD
+
+ OPSD 讓同一個模型帶著特權脈絡當老師
+
+ 知識蒸餾讓學生模型學習老師模型在每個 token 上的機率分布，而不只學一個正確答案；每個 token 都有訊號，比 RLVR 的單一獎勵密集。On-policy 指監督發生在學生自己取樣出的軌跡上；off-policy 指學生模仿別人寫好的軌跡。前者讓訓練時看到的狀態與推論時一致（§1）。
+
+ 比較兩個分布用 KL divergence：DKL(p∥q)=∑vp(v)log⁡p(v)q(v)≥0 $D_{KL}(p\|q)=\sum_v p(v)\log\frac{p(v)}{q(v)}\ge0$ ​(p∥q)=∑v​p(v)logq(v)p(v)​≥0，兩分布相同時為 0。它不對稱。學生分布寫作 pS $p^S$ 、老師分布寫作 pT $p^T$ 時，reverse KL DKL(pS∥pT) $D_{KL}(p^S\|p^T)$ ​(pS∥pT) 對「學生機率高、老師機率低」的 token 懲罰較重；forward KL DKL(pT∥pS) $D_{KL}(p^T\|p^S)$ ​(pT∥pS) 對「老師機率高、學生機率低」的 token 懲罰較重。stop-gradient sg[⋅] $\mathrm{sg}[\cdot]$ 表示前向照常計算，反向傳播時不讓梯度穿過。
+
+ On-policy 自蒸餾（OPSD）的老師不是另一個更大的模型，而是同一個模型（OPSD 的情形；LOPD 的老師不同，見 06）多看一段特權脈絡（privileged context）c $c$ ：學生推論時看不到的資訊。學生 πθS $\pi^S_\theta$ S​（參數 θ $\theta$ ）取樣軌跡：
+
+ at∼πθS(⋅∣st),τ=(s1,a1,…,s∣τ∣,a∣τ∣)∼πθS(⋅∣x) $a_t\sim\pi^S_\theta(\cdot\mid s_t),\qquad \tau=(s_1,a_1,\dots,s_{|\tau|},a_{|\tau|})\sim\pi^S_\theta(\cdot\mid x)$ ​∼πθS​(⋅∣st​),τ=(s1​,a1​,…,s∣τ∣​,a∣τ∣​)∼πθS​(⋅∣x)
+Eq. 1
+
+ 既有方法以設計者寫死的規則 Φfix $\Phi_{fix}$ ​ 從經驗來源 E $E$ （答案、推理軌跡、回饋、示範或檢索到的軌跡）產生脈絡，老師就是同一模型（OPSD 的情形；LOPD 的老師不同，見 06）看著這段脈絡：
+
+ cfix=Φfix(x,E),πθT(⋅∣st,cfix)=πθ(⋅∣[st;cfix]) $c_{fix}=\Phi_{fix}(x,E),\qquad \pi^T_\theta(\cdot\mid s_t,c_{fix})=\pi_\theta(\cdot\mid[s_t;c_{fix}])$ ​=Φfix​(x,E),πθT​(⋅∣st​,cfix​)=πθ​(⋅∣[st​;cfix​])
+Eq. 2
+
+ 損失在學生走過的每個前綴上比較兩者，D $D$ 為某個 token 層級的 divergence：
+
+ LOPSD(θ)=Eτ∼πθS[∑t=1∣τ∣∑n=1LtD(sg[πθT(⋅∣st,cfix,at,<n)]∥ πθS(⋅∣st,at,<n))] $\begin{aligned}\mathcal L_{OPSD}(\theta)=\mathbb E_{\tau\sim\pi^S_\theta}\Big[\textstyle\sum_{t=1}^{|\tau|}\sum_{n=1}^{L_t}D\big(&\mathrm{sg}[\pi^T_\theta(\cdot\mid s_t,c_{fix},a_{t,\lt n})]\\&\big\|\,\pi^S_\theta(\cdot\mid s_t,a_{t,\lt n})\big)\Big]\end{aligned}$ ​(θ)=Eτ∼πθS​​[∑t=1∣τ∣​∑n=1Lt​​D(​sg[πθT​(⋅∣st​,cfix​,at,<n​)]​πθS​(⋅∣st​,at,<n​))]​
+Eq. 3
+
+ 論文比較的基線各自代表一種 cfix $c_{fix}$ ​（§4.1、App. B.1）。它們也各自保留原論文的 KL 方向與老師形式，所以 §4.1「只差在特權脈絡與蒸餾損失」並不是只差一項。
+
+ 基線的特權脈絡（App. B.1）方法老師看到的脈絡老師形式損失
+
+ OPSD；oracle 軌跡，放在 system message；凍結；全詞表 forward KL
+
+ SDFT；示範，附在 user message；學生的 EMA（α = 0.01）；全詞表 forward KL
+
+ SDPO；同一步中成功的兄弟軌跡（G = 4）；學生的 EMA（0.05）；reverse KL＋top-K＋尾部
+
+ Skill-SD；以 UCB1 選出的技能摘要；—；PPO-clip＋重要性加權的取樣 token reverse KL
+
+ GRPO；無老師；—；PPO-clip，ε = 0.2
+
+ OPSD 與 SDFT 的示範池在覆蓋不足時，由更強的模型（DeepSeek-V4-Pro、Qwen3.7-Max）補上（App. B.1）。作者主張：這些脈絡的格式都由設計者事先決定，「supervision quality is bounded by a pre-defined context constructor」（§3.1）。這是主張，論文沒有證明它。
+
+ OPSD 的結構可以這樣總結：學生 πθS $\pi^S_\theta$ S​ 只看狀態 st=(x,o≤t,a<t) $s_t=(x,o_{\le t},a_{\lt t})$ ​=(x,o≤t​,a<t​)，並自己取樣軌跡；老師是同一個模型（OPSD 的情形；LOPD 的老師不同，見 06）多看特權脈絡 cfix=Φfix(x,E) $c_{fix}=\Phi_{fix}(x,E)$ ​=Φfix​(x,E)，這段脈絡可能是答案、軌跡、回饋或技能，由設計者的固定規則產生；老師在學生走過的每個 prefix (t,n) $(t,n)$ 給出下一 token 分布，損失是兩者的 token 層級 divergence，老師一側 stop-gradient（Eq. 2–3）。推論時只用學生，不給脈絡。
+
+ 本章符號
+
+ 符號意義
+
+ πθS $\pi^S_\theta$ S​、πT $\pi^T$ ；學生（參數 θ $\theta$ ）、老師
+
+ cfix=Φfix(x,E) $c_{fix}=\Phi_{fix}(x,E)$ ​=Φfix​(x,E)；固定規則從經驗 E $E$ 產生的特權脈絡
+
+ D $D$ 、DKL $D_{KL}$ ​、sg $\mathrm{sg}$ ；token 層級 divergence、KL divergence、stop-gradient
+
+ 延伸閱讀：On-policy 蒸餾與線上模仿學習、OPSD：同一模型帶特權脈絡當老師、特權脈絡的各種實體
+
+ 04 · 蒸餾損失
+
+ 蒸餾損失只比較老師的前 M 名與合併後的尾部
+
+ LOPD 的老師也看一段脈絡 c $c$ ，它的構造在 05–06 說明；這裡先把老師寫成 πT(⋅∣st,c,at,<n) $\pi^T(\cdot\mid s_t,c,a_{t,\lt n})$ (⋅∣st​,c,at,<n​)。在第 t $t$ 輪、第 n $n$ 個 token 的前綴上，學生與老師的下一 token 分布是
+
+ pt,nS=πθS(⋅∣st,at,<n),pt,nT=πT(⋅∣st,c,at,<n) $p^S_{t,n}=\pi^S_\theta(\cdot\mid s_t,a_{t,\lt n}),\qquad p^T_{t,n}=\pi^T(\cdot\mid s_t,c,a_{t,\lt n})$ S​=πθS​(⋅∣st​,at,<n​),pt,nT​=πT(⋅∣st​,c,at,<n​)
+Eq. 8
+
+ 完整詞表有十萬個以上的 token，逐一比較太貴。論文取老師機率最高的 M $M$ 個 token 為支撐集 Vt,nM $\mathcal V^M_{t,n}$ M​，其餘合併成一個尾部事件 ⊥ $\perp$ ；學生也用同一個支撐集（Eq. 9）：
+
+ p~t,n(v)={pt,n(v),v∈Vt,nM1−∑u∈Vt,nMpt,n(u),v=⊥ $\tilde p_{t,n}(v)=\begin{cases}p_{t,n}(v), & v\in\mathcal V^M_{t,n}\\ 1-\sum_{u\in\mathcal V^M_{t,n}}p_{t,n}(u), & v=\perp\end{cases}$ ​t,n​(v)={pt,n​(v),1−∑u∈Vt,nM​​pt,n​(u),​v∈Vt,nM​v=⊥​
+Eq. 9
+
+ 蒸餾損失在學生自己的軌跡上，對有監督的動作 token 取平均；ωt,n∈{0,1} $\omega_{t,n}\in\{0,1\}$ ​∈{0,1} 是標記「這個 token 要監督」的遮罩，D $\mathcal D$ 是任務分布：
+
+ Ldistill(θ,ϕ)=  Ex∼D Eτ∼πθS(⋅∣x)[∑t,nωt,nDKL(p~t,nS∥p~t,nT)∑t,nωt,n] $\begin{aligned}\mathcal L_{distill}(\theta,\phi)=\;&\mathbb E_{x\sim\mathcal D}\,\mathbb E_{\tau\sim\pi^S_\theta(\cdot\mid x)}\\&\Big[\frac{\sum_{t,n}\omega_{t,n}D_{KL}(\tilde p^S_{t,n}\|\tilde p^T_{t,n})}{\sum_{t,n}\omega_{t,n}}\Big]\end{aligned}$ ​(θ,ϕ)=​Ex∼D​Eτ∼πθS​(⋅∣x)​[∑t,n​ωt,n​∑t,n​ωt,n​DKL​(p~​t,nS​∥p~​t,nT​)​]​
+Eq. 10
+
+ 學生寫在前面，是 reverse KL；作者的理由是「so that the student concentrates on teacher-supported behavior」（§3.3）。預設 M=20 $M=20$ （§4.1）。取樣時的 top-k 也是 20（Table 4），但那是生成時的設定，與蒸餾的截斷是兩回事。ϕ $\phi$ 是產生脈絡的模組的參數，下一章定義。
+
+ 合併尾部有一個後果 本頁推導：把尾部多個 token 合併成一項，只會丟失可區分的資訊，KL 不會因此變大（log-sum 不等式）。所以截斷後的 KL 不大於完整 KL，M $M$ 越大、分得越細，截斷 KL 不會變小。學生在尾部內如何分配機率完全不影響損失，只有尾部總量受監督。下面的 C1 用 8 個 token 演示。
+
+ C1Top-M＋合併尾部的 reverse KL
+示範值
+
+ 假設：8 個 token 的玩具詞表；老師與學生的 logits 都是示範值，不來自任何模型。學生 logits 為 z=U+s(Z−U) $z=U+s(Z-U)$ ，s = 0 時學生等於老師。論文的 M = 20 是從約十萬個 token 中取 20 個，比例與這裡不同。
+
+ 老師機率（實心）學生機率（斜線）
+
+ 學生位置 s（0＝等於老師，1＝示範學生） 1.00
+
+ 支撐集大小 M 3
+
+ 反轉學生在尾部的機率分配
+ 完整 reverse KL：0.6173；完整 forward KL：0.6705；截斷 reverse KL：0.5210；截斷 − 完整：−0.0963；尾部質量（學生）：0.5382；尾部質量（老師）：0.1837；
+ M = 3，截斷 reverse KL 0.521，完整 0.617
+
+ 16 個機率的數值表
+token老師學生位置
+v1；0.4813；0.0894；前 M
+v2；0.2163；0.3280；前 M
+v3；0.1187；0.0444；前 M
+v4；0.0720；0.1990；尾部
+v5；0.0483；0.1092；尾部
+v6；0.0293；0.0269；尾部
+v7；0.0196；0.1629；尾部
+v8；0.0145；0.0402；尾部
+
+ 讀數由本頁依 Eq. 9–10 即時計算；截斷 KL ≤ 完整 KL 為 本頁推導（log-sum 不等式）。
+
+ C1 中恆成立的性質：截斷 KL 永遠不大於完整 KL；M $M$ 增加不會使截斷 KL 變小；M=8 $M=8$ 或 M=7 $M=7$ 時（尾部只剩 0 或 1 個 token）兩者相等；勾選「反轉學生在尾部的機率分配」時截斷 KL 不變；s = 0 時所有 KL 為 0。top-M 的出處在論文中前後不一致：§3.3 寫「we follow (Zhao et al., 2026)」（即 OPSD），§4.1 寫「SDPO-style top-M logits plus a tail bucket」，App. B.1 則說 OPSD 用全詞表 forward KL、SDPO 才是 reverse KL＋top-K＋尾部（見 14）。
+
+ LOPD 的蒸餾損失可以這樣總結：在每個 prefix 取老師機率最高的 M=20 $M=20$ 個 token 為 VM $\mathcal V^M$ ，其餘合併成 ⊥，學生用同一支撐集（Eq. 9）；損失 DKL(p~S∥p~T)=∑v∈VMpSlog⁡(pS/pT)+p~S(⊥)log⁡(p~S(⊥)/p~T(⊥)) $D_{KL}(\tilde p^S\|\tilde p^T)=\sum_{v\in\mathcal V^M}p^S\log(p^S/p^T)+\tilde p^S(\perp)\log(\tilde p^S(\perp)/\tilde p^T(\perp))$ ​(p~​S∥p~​T)=∑v∈VM​pSlog(pS/pT)+p~​S(⊥)log(p~​S(⊥)/p~​T(⊥))，學生在前（reverse KL），以 ω 對動作 token 平均（Eq. 10）。本頁推導 截斷 KL 不大於完整 KL（log-sum 不等式），學生在尾部內的分配不受監督，只有尾部總量受監督。
+
+ 本章符號
+
+ 符號意義
+
+ pt,nS $p^S_{t,n}$ S​、pt,nT $p^T_{t,n}$ T​；學生、老師在 prefix (t,n) $(t,n)$ 的下一 token 分布
+
+ Vt,nM $\mathcal V^M_{t,n}$ M​、⊥ $\perp$ 、p~ $\tilde p$ ​；老師前 M $M$ 名、合併後的尾部事件、合併後的分布
+
+ ωt,n $\omega_{t,n}$ ​；動作 token 遮罩（0 或 1）
+
+ 05 · Composer
+
+ Composer 從檢索到的經驗產生 96 個連續向量
+
+ LOPD 把固定規則 Φfix $\Phi_{fix}$ ​ 換成有參數的 Φϕ $\Phi_\phi$ ​，稱為 composer，輸出一串連續向量 token ⟨ei⟩ $\langle e_i\rangle$ ​⟩，以 ⊕ 表示串接：
+
+ cϕ=Φϕ(x,E)=⟨e1⟩⊕⟨e2⟩⊕⋯⊕⟨eK⟩ $c_\phi=\Phi_\phi(x,E)=\langle e_1\rangle\oplus\langle e_2\rangle\oplus\cdots\oplus\langle e_K\rangle$ ​=Φϕ​(x,E)=⟨e1​⟩⊕⟨e2​⟩⊕⋯⊕⟨eK​⟩
+Eq. 4
+
+ Eq. 4 照原文只寫 K $K$ 個 token，並稱 K $K$ 為「每筆經驗的 token 數」；下面的 Eq. 7 則有 J⋅K $J\cdot K$ 個。此處 K $K$ 為單筆軌跡的向量數；串接後共 J⋅K=96 $J\cdot K=96$ （Eq. 7）；J $J$ 即 nret $n_{ret}$ ​。兩式不一致，實作以 Eq. 7 為準。OPSD 的不對稱保留：老師看 cϕ $c_\phi$ ​，學生只看 st $s_t$ ​。
+
+ 經驗庫與檢索（§3.2、App. A.3）。經驗庫只存訓練集上的成功 rollout（工具類超過 reward 門檻、程式類通過全部測試），每筆是任務描述加上省略冗長觀察的「動作—結果」紀錄。檢索器 Qwen3-Embedding-8B 把文字轉成 4,096 維的單位向量：文件端編碼「任務＋軌跡」，查詢端只編碼任務。兩個單位向量的內積稱為 cosine 相似度，越大越相似；以 FAISS 精確搜尋取最高的 J $J$ 筆，記為 E={mj}j=1J $E=\{m_j\}_{j=1}^J$ ​}j=1J​（Eq. 15–16）。預設 J=3 $J=3$ ；附錄與 §4.3 把同一個量寫成 nret $n_{ret}$ ​。
+
+ 編碼。LoRA 是一種微調方式：凍結原本的權重矩陣，只訓練加在旁邊的一個低秩增量。encoder Encψ $\mathrm{Enc}_\psi$ ​ 是凍結的 backbone 加上 LoRA（rank 8、α = 16，套在每個 block 的七個線性投影上，App. A.1），參數記為 ψ $\psi$ 。它把「當前任務＋第 j $j$ 筆經驗」編成 Tj $T_j$ ​ 個 d $d$ 維隱藏向量（Eq. 5）。
+
+ Hj=Encψ(x,mj)∈RTj×dEj=Compχ(Hj;Qχ)=[⟨ej,1⟩,…,⟨ej,K⟩]∈RK×d $\begin{aligned}H_j&=\mathrm{Enc}_\psi(x,m_j)\in\mathbb R^{T_j\times d}\\E_j&=\mathrm{Comp}_\chi(H_j;Q_\chi)=[\langle e_{j,1}\rangle,\dots,\langle e_{j,K}\rangle]\in\mathbb R^{K\times d}\end{aligned}$ ​Ej​​=Encψ​(x,mj​)∈RTj​×d=Compχ​(Hj​;Qχ​)=[⟨ej,1​⟩,…,⟨ej,K​⟩]∈RK×d​
+Eq. 5、6
+
+ 壓縮。cross-attention：每個 query 向量對一組 key/value 向量，依相似度取 value 的加權平均。QFormer 式壓縮器用固定數量 K $K$ 個可學習的 query Qχ $Q_\chi$ ​ 對變長的 Hj $H_j$ ​ 做 cross-attention，所以不論經驗多長，輸出都是 K $K$ 個向量。論文的壓縮器有 8 層、各層共用參數，FFN 倍率 4，參數記為 χ $\chi$ ；composer 的全部可訓練參數是 ϕ=(ψ,χ) $\phi=(\psi,\chi)$ 。
+
+ 串接。J $J$ 筆經驗各 K $K$ 個向量串成老師的脈絡。這裡的 θˉ $\bar\theta$ 是訓練開始前的 base 模型權重，訓練中不更新：
+
+ cϕ(x,E)=⨁j=1J(⟨ej,1⟩⊕⋯⊕⟨ej,K⟩)πθˉ,ϕT(⋅∣s,cϕ)=πθˉ(⋅∣[s;cϕ]) $\begin{aligned}c_\phi(x,E)&=\textstyle\bigoplus_{j=1}^{J}\big(\langle e_{j,1}\rangle\oplus\cdots\oplus\langle e_{j,K}\rangle\big)\\\pi^T_{\bar\theta,\phi}(\cdot\mid s,c_\phi)&=\pi_{\bar\theta}(\cdot\mid[s;c_\phi])\end{aligned}$ ​(x,E)πθˉ,ϕT​(⋅∣s,cϕ​)​=⨁j=1J​(⟨ej,1​⟩⊕⋯⊕⟨ej,K​⟩)=πθˉ​(⋅∣[s;cϕ​])​
+Eq. 7
+
+ Composer 的流程可以這樣總結：經驗庫只存訓練集的成功 rollout；Qwen3-Embedding-8B（4,096 維）編碼查詢（只含任務）與文件（任務＋軌跡），FAISS 取 cosine 最高的 J=3 $J=3$ 筆（Eq. 15–16）；每筆由凍結 backbone＋LoRA（rank 8）編碼（Eq. 5），再由 8 層共用參數的 QFormer 式 cross-attention 以 K $K$ 個學習 query 壓成 K=32 $K=32$ 個向量（Eq. 6）；串接成 96 個 latent token，在輸入中以 96 個 pad 佔位並於 embedding 後替換（Eq. 17–18，用 torch.cat，見 06）。composer 先以 Eq. 14 的 NLL 冷啟動得到 ϕ0 $\phi_0$ ​（見 06）。
+
+ 本章符號
+
+ 符號意義
+
+ Φϕ $\Phi_\phi$ ​、cϕ $c_\phi$ ​、⟨e⟩ $\langle e\rangle$ ；composer、latent 脈絡、一個連續向量 token
+
+ ϕ=(ψ,χ) $\phi=(\psi,\chi)$ ；encoder 的 LoRA 參數與壓縮器參數
+
+ J $J$ （nret $n_{ret}$ ​）、K $K$ 、d $d$ ；檢索筆數（3）、每筆向量數（32）、隱藏維度
+
+ θˉ $\bar\theta$ ；凍結的 base checkpoint（訓練中不更新）
+
+ 延伸閱讀：Latent memory：把經驗壓縮成模型可讀的連續 token、檢索增強與外部記憶
+
+ 06 · 注入與凍結老師
+
+ 向量替換輸入中的佔位 token，老師的權重保持凍結
+
+ 96 個向量不是文字，不能直接交給推論引擎。論文在第一個 user message 中插入一個標記字串，前後是框架文字（工具類：「The following is a REFERENCE EXAMPLE of how a DIFFERENT, already-solved task was handled…」與「--- end of reference example ---」，App. A.5）。依標記把 prompt 切成兩半分別 tokenize，中間插入 J⋅K=96 $J\cdot K=96$ 個 pad token（Eq. 17）；把整串轉成 embedding 後、進入第一層之前，把這 96 個位置換成 composer 的輸出（Eq. 18）。
+
+ input_ids=[t1,…,ta,tpad,…,tpad⏟J⋅K,ta+1,…,tL]X[pk]←⟨ek⟩,k=1,…,J⋅K $\begin{aligned}&\texttt{input\_ids}=[t_1,\dots,t_a,\underbrace{t_{pad},\dots,t_{pad}}_{J\cdot K},t_{a+1},\dots,t_L]\\&X[p_k]\leftarrow\langle e_k\rangle,\quad k=1,\dots,J\cdot K\end{aligned}$ ​input_ids=[t1​,…,ta​,J⋅Ktpad​,…,tpad​​​,ta+1​,…,tL​]X[pk​]←⟨ek​⟩,k=1,…,J⋅K​
+Eq. 17、18
+
+ 替換要用 torch.cat 拼接切片，不能用 in-place 賦值，autograd 才追得到梯度（App. A.4）。encoder 的 LoRA 只在編碼經驗時啟用，在老師的主 forward 與推論時關閉，所以老師是「純 base model＋latent 脈絡」。論文另做了等價性檢查：在佔位處填入已知 token 的 embedding，兩條輸入路徑的 greedy 輸出相同。
+
+ 冷啟動（App. A.2）。正式訓練前，composer 先用 base model 自己的成功軌跡 y⋆ $y^\star$ 做 next-token 負對數概似（NLL）訓練，backbone 凍結（AdamW、lr 10−5 $10^{-5}$ 、batch 8、grad clip 3.0；資料量與步數「依 domain 調整」，未給數字），得到 ϕ0 $\phi_0$ ​：
+
+ Linit(ϕ)=−E(x,y⋆)∼Dexp, E=Ret(x)[log⁡πθˉ(y⋆∣s,cϕ(x,E))] $\mathcal L_{init}(\phi)=-\mathbb E_{(x,y^\star)\sim D_{exp},\,E=\mathrm{Ret}(x)}\big[\log\pi_{\bar\theta}(y^\star\mid s,c_\phi(x,E))\big]$ ​(ϕ)=−E(x,y⋆)∼Dexp​,E=Ret(x)​[logπθˉ​(y⋆∣s,cϕ​(x,E))]
+Eq. 14
+
+ 凍結老師與梯度路徑（§3.3）。老師 θˉ $\bar\theta$ 是「從同一個 backbone 初始化的凍結參考副本」。學生一開始更新，兩者的權重就不同。老師的權重沒有梯度更新，但老師的 forward activations 留在計算圖中，所以老師分布對 cϕ $c_\phi$ ​、進而對 ϕ $\phi$ 可微。Eq. 10 沒有對老師加 stop-gradient（與 Eq. 3 不同），蒸餾損失因此同時對學生 θ $\theta$ 與 composer ϕ $\phi$ 產生梯度；作者稱這與 prefix-tuning 是同一種機制。三條式子的 stop-gradient 位置不同，最容易混淆：
+
+ stop-gradient 放在哪裡式子sg 位置理由
+
+ Eq. 3（OPSD 損失）；老師一側加 sg；老師與學生同權重 θ，sg 讓損失只把學生移向老師，不反過來改老師
+
+ Eq. 10（LOPD 蒸餾損失）；老師一側不加 sg；θ̄ 已凍結，保留老師的計算圖才能讓梯度回到 composer φ（也因此可能退化，見 07）
+
+ Eq. 11（privilege δ）；學生項加 sg；δ 只用來訓練 composer，不讓 margin 項透過降低學生機率來製造優勢
+
+ LOPD 的老師與學生不是同一組權重。老師是凍結的 base checkpoint θˉ $\bar\theta$ （與學生同架構、同初始化，學生開始更新後權重就不同）加上 latent 脈絡：πθˉ(⋅∣[s;cϕ]) $\pi_{\bar\theta}(\cdot\mid[s;c_\phi])$ ​(⋅∣[s;cϕ​])（Eq. 7、§3.3）。更新的是學生 θ $\theta$ 與 composer ϕ=(ψ,χ) $\phi=(\psi,\chi)$ （encoder LoRA 與 QFormer）；θˉ $\bar\theta$ 不更新，但老師的 activations 留在計算圖中，Eq. 10 沒有對老師 stop-gradient，梯度穿過凍結網路回到 cϕ $c_\phi$ ​；encoder LoRA 在老師主 forward 時關閉（App. A.4）。
+
+ 本章符號
+
+ 符號意義
+
+ ϕ0 $\phi_0$ ​；冷啟動後的 composer 參數
+
+ y⋆ $y^\star$ ；base model 自己的成功軌跡
+
+ X $X$ 、pk $p_k$ ​；輸入 embedding 矩陣、第 k $k$ 個佔位位置
+
+ 延伸閱讀：Latent reasoning：以連續向量取代自然語言 token
+
+ 07 · 退化
+
+ 只最小化蒸餾損失時，老師分布可以移向學生來降低損失
+
+ 因為梯度會穿過老師回到 composer，composer 有兩種方式降低 Ldistill $\mathcal L_{distill}$ ​：讓學生變好，或讓老師變得像學生。作者寫：「an unconstrained composer can instead minimize Equation (10) by moving pT $p^T$ toward pS $p^S$ , yielding uninformative latent context without improving the student」（§3.3）。論文稱這種結果為退化（collapse）。
+
+ 以下用一個理想化模型說明這句話 本頁推導：只看一個前綴、完整詞表；學生 logits z $z$ 、老師 logits u $u$ 可以自由移動，p=softmax(z) $p=\mathrm{softmax}(z)$ 、q=softmax(u) $q=\mathrm{softmax}(u)$ ，KL=∑vpvlog⁡(pv/qv) $\mathrm{KL}=\sum_v p_v\log(p_v/q_v)$ ​pv​log(pv​/qv​)。對兩組 logits 的偏微分是
+
+ ∂ KL∂uk=qk−pk,∂ KL∂zk=pk[(log⁡pk−log⁡qk)−KL] $\frac{\partial\,\mathrm{KL}}{\partial u_k}=q_k-p_k,\qquad \frac{\partial\,\mathrm{KL}}{\partial z_k}=p_k\big[(\log p_k-\log q_k)-\mathrm{KL}\big]$ ​∂KL​=qk​−pk​,∂zk​∂KL​=pk​[(logpk​−logqk​)−KL]
+本頁推導
+
+ 對 u $u$ 做梯度下降，每一步都讓 q $q$ 往 p $p$ 移動，最小值在 q=p $q=p$ 。在此理想化模型中，損失梯度本身不含「脈絡是否帶有資訊」的訊號；真實系統中梯度還要經過 ∂u/∂ϕ $\partial u/\partial\phi$ （96 個向量與凍結網路），學生也同時移向老師，損失也是 top-M 版本。下面的 C3-lite 只讓老師移動、學生固定。
+
+ C3-lite只蒸餾時老師往哪裡走
+本頁推導
+
+ 假設：本頁推導的理想化模型。學生分布 p = (0.40, 0.30, 0.20, 0.10) 固定不動；老師從冷啟動分布 q₀ = (0.55, 0.15, 0.25, 0.05) 出發，logits 以步長 1 做梯度下降（玩具值）；只有一個前綴、4 個 token；p、q₀ 為示範值。結果不是論文的實驗。
+
+ 學生 p（空心框）老師 q（實心）
+
+ 檢視第幾步 600
+
+ 步數：600；KL：0.0000；q：0.4000, 0.3000, 0.2000, 0.1000；p：0.40, 0.30, 0.20, 0.10；
+ 第 600 步，KL = -0.0000
+
+ 讀數由本頁依上面的梯度式即時計算 本頁推導。加入結果獎勵約束後的版本見 10。
+
+ 退化的來源可以這樣總結：老師一側沒有 stop-gradient，composer 可以改變老師分布來降低損失（§3.3）。本頁推導 理想化下 ∂DKL(p∥q)/∂uk=qk−pk $\partial D_{KL}(p\|q)/\partial u_k=q_k-p_k$ ​(p∥q)/∂uk​=qk​−pk​，梯度下降使老師分布 q $q$ 移向學生 p $p$ ；在此理想化模型中，梯度本身不含脈絡是否有資訊的訊號；最小值 q=p $q=p$ 對應沒有資訊的脈絡，學生得不到新訊號。
+
+ 本章符號
+
+ 符號意義
+
+ z $z$ 、u $u$ ；理想化模型中的學生、老師 logits
+
+ p $p$ 、q $q$ ；對應的學生、老師分布
+
+ 延伸閱讀：OPD 與 OPSD 的失敗模式與穩定化
+
+ 08 · Privileged margin
+
+ Privileged margin 以結果獎勵加權老師在取樣 token 上的優勢
+
+ 作者用兩種方式防止退化：一是 06 的冷啟動，讓 composer 一開始就有資訊；二是把結果獎勵接進來（§3.3）。對每個有監督的 token，定義老師相對學生的 privilege：
+
+ δt,n(ϕ)=log⁡πθˉ,ϕT(at,n∣st,cϕ,at,<n)−sg[log⁡πθS(at,n∣st,at,<n)] $\delta_{t,n}(\phi)=\log\pi^T_{\bar\theta,\phi}(a_{t,n}\mid s_t,c_\phi,a_{t,\lt n})-\mathrm{sg}\big[\log\pi^S_\theta(a_{t,n}\mid s_t,a_{t,\lt n})\big]$ ​(ϕ)=logπθˉ,ϕT​(at,n​∣st​,cϕ​,at,<n​)−sg[logπθS​(at,n​∣st​,at,<n​)]
+Eq. 11
+
+ at,n $a_{t,n}$ ​ 是學生實際取樣到的 token；學生那一項加了 stop-gradient，所以 δ 只訓練 composer。兩個 log 機率在 forward 時都已算好，只需取出對應的值。把結果獎勵換成 A(τ)=2r(τ)−1∈[−1,1] $A(\tau)=2r(\tau)-1\in[-1,1]$ （獎勵 0.5 對應 0），再對軌跡上的 δ 加權平均：
+
+ Δ(ϕ)=Eτ[∑t,nωt,nA(τ) δt,n(ϕ)∑t,nωt,n],A(τ)=2r(τ)−1∈[−1,1] $\begin{aligned}\Delta(\phi)&=\mathbb E_\tau\Big[\frac{\sum_{t,n}\omega_{t,n}A(\tau)\,\delta_{t,n}(\phi)}{\sum_{t,n}\omega_{t,n}}\Big],\\A(\tau)&=2r(\tau)-1\in[-1,1]\end{aligned}$ A(τ)​=Eτ​[∑t,n​ωt,n​∑t,n​ωt,n​A(τ)δt,n​(ϕ)​],=2r(τ)−1∈[−1,1]​
+Eq. 12
+
+ Eq. 12 是逐軌跡比值再取期望；Alg. 1 第 12 行則寫「masked tokens 上的加權平均」，batch 內怎麼聚合沒有說清楚。成功軌跡（A>0 $A>0$ ）上老師給學生的 token 較高機率會使 Δ 增加，失敗軌跡上則使 Δ 減少。
+
+ 為了看清 Δ 何時為正，先定義一個量 本頁推導：Q(a) $Q(a)$ 是「在這個前綴選了 token a $a$ 之後，整條軌跡 A $A$ 的平均值」，Qˉ=∑apS(a)Q(a) $\bar Q=\sum_a p^S(a)Q(a)$ ​=∑a​pS(a)Q(a) 是它在學生分布下的平均。若動作恰好從 δ 中的學生分布 pS $p^S$ 取樣，δ 的期望可以逐步寫出：
+
+ Ea∼pS[δ]=∑apS(a)(log⁡pT(a)−log⁡pS(a))=−∑apS(a)log⁡pS(a)pT(a)=−DKL(pS∥pT)≤0 $\mathbb E_{a\sim p^S}[\delta]=\sum_a p^S(a)\big(\log p^T(a)-\log p^S(a)\big)=-\sum_a p^S(a)\log\frac{p^S(a)}{p^T(a)}=-D_{KL}(p^S\|p^T)\le0$ ​[δ]=a∑​pS(a)(logpT(a)−logpS(a))=−a∑​pS(a)logpT(a)pS(a)​=−DKL​(pS∥pT)≤0
+本頁推導
+
+ 這是期望值；單一批次的取樣平均可以為正。論文取樣用溫度 0.7、top-p 0.95、top-k 20（Table 4），計算 pS $p^S$ 時的溫度沒有說明，所以這個等式在論文設定下不一定成立。同樣的方法把一個前綴對 Δ 分子的期望貢獻拆成兩項：
+
+ c=∑apS(a)Q(a)log⁡pT(a)pS(a)=−Qˉ DKL(pS∥pT)+∑apS(a)(Q(a)−Qˉ)log⁡pT(a)pS(a) $c=\sum_a p^S(a)Q(a)\log\frac{p^T(a)}{p^S(a)}=-\bar Q\,D_{KL}(p^S\|p^T)+\sum_a p^S(a)\big(Q(a)-\bar Q\big)\log\frac{p^T(a)}{p^S(a)}$ ∑​pS(a)Q(a)logpS(a)pT(a)​=−Qˉ​DKL​(pS∥pT)+a∑​pS(a)(Q(a)−Qˉ​)logpS(a)pT(a)​
+本頁推導
+
+ 第一項在 Qˉ>0 $\bar Q>0$ ​>0（平均獎勵過半）時是負的，與 margin 作對；在 Qˉ<0 $\bar Q<0$ ​<0 時是正的，反而獎勵老師與學生的差距。第二項（共變項）才表示「老師在導向較高獎勵的 token 上給更高機率」。作為參考量：Table 3 的測試集平均獎勵換成 2r−1 $2r-1$ ，未訓練模型是 2(0.486)−1=−0.028 $2(0.486)-1=-0.028$ ，LOPD 學生是 2(0.637)−1=0.274 $2(0.637)-1=0.274$ ；這是測試集代理值，不是訓練 rollout 的 Qˉ $\bar Q$ ​，而 EnvScaler 的 r $r$ 是完成子任務比例，不是成功率。
+
+ C2δ 與 Δ 的帳本
+示範值
+
+ 假設：單一前綴、4 個候選 token；學生分布 p = (0.40, 0.30, 0.20, 0.10)、冷啟動老師 q₀ = (0.55, 0.15, 0.25, 0.05) 與每個 token 之後的期望獎勵都是示範值。老師分布 q = softmax((1−s)·log p + s·log q₀) 是 logit 的線性內插，不是論文的機制。用精確期望取代取樣，等於假設動作恰從 p 取樣；論文以溫度 0.7、top-p、top-k 取樣，E[δ] = −KL 在那裡不一定成立。
+
+ tokenpqQ = 2r − 1δp·δp·Q·δ
+v1；0.400；0.5500；0.60；＋0.3185；0.1274；0.0764
+v2；0.300；0.1500；−0.40；−0.6931；−0.2079；0.0832
+v3；0.200；0.2500；0.20；＋0.2231；0.0446；0.0089
+v4；0.100；0.0500；−0.80；−0.6931；−0.0693；0.0555
+
+ 老師位置 s（0＝等於學生 p，1＝q₀） 1.00
+
+ 期望獎勵 r(v1) 0.80
+
+ 期望獎勵 r(v2) 0.30
+
+ 期望獎勵 r(v3) 0.60
+
+ 期望獎勵 r(v4) 0.10
+
+ 預設
+預設全部 0.5全部 0.9
+
+ E[δ]：−0.1052；−KL：−0.1052；Q̄：0.0800；c = Σ p·Q·δ：0.2240；第一項 −Q̄·KL：−0.0084；共變項：0.2324；第一項＋共變項：0.2240；
+ s = 1.00，E[δ] -0.105，c 0.224，共變項 0.232
+
+ 讀數由本頁依 Eq. 11–12 與上面的分解式即時計算 本頁推導；Q = 2r − 1。
+
+ C2 中恆成立的性質：在這個元件的精確期望下，E[δ] 與 −KL 恆相等；s = 0 時所有 δ 與 c 為 0；期望獎勵全部相同時共變項為 0、c=−Qˉ⋅KL $c=-\bar Q\cdot\mathrm{KL}$ ​⋅KL，期望獎勵大於 0.5 時 c 為負、小於 0.5 時 c 為正。
+
+ δ 與 Δ 的定義與意義可以這樣總結：δ=log⁡πT(at,n∣⋅,cϕ)−sg[log⁡πS(at,n∣⋅)] $\delta=\log\pi^T(a_{t,n}\mid\cdot,c_\phi)-\mathrm{sg}[\log\pi^S(a_{t,n}\mid\cdot)]$ (at,n​∣⋅,cϕ​)−sg[logπS(at,n​∣⋅)]，at,n $a_{t,n}$ ​ 是學生取樣的 token（Eq. 11）；A=2r−1 $A=2r-1$ ；Δ=Eτ[∑ωAδ/∑ω] $\Delta=\mathbb E_\tau[\sum\omega A\delta/\sum\omega]$ ​[∑ωAδ/∑ω]（Eq. 12）。本頁推導 當動作恰從 δ 中的 pS $p^S$ 取樣時，Ea∼pS[δ]=−DKL(pS∥pT)≤0 $\mathbb E_{a\sim p^S}[\delta]=-D_{KL}(p^S\|p^T)\le0$ ​[δ]=−DKL​(pS∥pT)≤0：期望上不為正，單一批次的取樣平均可以為正；論文以溫度 0.7、top-p、top-k 取樣，條件未必成立。令 Q(a) $Q(a)$ ＝選了 token a $a$ 之後整條軌跡 A 的平均值、Qˉ $\bar Q$ ​ 為其學生平均，一個 prefix 的貢獻 =−Qˉ⋅KL+∑pS(Q−Qˉ)δ $=-\bar Q\cdot\mathrm{KL}+\sum p^S(Q-\bar Q)\delta$ ​⋅KL+∑pS(Q−Qˉ​)δ；當 Qˉ≥0 $\bar Q\ge0$ ​≥0 時 Δ 為正必須靠共變項，也就是老師在導向較高獎勵的 token 上給出比學生更高的機率；Qˉ<0 $\bar Q\lt 0$ ​<0 時第一項本身為正。
+
+ 本章符號
+
+ 符號意義
+
+ δt,n $\delta_{t,n}$ ​；老師與學生在取樣 token 上的 log 機率差
+
+ A(τ)=2r−1 $A(\tau)=2r-1$ 、Δ(ϕ) $\Delta(\phi)$ ；軌跡優勢、以 A 加權的 δ 平均
+
+ Q(a) $Q(a)$ 、Qˉ $\bar Q$ ​；選了 token a $a$ 之後的平均 A、其學生平均（本頁推導用）
+
+ 09 · 對偶更新
+
+ 對偶變數 β 在 Δ 低於 m 時加大懲罰
+
+ LOPD 要求 Δ 至少達到一個門檻 m $m$ （margin）。這是一個受限最佳化問題：在約束 g(ϕ)=m−Δ(ϕ)≤0 $g(\phi)=m-\Delta(\phi)\le0$ 下最小化損失。標準做法是加上一個對偶變數 β≥0 $\beta\ge0$ ，把約束乘上 β 加進目標，稱為 Lagrangian；β 由「約束違反多少」決定：違反時 β 增加、使懲罰變重；滿足時 β 減少，但不低於 0（[⋅]+ $[\cdot]_+$ ​ 表示負值截成 0，稱為投影）。約束有餘裕時 β 會降到 0、懲罰消失，這個性質稱為互補鬆弛。完整目標是
+
+ min⁡θ,ϕmax⁡β≥0 Ldistill(θ,ϕ)+β(m−Δ(ϕ))+λ∥cϕ−sg[cϕ0]∥22 $\begin{aligned}\min_{\theta,\phi}\max_{\beta\ge0}\ &\mathcal L_{distill}(\theta,\phi)+\beta\big(m-\Delta(\phi)\big)\\&+\lambda\big\|c_\phi-\mathrm{sg}[c_{\phi_0}]\big\|_2^2\end{aligned}$ min​β≥0max​ ​Ldistill​(θ,ϕ)+β(m−Δ(ϕ))+λ​cϕ​−sg[cϕ0​​]​22​​
+Eq. 13
+
+ 最後一項是 anchor：懲罰 latent 脈絡偏離冷啟動時的 cϕ0 $c_{\phi_0}$ ​​，權重 λ $\lambda$ ；cϕ0 $c_{\phi_0}$ ​​ 每個任務先快取，不需要額外 forward。預設 m=0.05 $m=0.05$ （§4.1）、λ=0.2 $\lambda=0.2$ 、對偶步長 ηβ=0.5 $\eta_\beta=0.5$ ​=0.5、composer 學習率 10−5 $10^{-5}$ （Table 4）。Alg. 1 的流程如下。
+
+ Alg. 1（原文）
+說明
+
+ 1 β ← 0; cache c_φ0 per taskβ 從 0 開始；每個任務先存好冷啟動的脈絡。
+
+ 5 τ_i ∼ π^S_θ(·|x_i); r_i ← V(τ_i); A_i ← 2r_i − 1學生取樣一條軌跡，驗證器給獎勵，換成 A。
+
+ 6 E_i ← Ret(x_i)
+7 c_φ,i ← Φ_φ(x_i, E_i)檢索 3 筆經驗，composer 產生 96 個 latent token。
+
+ 8–10 for each turn t and prefix a_t,<n:
+ compute p^S, p^T; top-M + tail; accumulate KL在學生走過的每個前綴上，老師重新評分，累加截斷 KL。
+
+ 11 δ_t,n ← log p^T(a_t,n) − sg[log p^S(a_t,n)]取出學生 token 的兩個 log 機率相減。
+
+ 12 Δ ← weighted mean of A_i · δ_t,n以 A 加權平均成 Δ（聚合方式見 08）。
+
+ 13 update (θ, φ) by minimizing Eq. (13)同時更新學生與 composer。
+
+ 14 β ← [β + η_β (m − Δ)]_+Δ 低於 m 時 β 增加，高於 m 時減少到 0 為止。
+
+ 作者的排除論述只有一句：「If the composer degenerates to uninformative context, πT→πS $\pi^T\to\pi^S$ →πS, δ→0 $\delta\to0$ , Δ→0<m $\Delta\to0\lt m$ , and the dual penalty activates—structurally excluding the trivial solution.」（§3.3）論文沒有收斂或可行性分析。本頁推導 m=0 $m=0$ 時，退化點的 Δ = 0 滿足 Δ ≥ 0，退化本身是可行的，所以這個論述需要 m>0 $m>0$ 。
+
+ 本頁推導 β 項對 φ 的梯度是 −β∇ϕΔ=−β E[A ∇ϕlog⁡πT(at,n∣⋅)] $-\beta\nabla_\phi\Delta=-\beta\,\mathbb E[A\,\nabla_\phi\log\pi^T(a_{t,n}\mid\cdot)]$ ​Δ=−βE[A∇ϕ​logπT(at,n​∣⋅)]（遮罩平均）。這與強化學習中 REINFORCE 的梯度形式相同（本頁只用到它的形式：以樣本的 log 機率梯度乘上獎勵），樣本來自學生而不是老師，沒有重要性權重。β 的變化很慢：Δ 停在 0 時每步只增加 0.5×0.05=0.025 $0.5\times0.05=0.025$ 。若每 32 rollouts（App. B.1）做一次對偶更新（本頁推論，論文未寫明），Fig. 4 的 1,600 rollouts 是 50 步，Δ 一直為 0 時 β = 1.25；這是 Δ = 0 的情形，不是上限，Δ 為負時每步增加 0.5(m−Δ)>0.025 $0.5(m-\Delta)>0.025$ 。
+
+ 對偶更新可以這樣總結：Eq. 13 為 min⁡θ,ϕmax⁡β≥0Ldistill+β(m−Δ)+λ∥cϕ−sg[cϕ0]∥2 $\min_{\theta,\phi}\max_{\beta\ge0}\mathcal L_{distill}+\beta(m-\Delta)+\lambda\|c_\phi-\mathrm{sg}[c_{\phi_0}]\|^2$ ​maxβ≥0​Ldistill​+β(m−Δ)+λ∥cϕ​−sg[cϕ0​​]∥2；β 初值 0，β←[β+ηβ(m−Δ)]+ $\beta\leftarrow[\beta+\eta_\beta(m-\Delta)]_+$ ​(m−Δ)]+​；m=0.05 $m=0.05$ 、ηβ=0.5 $\eta_\beta=0.5$ ​=0.5、λ=0.2 $\lambda=0.2$ （§4.1、Table 4）。Δ<m 時 β 增加，Δ>m 時 β 降到 0 為止。本頁推導 β 項對 φ 的梯度是以學生樣本、無重要性權重的 REINFORCE 形式 −βE[A∇ϕlog⁡πT(at,n)] $-\beta\mathbb E[A\nabla_\phi\log\pi^T(a_{t,n})]$ ​logπT(at,n​)]；Δ 停在 0 時 β 每步只增加 0.025。
+
+ 本章符號
+
+ 符號意義
+
+ m $m$ ；margin，Δ 的下限（預設 0.05）
+
+ β $\beta$ 、ηβ $\eta_\beta$ ​；對偶變數、對偶步長（0.5）
+
+ λ $\lambda$ ；anchor 權重（0.2）
+
+ 10 · 理想化不動點
+
+ 理想化模型中，老師收斂到依期望獎勵重新加權的學生分布
+
+ 把 07 的理想化模型加上 margin 項 本頁推導。假設：學生固定、單一前綴、老師 logits 自由、β 固定、不計 anchor 與 top-M。KL−βΔ $\mathrm{KL}-\beta\Delta$ 對老師 logits 的梯度是 (qk−pk)−β(pkQk−qkQˉ) $(q_k-p_k)-\beta(p_kQ_k-q_k\bar Q)$ ​−pk​)−β(pk​Qk​−qk​Qˉ​)，令它為 0 得到
+
+ q∗(a)=p(a) (1+βQ(a))1+βQˉ,需 1+βQ(a)>0 $q^*(a)=\frac{p(a)\,\big(1+\beta Q(a)\big)}{1+\beta\bar Q},\qquad\text{需 }1+\beta Q(a)>0$ (a)=1+βQˉ​p(a)(1+βQ(a))​,需 1+βQ(a)>0
+本頁推導
+
+ 三個特例：β = 0 時 q∗=p $q^*=p$ =p，即 07 的退化；Q 對所有 token 都相同時，不論 β 多大 q∗=p $q^*=p$ =p；某個 token 的 1+βQ(a)≤0 $1+\beta Q(a)\le0$ 時，q∗ $q^*$ 在該 token 為 0，老師 logit 只能漸近地下降。在 q∗ $q^*$ 處 Δ ≥ 0（由 Jensen 不等式），等號若且唯若 Q 在 p 下為常數。C3 讓你比較只蒸餾、固定 β、對偶更新三種情形。
+
+ C3只蒸餾、固定 β 與對偶更新下老師往哪裡走
+本頁推導
+
+ 假設：本頁推導的理想化模型。學生分布 p 固定不動；只有一個前綴、4 個 token；老師 logits 可以自由移動（論文中只能透過 96 個 latent 向量改變）；用精確期望；不含 anchor 與 top-M；p、q₀、期望獎勵為示範值；步長 1 是玩具值，與論文的 composer 學習率 10⁻⁵ 無關；β 上限 5 是本頁的數值保護。結果不是論文的實驗。
+
+ ①只蒸餾（β = 0）②固定 β = 0.5③對偶更新（m = 0.05）
+
+ 學生 p（空心框）老師 q（實心）q*（短橫線）
+
+ 期望獎勵設定
+設定 A設定 B設定 C
+
+ β 的來源
+固定對偶更新
+
+ β 0.00
+
+ m 0.05
+
+ 檢視第幾步 600
+
+ 步數：600；KL：0.0000；Δ：0.0000；β：0.0000；q：0.4000, 0.3000, 0.2000, 0.1000；q*：0.4000, 0.3000, 0.2000, 0.1000；
+
+ 第 600 步，Δ = 0.000，β = 0.000
+
+ 讀數由本頁依上面的梯度式與 Alg. 1 第 14 行的對偶更新即時計算 本頁推導；對偶步長 0.5 為論文值。設定 A＝(0.8, 0.3, 0.6, 0.1)、B＝(0.5, 0.5, 0.5, 0.5)、C＝(0.7, 0.7, 0.7, 0.0)。
+
+ C3 中恆成立或可由式子讀出的性質：β = 0 時 q 必收斂到 p；期望獎勵全部相同（Q 為常數）時 q∗=p $q^*=p$ =p，且 Δ = −Q·KL(p‖q)，只有 Q = 0（期望獎勵 0.5，設定 B）時 Δ 恆為 0；Q < 0 時 Δ = |Q|·KL，一個不含獎勵資訊的脈絡也能先滿足 margin；β 每步增加 0.5·m 只在 Δ = 0 時成立；對偶模式若收斂，收斂點滿足 Δ = m，或 β = 0 且 Δ ≥ m。m = 0 時，本頁以字面 m = 0、β 照常更新計算；論文沒有說明 Fig. 3 的 m = 0 是關掉 β 還是把 m 設為 0。
+
+ 理想化不動點可以這樣總結：本頁推導 q∗(a)=p(a)(1+βQ(a))/(1+βQˉ) $q^*(a)=p(a)(1+\beta Q(a))/(1+\beta\bar Q)$ (a)=p(a)(1+βQ(a))/(1+βQˉ​)（需 1+βQ>0 $1+\beta Q>0$ ），由 (qk−pk)−β(pkQk−qkQˉ)=0 $(q_k-p_k)-\beta(p_kQ_k-q_k\bar Q)=0$ ​−pk​)−β(pk​Qk​−qk​Qˉ​)=0 得出；β = 0 時 q∗=p $q^*=p$ =p（退化）；Q 對所有 token 相同時不論 β 多大 q∗=p $q^*=p$ =p。假設：學生固定、單一 prefix、老師 logits 自由、不計 anchor 與 top-M；這是本頁的解釋模型，不是論文結果。
+
+ 本頁推導 這個模型也指出一個論文沒有討論的情形：學生蒸餾成功、pS $p^S$ 追上 pT $p^T$ 時，δ → 0、Δ → 0 < m，同樣會觸發懲罰。margin 要求的不只是「老師不偷懶」，而是老師持續領先學生。論文沒有報告訓練中 Δ 或 β 的軌跡。
+
+ 11 · 消融
+
+ 消融：margin 太小時，學生低於以凍結 composer 訓練的學生
+
+ Fig. 3 在 EnvScaler 上用 Qwen3-4B 訓練多個變體，每個變體評測時只用學生，不給檢索、composer 或 latent 脈絡（App. B.4）。「Frozen φ₀」是以凍結的冷啟動 composer 訓練出的學生（沒有聯合最佳化），不是 composer 或老師本身的分數；其餘各列只改 m $m$ 。
+
+ 重畫論文 Fig. 3 的數字；每點為單次訓練，論文未給變異。
+
+ 量測到的是：m=0 $m=0$ 與 m=0.01 $m=0.01$ 訓練出的學生（0.551、0.566）低於以凍結 composer 訓練的學生（0.573）；m≥0.02 $m\ge0.02$ 高於它，最高在 m=0.05 $m=0.05$ （0.637），之後 m=0.10 $m=0.10$ 、0.20 $0.20$ 為 0.626、0.613。
+
+ 作者認為 沒有 margin 時「unconstrained distillation gradients degrade the latent context」，聯合訓練讓 composer 接觸到初始化時沒有的訊號，即學生當前軌跡分布需要什麼證據；margin 是實現這個好處的必要條件。這些是解釋，不是量測。
+
+ 沒有量的東西：老師本身（例如未訓練 backbone 加上 φ₀）的 reward，所以不知道聯合訓練有沒有讓老師變強；訓練中 Δ 與 β 的軌跡；每個點都是單次訓練。照 Eq. 13 字面，m=0 $m=0$ 仍是約束 Δ ≥ 0，但退化點的 Δ = 0 滿足它，所以 m=0 $m=0$ 擋不住退化；論文稱這一列為「without the margin constraint」，實作是關掉 β 還是把 m 設為 0 沒有說明。
+
+ Fig. 3 的七個數字是（EnvScaler、學生不帶脈絡評測）：Frozen φ₀ 0.573；m=0 0.551；0.01 0.566；0.02 0.603；0.05 0.637；0.10 0.626；0.20 0.613。量測：m≤0.01 的學生低於以凍結 composer 訓練的學生，m≥0.02 高於它。「無約束的蒸餾梯度讓 latent 脈絡退化」是作者認為。沒量：老師本身（例如 base＋φ₀）的 reward、訓練中 Δ 與 β 的軌跡；每點是單次訓練。本頁推導 m=0 時退化點 Δ=0 仍滿足 Δ≥0，所以作者的排除論述需要 m>0。
+
+ 12 · 主要結果
+
+ 主要結果：10 組彙總欄都最高，多數差距只有幾題
+
+ 工具類 benchmark：EnvScaler（200 題測試，與訓練集不重疊）、BFCL-v3（四個多輪子集各 200 題）、ACEBench（50 題：multi-step 20、multi-turn 30）。程式類：LiveCodeBench v5（279 題）、v6（131 題）、HumanEval+（164 題）、MBPP+（378 題），報告 pass@1（App. B.3）。下表只列彙總欄；論文寫「LOPD obtains the best aggregate result in all ten backbone–benchmark comparisons」（§4.2）。
+
+ Table 1 彙總欄（工具類，0–100）backbone · 方法EnvScalerBFCL-v3 AvgACEBench Avg
+
+ Qwen3-4B · Vanilla；48.6；22.88；50.6
+
+ Qwen3-4B · GRPO；61.8；25.25；56.0
+
+ Qwen3-4B · Skill-SD；59.1；24.63；56.0
+
+ Qwen3-4B · LOPD；63.7；27.38；60.6
+
+ Qwen3-8B · Vanilla；49.2；28.38；54.6
+
+ Qwen3-8B · GRPO；57.3；29.00；58.0
+
+ Qwen3-8B · Skill-SD；60.2；27.38；56.0
+
+ Qwen3-8B · LOPD；66.4；29.88；62.7
+
+ Table 2 彙總欄（程式類 pass@1 %）backbone · 方法LiveCodeBench AvgEvalPlus Avg
+
+ Qwen3-4B · Vanilla；45.61；78.79
+
+ Qwen3-4B · GRPO；48.29；79.34
+
+ Qwen3-4B · SDFT；47.07；80.07
+
+ Qwen3-4B · LOPD；48.78；81.36
+
+ Olmo3-7B · Vanilla；46.34；75.28
+
+ Olmo3-7B · GRPO；48.29；77.67
+
+ Olmo3-7B · SDFT；46.58；77.86
+
+ Olmo3-7B · LOPD；50.98；78.41
+
+ 完整 Table 1、Table 2（含所有方法與子欄）
+
+ Table 1（工具類）backbone · 方法EnvBaseMiss FuncMiss ParamLong CtxBFCL AvgM-StepM-TurnACE Avg
+Qwen3-4B · Vanilla；48.6；28.50；20.50；20.50；22.00；22.88；48.3；52.2；50.6
+Qwen3-4B · GRPO；61.8；33.00；20.50；24.50；23.00；25.25；58.3；54.4；56.0
+Qwen3-4B · Skill-SD；59.1；33.00；19.00；24.00；22.50；24.63；56.6；55.6；56.0
+Qwen3-4B · OPSD；51.2；31.50；19.50；20.50；29.00；25.13；41.6；53.3；48.6
+Qwen3-4B · SDPO；50.6；21.50；14.00；13.50；14.00；15.75；45.0；33.3；38.0
+Qwen3-4B · SDFT；50.3；31.50；17.00；17.00；21.50；21.75；53.3；47.8；50.0
+Qwen3-4B · LOPD；63.7；32.50；26.50；24.50；26.00；27.38；56.6；63.3；60.6
+Qwen3-8B · Vanilla；49.2；34.00；28.50；25.50；25.50；28.38；61.6；50.0；54.6
+Qwen3-8B · GRPO；57.3；36.00；28.00；27.00；25.00；29.00；65.0；53.3；58.0
+Qwen3-8B · Skill-SD；60.2；33.00；27.00；25.00；24.50；27.38；63.3；51.1；56.0
+Qwen3-8B · OPSD；52.0；30.50；25.00；23.50；24.00；25.75；60.0；47.8；52.7
+Qwen3-8B · SDPO；55.3；29.00；24.50；23.00；23.50；25.00；56.7；48.9；52.0
+Qwen3-8B · SDFT；56.2；31.50；26.00；24.50；25.50；26.88；65.0；47.8；54.7
+Qwen3-8B · LOPD；66.4；37.00；29.00；27.50；26.00；29.88；73.3；55.6；62.7
+
+ Table 2（程式類）backbone · 方法v5v6LCB AvgHE+MBPP+EvalPlus Avg
+Qwen3-4B · Vanilla；47.67；41.22；45.61；85.37；75.93；78.79
+Qwen3-4B · GRPO；50.18；44.27；48.29；86.59；76.19；79.34
+Qwen3-4B · Skill-SD；49.82；41.98；47.32；85.98；76.98；79.70
+Qwen3-4B · OPSD；42.65；35.11；40.24；85.36；76.72；79.33
+Qwen3-4B · SDPO；40.86；34.35；38.78；84.76；74.87；77.86
+Qwen3-4B · SDFT；48.75；43.51；47.07；87.20；76.98；80.07
+Qwen3-4B · LOPD；50.54；45.04；48.78；87.80；78.57；81.36
+Olmo3-7B · Vanilla；47.31；44.27；46.34；86.59；70.37；75.28
+Olmo3-7B · GRPO；49.46；45.80；48.29；89.02；72.75；77.67
+Olmo3-7B · Skill-SD；49.10；45.03；47.80；87.20；72.22；76.75
+Olmo3-7B · OPSD；44.09；45.04；44.39；87.80；71.96；76.75
+Olmo3-7B · SDPO；49.82；43.51；47.80；88.41；72.75；77.49
+Olmo3-7B · SDFT；47.67；44.27；46.58；89.02；73.02；77.86
+Olmo3-7B · LOPD；53.41；45.80；50.98；90.24；73.28；78.41
+
+ 彙總算法 本頁推導：論文沒有說明，本頁由表中數字驗算全部吻合：BFCL Avg 是四個子集的簡單平均；ACE Avg ＝ (20·M-Step＋30·M-Turn)/50；LCB Avg ＝ (279·v5＋131·v6)/410；EvalPlus Avg ＝ (164·HE＋378·MBPP)/542。
+
+ 子欄有反例：Qwen3-4B 的 BFCL Base 32.50 低於 GRPO 與 Skill-SD 的 33.00；Long Ctx 26.00 低於 OPSD 的 29.00；Miss Param 24.50 與 GRPO 並列；ACE M-Step 56.6 低於 GRPO 的 58.3；Olmo3-7B 的 LCB v6 45.80 與 GRPO 並列。
+
+ 「Qwen3-8B 上優勢更大」（§4.2）只對部分欄位成立 本頁推導：對最強基線的差距，EnvScaler 由 4B 的 1.9 變成 8B 的 6.2；ACE 由 4.6 變成 4.7；BFCL 由 2.13 變成 0.88（變小）。§4.2 另寫：對未訓練模型的增益從 1.50（BFCL，8B）到 17.2（EnvScaler，8B）。
+
+ 覆蓋：「三個 backbone、七個 benchmark」是聯集，不是 3×7 全格：Qwen3-4B 跑了全部 7 個（工具類 3＋程式類 4），Qwen3-8B 只有 3 個工具類，Olmo3-7B 只有 4 個程式類，論文沒有說明原因。
+
+ 統計強度。論文沒有 seed 數、標準差或信賴區間；評測溫度 0.7，有取樣雜訊。ACEBench 只有 50 題，表中數值落在 1/60 與 1/90 的格點上（例如 48.3 ≈ 29/60），暗示重複 3 次或部分給分，論文沒有說明 本頁推導。Fig. 5(a) 中 K = 64 比 K = 32 低 3.1、比 K = 128 低 2.3，並不單調，可作為單次實驗雜訊的粗略參考，許多主表差距比它小。K 與 nret $n_{ret}$ ​ 依 EnvScaler 測試集上的敏感度挑選（§4.3）；m 的選法論文沒有說明，Fig. 3 的 m 掃描也是在測試集上；論文沒有提到 validation split。
+
+ 標準誤。設一個 benchmark 有 N $N$ 題、答對率 p^ $\hat p$ ​。若把每題答對與否看成獨立、同機率的事件，這個分數因「題目取樣」造成的標準誤（SE）是 SE=p^(1−p^)/N $SE=\sqrt{\hat p(1-\hat p)/N}$ ​(1−p^​)/N​；常態近似下，約 95% 的取樣結果會落在 p^±1.96 SE $\hat p\pm1.96\,SE$ ​±1.96SE 之內。兩個方法在同一批題目上評測時，比較兩者的差異要用逐題配對的檢定，需要逐題結果；論文沒有提供，所以下面的 C4 只顯示單一分數的 SE，不據此判斷差異是否顯著。
+
+ C4分數換算成題數
+本頁推導
+
+ 假設：題數＝round(分數 × N / 100)；SE 是單一分數的題目取樣標準誤，假設每題答對與否獨立、同機率，只反映單次評測的取樣雜訊（溫度 0.7），不含訓練 seed 的變異（論文未報告）。這不是配對檢定：兩方法在同一批題目上評測，配對差的不確定性需要逐題結果，論文沒有提供。EnvScaler（連續 reward）與 ACEBench（數值不在整數題數格點上）不列入。
+
+ LOPD（實心圓，誤差線為 ±1.96 SE）最強基線（空心菱形）
+
+ 比較項目Qwen3-4B · BFCL-v3 Avg（N = 800）Qwen3-8B · BFCL-v3 Avg（N = 800）Qwen3-4B · LiveCodeBench v5（N = 279）Qwen3-4B · LiveCodeBench v6（N = 131）Qwen3-4B · LiveCodeBench Avg（N = 410）Qwen3-4B · HumanEval+（N = 164）Qwen3-4B · MBPP+（N = 378）Qwen3-4B · EvalPlus Avg（N = 542）Olmo3-7B · LiveCodeBench v5（N = 279）Olmo3-7B · LiveCodeBench v6（N = 131）Olmo3-7B · LiveCodeBench Avg（N = 410）Olmo3-7B · HumanEval+（N = 164）Olmo3-7B · MBPP+（N = 378）Olmo3-7B · EvalPlus Avg（N = 542）
+
+ LOPD：50.54% ＝ 141 / 279 題；最強基線（GRPO）：50.18% ＝ 140 / 279 題；差距：1 題（0.36 個百分點）；LOPD 分數的單一分數 SE（題目取樣，非配對檢定）：2.99 個百分點；
+ LiveCodeBench v5：差距 1 題，單一分數 SE 2.99 個百分點
+
+ 讀數由本頁依 Table 1–2 的分數與 App. B.3 的題數即時計算 本頁推導。
+
+ 主結果與統計強度可以這樣總結：「10 組都最好」指 10 組 backbone × benchmark 的彙總欄（Table 1–2）；子欄有反例（Qwen3-4B BFCL Base 32.50<33.00、Long Ctx 26.00<29.00、ACE M-Step 56.6<58.3）。本頁推導 Qwen3-4B 程式類對最強基線：LCB v5 141 vs 140／279、v6 59 vs 58／131、HumanEval+ 144 vs 143／164。缺：seed 數、標準差或信賴區間；評測溫度 0.7；K、nret $n_{ret}$ ​ 依 EnvScaler 測試集選定（m 的選法未說明，其掃描也在測試集上）。
+
+ 13 · 效率與行為
+
+ 樣本效率、行為變化與 latent 解碼
+
+ Fig. 4（Qwen3-4B、EnvScaler）是訓練中定期在測試集上評測的平均獎勵曲線（App. B.4「Mean reward is periodically evaluated on the EnvScaler test set」）。論文只用文字給出下列幾點：
+
+ Fig. 4：論文只以文字給出；本頁不重畫曲線方法generations平均獎勵
+
+ LOPD；320；超過 0.61
+
+ LOPD；576；0.637
+
+ LOPD；576–1,600；0.63–0.64
+
+ GRPO；1,600；0.611
+
+ Skill-SD；1,600；0.588
+
+ 摘要寫 LOPD「surpassing GRPO and Skill-SD with less than 30% of their rollout budget」。本頁推導 320/1,600 = 20%、576/1,600 = 36%、30% 對應 480。對 Skill-SD（0.588），LOPD 在 320 時已超過 0.61，說法成立；對 GRPO（0.611），文字只說超過 0.61，無法確定在 480 之前超過 0.611。本頁推論 論文也沒有說這個預算是否計入建經驗庫（用 base model 在訓練集上 rollout 並篩選成功者）與冷啟動所需的額外 rollouts。
+
+ Table 1 與 Fig. 4 不一致：同樣是 Qwen3-4B 的 EnvScaler，Table 1 的 GRPO 是 61.8、Skill-SD 是 59.1，Fig. 4 的終值卻是 0.611、0.588；LOPD 兩處一致（63.7、0.637）。論文沒有解釋；因為 Fig. 4 是訓練中的定期評測，差異可能來自 checkpoint 或評測流程，無法排除。
+
+ Fig. 5：(a) 每筆經驗的 latent 數 K = 8／16／32／64／128 時 EnvScaler 平均獎勵 56.5／56.3／63.7／60.6／62.9（%）；(b) 檢索筆數 nret=1 $n_{ret}=1$ ​=1 時 0.605、3 時 0.637，其餘點文字沒有給；(c–e) nret=3 $n_{ret}=3$ ​=3 時 ACEBench M-Step 56.6、M-Turn 63.3、Avg 60.6。論文以「最小的、離開低容量區的設定」選定 K = 32。
+
+ Table 3：EnvScaler 測試集上的行為（Qwen3-4B）指標VanillaBase＋ComposerLOPD 學生
+
+ Reward；0.486；0.631；0.637
+
+ Interaction steps；11.12；16.31；17.04
+
+ Tool calls / step；3.50；1.21；1.11
+
+ First-step length；9,937；6,695；6,210
+
+ Reward / tool call；0.038；0.053；0.050
+
+ Repeated tool calls；8.89；4.49；5.25
+
+ Base＋Composer 是未訓練的 backbone 加上聯合訓練後的 composer（m = 0.05）與 latent 脈絡，也就是推論時掛上脈絡的老師（App. B.4）。§4.3 寫 LOPD 學生的第一步回答短 37.5%（9,937 → 6,210）。作者認為 這表示學生「internalizes the teacher's procedural guidance」，由一次發出多個推測性呼叫轉為較循序的計畫。三點保留：(1) agentic system prompt 本來就寫「Avoid making parallel tool calls in one step」（App. A.5），行為改變也可以讀成變得遵守 prompt 本頁推論；(2) 推論時的老師 0.631 與學生 0.637 相近，學生約等於老師，而不訓練學生、直接掛上 composer 就拿到幾乎全部增益，論文沒有討論這個部署選項；(3) Reward / tool call 無法由同表重現：0.486 /(11.12 × 3.50) = 0.0125，表列 0.038 本頁推導，定義沒有給。
+
+ Fig. 6：把凍結的語言模型輸出層套到 32 個 latent token 上，解出的是多語言與程式碎片，讀不出程序，也沒有抄寫檢索到的解答。作者自己寫「direct decodability alone does not establish which information the teacher functionally uses」。展示的檢索都是 rank 2（相似度 0.886、0.691）。本頁疑問 兩例的 task id「env_174_rl-task_29」「taco_00713」看起來像訓練語料的編號；rank 1 是否就是任務自己的成功軌跡（自我檢索，見 15），論文沒有說明。
+
+ 「<30% rollout 預算」的範圍可以這樣總結：Fig. 4 的文字只給：LOPD 320 generations 後超過 0.61、576 時 0.637、之後 0.63–0.64；GRPO、Skill-SD 在 1,600 時 0.611、0.588（§4.3）。本頁推導 320/1,600=20%、576/1,600=36%；說法對 Skill-SD 成立，對 GRPO 只知道 LOPD 超過 0.61、不知是否超過 0.611。本頁推論 論文未說預算是否計入建經驗庫與冷啟動所需的額外 base-model rollouts；Fig. 4 是訓練中定期在測試集上的評測（App. B.4）。Table 1 的 GRPO 61.8、Skill-SD 59.1 與 0.611、0.588 不一致，論文未解釋；曲線無數值，本頁不重畫。
+
+ 14 · 主張與證據
+
+ 論文主張與證據的對照
+
+ 主張、出處、證據與判讀主張位置證據判讀
+
+ latent 脈絡優於文字脈絡；§1、§4.2；沒有「檢索軌跡以文字放入老師」的 baseline；缺少證據
+
+ retrieval alone is insufficient；§5；Frozen φ₀ 是凍結的 latent composer，不是純檢索；缺少證據
+
+ 老師與學生是同一個模型；§1（OPSD 一般描述）；§3.3：老師是凍結的 θ̄，學生更新後權重不同；對 LOPD 不成立
+
+ 聯合訓練讓老師變強；§4.3 解釋；沒有 base＋φ₀ 的 reward；未量測
+
+ 少於 30% rollout 預算；摘要、§1、§5；Fig. 4 文字點（見 13）；只對 Skill-SD 明確
+
+ 每個比較都最好；§4.2；只有彙總欄；子欄有反例；限彙總欄
+
+ Qwen3-8B 優勢更大；§4.2；EnvScaler 1.9→6.2、ACE 4.6→4.7、BFCL 2.13→0.88；部分成立
+
+ 三個 backbone、七個 benchmark；§1、§4.1；Qwen3-4B 全部 7 個、Qwen3-8B 只有 3 個工具類、Olmo3-7B 只有 4 個程式類；聯集，不是 3×7 全格
+
+ latent 是可讀的 insights／tips；Fig. 1 插圖；Fig. 1 圖說只用軌跡；Fig. 6 解碼是雜訊；不成立
+
+ margin 保證脈絡有資訊；§3.3；只要求加權 log 機率差 ≥ m，軟約束（見 08–10）；口語論述
+
+ top-M 設計的出處；§3.3／§4.1／App. B.1；分別寫 OPSD、SDPO-style、OPSD 為全詞表 forward KL；前後矛盾
+
+ latent token 數；Eq. 4／Eq. 7；K $K$ 個 vs J⋅K $J\cdot K$ 個；符號不一致
+
+ 檢索筆數符號；§3.2／App.；同一個量寫成 J $J$ 與 nret $n_{ret}$ ​；符號不一致
+
+ m = 0 等於沒有約束；§4.3；Eq. 13 字面仍是 Δ ≥ 0；退化點滿足它；實作未說明
+
+ Δ 的聚合方式；Eq. 12／Alg. 1；逐軌跡比值 vs 遮罩 token 加權平均；不一致
+
+ Reward / tool call；Table 3；無法由同表其他列重現；定義未給
+
+ 行為內化；§4.3；prompt 本來要求避免平行呼叫；學生 ≈ 老師；另有解釋
+
+ 缺乏證據的主張與內部矛盾可以這樣總結：論文沒有「把檢索到的軌跡以文字放進老師脈絡」的 baseline，Frozen φ₀（0.573）是凍結的 latent composer，不是純檢索，所以「latent 優於文字」與結論中的「retrieval alone is insufficient」都沒有直接證據；Table 3 推論時的老師（Base＋Composer）0.631 與學生 0.637 相近。top-M 出處矛盾：§3.3 寫 follow Zhao et al.（OPSD），§4.1 寫 SDPO-style，App. B.1 說 OPSD 用全詞表 forward KL、SDPO 才用 top-K＋尾部。
+
+ 15 · 實作與錯誤
+
+ 實作設定與常見錯誤
+
+ 實作設定（Table 4、Table 5、App. A–B）項目工具類程式類
+
+ 訓練資料；EnvScaler 衍生 2,349 tasks；TACO（DeepCoder）約 7,000
+
+ 生成預算（tokens）；40,960；16,384
+
+ 最大環境步數；30；單輪
+
+ 解碼；溫度 0.7、top-p 0.95、top-k 20；同左；評測皆開 thinking mode
+
+ LOPD 參數；composer lr 10⁻⁵、λ = 0.2、η_β = 0.5、m = 0.05、J = 3、K = 32、M = 20；同左
+
+ 所有方法共用；每步 32 rollouts、AdamW lr 10⁻⁵、grad clip 1.0；同左
+
+ composer；LoRA rank 8、α 16、dropout 0；QFormer 8 層共用參數、FFN ×4；同左
+
+ 檢索；Qwen3-Embedding-8B（4,096 維）、FAISS IndexFlatIP；同左
+
+ 常見錯誤
+
+ 把老師當成與學生同權重。LOPD 的老師是凍結的 θ̄ 加 latent 脈絡。
+
+ 對老師加 stop-gradient。Eq. 10 不加，否則 composer 收不到蒸餾梯度。
+
+ 用學生的前 M 名當支撐集。Eq. 9 用老師的前 M 名。
+
+ 把蒸餾的 M = 20 與取樣的 top-k = 20 混為一談。
+
+ 用 in-place 賦值替換佔位 embedding。須用 torch.cat，autograd 才追得到。
+
+ 老師主 forward 忘了關掉 encoder LoRA。
+
+ 以為 m = 0 等於「沒有約束」。照 Eq. 13 字面仍有 Δ ≥ 0，但退化點 Δ = 0 滿足它，所以 m = 0 擋不住退化；論文沒有說明 m = 0 的實作是關掉 β 還是把 m 設 0。
+
+ 論文沒有說明的設定
+
+ 學生是全參數微調還是 LoRA；學生學習率（App. B.1 只說所有方法共用 10⁻⁵）；總訓練步數（程式類完全沒給）；LOPD 每任務的 rollout 數；seed 數；經驗庫大小與 reward 門檻；冷啟動資料量；ω 是否涵蓋 thinking token；計算 pS $p^S$ 、pT $p^T$ 時的溫度；anchor 範數是否取平均。沒有對 λ、A 加權或冷啟動做消融。本頁疑問 經驗庫由訓練集建成、訓練時的查詢也來自訓練集，Ret(x) 是否排除任務 x 自己的成功軌跡，論文沒有說明；若沒有排除，latent 可能攜帶同一題的解答。
+
+ 16 · 研究脈絡
+
+ 研究脈絡
+
+ LOPD 接在幾條脈絡之後。DAgger（2010）提出在學生自己走到的狀態上向老師求監督；知識蒸餾（2015）讓學生學老師的完整分布；context distillation（2022）讓同一個模型把「看過額外脈絡時的行為」蒸餾回不看脈絡的自己；MiniLLM（2023）把 on-policy 蒸餾用在大型語言模型。GRPO（2024）是只用結果獎勵的基線。連續 latent token 的形式來自 latent 推理（Coconut，2024）與 latent 記憶（MemGen，2025）。2026 年的 OPSD 家族（OPSD、SDFT、SDPO、Skill-SD）各自指定一種特權脈絡；RLCSD 指出特權脈絡造成的風格偏移。每張卡片連到對應的研究筆記。
+
+ on-policy 模仿／蒸餾蒸餾基礎context distillationRLVRlatent 推理latent 記憶OPSD特權脈絡失敗模式本文
+
+ 2010on-policy 模仿／蒸餾A Reduction of Imitation Learning and Structured Prediction to No-Regret Online Learning
+Ross et al.
+DAgger；on-policy 模仿學習的起點
+arXiv ↗筆記
+2015蒸餾基礎Distilling the Knowledge in a Neural Network
+Hinton et al.
+知識蒸餾基礎
+arXiv ↗筆記
+2022context distillationLearning by Distilling Context
+Snell et al.
+context distillation；自蒸餾概念
+arXiv ↗筆記
+2023on-policy 模仿／蒸餾MiniLLM: On-Policy Distillation of Large Language Models
+Gu et al.
+LLM 的 on-policy 蒸餾
+arXiv ↗筆記
+2024RLVRDeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models
+Shao et al.
+GRPO；LOPD 的 RLVR 基線
+arXiv ↗筆記
+2024latent 推理Training Large Language Models to Reason in a Continuous Latent Space
+Hao et al.
+Coconut；連續 latent 思考
+arXiv ↗筆記
+2025latent 記憶MemGen: Weaving Generative Latent Memory for Self-Evolving Agents
+Zhang et al.
+生成式 latent 記憶；同作者群
+arXiv ↗筆記
+2026OPSDSelf-Distilled Reasoner: On-Policy Self-Distillation for Large Language Models
+Zhao et al.
+OPSD；特權推理軌跡
+arXiv ↗筆記
+2026OPSDReinforcement Learning via Self-Distillation
+Hübotter et al.
+SDPO；回饋條件化老師與 top-M 蒸餾
+arXiv ↗筆記
+2026OPSDSelf-Distillation Enables Continual Learning
+Shenfeld et al.
+SDFT；LOPD 的基線
+arXiv ↗筆記
+2026特權脈絡Skill-SD: Skill-Conditioned Self-Distillation for Multi-turn LLM Agents
+Wang et al.
+技能條件化老師；LOPD 的基線
+arXiv ↗筆記
+2026失敗模式RLCSD: Reinforcement Learning with Contrastive On-Policy Self-Distillation
+Pan et al.
+privilege-induced style drift
+arXiv ↗筆記
+2026本文Latent On-Policy Self-Distillation
+Zhang et al.
+本論文：可學習的 latent 特權脈絡與 privileged-margin
+arXiv ↗筆記
+
+ 17 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 論文的結論（§5）只談展望，沒有限制段。本頁整理 本頁整理：沒有定理或收斂分析；沒有多個 seed 或信賴區間；沒有以文字放入檢索軌跡的 baseline；K 與 nret $n_{ret}$ ​ 依測試集選定；老師的 backbone 固定為 base checkpoint，從頭到尾不進步，只有脈絡在變。
+
+ 研究筆記（依閱讀順序）
+
+ LOPD（Latent On-Policy Self-Distillation）的研究脈絡總覽總覽
+
+ RLVR、GRPO 與信用分配瓶頸背景
+
+ PPO、GRPO、DAPO 與 LLM 的 RL 目標背景
+
+ 知識蒸餾基礎：logit 蒸餾與序列層級蒸餾蒸餾基礎
+
+ On-policy 蒸餾與線上模仿學習蒸餾基礎
+
+ Context distillation 與自蒸餾蒸餾基礎
+
+ SDPO（Reinforcement Learning via Self-Distillation）的研究脈絡總覽OPSD 家族
+
+ OPSD：同一模型帶特權脈絡當老師OPSD 家族
+
+ 特權脈絡的各種實體：答案、回饋、技能與同儕 rollout特權脈絡
+
+ OPD 與 OPSD 的失敗模式與穩定化margin 的動機
+
+ Latent reasoning：以連續向量取代自然語言 tokenlatent 形式
+
+ Latent memory：把經驗壓縮成模型可讀的連續 tokenlatent 形式
+
+ LOPD 方法：可學習的 latent 脈絡與 privileged-margin本論文
+
+ 其他相關筆記
+
+ 檢索增強與外部記憶檢索
+
+ 豐富回饋、事後回顧與 feedback-conditioned policy回饋型特權脈絡
+
+ Guibin Zhang, Jiayang Lyu, Ran Sun, Xinlei Yu, Haoyu Zhao, Qibing Ren, Shuicheng Yan. Latent On-Policy Self-Distillation. 2026. arXiv:2608.13040.
+
+ 本頁的方程式與數字取自論文 v1；標示「本頁推導」的內容為本頁自行推導，「本頁推論」「本頁疑問」為本頁的推論與疑問，「示範值」為本頁為了示範而選的數值，「作者認為」為論文作者的解釋，皆非論文的量測結果。C1–C4 的讀數在瀏覽器中即時計算，不重現論文的實驗。
+
+ ← Paper Master
+ 教學與筆記

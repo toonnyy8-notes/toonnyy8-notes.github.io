@@ -1,0 +1,243 @@
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 119</span>
+  <span class="ttl">Latent On-Policy Self-Distillation（LOPD）</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 119</b> · 互動教學 · arXiv 2608.13040 · 2026</div>
+  <h1>LOPD：讓自蒸餾老師的特權脈絡可以訓練</h1>
+  <p class="dek">這篇論文從過去的成功解題紀錄找出相似的幾筆，轉成一串數字放進老師的輸入，並用最後的成績限制老師不要變得和學生一樣。</p>
+  <p class="byline">Guibin Zhang、Jiayang Lyu、Ran Sun、Xinlei Yu、Haoyu Zhao、Qibing Ren、Shuicheng Yan（2026）〈Latent On-Policy Self-Distillation〉</p>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 自蒸餾</span><p>自蒸餾（self-distillation）：同一個語言模型扮演兩個角色（這是 OPSD 的做法；LOPD 的老師權重是凍結的，見 06）。學生只看任務，自己寫出回答；老師多看一段額外資訊，在學生寫出的每個位置給出「下一個詞是什麼」的機率，學生學著讓自己的機率接近老師。詳見 03。</p></div>
+    <div class="fact"><span class="n">02 · 可訓練的額外資訊</span><p>LOPD 讓這段額外資訊可以訓練：從過去成功的解題紀錄中找出 3 筆最相似的，轉成 96 組數字（向量，不是文字）放進老師的輸入。老師的權重在訓練中不更新，只有產生這些數字的模組與學生在學。詳見 05、06。</p></div>
+    <div class="fact"><span class="n">03 · 結果與強度</span><p>論文報告：在工具使用與程式生成共 10 組比較中，每組評測題目的彙總分數都是 LOPD 最高；但程式題的差距多半只有 1–3 題，且論文沒有多次重複訓練的差異範圍。詳見 12。</p></div>
+  </div>
+  <div class="fig" id="fig-hero"><svg role="img" aria-label="學生只看任務與互動歷史，老師另外看 3 筆紀錄各 32 組數字，兩者各自輸出下一個詞的機率，並比較兩組機率的差異"></svg></div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2608.13040">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-119">在關聯圖中查看</a>
+    <a class="btn" href="lopd-lineage-hub.html">研究筆記總覽</a>
+  </div>
+  <div class="callout" id="notice">
+    <p class="ct">閱讀須知</p>
+    <ol class="prose" style="margin:0;padding-left:1.3em">
+      <li>本論文沒有定理或證明；頁面中的梯度式、$\mathbb E[\delta]=-\mathrm{KL}$、$q^*\propto p(1+\beta Q)$ 都是 <span class="tag">本頁推導</span>。（<a href="#collapse">07</a>–<a href="#fixedpoint">10</a>）</li>
+      <li>老師是凍結的 base checkpoint 加 latent 脈絡，不是與學生同權重的模型。（<a href="#inject">06</a>）</li>
+      <li>「latent 優於文字」與「retrieval alone is insufficient」缺少證據：論文沒有以文字放入檢索軌跡的 baseline。（<a href="#claims">14</a>）</li>
+      <li>Table 1 與 Fig. 4 的 GRPO／Skill-SD 數字不一致；top-M 設計的引用來源前後矛盾。（<a href="#efficiency">13</a>、<a href="#distill">04</a>）</li>
+      <li>「少於 30% rollout 預算」只對 Skill-SD 明確成立；論文未說明預算是否計入建經驗庫與冷啟動的額外 rollouts。（<a href="#efficiency">13</a>）</li>
+      <li>統計較弱：沒有多個 seed、程式類差距多為 1–3 題、K 與 $n_{ret}$ 依測試集選定（m 的選法未說明）。（<a href="#results">12</a>）</li>
+      <li>Fig. 4、Fig. 5 的曲線沒有數值，本頁只列論文文字給出的點，不重畫。（<a href="#efficiency">13</a>）</li>
+    </ol>
+  </div>
+</section>
+
+<!-- S1 -->
+<section class="ch" id="basics" data-toc="01" data-tt="下一個 token">
+  <div class="ch-num">01 · 下一個 token</div>
+  <h2>語言模型在每個位置輸出下一個 token 的分布</h2>
+  <div class="prose">
+    <p>語言模型把文字切成 <b>token</b>（詞或詞的片段），所有可能的 token 組成<b>詞表</b> $\mathcal V$。給定前面的文字，模型對詞表中每個 token $v$ 輸出一個未正規化的分數 $z_v$，稱為 <b>logit</b>。<b>softmax</b> 把 logit 轉成機率：$p(v)=e^{z_v}/\sum_{u\in\mathcal V}e^{z_u}$，所有機率相加為 1。$\log p(v)$ 稱為該 token 的 <b>log 機率</b>，機率越小越負。</p>
+    <p>生成文字時，模型依這個分布抽出下一個 token，接到前文後再預測下一個，如此反覆。溫度、top-k、top-p 是改變抽取方式的設定（例如 top-k 只在機率最高的 k 個 token 中抽）；本論文的設定值列在 <a href="#impl">15</a>。</p>
+  </div>
+  <details class="more"><summary>本章符號</summary>
+    <div class="tscroll" tabindex="0" role="region" aria-label="本章符號表"><table class="stack"><thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td data-h="符號">$\mathcal V$<span class="sr">；</span></td><td data-h="意義">詞表</td></tr>
+      <tr><td data-h="符號">$z_v$、logit<span class="sr">；</span></td><td data-h="意義">模型對 token $v$ 的未正規化分數</td></tr>
+      <tr><td data-h="符號">$p(v)$<span class="sr">；</span></td><td data-h="意義">softmax 後的機率；$\log p(v)$ 為 log 機率</td></tr>
+    </tbody></table></div></details>
+</section>
+
+<!-- S2 -->
+<section class="ch" id="agent" data-toc="02" data-tt="軌跡與獎勵">
+  <div class="ch-num">02 · 軌跡與獎勵</div>
+  <h2>多輪代理人的一條軌跡只在結尾得到一個獎勵</h2>
+  <div class="prose">
+    <p>論文研究的是多輪<b>代理人</b>（agent）：收到任務 $x$ 後，與環境（例如一組可呼叫的工具 API）來回互動。第 $t$ 輪時，代理人看到的<b>狀態</b> $s_t=(x,o_{\le t},a_{\lt t})$ 包含任務、到目前為止的觀察 $o_{\le t}$ 與之前的動作 $a_{\lt t}$（§3.1）。這一輪的動作 $a_t=(a_{t,1},\dots,a_{t,L_t})$ 是一串 token，長度 $L_t$；$a_{t,n}$ 是第 $n$ 個 token，$a_{t,\lt n}$ 是它之前的<b>前綴</b>（prefix）。所有輪次串起來是一條<b>軌跡</b> $\tau$，共 $|\tau|$ 輪。</p>
+    <p>軌跡結束後，驗證器給一個<b>結果獎勵</b> $r(\tau)\in[0,1]$：工具類資料集 EnvScaler 給完成子任務的比例，程式類資料集 TACO 全部測試通過給 1、否則 0（App. B.2）。只用這個數字訓練模型的做法稱為 <b>RLVR</b>（reinforcement learning with verifiable rewards）：一條可能有上千個 token 的軌跡只得到一個數，哪些 token 該負責並不清楚。論文的 RLVR 基線是 <b>GRPO</b>：同一題取 G 條軌跡，以每條獎勵相對於組內平均的高低加權更新（App. B.1，G = 4）。</p>
+  </div>
+  <details class="more"><summary>本章符號</summary>
+    <div class="tscroll" tabindex="0" role="region" aria-label="本章符號表"><table class="stack"><thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td data-h="符號">$x$、$o_{\le t}$、$a_{\lt t}$、$s_t$<span class="sr">；</span></td><td data-h="意義">任務、觀察、之前的動作、第 $t$ 輪的狀態</td></tr>
+      <tr><td data-h="符號">$a_{t,n}$、$a_{t,\lt n}$、$L_t$<span class="sr">；</span></td><td data-h="意義">第 $t$ 輪第 $n$ 個 token、它之前的前綴、該輪動作長度</td></tr>
+      <tr><td data-h="符號">$\tau$、$r(\tau)$<span class="sr">；</span></td><td data-h="意義">軌跡、結果獎勵（0 到 1）</td></tr>
+    </tbody></table></div></details>
+  <p class="read">延伸閱讀：<a href="rlvr-grpo-credit-assignment.html">RLVR、GRPO 與信用分配瓶頸</a></p>
+</section>
+
+<!-- S3 -->
+<section class="ch" id="opsd" data-toc="03" data-tt="OPSD">
+  <div class="ch-num">03 · OPSD</div>
+  <h2>OPSD 讓同一個模型帶著特權脈絡當老師</h2>
+  <div class="prose">
+    <p><b>知識蒸餾</b>讓學生模型學習老師模型在每個 token 上的機率分布，而不只學一個正確答案；每個 token 都有訊號，比 RLVR 的單一獎勵密集。<b>On-policy</b> 指監督發生在學生自己取樣出的軌跡上；<b>off-policy</b> 指學生模仿別人寫好的軌跡。前者讓訓練時看到的狀態與推論時一致（§1）。</p>
+    <p>比較兩個分布用 <b>KL divergence</b>：$D_{KL}(p\|q)=\sum_v p(v)\log\frac{p(v)}{q(v)}\ge0$，兩分布相同時為 0。它不對稱。學生分布寫作 $p^S$、老師分布寫作 $p^T$ 時，<b>reverse KL</b> $D_{KL}(p^S\|p^T)$ 對「學生機率高、老師機率低」的 token 懲罰較重；<b>forward KL</b> $D_{KL}(p^T\|p^S)$ 對「老師機率高、學生機率低」的 token 懲罰較重。<b>stop-gradient</b> $\mathrm{sg}[\cdot]$ 表示前向照常計算，反向傳播時不讓梯度穿過。</p>
+    <p><b>On-policy 自蒸餾</b>（OPSD）的老師不是另一個更大的模型，而是同一個模型（OPSD 的情形；LOPD 的老師不同，見 <a href="#inject">06</a>）多看一段<b>特權脈絡</b>（privileged context）$c$：學生推論時看不到的資訊。學生 $\pi^S_\theta$（參數 $\theta$）取樣軌跡：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="Eq. 1">$$a_t\sim\pi^S_\theta(\cdot\mid s_t),\qquad \tau=(s_1,a_1,\dots,s_{|\tau|},a_{|\tau|})\sim\pi^S_\theta(\cdot\mid x)$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="prose"><p>既有方法以設計者寫死的規則 $\Phi_{fix}$ 從經驗來源 $E$（答案、推理軌跡、回饋、示範或檢索到的軌跡）產生脈絡，老師就是同一模型（OPSD 的情形；LOPD 的老師不同，見 <a href="#inject">06</a>）看著這段脈絡：</p></div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="Eq. 2">$$c_{fix}=\Phi_{fix}(x,E),\qquad \pi^T_\theta(\cdot\mid s_t,c_{fix})=\pi_\theta(\cdot\mid[s_t;c_{fix}])$$</div><span class="eq-n">Eq. 2</span></div>
+  <div class="prose"><p>損失在學生走過的每個前綴上比較兩者，$D$ 為某個 token 層級的 divergence：</p></div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="Eq. 3">$$\begin{aligned}\mathcal L_{OPSD}(\theta)=\mathbb E_{\tau\sim\pi^S_\theta}\Big[\textstyle\sum_{t=1}^{|\tau|}\sum_{n=1}^{L_t}D\big(&\mathrm{sg}[\pi^T_\theta(\cdot\mid s_t,c_{fix},a_{t,\lt n})]\\&\big\|\,\pi^S_\theta(\cdot\mid s_t,a_{t,\lt n})\big)\Big]\end{aligned}$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="prose"><p>論文比較的基線各自代表一種 $c_{fix}$（§4.1、App. B.1）。它們也各自保留原論文的 KL 方向與老師形式，所以 §4.1「只差在特權脈絡與蒸餾損失」並不是只差一項。</p></div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="基線的特權脈絡表"><table class="stack"><caption>基線的特權脈絡（App. B.1）</caption><thead><tr><th>方法</th><th>老師看到的脈絡</th><th>老師形式</th><th>損失</th></tr></thead><tbody>
+    <tr><td data-h="方法">OPSD<span class="sr">；</span></td><td data-h="脈絡">oracle 軌跡，放在 system message<span class="sr">；</span></td><td data-h="老師">凍結<span class="sr">；</span></td><td data-h="損失">全詞表 forward KL</td></tr>
+    <tr><td data-h="方法">SDFT<span class="sr">；</span></td><td data-h="脈絡">示範，附在 user message<span class="sr">；</span></td><td data-h="老師">學生的 EMA（α = 0.01）<span class="sr">；</span></td><td data-h="損失">全詞表 forward KL</td></tr>
+    <tr><td data-h="方法">SDPO<span class="sr">；</span></td><td data-h="脈絡">同一步中成功的兄弟軌跡（G = 4）<span class="sr">；</span></td><td data-h="老師">學生的 EMA（0.05）<span class="sr">；</span></td><td data-h="損失">reverse KL＋top-K＋尾部</td></tr>
+    <tr><td data-h="方法">Skill-SD<span class="sr">；</span></td><td data-h="脈絡">以 UCB1 選出的技能摘要<span class="sr">；</span></td><td data-h="老師">—<span class="sr">；</span></td><td data-h="損失">PPO-clip＋重要性加權的取樣 token reverse KL</td></tr>
+    <tr><td data-h="方法">GRPO<span class="sr">；</span></td><td data-h="脈絡">無老師<span class="sr">；</span></td><td data-h="老師">—<span class="sr">；</span></td><td data-h="損失">PPO-clip，ε = 0.2</td></tr>
+  </tbody></table></div>
+  <div class="prose"><p>OPSD 與 SDFT 的示範池在覆蓋不足時，由更強的模型（DeepSeek-V4-Pro、Qwen3.7-Max）補上（App. B.1）。作者主張：這些脈絡的格式都由設計者事先決定，「supervision quality is bounded by a pre-defined context constructor」（§3.1）。這是主張，論文沒有證明它。</p></div>
+  <div class="fig" id="fig-opsd"><svg role="img" aria-label="左：OPSD 的老師與學生同權重，老師看固定脈絡並 stop-gradient。右：LOPD 的老師是凍結的 base 權重加可訓練的 latent 脈絡，梯度回到 composer"></svg></div>
+  <div class="prose">
+    <p>OPSD 的結構可以這樣總結：學生 $\pi^S_\theta$ 只看狀態 $s_t=(x,o_{\le t},a_{\lt t})$，並自己取樣軌跡；老師是同一個模型（OPSD 的情形；LOPD 的老師不同，見 <a href="#inject">06</a>）多看特權脈絡 $c_{fix}=\Phi_{fix}(x,E)$，這段脈絡可能是答案、軌跡、回饋或技能，由設計者的固定規則產生；老師在學生走過的每個 prefix $(t,n)$ 給出下一 token 分布，損失是兩者的 token 層級 divergence，老師一側 stop-gradient（Eq. 2–3）。推論時只用學生，不給脈絡。</p>
+  </div>
+  <details class="more"><summary>本章符號</summary>
+    <div class="tscroll" tabindex="0" role="region" aria-label="本章符號表"><table class="stack"><thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td data-h="符號">$\pi^S_\theta$、$\pi^T$<span class="sr">；</span></td><td data-h="意義">學生（參數 $\theta$）、老師</td></tr>
+      <tr><td data-h="符號">$c_{fix}=\Phi_{fix}(x,E)$<span class="sr">；</span></td><td data-h="意義">固定規則從經驗 $E$ 產生的特權脈絡</td></tr>
+      <tr><td data-h="符號">$D$、$D_{KL}$、$\mathrm{sg}$<span class="sr">；</span></td><td data-h="意義">token 層級 divergence、KL divergence、stop-gradient</td></tr>
+    </tbody></table></div></details>
+  <p class="read">延伸閱讀：<a href="on-policy-distillation-imitation.html">On-policy 蒸餾與線上模仿學習</a>、<a href="lopd-opsd-self-teacher-privileged-context.html">OPSD：同一模型帶特權脈絡當老師</a>、<a href="lopd-privileged-context-substrates.html">特權脈絡的各種實體</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">OPSD 的老師與學生各看到什麼？監督在哪些狀態上計算？推論時用誰？</p>
+    <p class="a">學生只看 $s_t$ 並自己取樣；老師是同一模型多看 $c_{fix}=\Phi_{fix}(x,E)$，在學生走過的每個 prefix 給出分布；損失是 token 層級 divergence，老師一側 stop-gradient（Eq. 2–3）。推論時只用學生。</p>
+  </div></details>
+</section>
+
+<!-- S4 -->
+<section class="ch" id="distill" data-toc="04" data-tt="蒸餾損失">
+  <div class="ch-num">04 · 蒸餾損失</div>
+  <h2>蒸餾損失只比較老師的前 M 名與合併後的尾部</h2>
+  <div class="prose">
+    <p>LOPD 的老師也看一段脈絡 $c$，它的構造在 <a href="#composer">05</a>–<a href="#inject">06</a> 說明；這裡先把老師寫成 $\pi^T(\cdot\mid s_t,c,a_{t,\lt n})$。在第 $t$ 輪、第 $n$ 個 token 的前綴上，學生與老師的下一 token 分布是</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="Eq. 8">$$p^S_{t,n}=\pi^S_\theta(\cdot\mid s_t,a_{t,\lt n}),\qquad p^T_{t,n}=\pi^T(\cdot\mid s_t,c,a_{t,\lt n})$$</div><span class="eq-n">Eq. 8</span></div>
+  <div class="prose"><p>完整詞表有十萬個以上的 token，逐一比較太貴。論文取<b>老師</b>機率最高的 $M$ 個 token 為支撐集 $\mathcal V^M_{t,n}$，其餘合併成一個尾部事件 $\perp$；學生也用同一個支撐集（Eq. 9）：</p></div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="Eq. 9">$$\tilde p_{t,n}(v)=\begin{cases}p_{t,n}(v), & v\in\mathcal V^M_{t,n}\\ 1-\sum_{u\in\mathcal V^M_{t,n}}p_{t,n}(u), & v=\perp\end{cases}$$</div><span class="eq-n">Eq. 9</span></div>
+  <div class="prose"><p>蒸餾損失在學生自己的軌跡上，對有監督的動作 token 取平均；$\omega_{t,n}\in\{0,1\}$ 是標記「這個 token 要監督」的遮罩，$\mathcal D$ 是任務分布：</p></div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="Eq. 10">$$\begin{aligned}\mathcal L_{distill}(\theta,\phi)=\;&\mathbb E_{x\sim\mathcal D}\,\mathbb E_{\tau\sim\pi^S_\theta(\cdot\mid x)}\\&\Big[\frac{\sum_{t,n}\omega_{t,n}D_{KL}(\tilde p^S_{t,n}\|\tilde p^T_{t,n})}{\sum_{t,n}\omega_{t,n}}\Big]\end{aligned}$$</div><span class="eq-n">Eq. 10</span></div>
+  <div class="prose">
+    <p>學生寫在前面，是 reverse KL；作者的理由是「so that the student concentrates on teacher-supported behavior」（§3.3）。預設 $M=20$（§4.1）。取樣時的 top-k 也是 20（Table 4），但那是生成時的設定，與蒸餾的截斷是兩回事。$\phi$ 是產生脈絡的模組的參數，下一章定義。</p>
+    <p>合併尾部有一個後果 <span class="tag">本頁推導</span>：把尾部多個 token 合併成一項，只會丟失可區分的資訊，KL 不會因此變大（log-sum 不等式）。所以截斷後的 KL 不大於完整 KL，$M$ 越大、分得越細，截斷 KL 不會變小。學生在尾部內如何分配機率完全不影響損失，只有尾部總量受監督。下面的 C1 用 8 個 token 演示。</p>
+  </div>
+
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>Top-M＋合併尾部的 reverse KL</h3><span class="tag">示範值</span></div>
+    <p class="plate-lead">假設：8 個 token 的玩具詞表；老師與學生的 logits 都是示範值，不來自任何模型。學生 logits 為 $z=U+s(Z-U)$，s = 0 時學生等於老師。論文的 M = 20 是從約十萬個 token 中取 20 個，比例與這裡不同。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div id="c1-fig"><svg role="img" aria-label="8 個 token 的老師與學生機率長條" aria-describedby="c1-read"></svg></div>
+        <div class="legend"><span class="lg box tbox">老師機率（實心）</span><span class="lg box sbox">學生機率（斜線）</span></div>
+      </div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1-s">學生位置 s（0＝等於老師，1＝示範學生） <output id="c1-so"></output></label><input type="range" id="c1-s" min="0" max="20" step="1" value="20"></div>
+        <div class="rng"><label class="lbl" for="c1-m">支撐集大小 M <output id="c1-mo"></output></label><input type="range" id="c1-m" min="1" max="8" step="1" value="3"></div>
+        <label class="chk-row"><input type="checkbox" id="c1-perm"> <span id="c1-perm-l">反轉學生在尾部的機率分配</span></label>
+        <dl class="ro" id="c1-read"></dl>
+        <p class="sr" id="c1-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <details class="more"><summary>16 個機率的數值表</summary><div class="tscroll" tabindex="0" role="region" aria-label="C1 機率表"><table class="grad" id="c1-tab"></table></div></details>
+    <p class="plate-f">讀數由本頁依 Eq. 9–10 即時計算；截斷 KL ≤ 完整 KL 為 <span class="tag">本頁推導</span>（log-sum 不等式）。</p>
+  </div>
+
+  <div class="prose">
+    <p>C1 中恆成立的性質：截斷 KL 永遠不大於完整 KL；$M$ 增加不會使截斷 KL 變小；$M=8$ 或 $M=7$ 時（尾部只剩 0 或 1 個 token）兩者相等；勾選「反轉學生在尾部的機率分配」時截斷 KL 不變；s = 0 時所有 KL 為 0。top-M 的出處在論文中前後不一致：§3.3 寫「we follow (Zhao et al., 2026)」（即 OPSD），§4.1 寫「SDPO-style top-M logits plus a tail bucket」，App. B.1 則說 OPSD 用全詞表 forward KL、SDPO 才是 reverse KL＋top-K＋尾部（見 <a href="#claims">14</a>）。</p>
+    <p>LOPD 的蒸餾損失可以這樣總結：在每個 prefix 取老師機率最高的 $M=20$ 個 token 為 $\mathcal V^M$，其餘合併成 ⊥，學生用同一支撐集（Eq. 9）；損失 $D_{KL}(\tilde p^S\|\tilde p^T)=\sum_{v\in\mathcal V^M}p^S\log(p^S/p^T)+\tilde p^S(\perp)\log(\tilde p^S(\perp)/\tilde p^T(\perp))$，學生在前（reverse KL），以 ω 對動作 token 平均（Eq. 10）。<span class="tag">本頁推導</span> 截斷 KL 不大於完整 KL（log-sum 不等式），學生在尾部內的分配不受監督，只有尾部總量受監督。</p>
+  </div>
+  <details class="more"><summary>本章符號</summary>
+    <div class="tscroll" tabindex="0" role="region" aria-label="本章符號表"><table class="stack"><thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td data-h="符號">$p^S_{t,n}$、$p^T_{t,n}$<span class="sr">；</span></td><td data-h="意義">學生、老師在 prefix $(t,n)$ 的下一 token 分布</td></tr>
+      <tr><td data-h="符號">$\mathcal V^M_{t,n}$、$\perp$、$\tilde p$<span class="sr">；</span></td><td data-h="意義">老師前 $M$ 名、合併後的尾部事件、合併後的分布</td></tr>
+      <tr><td data-h="符號">$\omega_{t,n}$<span class="sr">；</span></td><td data-h="意義">動作 token 遮罩（0 或 1）</td></tr>
+    </tbody></table></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">蒸餾損失比較哪些機率？支撐集由誰決定？合併尾部有什麼後果？</p>
+    <p class="a">老師前 $M=20$ 名加合併的 ⊥，學生用老師的支撐集；reverse KL，以 ω 平均（Eq. 9–10）。截斷 KL ≤ 完整 KL，尾部內分配不受監督（本頁推導）。</p>
+  </div></details>
+</section>
+
+<!-- S5 -->
+<section class="ch" id="composer" data-toc="05" data-tt="Composer">
+  <div class="ch-num">05 · Composer</div>
+  <h2>Composer 從檢索到的經驗產生 96 個連續向量</h2>
+  <div class="prose">
+    <p>LOPD 把固定規則 $\Phi_{fix}$ 換成有參數的 $\Phi_\phi$，稱為 <b>composer</b>，輸出一串連續向量 token $\langle e_i\rangle$，以 ⊕ 表示串接：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="Eq. 4">$$c_\phi=\Phi_\phi(x,E)=\langle e_1\rangle\oplus\langle e_2\rangle\oplus\cdots\oplus\langle e_K\rangle$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="prose">
+    <p>Eq. 4 照原文只寫 $K$ 個 token，並稱 $K$ 為「每筆經驗的 token 數」；下面的 Eq. 7 則有 $J\cdot K$ 個。此處 $K$ 為單筆軌跡的向量數；串接後共 $J\cdot K=96$（Eq. 7）；$J$ 即 $n_{ret}$。兩式不一致，實作以 Eq. 7 為準。OPSD 的不對稱保留：老師看 $c_\phi$，學生只看 $s_t$。</p>
+    <p><b>經驗庫與檢索</b>（§3.2、App. A.3）。經驗庫只存<b>訓練集</b>上的成功 rollout（工具類超過 reward 門檻、程式類通過全部測試），每筆是任務描述加上省略冗長觀察的「動作—結果」紀錄。檢索器 Qwen3-Embedding-8B 把文字轉成 4,096 維的單位向量：文件端編碼「任務＋軌跡」，查詢端只編碼任務。兩個單位向量的內積稱為 <b>cosine 相似度</b>，越大越相似；以 FAISS 精確搜尋取最高的 $J$ 筆，記為 $E=\{m_j\}_{j=1}^J$（Eq. 15–16）。預設 $J=3$；附錄與 §4.3 把同一個量寫成 $n_{ret}$。</p>
+    <p><b>編碼</b>。<b>LoRA</b> 是一種微調方式：凍結原本的權重矩陣，只訓練加在旁邊的一個低秩增量。encoder $\mathrm{Enc}_\psi$ 是凍結的 backbone 加上 LoRA（rank 8、α = 16，套在每個 block 的七個線性投影上，App. A.1），參數記為 $\psi$。它把「當前任務＋第 $j$ 筆經驗」編成 $T_j$ 個 $d$ 維隱藏向量（Eq. 5）。</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="Eq. 5 與 Eq. 6">$$\begin{aligned}H_j&=\mathrm{Enc}_\psi(x,m_j)\in\mathbb R^{T_j\times d}\\E_j&=\mathrm{Comp}_\chi(H_j;Q_\chi)=[\langle e_{j,1}\rangle,\dots,\langle e_{j,K}\rangle]\in\mathbb R^{K\times d}\end{aligned}$$</div><span class="eq-n">Eq. 5、6</span></div>
+  <div class="prose">
+    <p><b>壓縮</b>。<b>cross-attention</b>：每個 query 向量對一組 key/value 向量，依相似度取 value 的加權平均。<b>QFormer</b> 式壓縮器用固定數量 $K$ 個可學習的 query $Q_\chi$ 對變長的 $H_j$ 做 cross-attention，所以不論經驗多長，輸出都是 $K$ 個向量。論文的壓縮器有 8 層、各層<b>共用參數</b>，FFN 倍率 4，參數記為 $\chi$；composer 的全部可訓練參數是 $\phi=(\psi,\chi)$。</p>
+    <p><b>串接</b>。$J$ 筆經驗各 $K$ 個向量串成老師的脈絡。這裡的 $\bar\theta$ 是<b>訓練開始前的 base 模型權重，訓練中不更新</b>：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="Eq. 7">$$\begin{aligned}c_\phi(x,E)&=\textstyle\bigoplus_{j=1}^{J}\big(\langle e_{j,1}\rangle\oplus\cdots\oplus\langle e_{j,K}\rangle\big)\\\pi^T_{\bar\theta,\phi}(\cdot\mid s,c_\phi)&=\pi_{\bar\theta}(\cdot\mid[s;c_\phi])\end{aligned}$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="prose">
+    <p>Composer 的流程可以這樣總結：經驗庫只存訓練集的成功 rollout；Qwen3-Embedding-8B（4,096 維）編碼查詢（只含任務）與文件（任務＋軌跡），FAISS 取 cosine 最高的 $J=3$ 筆（Eq. 15–16）；每筆由凍結 backbone＋LoRA（rank 8）編碼（Eq. 5），再由 8 層共用參數的 QFormer 式 cross-attention 以 $K$ 個學習 query 壓成 $K=32$ 個向量（Eq. 6）；串接成 96 個 latent token，在輸入中以 96 個 pad 佔位並於 embedding 後替換（Eq. 17–18，用 torch.cat，見 06）。composer 先以 Eq. 14 的 NLL 冷啟動得到 $\phi_0$（見 06）。</p>
+  </div>
+  <details class="more"><summary>本章符號</summary>
+    <div class="tscroll" tabindex="0" role="region" aria-label="本章符號表"><table class="stack"><thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td data-h="符號">$\Phi_\phi$、$c_\phi$、$\langle e\rangle$<span class="sr">；</span></td><td data-h="意義">composer、latent 脈絡、一個連續向量 token</td></tr>
+      <tr><td data-h="符號">$\phi=(\psi,\chi)$<span class="sr">；</span></td><td data-h="意義">encoder 的 LoRA 參數與壓縮器參數</td></tr>
+      <tr><td data-h="符號">$J$（$n_{ret}$）、$K$、$d$<span class="sr">；</span></td><td data-h="意義">檢索筆數（3）、每筆向量數（32）、隱藏維度</td></tr>
+      <tr><td data-h="符號">$\bar\theta$<span class="sr">；</span></td><td data-h="意義">凍結的 base checkpoint（訓練中不更新）</td></tr>
+    </tbody></table></div></details>
+  <p class="read">延伸閱讀：<a href="lopd-latent-memory-for-agents.html">Latent memory：把經驗壓縮成模型可讀的連續 token</a>、<a href="retrieval-augmented-external-memory.html">檢索增強與外部記憶</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">從任務 $x$ 到老師輸入中的 latent token，經過哪些步驟？數量多少？</p>
+    <p class="a">成功 rollout 經驗庫 → Qwen3-Embedding-8B＋FAISS 取 $J=3$ 筆 → 凍結 backbone＋LoRA 編碼 → 8 層共用參數 QFormer 壓成 $K=32$ 個 → 96 個 latent token 替換 pad 佔位；composer 以 Eq. 14 冷啟動。</p>
+  </div></details>
+</section>
+
+<!-- S6 -->
+<section class="ch" id="inject" data-toc="06" data-tt="注入與凍結老師">
+  <div class="ch-num">06 · 注入與凍結老師</div>
+  <h2>向量替換輸入中的佔位 token，老師的權重保持凍結</h2>
+  <div class="prose">
+    <p>96 個向量不是文字，不能直接交給推論引擎。論文在第一個 user message 中插入一個標記字串，前後是框架文字（工具類：「The following is a REFERENCE EXAMPLE of how a DIFFERENT, already-solved task was handled…」與「--- end of reference example ---」，App. A.5）。依標記把 prompt 切成兩半分別 tokenize，中間插入 $J\cdot K=96$ 個 pad token（Eq. 17）；把整串轉成 embedding 後、進入第一層之前，把這 96 個位置換成 composer 的輸出（Eq. 18）。</p>
+  </div>
+  <div class="fig" id="fig-slots"><svg role="img" aria-label="輸入 token 序列：前段文字、96 個佔位格分成 3 組各 32 格、後段文字；embedding 後佔位格被替換成 latent 向量"></svg></div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="Eq. 17 與 Eq. 18">$$\begin{aligned}&\texttt{input\_ids}=[t_1,\dots,t_a,\underbrace{t_{pad},\dots,t_{pad}}_{J\cdot K},t_{a+1},\dots,t_L]\\&X[p_k]\leftarrow\langle e_k\rangle,\quad k=1,\dots,J\cdot K\end{aligned}$$</div><span class="eq-n">Eq. 17、18</span></div>
+  <div class="prose">
+    <p>替換要用 <code>torch.cat</code> 拼接切片，不能用 in-place 賦值，autograd 才追得到梯度（App. A.4）。encoder 的 LoRA 只在編碼經驗時啟用，在老師的主 forward 與推論時關閉，所以老師是「純 base model＋latent 脈絡」。論文另做了等價性檢查：在佔位處填入已知 token 的 embedding，兩條輸入路徑的 greedy 輸出相同。</p>
+    <p><b>冷啟動</b>（App. A.2）。正式訓練前，composer 先用 base model 自己的成功軌跡 $y^\star$ 做 next-token 負對數概似（NLL）訓練，backbone 凍結（AdamW、lr $10^{-5}$、batch 8、grad clip 3.0；資料量與步數「依 domain 調整」，未給數字），得到 $\phi_0$：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0" role="group" aria-label="Eq. 14">$$\mathcal L_{init}(\phi)=-\mathbb E_{(x,y^\star)\sim D_{exp},\,E=\mathrm{Ret}(x)}\big[\log\pi_{\bar\theta}(y^\star\mid s,c_\phi(x,E))\big]$$</div><span class="eq-n">Eq. 14</span></div>
+  <div class="prose">
+    <p><b>凍結老師與梯度路徑</b>（§3.3）。老師 $\bar\theta$ 是「從同一個 backbone 初始化的凍結參考副本」。學生一開始更新，兩者的權重就不同。老師的權重沒有梯度更新，但老師的 forward activations 留在計算圖中，所以老師分布對 $c_\phi$、進而對 $\phi$ 可微。Eq. 10 沒有對老師加 stop-gradient（與 Eq. 3 不同），蒸餾損失因此同時對學生 $\theta$ 與 composer $\phi$ 產生梯度；作者稱這與 prefix-tuning 是同一種機制。三條式子的 stop-gradient 位置不同，最容易混淆：</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="stop-gradient 位置對照表"><table class="stack"><caption>stop-gradient 放在哪裡</caption><thead><tr><th>式子</th><th>sg 位置</th><th>理由</th></tr></thead><tbody>
+    <tr><td data-h="式子">Eq. 3（OPSD 損失）<span class="sr">；</span></td><td data-h="sg 位置">老師一側加 sg<span class="sr">；</span></td><td data-h="理由">老師與學生同權重 θ，sg 讓損失只把學生移向老師，不反過來改老師</td></tr>
+    <tr><td data-h="式子">Eq. 10（LOPD 蒸餾損失）<span class="sr">；</span></td><td data-h="sg 位置">老師一側不加 sg<span class="sr">；</span></td><td data-h="理由">θ̄ 已凍結，保留老師的計算圖才能讓梯度回到 composer φ（也因此可能退化，見 07）</td></tr>
+    <tr><td data-h="式子">Eq. 11（privilege δ）<span class="sr">；</span></td><td data-h="sg 位置">學生項加 sg<span class="sr">；</span></td><td data-h="理由">δ 只用來訓練 composer，不讓 margin 項透過降低學生機率來製造優勢</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <p>LOPD 的老師與學生不是同一組權重。老師是凍結的 base checkpoint $\bar\theta$（與學生同架構、同初始化，學生開始更新後權重就不同）加上 latent 脈絡：$\pi_{\bar\theta}(\cdot\mid[s;c_\phi])$（Eq. 7、§3.3）。更新的是學生 $\theta$ 與 composer $\phi=(\psi,\chi)$（encoder LoRA 與 QFormer）；$\bar\theta$ 不更新，但老師的 activations 留在計算圖中，Eq. 10 沒有對老師 stop-gradient，梯度穿過凍結網路回到 $c_\phi$；encoder LoRA 在老師主 forward 時關閉（App. A.4）。</p>
+  </div>
+  <details class="more"><summary>本章符號</summary>
+    <div class="tscroll" tabindex="0" role="region" aria-label="本章符號表"><table class="stack"><thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td data-h="符號">$\phi_0$<span class="sr">；</span></td><td data-h="意義">冷啟動後的 composer 參數</td></tr>
+      <tr><td data-h="符號">$y^\star$<span class="sr">；</span></td><td data-h="意義">base model 自己的成功軌跡</td></tr>
+      <tr><td data-h="符號">$X$、$p_k$<span class="sr">；</span></td><td data-h="意義">輸入 embedding 矩陣、第 $k$ 個佔位位置</td></tr>
+    </tbody></table></div></details>
+  <p class="read">延伸閱讀：<a href="lopd-latent-reasoning-continuous-tokens.html">Latent reasoning：以連續向量取代自然語言 token</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">LOPD 的老師與學生是同一組權重嗎？哪些參數會更新？梯度怎麼到 composer？</p>
+    <p class="a">不是；老師＝凍結 $\bar\theta$＋$c_\phi$。更新學生 $\theta$ 與 $\phi=(\psi,\chi)$；Eq. 10 無 stop-gradient，梯度穿過凍結網路回到 $c_\phi$；encoder LoRA 在老師主 forward 關閉。</p>
+  </div></details>
+</section>
