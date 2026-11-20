@@ -3,6 +3,8 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 SRC=[('ai-research-topic-papers.md','raymin-notes'),('diffusion-channels-papers.md','raymin-notes'),('waiting-to-read-papers.md','toonnyy8-notes'),('pdf-library-papers.md','toonnyy8-notes')]
 AX=re.compile(r'(?:arxiv\.org/(?:abs|pdf|html)/|alphaxiv\.org/(?:abs|overview)/|huggingface\.co/papers/)(\d{4}\.\d{4,5})')
 papers={};order=[]
+# Same paper listed under a project/OpenReview URL and an arXiv URL: map the former onto the arXiv key.
+SAME={'https://dream-rsi.com':'2609.14858','https://openreview.net/forum?id=kqmucDKVcU':'2403.13117'}
 for fn,br in SRC:
   cat=None;sub=None
   for line in open(fn).read().split('## 二')[0].splitlines():
@@ -12,6 +14,7 @@ for fn,br in SRC:
     if not m: continue
     title,url,note=m.groups()
     a=AX.search(url); key=a.group(1) if a else url.split('#')[0].rstrip('/')
+    if key in SAME: key=SAME[key]; url=f'https://arxiv.org/abs/{key}'; a=AX.search(url)
     if key in papers:
       p=papers[key]; s=f'{fn} ({br})'
       if s not in p['sources']: p['sources'].append(s)
