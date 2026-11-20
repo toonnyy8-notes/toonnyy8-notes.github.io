@@ -1,0 +1,1108 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>On-policy 或 off-policy 蒸餾</title>
+<meta name="description" content="圖解 On-Policy or Off-Policy Learning?（arXiv 2609.35259）：在強到弱蒸餾中分別改變 rollout 策略、KL 方向與學習率，以及 forward／reverse KL 梯度對 rollout 的敏感度。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+
+/* ---- No. 447 additions ---- */
+:root{--c-ref:var(--c-par)}
+details.more{max-width:760px;margin:16px 0 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.more>summary{cursor:pointer;list-style:none;padding:12px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px;color:var(--ink-2)}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.more[open]>summary::before{transform:rotate(45deg)}
+details.more>.tscroll{margin:0 12px 12px}
+details.more.mini{margin:0;border-radius:10px}
+details.more.mini>summary{font-size:13px;padding:8px 14px}
+details.more.mini .readout{margin:0 8px 8px}
+.lg.sq::before{width:9px;height:9px;border:2px solid var(--ink);border-radius:1px}
+.lg.ring::before{width:12px;height:12px;border:2px solid var(--accent);border-radius:50%}
+.lg.dia::before{width:9px;height:9px;border:2px solid var(--ink);transform:rotate(45deg)}
+.lg.cref::before{border-top:3px dashed var(--c-ref)}
+.lg.samp::before{border-top:1.5px solid var(--ink-2)}
+.quote{padding:10px 16px;border:1px solid var(--line);background:var(--surface);border-radius:10px}
+.note.small{font-size:13px;margin:-6px 0 0;line-height:1.55}
+.hero-strip{max-width:520px;margin:8px 0 0}
+.hero-strip .cap{font-size:13px;color:var(--ink-3)}
+svg .samp{stroke:var(--ink-2);stroke-width:1.2;fill:none;opacity:.7}
+svg .cref{stroke:var(--c-ref);stroke-width:3;fill:none;stroke-dasharray:7 5}
+svg .plan{stroke:var(--accent);stroke-width:3;fill:none}
+svg .plan0{stroke:var(--ink-2);stroke-width:1.6;fill:none}
+svg .mk{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .mk-acc{fill:none;stroke:var(--accent);stroke-width:2.5}
+svg .cell{stroke:var(--line);stroke-width:.5}
+svg .cur-col{fill:none;stroke:var(--ink);stroke-width:2}
+svg .frame{fill:none;stroke:var(--line)}
+svg .warn{font:500 14px var(--f-body);fill:var(--accent)}
+.warm{max-width:760px;margin:12px 0 24px;display:flex;flex-direction:column;gap:12px;padding:18px 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+.lane{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lane-h{font:500 12px/1 var(--f-mono);color:var(--ink-3);width:4.5em}
+.nd{padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);font-size:14px;line-height:1.3}
+.nd.acc{border-color:var(--accent);background:var(--accent-soft)}
+.ar{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-2)}
+.ar::before{content:"";width:22px;border-top:2px solid var(--ink-2)}
+.ar::after{content:"";width:0;height:0;border-left:6px solid var(--ink-2);border-top:4px solid transparent;border-bottom:4px solid transparent;margin-left:-6px}
+.ar.dash::before{border-top-style:dashed}
+.plate .readout{white-space:pre-line}
+@media (max-width:599px){.lane-h{width:100%}}
+
+/* ---- No. 136 additions ---- */
+details.more{max-width:760px;margin:16px 0 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.more>summary{cursor:pointer;list-style:none;padding:12px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px;color:var(--ink-2)}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.more[open]>summary::before{transform:rotate(45deg)}
+details.more>.tscroll{margin:0 12px 12px}
+details.more.mini{max-width:700px;margin:20px 0 0;border-radius:10px}
+details.more.mini>summary{font-size:13px;padding:8px 14px}
+.tag.fig,.tag.demo{border-style:dashed}
+.eq:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+dl.ro{display:grid;grid-template-columns:auto auto;gap:4px 14px;margin:14px 0 0;font:400 13px/1.6 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px}
+dl.ro dt{color:var(--ink-3)}dl.ro dd{margin:0;color:var(--ink);text-align:right;font-variant-numeric:tabular-nums}
+.fig .cap{margin:0 0 4px;font-size:13px;color:var(--ink-3)}
+/* 2x2 grid */
+.grid22{display:grid;grid-template-columns:4.5em repeat(2,minmax(0,1fr));gap:6px;max-width:520px;margin:20px 0 6px;font-size:13px}
+.grid22 .g-h{font:500 12px/1.3 var(--f-mono);color:var(--ink-3);align-self:end}
+.grid22 .g-r{font:500 12px/1.3 var(--f-mono);color:var(--ink-3);align-self:center}
+.g-cell{border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:8px 10px}
+.g-cell.conv{border-color:color-mix(in oklab,var(--accent) 45%,var(--line))}
+.g-n{font:600 13px/1.3 var(--f-body);margin-bottom:6px}
+.g-lr{display:grid;grid-template-columns:1fr 1fr;gap:4px;font:400 12px/1.4 var(--f-mono);color:var(--ink-2)}
+.g-lr span{background:var(--surface-2);border-radius:6px;padding:3px 6px}
+.g-lr span:last-child{background:color-mix(in oklab,var(--ink) 14%,var(--surface))}
+.g-lr b{color:var(--ink);font-weight:500}
+.grid-cap{max-width:640px;font-size:13px;color:var(--ink-3)}
+/* C1 */
+.c1row{margin:10px 0 4px}
+.c1h{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;font-size:13px;color:var(--ink-2)}
+.c1h b{color:var(--ink);font-weight:600}
+.c1lg{font:400 12px/1.5 var(--f-mono);color:var(--ink-3)}
+.c1pt{cursor:pointer;outline:none}
+.c1pt:focus-visible .mk,.c1pt:focus-visible .mk-sel{stroke:var(--accent);stroke-width:3}
+#c1-table tr.grp td{background:var(--surface-2);font-size:13px}
+svg .mk{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .mk-sel{fill:var(--accent);stroke:var(--ink);stroke-width:2}
+/* bars, lines */
+svg .bar-s{fill:var(--c-par)}
+svg .bar-h{fill:url(#hatch);stroke:var(--ink-2);stroke-width:1}
+svg .bS-r{fill:var(--c-par)}
+svg .bT-r{fill:var(--surface);stroke:var(--ink);stroke-width:1.5}
+svg .bL-r{fill:url(#hatchA);stroke:var(--accent);stroke-width:1.2}
+svg .acc-s{stroke:var(--accent);stroke-width:2.5;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .npar-s{stroke:var(--c-par);stroke-width:2.5;fill:none;stroke-dasharray:8 5}
+svg .par-f{fill:var(--c-par)}
+svg .dot3-s{stroke:var(--ink-3);stroke-width:2;fill:none;stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .ref-s{stroke:var(--ink-3);stroke-width:1.2;fill:none;stroke-dasharray:5 4}
+svg .axis{stroke:var(--ink-3);stroke-width:1}
+svg .lab{fill:var(--ink-2);font:400 12px var(--f-mono)}
+svg .lab9{fill:var(--ink-2);font:400 12px var(--f-mono)}
+svg .lab13{fill:var(--ink);font:500 13px var(--f-body)}
+svg .halo{paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round}
+.lg.npar::before{border-top:2.5px dashed var(--c-par)}
+.lg.dot3::before{border-top:2px dotted var(--ink-3)}
+.lg.bS::before,.lg.bT::before,.lg.bL::before{width:14px;height:12px;border:0;border-radius:2px}
+.lg.bS::before{background:var(--c-par)}
+.lg.bT::before{background:var(--surface);border:1.5px solid var(--ink)}
+.lg.bL::before{border:1.2px solid var(--accent);background:var(--surface)}
+.lg.bL{position:relative}.lg.bL::after{content:"";position:absolute;left:1px;top:50%;width:12px;height:10px;margin-top:-5px;background:var(--accent);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='5'%3E%3Cpath d='M-1 6L6 -1M-1 1L1 -1M4 6L6 4' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E");mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='5'%3E%3Cpath d='M-1 6L6 -1M-1 1L1 -1M4 6L6 4' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E")}
+.plate-h .tag{flex:0 0 auto;width:auto}
+.plate+.prose{margin-top:24px}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 136</span>
+  <span class="ttl">On-policy 或 off-policy 蒸餾</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 136</b> · 互動教學 · arXiv 2609.35259 · preprint 2026</div>
+  <h1>On-policy 或 off-policy：蒸餾動態的受控比較</h1>
+  <p class="dek">作者在相同流程下分別改變訓練文本由哪個模型生成、比較兩個機率分布的方式與學習率，發現文本由哪個模型生成不是主要因素。</p>
+  <p class="byline">Julianna Piskorz、Antonin Berthon（同等貢獻）、Mihaela van der Schaar（University of Cambridge，2026）〈On-Policy or Off-Policy Learning? A Systematic Study of Distillation Dynamics〉</p>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 兩種蒸餾</span><p>蒸餾（distillation）讓小模型（學生）模仿大模型（教師）每一步的下一個字詞機率。訓練用的文本可以由教師模型生成（off-policy，OffPD），也可以由學生模型生成（on-policy，OnPD）。</p></div>
+    <div class="fact"><span class="n">02 · 三個因素分開改</span><p>作者固定其他設定，只改變文本由哪個模型生成、比較機率的方式（KL 散度的兩個方向：以教師加權的 forward、以學生加權的 reverse）與學習率。生成文本的模型對最終準確率沒有一致的影響：最佳平均準確率 OnPD 72%、OffPD 73%。</p></div>
+    <div class="fact"><span class="n">03 · 學習率</span><p>學習率決定有多少參數幾乎沒動（變化小於 10⁻⁶ 的參數比例）：學習率 1×10⁻⁵ 時 85.3–89.6%，5×10⁻⁵ 時 51.9–60.0%。</p></div>
+  </div>
+  <div class="grid22" data-hl="none" aria-hidden="true"></div>
+  <p class="cap grid-cap">本頁的 2×2 設計格：列是 rollout 策略（OnPD／OffPD），欄是 KL 方向（F＝forward、Rev＝reverse），每格左右兩半是兩個學習率。</p>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2609.35259">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-136">在關聯圖中查看</a>
+    <a class="btn" href="odd-lineage-hub.html">研究筆記總覽</a>
+  </div>
+</section>
+
+<!-- S1 -->
+<section class="ch" id="setup" data-toc="01" data-tt="蒸餾目標">
+  <div class="ch-num">01 · 蒸餾目標</div>
+  <h2>蒸餾目標對 rollout 中出現的前綴取平均</h2>
+  <div class="prose">
+    <p>語言模型把文字切成 <b>token</b>（模型輸出的最小單位），所有可能的 token 構成<b>詞彙表</b> $\mathcal V$，大小記為 $\lvert\mathcal V\rvert$（論文記為 $M$）。給定輸入（prompt）$x\sim p_{\text{data}}$ 與輸出序列 $y=(y_1,\dots,y_{L_y})$，第 $n$ 個 token 之前的輸出 $y_{\lt n}=(y_1,\dots,y_{n-1})$ 稱為<b>前綴</b>，記 $h_n=(x,y_{\lt n})$（Eq. 16）。模型在每個前綴上輸出一個下一個 token 的機率分布：學生是 $\pi_S^\theta(\cdot\mid h_n)$（參數 $\theta$），教師是 $\pi_T(\cdot\mid h_n)$。</p>
+    <p>後訓練常見的幾種方法：<b>SFT</b>（監督式微調，以示範答案做下一個 token 的交叉熵訓練）；<b>RL</b>（強化學習，以獎勵更新模型）；<b>RLVR</b>（以可驗證獎勵，例如答案對錯，做的 RL）；<b>GRPO</b>（一種以同一題多個回答的組內相對獎勵更新的 RL 演算法）。本文研究另一種常用方法：<b>強到弱蒸餾</b>（strong-to-weak distillation）：用較大的教師模型提供監督，讓較小的學生模型學習教師的推理行為（Sec. 1）。</p>
+    <p>計算損失所用的輸出序列稱為 <b>rollout</b>，產生它的策略記為 $\rho$。蒸餾目標寫成（Sec. 3，Eq. 1）：先對 prompt 與 rollout 取期望，再對 rollout 中每個位置的學生–教師差異取平均。</p>
+    <div class="eq" tabindex="0" role="region" aria-label="方程式 Eq. 1，可左右捲動"><div class="eq-m">$$L(\theta)=\mathbb E_{x\sim p_{\text{data}}}\,\mathbb E_{y\sim\rho(\cdot\mid x)}\Big[\tfrac1{L_y}\textstyle\sum_{n=1}^{L_y}D\big(\pi_S^\theta(\cdot\mid h_n)\,\Vert\,\pi_T(\cdot\mid h_n)\big)\Big]$$</div><span class="eq-n">Eq. 1</span></div>
+    <p>其中 $D$ 是比較兩個下一個 token 分布的距離函數，本文用 KL 散度（S2）。這個式子只在 rollout 中出現的前綴上比較兩個模型，所以 $\rho$ 決定了學生在哪些前綴上受到監督。</p>
+    <p>OffPD 取 $\rho=\pi_T$（教師產生軌跡），OnPD 取 $\rho=\pi_S^\theta$（學生產生軌跡）。在 OnPD 中，損失也透過抽樣 $y\sim\pi_S^\theta$ 依賴 $\theta$；論文為了可計算，讓梯度不穿過抽樣，把抽到的軌跡視為固定（stop-gradient），得到的更新稱為半梯度（semi-gradient，Sec. 3、Eq. 19）。當 $\rho$ 不依賴 $\theta$（例如 OffPD）時，半梯度就是一般梯度。</p>
+    <p>作者選擇蒸餾作為測試平台的理由（Sec. 1）：比較 SFT 與 RLVR 時，目標函數、監督來源與密度、最佳化程序都一起改變；蒸餾可以只換 rollout 的來源，其他流程保持不變。</p>
+  </div>
+  <details class="more mini"><summary>本節新符號</summary><div class="tscroll"><table><thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$\mathcal V$、$\lvert\mathcal V\rvert$<span class="sr">：</span></td><td>詞彙表與其大小</td></tr>
+    <tr><td>$x$、$y$、$L_y$<span class="sr">：</span></td><td>輸入、輸出序列、輸出長度</td></tr>
+    <tr><td>$y_{\lt n}$、$h_n$<span class="sr">：</span></td><td>前綴；$h_n=(x,y_{\lt n})$</td></tr>
+    <tr><td>$\pi_S^\theta$、$\pi_T$<span class="sr">：</span></td><td>學生、教師的下一個 token 分布</td></tr>
+    <tr><td>$\rho$<span class="sr">：</span></td><td>rollout 策略</td></tr>
+    <tr><td>$D$<span class="sr">：</span></td><td>分布之間的距離函數</td></tr>
+  </tbody></table></div></details>
+  <p class="read">延伸閱讀：<a href="knowledge-distillation-foundations.html">知識蒸餾基礎</a>、<a href="odd-onpd-vs-offpd-setup.html">OnPD 與 OffPD 的定義</a>、<a href="odd-strong-to-weak-distillation-practice.html">強到弱蒸餾在後訓練中的使用</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa"><p class="q">Eq. 1 中 OffPD 與 OnPD 各怎麼設定 $\rho$？OnPD 的梯度如何處理抽樣？</p><p class="a">OffPD 取 $\rho=\pi_T$，OnPD 取 $\rho=\pi_S^\theta$；OnPD 的梯度不穿過抽樣，軌跡視為固定（stop-gradient），得到半梯度（Sec. 3、Eq. 19）。</p></div></details>
+</section>
+
+<!-- S2 -->
+<section class="ch" id="kl" data-toc="02" data-tt="KL 方向">
+  <div class="ch-num">02 · KL 方向</div>
+  <h2>KL 方向與 rollout 策略是兩個獨立選擇</h2>
+  <div class="prose">
+    <p>KL 散度不對稱，所以有兩個方向（Sec. 3，Eq. 2–3）。本文在整個詞彙表上計算（兩個模型的完整輸出分布都取得到），不用抽樣 token 估計，以避免額外的變異。</p>
+    <div class="eq" tabindex="0" role="region" aria-label="方程式 Eq. 2 與 Eq. 3，可左右捲動"><div class="eq-m">$$\begin{aligned}D_{\text{F-KL}}&amp;=\textstyle\sum_{v\in\mathcal V}\pi_T(v)\log\frac{\pi_T(v)}{\pi_S(v)}\\ D_{\text{R-KL}}&amp;=\textstyle\sum_{v\in\mathcal V}\pi_S(v)\log\frac{\pi_S(v)}{\pi_T(v)}\end{aligned}$$</div><span class="eq-n">Eq. 2, 3</span></div>
+    <p>forward KL $\sum_v\pi_T\log(\pi_T/\pi_S)$ 以教師機率加權，懲罰學生沒涵蓋教師給高機率的 token，因此常稱為 mode-covering；reverse KL $\sum_v\pi_S\log(\pi_S/\pi_T)$ 以學生機率加權，懲罰學生把機率放在教師認為不太可能的 token，因此常稱為 mode-seeking（Eq. 2–3、Sec. 3）。</p>
+    <p>習慣上 OffPD 配 forward KL、OnPD 配 reverse KL。這個慣例配對有兩個來源，而本文在全詞彙上算 KL，所以可以把兩者拆開。來源一：教師 rollout 加 forward KL、學生 rollout 加 reverse KL，正好是序列層級 KL 的兩種鏈式分解（Prop. C.4，條件是固定生成長度 $H$、token 損失加總），但這只在目標值層級成立；因為梯度不穿過學生抽樣的前綴，OnPD reverse-KL 的更新一般不是序列層級 reverse KL 的完整梯度。來源二：在固定前綴下，只用一個抽樣 token 估計 KL 時，$v\sim\pi_T$ 的 $\log[\pi_T(v)/\pi_S(v)]$ 是 forward KL 的不偏估計，$v\sim\pi_S$ 的 $\log[\pi_S(v)/\pi_T(v)]$ 是 reverse KL 的不偏估計，所以 rollout 的 token 自然配上對應方向。本文在全詞彙上算 KL，KL 方向不限制 rollout；而且這兩個來源都不代表慣例配對較容易最佳化或表現較好（Sec. 3）。因此作者把 rollout 策略與 KL 方向當成兩個獨立的設計選擇。</p>
+    <p>另外，實驗以每條輸出的實際長度 $L_y$ 正規化，實作的目標一般不是序列 KL 的常數倍（App. C.5 末段）。</p>
+  </div>
+  <div class="grid22" data-hl="all" aria-hidden="true"></div>
+  <p class="cap grid-cap">rollout 策略（列）× KL 方向（欄）四種組合都會被訓練，包括兩種「交叉配對」（OnPD·F 與 OffPD·Rev）。</p>
+  <p class="read">延伸閱讀：<a href="odd-token-kl-direction-gradients.html">Token 層級的正向與反向 KL</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa"><p class="q">兩個方向各以誰的機率加權？各常被稱為什麼？</p><p class="a">forward 以教師加權，稱 mode-covering；reverse 以學生加權，稱 mode-seeking（Eq. 2–3）。</p><p class="q">慣例配對的兩個來源是什麼？為什麼本文可以拆開？</p><p class="a">序列 KL 的鏈式分解（只在目標值層級、固定 $H$）與單樣本估計；本文在全詞彙上算 KL，且兩個來源都不代表慣例配對較好（Sec. 3）。</p></div></details>
+</section>
+
+<!-- S3 -->
+<section class="ch" id="design" data-toc="03" data-tt="實驗設計">
+  <div class="ch-num">03 · 實驗設計</div>
+  <h2>實驗只改三個因素</h2>
+  <div class="prose">
+    <p>本文獨立改變三個因素：rollout（OnPD／OffPD）、KL 方向（forward／reverse）、學習率（1×10⁻⁵／5×10⁻⁵）。主實驗把 Llama-3.1-8B 教師蒸餾到 Llama-3.2-1B 學生，全參數微調 150 步，每個設定 3 個 seed。遺忘的量法是 7 個 OOD 基準平均分數在訓練前後的下降；稀疏度的量法是參數變化量絕對值小於 $\tau=10^{-6}$ 的參數比例 $S_\tau=\frac1P\sum_i\mathbb I[\lvert\theta_i^{\text{final}}-\theta_i^{\text{init}}\rvert\lt\tau]$（Sec. 4.1、App. D.4，沿用 Mukherjee et al., 2025）。</p>
+    <p>ID（in-distribution）指與訓練任務同分布的留出評估；OOD（out-of-distribution）指訓練任務以外的評估。教師與學生來自同一模型家族，共用 tokenizer 與詞彙表，才能直接比較兩者的 token 分布。因為同家族模型的能力重疊會限制知識轉移，作者為每個任務各訓練一個教師並在蒸餾時凍結，以建立足夠的能力差距（Sec. 4.1）。</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="實驗設定表，可橫向捲動"><table class="stack"><caption>實驗設定（Sec. 4.1、App. D）</caption><thead><tr><th>項目</th><th>設定</th></tr></thead><tbody>
+    <tr><td data-h="項目">因素<span class="sr">：</span></td><td data-h="設定">rollout × KL 方向 × 學習率（1×10⁻⁵、5×10⁻⁵）；Countdown-3 另掃 {1,…,6}×10⁻⁵（Fig. 2）</td></tr>
+    <tr><td data-h="項目">模型<span class="sr">：</span></td><td data-h="設定">Llama-3.1-8B → Llama-3.2-1B；App. A.5 為 Qwen2.5-7B → Qwen2.5-1.5B</td></tr>
+    <tr><td data-h="項目">教師<span class="sr">：</span></td><td data-h="設定">SFT 500 步；Science、MedReason 再做 GRPO。Llama 教師準確率：MedReason 85.5%、Science 67.5%、Countdown-3 99.0%（Table 2）</td></tr>
+    <tr><td data-h="項目">任務<span class="sr">：</span></td><td data-h="設定">MedReason（醫學選擇題）、Science（SciKnowEval 科學選擇題）、Countdown-3（三個運算元的算術）；教師回答平均 94–135 tokens</td></tr>
+    <tr><td data-h="項目">OOD 基準<span class="sr">：</span></td><td data-h="設定">MMLU-Pro、TruthfulQA、IFEval、HumanEval、EQ-Bench、BBQ、ToxiGen（App. D.1.2）</td></tr>
+    <tr><td data-h="項目">溫度<span class="sr">：</span></td><td data-h="設定">教師 0.5、學生 1.0，抽樣與計算 KL 用同一組溫度；唯一的介入是 rollout 分布是 $\pi_T$ 還是 $\pi_S^\theta$（App. D.2.2）</td></tr>
+  </tbody></table></div>
+  <details class="more mini"><summary>本節新符號</summary><div class="tscroll"><table><thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>ID、OOD<span class="sr">：</span></td><td>同分布評估、訓練任務以外的評估</td></tr>
+    <tr><td>$\tau$、$S_\tau$<span class="sr">：</span></td><td>稀疏度門檻（$10^{-6}$）與稀疏度</td></tr>
+  </tbody></table></div></details>
+  <p class="read">延伸閱讀：<a href="odd-on-policy-forgetting-sparsity-claims.html">On-policy 學習較不遺忘、更新較稀疏的既有說法</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa"><p class="q">獨立改變哪三個因素？遺忘與稀疏度怎麼量？</p><p class="a">rollout、KL 方向、學習率；遺忘＝7 個 OOD 基準平均分數的下降；稀疏度＝變化量小於 $10^{-6}$ 的參數比例。</p></div></details>
+</section>
+
+<!-- S4 -->
+<section class="ch" id="main-results" data-toc="04" data-tt="主結果">
+  <div class="ch-num">04 · 主結果</div>
+  <h2>rollout 策略沒有一致優勢，學習率主導遺忘與稀疏度</h2>
+  <div class="prose">
+    <p>主結果如下（Sec. 4.2）。最佳平均準確率 OnPD 72%、OffPD 73%；forward KL 在所有 rollout 與學習率下為 71–73%，reverse KL 為 35%–72%，且對學習率敏感得多。遺忘：低學習率時 OOD 平均最多變動 1.3 個百分點，高學習率時下降 11.2–14.0 個百分點。稀疏度：低學習率 85.3–89.6%，高學習率 51.9–60.0%，而且在每一組配對比較中 OffPD 的更新至少與 OnPD 一樣稀疏。</p>
+    <p>（「百分點」pp 指兩個百分比的差。）rollout 之間的遺忘差異相對小；使用 forward KL 時，降低學習率可以消除大部分遺忘，同時保持相近的 ID 準確率。KL 方向對稀疏度是次要因素：在 on-policy rollout 上，reverse KL 一般比 forward KL 稀疏。論文文字只給遺忘的範圍（低學習率最多 1.3 pp、高學習率 11.2–14.0 pp），逐格的遺忘值只畫在 Fig. 1 中，本頁不逐格列出。</p>
+    <p>學習率掃描（Countdown-3，Fig. 2）：稀疏度隨學習率約線性下降，OOD 表現也一致變差，兩種 rollout 的趨勢相近；相同學習率下 OffPD 幾乎在每組比較中遺忘較少，但差異小於學習率的效果。forward KL 下，小學習率可以同時達到最佳任務表現而不損失既有能力。作者把「最終表現相近、但遺忘程度差很多」比作 Catalan-Tatjer 與 Geiping 在 SFT 中描述的「cliff」現象（引號內為作者引用的用詞）。</p>
+    <p>Fig. 1 長條上的數字標籤 <span class="tag fig">圖讀值</span>（三資料集平均、3 seeds；LR 1×10⁻⁵ / 5×10⁻⁵）——ID 準確率：OnPD·F 72 / 72，OnPD·Rev 72 / 35，OffPD·F 71 / 73，OffPD·Rev 35 / 49；更新稀疏度：OnPD·F 85.3 / 51.9，OnPD·Rev 88.5 / 58.5，OffPD·F 88.8 / 59.5，OffPD·Rev 89.6 / 60.0。下方 C1 用這些數字計算「只改一個因素時」的差。</p>
+  </div>
+  <div class="grid22" data-hl="fig1" aria-hidden="true"></div>
+  <p class="cap grid-cap">Fig. 1 的 ID 準確率放進設計格（每格：LR 1e-5 / 5e-5）。</p>
+
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>只改一個因素時的配對差</h3><span class="tag fig">圖讀值</span></div>
+    <p class="plate-lead">假設：數值是 Fig. 1 長條上的標籤（三個資料集平均、3 seeds；準確率標籤為整數，每個差約 ±1 pp）。配對差＝只改一個因素、另兩個固定時的絕對差（百分點）；學習率兩個水準相差 5 倍，其他因素是二元選擇，大小比較依賴所選水準。這是描述統計，不是變異數分解或因果歸因。</p>
+    <div class="ctl-row"><span class="lbl">指標</span><div class="seg" id="c1-metric" role="radiogroup" aria-label="指標"></div></div>
+    <div class="legend c1-legend" id="c1-legend"></div>
+    <div class="fig" id="c1-fig"></div>
+    <div class="tscroll" tabindex="0" role="region" aria-label="配對差表，可橫向捲動"><table class="stack" id="c1-table"><caption>配對差（方法名在前、數值在後）</caption><thead><tr><th>改的因素與固定組合</th><th>方法 1</th><th>方法 2</th><th>差</th></tr></thead><tbody></tbody></table></div>
+    <p class="sr" id="c1-live" aria-live="polite"></p>
+    <p class="plate-f">數值讀自 Fig. 1；配對差為本頁計算。鍵盤：Tab 移到某一列的圖，左右鍵在 4 個點間移動。</p>
+  </div>
+  <div class="prose">
+    <p>由 C1 的表可以讀出 <span class="tag">本頁推導</span>：稀疏度的學習率配對差 29.3–33.4 pp，rollout 配對差 1.1–7.6 pp，KL 配對差 0.5–6.6 pp；ID 準確率改 rollout 的配對差在 forward KL 下為 1 與 1 pp（在 ±1 pp 的捨入範圍內），在 reverse KL 下為 37 與 14 pp。後者對應 S5–S8 的主題：reverse KL 對 rollout 較敏感。準確率標籤是整數，0–2 pp 的差無法區分；學習率兩個水準相差 5 倍，而 rollout 與 KL 是二元選擇，所以「哪個因素的配對差較大」依賴所選的水準。這些是描述性的配對差，不是因果歸因。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="odd-learning-rate-adam-clipping-rlvr.html">學習率、Adam、梯度裁剪與蒸餾後的 RLVR</a></p>
+  <details class="more mini"><summary>本節新符號</summary><div class="tscroll"><table><tbody><tr><td>pp<span class="sr">：</span></td><td>百分點，兩個百分比的差</td></tr></tbody></table></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa"><p class="q">最佳準確率、遺忘、稀疏度在 OnPD／OffPD 與兩個學習率下各是多少？</p><p class="a">最佳平均準確率 72% 與 73%；遺忘低學習率最多 1.3 pp、高學習率 11.2–14.0 pp；稀疏度 85.3–89.6% 與 51.9–60.0%；OffPD 每組至少與 OnPD 一樣稀疏。</p></div></details>
+</section>
+
+<!-- S5 -->
+<section class="ch" id="grad" data-toc="05" data-tt="logit 梯度">
+  <div class="ch-num">05 · logit 梯度</div>
+  <h2>forward KL 的 logit 梯度有界，reverse KL 沒有</h2>
+  <div class="prose">
+    <p>先回顧從參數到損失的路徑。學生在一個前綴上先算出一個實數向量 $z_S^\theta$，稱為 <b>logit</b>，每個 token 一個數；softmax 把它變成機率 $\pi_S^\theta(v)=e^{z_v}/\sum_ue^{z_u}$；再用 KL 和教師比較。梯度沿這條路反向傳回參數，所以關鍵是「KL 對 logit 的導數」。</p>
+    <p>兩個 token 的例子：學生 logit 為 $(1,0)$，softmax 得 $\pi_S=(0.7311,0.2689)$；教師為 $(0.5,0.5)$。forward KL ＝ 0.1201 nats，reverse KL ＝ 0.1109 nats。forward KL 對 logit 的導數是 $(0.2311,-0.2311)$，reverse KL 的是 $(0.1966,-0.1966)$。梯度下降會減少第一個 token 的 logit、增加第二個，使學生往教師的 (0.5, 0.5) 靠近。（nat 是以自然對數計的資訊單位。）</p>
+    <p>softmax 的導數是 $\partial\pi_S(u)/\partial z_v=\pi_S(u)(\mathbb I[u=v]-\pi_S(v))$（Eq. 9）。固定前綴、教師分布與 $\theta$ 無關時，代入 Eq. 2–3 得到（Sec. 5.1，Eq. 4–5，推導見 App. B）：</p>
+    <div class="eq" tabindex="0" role="region" aria-label="方程式 Eq. 4 與 Eq. 5，可左右捲動"><div class="eq-m">$$\begin{aligned}\nabla_\theta D_{\text{F-KL}}&amp;=\textstyle\sum_v\big(\pi_S^\theta(v)-\pi_T(v)\big)\nabla_\theta(z_S^\theta)_v\\ \nabla_\theta D_{\text{R-KL}}&amp;=\textstyle\sum_v\pi_S^\theta(v)\Big(\log\frac{\pi_S^\theta(v)}{\pi_T(v)}-D_{\text{R-KL}}\Big)\nabla_\theta(z_S^\theta)_v\end{aligned}$$</div><span class="eq-n">Eq. 4, 5</span></div>
+    <p>forward KL 對學生 logit 的導數是 $\pi_S(v)-\pi_T(v)$：每個座標落在 $[-1,1]$，只要兩個分布不同就非零。reverse KL 對學生 logit 的導數是 $\pi_S(v)\big(\log\frac{\pi_S(v)}{\pi_T(v)}-D_{\text{R-KL}}\big)$：它以學生機率加權，學生機率趨近 0 時這個座標消失，所以 reverse KL 難以找回學生遺漏的教師 mode；反過來，學生給某 token 可觀機率而教師機率趨近 0 時，log 比 $\log\frac{\pi_S}{\pi_T}$ 可任意大，導數可任意大（Eq. 4–5、Sec. 5.1）。reverse 式假設凡 $\pi_S(v)>0$ 處 $\pi_T(v)>0$，否則 reverse KL 無限大（App. B）。</p>
+    <p>作者認為：forward KL 在任何兩分布不一致的前綴都提供訊號；reverse KL 強調「學生支持、教師不支持」的 token，因此更依賴學生自己會產生的前綴，預期從 on-policy rollout 獲益較多（Sec. 5.1）。</p>
+    <p>記 $r(v)=\log\frac{\pi_S(v)}{\pi_T(v)}$（log 機率比，Eq. 42），一個前綴上的範圍 $\Delta r=\max_vr(v)-\min_vr(v)$。論文證明 $\lVert\nabla_zD_{\text{R-KL}}\rVert_2\le\Delta r$（Eq. 63–65）；此界不緊，只保證有限（下方 C2 中常差好幾倍）。兩個梯度向量的座標和都是 0 <span class="tag">本頁推導</span>（$\sum_v(\pi_S-\pi_T)=0$；$\sum_v\pi_S(r-D_{\text{R-KL}})=D_{\text{R-KL}}-D_{\text{R-KL}}=0$），也就是把所有 logit 加同一個常數不改變損失。</p>
+  </div>
+
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>一個前綴上的 forward／reverse KL 與 logit 梯度</h3><span class="tag demo">示範值</span></div>
+    <p class="plate-lead">假設：詞彙表 5 個 token（A–E）；只有 token A 的機率可調，其餘機率依固定比例 0.4 : 0.3 : 0.2 : 0.1 分給 B–E，學生與教師用同一比例，所以 B–E 的 log 機率比彼此相同；直接 logit 參數化（Jacobian＝單位矩陣）。</p>
+    <div class="ctl-row" id="c2-presets"></div>
+    <div class="pg two">
+      <div class="rng"><label class="lbl" for="c2-s">學生給 A 的機率 π_S(A) <output id="c2-so"></output></label><input type="range" id="c2-s" min="-6" max="-0.05" step="0.01" value="-0.3"></div>
+      <div class="rng"><label class="lbl" for="c2-t">教師給 A 的機率 π_T(A) <output id="c2-to"></output></label><input type="range" id="c2-t" min="-6" max="-0.05" step="0.01" value="-2"></div>
+    </div>
+    <div class="pg two">
+      <div class="fig" id="c2-f"><p class="cap">forward KL 的 logit 梯度 π_S − π_T（縱軸固定 ±1）</p><svg role="img" aria-label="forward KL 的 logit 梯度"></svg></div>
+      <div class="fig" id="c2-r"><p class="cap">reverse KL 的 logit 梯度（斜線；縱軸隨數值調整）</p><svg role="img" aria-label="reverse KL 的 logit 梯度"></svg></div>
+    </div>
+    <dl class="ro" id="c2-read"></dl>
+    <p class="sr" id="c2-live" aria-live="polite"></p>
+    <p class="plate-f">讀數由本頁依 Eq. 2–5、Eq. 65 即時計算；座標和為 0 的檢查為本頁推導；B–E 比例為示範值。‖g_R‖₂ ≤ Δr 這個界不緊。</p>
+  </div>
+  <div class="prose">
+    <p>「教師給 A 的機率趨近 0」按鈕下，reverse 的 A 座標 3.45，超出 forward 每座標的界 1；「學生給 A 的機率趨近 0」按鈕下，forward 的 A 座標 −0.60（梯度下降使 A 的 logit 上升），reverse 的 A 座標 ≈ 0。此按鈕下 reverse 的整個梯度向量都接近 0：B–E 共用同一比例、log 比相同，學生在 B–E 上已與教師成比例。這是玩具假設造成的；Sec. 5.1 的論述只針對 A 這一個座標。</p>
+  </div>
+  <details class="more mini"><summary>本節新符號</summary><div class="tscroll"><table><tbody>
+    <tr><td>logit $z_S^\theta$<span class="sr">：</span></td><td>softmax 前的實數向量</td></tr>
+    <tr><td>$r(v)$、$\Delta r$<span class="sr">：</span></td><td>log 機率比；它在一個前綴上的範圍</td></tr>
+    <tr><td>nat<span class="sr">：</span></td><td>以自然對數計的資訊單位</td></tr>
+  </tbody></table></div></details>
+  <p class="read">延伸閱讀：<a href="odd-token-kl-direction-gradients.html">Token 層級的正向與反向 KL：梯度形式與對 rollout policy 的敏感度</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa"><p class="q">forward 與 reverse KL 對學生 logit 的導數是什麼？各在何時變大或消失？</p><p class="a">forward：$\pi_S-\pi_T$，每座標在 $[-1,1]$；reverse：$\pi_S(\log\frac{\pi_S}{\pi_T}-D_{\text{R-KL}})$，學生機率趨近 0 時消失，教師機率趨近 0 時可任意大。</p></div></details>
+</section>
+
+<!-- S6a -->
+<section class="ch" id="bound-fwd" data-toc="06a" data-tt="forward 的穩定性">
+  <div class="ch-num">06a · forward 的穩定性</div>
+  <h2>rollout 相近時 forward KL 的更新也相近</h2>
+  <div class="prose">
+    <p>S4 的實驗中 rollout 換來換去，forward KL 的表現幾乎不變。App. C 問的是：如果兩個 rollout 策略只差一點，用它們算出的期望更新會差多少？</p>
+    <p>需要三個量。<b>Jacobian</b> $J_\theta(h_n)=\partial z_S^\theta(h_n)/\partial\theta$（Eq. 21）描述參數改變如何影響 logit；$B$ 是 $J_\theta^\top$ 最大奇異值的上界，也就是「logit 空間的一個向量經 $J^\top$ 映到參數空間時，長度最多放大幾倍」（Eq. 26）。<b>total variation</b> 距離 $\mathrm{TV}(P,Q)=\tfrac12\lVert P-Q\rVert_1$ 是兩個分布之間最多有多少機率質量不同；本文用在兩個 rollout 策略對<b>完整輸出序列</b>的分布之間。<b>半梯度</b> $\bar\nabla_\theta L(\theta;\rho)=\mathbb E_x\mathbb E_{y\sim\rho}[g(x,y)]$（Eq. 19、25），其中 $g$ 是一條軌跡上各 token 梯度的平均（Eq. 24）。</p>
+    <p><b>Theorem C.1</b>（forward KL 的 rollout 穩定性）：若對每個 prompt、兩個 rollout 策略下機率為正的每個輸出、每個位置都有 $\lVert J_\theta^\top v\rVert_2\le B\lVert v\rVert_2$（Eq. 26），則</p>
+    <div class="eq" tabindex="0" role="region" aria-label="方程式 Eq. 27，可左右捲動"><div class="eq-m">$$\begin{aligned}&amp;\big\lVert\bar\nabla_\theta L_{\text{F-KL}}(\theta;\rho)-\bar\nabla_\theta L_{\text{F-KL}}(\theta;\rho')\big\rVert_2\\&amp;\qquad\le2\sqrt2\,B\;\mathbb E_x\big[\mathrm{TV}(\rho(\cdot|x),\rho'(\cdot|x))\big]\end{aligned}$$</div><span class="eq-n">Eq. 27</span></div>
+    <p>並且單一軌跡梯度的二階動差（平方範數的期望）不超過 $2B^2$（Eq. 28）。常數只依賴 $B$，不依賴學生與教師的機率比。</p>
+  </div>
+  <details class="more"><summary>證明（三步，App. C.2）</summary><div class="prose" style="padding:0 20px 8px">
+    <p>1. 任兩個機率向量 $\lVert p-q\rVert_2\le\sqrt2$，所以每個 token 的參數梯度 $\lVert J^\top(\pi_S-\pi_T)\rVert_2\le\sqrt2B$（Eq. 30）。</p>
+    <p>2. 一條軌跡的梯度是各 token 的平均，三角不等式給出 $\lVert g\rVert_2\le\sqrt2B$（Eq. 33）。</p>
+    <p>3. 對有界函數 $g$，$\lVert\mathbb E_P[g]-\mathbb E_Q[g]\rVert_2\le2\sup\lVert g\rVert_2\,\mathrm{TV}(P,Q)$（Eq. 34），對每個 prompt 套用再取期望，得到 Eq. 27。</p>
+  </div></details>
+  <details class="more mini"><summary>本節新符號</summary><div class="tscroll"><table><tbody>
+    <tr><td>$J_\theta$、$B$<span class="sr">：</span></td><td>logit 對參數的 Jacobian；$J^\top$ 最大奇異值的上界</td></tr>
+    <tr><td>$\mathrm{TV}$<span class="sr">：</span></td><td>完整輸出序列分布之間的 total variation 距離</td></tr>
+    <tr><td>$\bar\nabla_\theta L$<span class="sr">：</span></td><td>期望半梯度</td></tr>
+  </tbody></table></div></details>
+</section>
+
+<!-- S6b -->
+<section class="ch" id="bound-rev" data-toc="06b" data-tt="reverse 的敏感度">
+  <div class="ch-num">06b · reverse 的敏感度</div>
+  <h2>reverse KL 的更新可以在 rollout 幾乎不變時大幅改變</h2>
+  <div class="prose">
+    <p><b>Theorem C.2</b> 說 reverse KL 沒有類似 Eq. 27 的上界：不存在與學生、教師分布無關的有限常數 $C$，使更新差 $\le C\,\mathbb E_x[\mathrm{TV}]$（Eq. 46），即使詞彙只有兩個 token、Jacobian 最大奇異值為 1。反例（Eq. 47–57）：兩條長度 2 的軌跡 $y^{(0)}$、$y^{(\delta)}$。$y^{(0)}$ 的每個前綴上學生與教師相同，梯度為 0；$y^{(\delta)}$ 的第二個前綴上學生是 $(\tfrac12,\tfrac12)$、教師是 $(\delta,1-\delta)$，$0\lt\delta\lt\tfrac12$，此處 logit 梯度 $=\tfrac14\log\frac{1-\delta}\delta\,(1,-1)$（Eq. 51）。令 $\rho'$ 只產生 $y^{(0)}$，$\rho$ 以機率 $1-\varepsilon$ 產生 $y^{(0)}$、以機率 $\varepsilon$ 產生 $y^{(\delta)}$，兩者 TV $=\varepsilon$（Eq. 55）。</p>
+    <p>兩個 rollout 穩定性定理可以這樣陳述。Theorem C.1：若對每個 prompt、兩個 rollout 下機率為正的每個輸出與每個位置都有 $\lVert J_\theta^\top v\rVert_2\le B\lVert v\rVert_2$（Eq. 26），則 forward KL 的期望更新差 $\le2\sqrt2B\,\mathbb E_x[\mathrm{TV}]$，其中 TV 是兩個 rollout 策略對完整輸出序列的分布距離（Eq. 27）。Theorem C.2：在上面的兩 token 反例中 TV $=\varepsilon$，reverse KL 的更新差 $=\frac{\varepsilon\sqrt2}8\log\frac{1-\delta}\delta$（Eq. 57），$\delta\to0$ 時發散，所以不存在與分布無關的常數。Corollary C.3：若每個前綴上 log 比的範圍不超過 $R$（Eq. 58），則恢復上界 $2BR\,\mathbb E_x[\mathrm{TV}]$（Eq. 59）。反例中教師的每個機率都嚴格為正，所以它適用於 softmax 語言模型。</p>
+    <p>這些定理不能推出「forward KL 下不同 rollout 會得到相同的最終表現」。定理只控制一步的期望半梯度，上界依賴完整軌跡分布的距離與 Jacobian 上界 $B$；它不證明不同 rollout 會得到相似的模型或相似的表現，也不解釋遺忘與稀疏度的差異，也不主張 reverse KL 一定不穩定或學生 rollout 一定較好。實驗結果只能解讀為與定理一致，不是它的直接推論（App. C.2、C.4）。作者另指出：rollout 機率 $\varepsilon$ 的變動可被局部梯度 $\log(1/\delta)$ 放大成 $\varepsilon\log(1/\delta)$ 的更新差；全域梯度截斷能限制實際的梯度範數，緩解這種情形，但不等於施加 Eq. 58 的條件。</p>
+    <p>同一反例改用 forward KL <span class="tag">本頁推導</span>：第二前綴的 logit 梯度是 $(\tfrac12-\delta)(1,-1)$，更新差 $=\varepsilon\frac{\sqrt2}2(\tfrac12-\delta)\le\frac{\sqrt2}4\varepsilon$。這是同一反例下的值，不是 forward 的最壞情形；forward 的保證只有 Eq. 27 的上界。reverse 的更新差在 δ ≈ 1.1×10⁻⁷ 時超過 forward 的通用上界 $2\sqrt2\varepsilon$。兩者屬於不同的目標函數，這只是數字比較，不表示兩個界可以互換或直接比較。</p>
+  </div>
+
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>rollout 相差 ε 時，更新差多少</h3><span class="tag demo">示範值</span><span class="tag">本頁推導</span></div>
+    <p class="plate-lead">假設：論文 Theorem C.2 的兩 token 反例：學生 (1/2, 1/2)、教師 (δ, 1−δ)、直接 logit 參數化（B = 1）；rollout 以機率 ε 換成走到這個前綴的軌跡（TV = ε）。forward 曲線是本頁用同一反例算出的值，不是 forward 的最壞情形。B = 1 與預設的 δ = 0.01、ε = 0.1 是示範假設，非論文實驗。</p>
+    <div class="pg two">
+      <div class="rng"><label class="lbl" for="c3-d">教師給 token 1 的機率 δ <output id="c3-do"></output></label><input type="range" id="c3-d" min="-12" max="-0.31" step="0.01" value="-2"></div>
+      <div class="rng"><label class="lbl" for="c3-e">rollout 的差 ε（= TV） <output id="c3-eo"></output></label><input type="range" id="c3-e" min="0.01" max="1" step="0.01" value="0.1"></div>
+    </div>
+    <div class="fig" id="c3-fig"><svg role="img" aria-label="更新差對 δ 的曲線"></svg></div>
+    <div class="legend"><span class="lg acc">reverse 更新差（Eq. 57）</span><span class="lg npar">forward 更新差，同一反例（本頁推導）</span><span class="lg dot3">forward 的界 2√2·ε（Eq. 27）</span></div>
+    <dl class="ro" id="c3-read"></dl>
+    <p class="sr" id="c3-live" aria-live="polite"></p>
+    <p class="plate-f">Eq. 27、53、57、59 即時計算；forward 曲線與交點為本頁推導。圖畫的是未除以 ε 的更新差，ε 改變時三條線一起平移；交點的 δ 與 ε 無關。</p>
+  </div>
+  <div class="prose">
+    <p>預設值（δ = 0.01、ε = 0.1）下 reverse 更新差 0.0812、forward 更新差 0.0346。δ 每小 10 倍，reverse 更新差增加 $\varepsilon\frac{\sqrt2}8\ln10\approx0.407\varepsilon$ <span class="tag">本頁推導</span>；forward 更新差趨近 $\frac{\sqrt2}4\varepsilon$ 後不再增加。</p>
+  </div>
+  <details class="more mini"><summary>本節新符號</summary><div class="tscroll"><table><tbody>
+    <tr><td>$\varepsilon$、$\delta$<span class="sr">：</span></td><td>反例中 rollout 的混合機率、教師給 token 1 的機率</td></tr>
+    <tr><td>$R$<span class="sr">：</span></td><td>Corollary C.3 中所有前綴上 $\Delta r$ 的上界</td></tr>
+  </tbody></table></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa"><p class="q">Theorem C.1 的上界是什麼？Theorem C.2 的反例給出多大的更新差？</p><p class="a">C.1：在 Eq. 26 條件下 $\le2\sqrt2B\,\mathbb E_x[\mathrm{TV}]$；C.2：$\frac{\varepsilon\sqrt2}8\log\frac{1-\delta}\delta$，$\delta\to0$ 時發散；C.3：$2BR\,\mathbb E_x[\mathrm{TV}]$。</p><p class="q">這些定理能否推出「forward KL 下不同 rollout 得到相同最終表現」？</p><p class="a">不能；定理只控制一步的期望半梯度。</p></div></details>
+</section>
+
+<!-- S7 -->
+<section class="ch" id="spectrum" data-toc="07" data-tt="rollout 光譜">
+  <div class="ch-num">07 · rollout 光譜</div>
+  <h2>光譜 π_λ 在教師與學生之間連續內插與外插</h2>
+  <div class="prose">
+    <p>為了在實驗上檢驗 S5–S6 的敏感度，作者讓 rollout 策略隨一個參數 $\lambda$ 連續變化。這裡的「光譜」（spectrum）指這一族隨 $\lambda$ 變化的抽樣分布（Sec. 5.2，App. D.5）。兩個 token 的<b>勝算</b>（odds）是它們的機率比 $\pi(v)/\pi(u)$；$r_v=\log\pi_S(v)-\log\pi_T(v)$ 是 S5 定義的 log 機率比。</p>
+    <div class="eq" tabindex="0" role="region" aria-label="方程式 Eq. 75 與 Eq. 76，可左右捲動"><div class="eq-m">$$\begin{aligned}(\hat z_\lambda)_v&amp;=\tfrac12(\log\pi_S(v)+\log\pi_T(v))+\tfrac\lambda2(\log\pi_S(v)-\log\pi_T(v))\\&amp;=\tfrac{1+\lambda}2\log\pi_S(v)+\tfrac{1-\lambda}2\log\pi_T(v)\end{aligned}$$</div><span class="eq-n">Eq. 75–76</span></div>
+    <p>rollout 光譜的定義：$\pi_\lambda=\mathrm{softmax}(\hat z_\lambda)$，其中 $\hat z_\lambda=\frac{1+\lambda}2\log\pi_S+\frac{1-\lambda}2\log\pi_T$。$\lambda=-1$ 時就是 $\pi_T$（OffPD），$\lambda=1$ 時就是 $\pi_S$（OnPD），$\lambda=0$ 是兩者正規化後的幾何中點。$\lvert\lambda\rvert>1$ 時某一個係數變成負的，會放大兩個模型都給低機率、只是被偏好的一方給得相對較高的 token。作者的防護是：只對被偏好方機率至少為其最大機率 $\alpha=0.2$ 倍的 token（可信度遮罩，Eq. 77–78）加上 log 比加成，而且加成截斷在 $c=2\log3$（Eq. 79–80），使 $\lambda\in[-2,2]$ 內相對錨點策略的兩兩勝算放大最多 3 倍（Eq. 75–80、App. D.5）。</p>
+    <p>完整寫法：$b_S(v)=M_S(v)\min\{\max\{r_v,0\},c\}$，$b_T(v)=M_T(v)\min\{\max\{-r_v,0\},c\}$；$\lambda>1$ 時 $\tilde z_\lambda=\log\pi_S+\frac{\lambda-1}2b_S$，$\lambda\lt-1$ 時 $\tilde z_\lambda=\log\pi_T+\frac{-\lambda-1}2b_T$，$\lvert\lambda\rvert\le1$ 時 $\tilde z_\lambda=\hat z_\lambda$；最後 $\pi_\lambda=\mathrm{softmax}(\tilde z_\lambda)$。遮罩外的 token 保留錨點策略的機率，因此 $\pi_{-1}=\pi_T$、$\pi_1=\pi_S$，在 $\lvert\lambda\rvert=1$ 處連續。</p>
+    <p>3 倍的來由 <span class="tag">本頁推導</span>：$\lambda>1$ 時 $\tilde z_\lambda-\log\pi_S=\frac{\lambda-1}2b_S$，任兩個 token 的勝算比被乘上 $\exp\!\big(\frac{\lambda-1}2(b_S(v)-b_S(u))\big)\le\exp\!\big(\frac{\lambda-1}2c\big)$，$\lambda=2$ 時為 $e^{\ln3}=3$。不加防護時，同一倍數是 $\exp\!\big(\frac{\lambda-1}2(\max r-\min r)\big)$，沒有上界。Fig. 4 確認這種抽樣方式確實改變了生成軌跡上學生與教師的似然。</p>
+  </div>
+
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>rollout 光譜 π_λ</h3><span class="tag demo">示範值</span></div>
+    <p class="plate-lead">假設：單一前綴、6 個 token（A–F）、學生與教師分布固定；不模擬訓練，只顯示抽樣分布 π_λ。token F 兩個模型都給低機率，但學生給的機率是教師的 200 倍。</p>
+    <div class="rng"><label class="lbl" for="c4-l">光譜參數 λ（← 教師偏好　學生偏好 →） <output id="c4-lo"></output></label><input type="range" id="c4-l" min="-2" max="2" step="0.05" value="0"></div>
+    <div class="ctl-row"><div class="ctl-row" id="c4-btns"></div><label class="chk"><input type="checkbox" id="c4-safe" checked> 使用遮罩與截斷（App. D.5）</label></div>
+    <div class="fig" id="c4-fig"><svg role="img" aria-label="π_S、π_T 與 π_λ 的長條圖"></svg></div>
+    <div class="legend"><span class="lg bS">π_S 學生（實心）</span><span class="lg bT">π_T 教師（空心）</span><span class="lg bL">π_λ（斜線）</span></div>
+    <dl class="ro" id="c4-read"></dl>
+    <p class="sr" id="c4-live" aria-live="polite"></p>
+    <p class="plate-f">依 Eq. 75–80（α = 0.2，c = 2 ln 3）即時計算；3 倍上界的推導為本頁內容；分布為示範值（π_S = 0.45, 0.25, 0.15, 0.08, 0.05, 0.02；π_T = 0.03, 0.57, 0.25, 0.10, 0.0499, 0.0001）。</p>
+  </div>
+  <div class="prose">
+    <p>「λ = 2」按鈕下開啟防護時，A 的加成被截斷在 c，最大勝算放大正好 3.00；F 不在遮罩內（π_S(F) = 0.02 低於 0.2 × 0.45），π_λ(F) = 0.0105。關閉防護時 π_λ(F) 升到 0.1164，最大勝算放大 21.35 倍。這就是 App. D.5 要避免的情形：兩個模型都給低機率的 token 被外插放大。</p>
+  </div>
+  <details class="more mini"><summary>本節新符號</summary><div class="tscroll"><table><tbody>
+    <tr><td>勝算<span class="sr">：</span></td><td>兩個 token 的機率比</td></tr>
+    <tr><td>$\lambda$、$\alpha$、$c$<span class="sr">：</span></td><td>光譜參數；遮罩門檻 0.2；截斷值 $2\ln3$</td></tr>
+    <tr><td>$M_S$、$M_T$、$b_S$、$b_T$<span class="sr">：</span></td><td>可信度遮罩與截斷後的加成</td></tr>
+  </tbody></table></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa"><p class="q">$\pi_\lambda$ 在 $\lambda=-1,0,1$ 是什麼？$\lvert\lambda\rvert>1$ 時如何防護？</p><p class="a">$\pi_T$、正規化幾何中點、$\pi_S$；遮罩 $\alpha=0.2$ 加截斷 $c=2\log3$，勝算放大最多 3 倍。</p></div></details>
+</section>
+
+<!-- S8 -->
+<section class="ch" id="spectrum-results" data-toc="08" data-tt="光譜實驗">
+  <div class="ch-num">08 · 光譜實驗</div>
+  <h2>光譜上 forward KL 穩定，reverse KL 偏好學生 rollout</h2>
+  <div class="prose">
+    <p>作者沿用 S3 的設定，在 Countdown-3 上以 $\pi_\lambda$ 抽樣訓練 150 步（Sec. 5.2，Fig. 3）。forward KL 的準確率在整個光譜上都高於 80%，學習率 1×10⁻⁵ 時只變動 5.2 個百分點；reverse KL 的平均表現隨 $\lambda$ 大幅變化，數個設定 seed 間變異大，低學習率時明顯受益於學生偏好的 rollout（$\lambda>0$），教師偏好的 rollout 表現變差，高學習率時仍不穩定，偶爾準確率驟降（論文用詞 collapse）。遺忘與稀疏度受 rollout 的影響相對小，主要由學習率決定（Sec. 5.2、Fig. 3）。</p>
+    <p>OnPD 加 forward KL 即使經過一段大量不連貫、高熵的 rollout 階段仍能有效學習（App. A.10，見 S10）；作者據此指出，最終表現相近可能掩蓋很不同的最佳化路徑。</p>
+    <p>Qwen2.5（Fig. 15，單一 seed 42）：forward KL 穩健；reverse KL 對教師偏好的 rollout（$\lambda\lt0$）高度敏感，$\lambda\ge0$ 時大幅恢復並接近 forward KL。學習率 5×10⁻⁵ 下，學生偏好的 rollout（$\lambda>0$）使 forward KL 的遺忘隨 $\lambda$ 愈來愈嚴重，reverse KL 一般也遺忘較多但不那麼單調；作者把它當作「on-policy 不必然減少遺忘」的額外證據。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa"><p class="q">光譜上 forward 與 reverse KL 的表現如何？遺忘與稀疏度呢？</p><p class="a">forward 全光譜高於 80%、變動 5.2 pp；reverse 隨 λ 大幅變化，低學習率偏好 λ > 0；遺忘與稀疏度主要由學習率決定。</p></div></details>
+</section>
+
+<!-- S9 -->
+<section class="ch" id="beyond" data-toc="09" data-tt="準確率以外">
+  <div class="ch-num">09 · 準確率以外</div>
+  <h2>on-policy 資料改善較難任務的泛化，但 RLVR 後不保留</h2>
+  <div class="prose">
+    <p><b>pass@k</b> 是每題抽 $k$ 個回答、至少一個正確的題目比例；pass@1 就是單次回答的準確率。這部分的評估每題抽 10 個回答（App. A.4）。pass@1 的改善不一定帶來 pass@k 的改善（Yue et al., 2025）。在 Countdown-3（LR 1×10⁻⁵）上，$\lambda>0$ 時兩種 KL 的 pass@1 相近，但 forward KL 的 pass@10 明顯較高；Qwen 結果相同（Fig. 16）。作者的結論：KL 方向比 rollout 更影響輸出涵蓋度。</p>
+    <p>本文在三個地方討論 on-policy 的優勢與限度。第一，Countdown-4E（四個運算元取自 1–10 的較難 OOD 任務，同一批 Countdown-3 checkpoint 不再訓練、直接評估）上，兩種 KL 方向下較 on-policy 的 rollout（$\lambda>0$）的 pass@k 一致高 10–15%（論文寫「10 − 15% higher」，未說明是百分點或相對比例）；這是本文第一個 on-policy 明顯較好的設定。第二，OnPD 加 reverse KL 幾乎不轉移教師的西班牙文風格（0.0%／0.1%，每條件 1 次訓練），作者據此認為這個組合「可能有助於抑制」附帶的風格轉移。第三，後續 300 步 RLVR 後，最強的持續表現來自 off-policy checkpoint，on-policy 的初始優勢沒有可靠保留（Sec. 5.3）。</p>
+    <p>RLVR 的設定（App. D.6）：Countdown-4，300 步，GRPO 加 DAPO loss，無 KL 懲罰，LoRA rank 256，RLVR 學習率 2×10⁻⁶，正確給獎勵 2、否則 0，共 24 次訓練。LR 1×10⁻⁵ 蒸餾的 reverse-KL checkpoint 起初進步快（包括起始準確率低的 OffPD），後來獎勵驟降（論文用詞 reward collapse）；OffPD 加 forward KL（1×10⁻⁵）與 OffPD 加 reverse KL（5×10⁻⁵，Fig. 26）穩定進步，訓練結束時最高，雖然起點接近 0%。圖中的曲線是訓練獎勵，不是留出準確率；正確率等於平均獎勵的一半。這與 Zhang et al.（2026a）一致：初始表現最強的 checkpoint 不一定是後續 RLVR 最好的起點。</p>
+    <p>風格轉移實驗（App. A.11、D.7）：Qwen2.5-3B 教師在每題得到正確示範，並被要求只用西班牙文推理；Qwen2.5-1.5B 學生在 Science（App. D.7 稱 ScienceQA）上蒸餾，用 GPT-5 判定回答語言。下表為 Fig. 24 的數字標籤 <span class="tag fig">圖讀值</span>。</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="風格轉移表，可橫向捲動"><table class="stack"><caption>學生回答為西班牙文的比例（Fig. 24，每條件 1 次訓練）</caption><thead><tr><th>設定</th><th>LR 1×10⁻⁵</th><th>LR 5×10⁻⁵</th></tr></thead><tbody>
+    <tr><td data-h="設定">OnPD·forward<span class="sr">：</span></td><td data-h="LR 1×10⁻⁵">LR 1e-5：90.6%<span class="sr">；</span></td><td data-h="LR 5×10⁻⁵">LR 5e-5：100.0%</td></tr>
+    <tr><td data-h="設定">OnPD·reverse<span class="sr">：</span></td><td data-h="LR 1×10⁻⁵">LR 1e-5：0.0%<span class="sr">；</span></td><td data-h="LR 5×10⁻⁵">LR 5e-5：0.1%</td></tr>
+    <tr><td data-h="設定">OffPD·forward<span class="sr">：</span></td><td data-h="LR 1×10⁻⁵">LR 1e-5：82.6%<span class="sr">；</span></td><td data-h="LR 5×10⁻⁵">LR 5e-5：99.9%</td></tr>
+    <tr><td data-h="設定">OffPD·reverse<span class="sr">：</span></td><td data-h="LR 1×10⁻⁵">LR 1e-5：61.7%<span class="sr">；</span></td><td data-h="LR 5×10⁻⁵">LR 5e-5：100.0%</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <p>作者的解釋（假說）：在學生產生的英文前綴上，教師仍支持英文續寫；mode-seeking 的 reverse KL 可以對齊這個英文 mode，而不必涵蓋西班牙文。off-policy rollout 即使用 reverse KL 仍會轉移風格。（App. A.11 第二段有一句寫成「OnPD with forward KL」，與 Fig. 24 和 Sec. 5.3 不符；本頁依圖與 Sec. 5.3。）</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="odd-sft-vs-rl-generalization-claims.html">SFT 與 RL 的泛化比較</a>、<a href="context-distillation-self-distillation.html">context distillation 與自蒸餾</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa"><p class="q">本文在哪裡觀察到 on-policy 的優勢？RLVR 後呢？</p><p class="a">Countdown-4E 上 λ > 0 的 pass@k 高 10–15%；OnPD 加 reverse KL 幾乎不轉移西班牙文風格（單次訓練）；RLVR 後最強的是 off-policy checkpoint。</p></div></details>
+</section>
+
+<!-- S10 -->
+<section class="ch" id="robust" data-toc="10" data-tt="穩健性">
+  <div class="ch-num">10 · 穩健性</div>
+  <h2>三項穩健性檢查不改變主要結論</h2>
+  <div class="prose">
+    <p>本文做了三項穩健性檢查（Sec. 6、App. A.1–A.3）。抽樣 KL：forward 仍穩健、reverse 仍敏感，學習率仍主導遺忘與稀疏度。移除梯度截斷：reverse KL 明顯變差、forward KL 在較大學習率仍有效（App. A.1：OffPD 尤其明顯），但整體沒有一致的 OnPD–OffPD 差距（Sec. 6）；Fig. 8 沒有數字標籤，論文未給數值。Numina–MATH（教師回答平均 622 tokens）：低學習率時 OnPD 加 reverse KL 的 MATH-500 最高（59.0%），但這是訓練軌跡上各 checkpoint 的最高值（作者註明可能偏樂觀），且每條件只有 1 次訓練，作者視為提示性。</p>
+    <h3>抽樣 KL（App. A.2）</h3>
+    <p>forward 抽 $y_n\sim\pi_T$，損失 $\hat L_{\text{F-KL}}=-\log\pi_S^\theta(y_n\mid h_n)$；reverse 抽 $y_n\sim\pi_S^\theta$，替代損失 $\hat L_{\text{R-KL}}=\mathrm{sg}[\log\pi_S^\theta(y_n\mid h_n)-\log\pi_T(y_n\mid h_n)]\,\log\pi_S^\theta(y_n\mid h_n)$，sg 是 stop-gradient。這個額外的 token 在每個位置獨立抽樣，不必等於 rollout 中的 token（論文 App. A.2 一處寫成 $x_n$，前後文應為 $y_n$）。</p>
+    <h3>移除梯度截斷（App. A.1，Fig. 7–8）</h3>
+    <p>主實驗把全域梯度範數截斷在 1.0；截斷前的範數在多數訓練步驟超過 1.0（App. A.1），reverse KL 的範數更大、更不穩，早期有尖峰。移除截斷後 KL 方向之間的差異變大：reverse KL 明顯變差，forward KL 在較大學習率下仍有效；App. A.1 補充 forward KL 的這個表現在 OffPD 尤其明顯，而 Sec. 6 對 rollout 的總結是沒有一致的 OnPD–OffPD 差距。兩句不衝突：前者是 forward KL 內部的一個趨勢，後者是跨 KL 方向與學習率的整體判斷。Fig. 8 只有曲線、沒有數字標籤，所以本頁不寫數字。遺忘與稀疏度仍主要由學習率決定；App. A.1 另提 OnPD 加 forward KL 訓練後的 OOD 表現特別低。</p>
+    <p>作者提出的可能解釋：Adam 以 $\hat m_t/(\sqrt{\hat v_t}+\epsilon)$ 更新（$\hat m_t$、$\hat v_t$ 是梯度與其逐座標平方的移動平均），這個正規化抵銷均勻的梯度尺度變化；孤立的梯度尖峰會讓 $m_t$ 偏向非典型的批次，並膨脹衰減較慢的 $v_t$，壓抑之後的修正更新。作者推測這對 OnPD 特別不利，因為早期的破壞性更新會改變之後產生 rollout 的策略；而且這個機制可以損害任務學習卻不增加遺忘。</p>
+    <h3>較長的推理（App. A.3）</h3>
+    <p>Qwen2.5-Math-1.5B-Instruct 蒸餾到 Qwen2.5-1.5B-Instruct，資料是 Numina–MATH 2 萬題（MATH 訓練集 7,498 題加 NuminaMath 合成題 12,502 題），1,000 步，每 100 步評估，生成溫度 0.7、top-p 0.8。未訓練時 MATH-500 為 53.1%，選出的 checkpoint 為 53.3%–59.0%。學習率 1×10⁻⁵ 時 OOD 大致保持、稀疏度 92–93%；5×10⁻⁵ 時 OOD 由約 41.4% 降到 33.7–35.9%、稀疏度 63–70%。OnPD 用 vLLM 生成時，以截斷在 2 的重要性權重修正 vLLM 與訓練後端的抽樣分布差異（沿用 Shenfeld et al., 2026）。A.3 的結論與前兩項相同：forward KL 仍比 reverse KL 穩健，遺忘與稀疏度仍由學習率主導（App. A.3）；OnPD 加 reverse KL 在低學習率的最高值只作提示。</p>
+    <h3>低 forward KL 可能掩蓋高熵的 rollout（App. A.10）</h3>
+    <p>熵 $H(T)=-\sum_vT(v)\ln T(v)$ 衡量分布的不確定性，交叉熵 $\mathrm{CE}(T,S)=-\sum_vT(v)\ln S(v)$；兩者滿足 $D_{\mathrm{KL}}(T\Vert S)=\mathrm{CE}(T,S)-H(T)$（Eq. 6）。Science 上 OnPD 加 forward KL 的第 10–20 步，forward KL 變小，但教師熵與交叉熵都接近詞彙表的尺度（12 nats，約 16.3 萬個等效 token 選擇）：小 KL 來自兩個大數幾乎相消，不是有把握的預測。低熵的區段沿軌跡往後推進；作者推測這是一個自我加強的過程：前段 token 改善後，教師才能在後段前綴上給出有用的監督。第 50 步時 Science 平均 37%、MedReason 56%，OOD 只降 1.3 與 0.8 個百分點。作者推測差距來自取樣溫度（評估 0.5、訓練 1.0）：把 Science 第 50 步的單一 checkpoint（seed 42）在同樣 20 個 prompt 上以 {0.3, 0.5, 0.7, 1.0} 重新取樣，準確率到 0.7 都高，1.0 時驟降，此時教師與學生的熵都超過 7 nats。</p>
+    <h3>生成溫度消融（App. A.12，MedReason）</h3>
+    <p>預設 OnPD 生成溫度 1.0、OffPD 0.5，把兩者互換（計算 KL 用的溫度不變）。forward KL：低學習率 OnPD 67.0→66.7%、OffPD 68.2→68.0%；高學習率 OnPD 55.7→63.0%、OffPD 62.8→60.7%。reverse KL：OnPD 69.3→67.5%（1×10⁻⁵）、59.3→36.0%（5×10⁻⁵，seed 間變異大）；OffPD 5.7→27.0%（1×10⁻⁵）、46.0→60.3%（5×10⁻⁵）。作者的限定：低學習率的 forward-KL 比較不能用預設溫度的差異解釋，但生成溫度對高學習率的 OnPD 有中等影響，reverse KL 對生成分布更敏感；段末與圖說的結論是 OnPD 與 OffPD 可達到的最佳表現不受生成溫度影響。</p>
+  </div>
+  <details class="more mini"><summary>本節新符號</summary><div class="tscroll"><table><tbody>
+    <tr><td>$H$、CE<span class="sr">：</span></td><td>熵、交叉熵</td></tr>
+    <tr><td>sg<span class="sr">：</span></td><td>stop-gradient</td></tr>
+    <tr><td>$\hat m_t$、$\hat v_t$<span class="sr">：</span></td><td>Adam 的一階、二階移動平均</td></tr>
+  </tbody></table></div></details>
+  <p class="read">延伸閱讀：<a href="odd-learning-rate-adam-clipping-rlvr.html">學習率、Adam、梯度裁剪與蒸餾後的 RLVR</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa"><p class="q">改用抽樣 KL、移除梯度截斷、改用長推理任務後，結論如何？</p><p class="a">抽樣 KL 結論不變；移除截斷後 reverse 變差、forward 仍有效、無一致的 OnPD–OffPD 差距；MATH 上 OnPD 加 reverse 最高 59.0%，但為 checkpoint 最大值、單次訓練。</p></div></details>
+</section>
+
+<!-- S11 -->
+<section class="ch" id="impl" data-toc="11" data-tt="實作">
+  <div class="ch-num">11 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="tscroll" tabindex="0" role="region" aria-label="訓練設定表，可橫向捲動"><table class="stack"><caption>蒸餾訓練設定（App. D.3 Table 3、D.5）</caption><thead><tr><th>項目</th><th>值</th></tr></thead><tbody>
+    <tr><td data-h="項目">最佳化步數<span class="sr">：</span></td><td data-h="值">150（主比較用第 150 步的 checkpoint）</td></tr>
+    <tr><td data-h="項目">最佳化器<span class="sr">：</span></td><td data-h="值">Fused AdamW，β₁ = 0.9，β₂ = 0.999，ε = 10⁻⁸，weight decay 0</td></tr>
+    <tr><td data-h="項目">學習率排程<span class="sr">：</span></td><td data-h="值">常數，前 10 步線性 warm-up</td></tr>
+    <tr><td data-h="項目">批次<span class="sr">：</span></td><td data-h="值">每裝置 1、梯度累積 32，每步 32 個 prompt；每個 prompt 1 條軌跡</td></tr>
+    <tr><td data-h="項目">梯度截斷<span class="sr">：</span></td><td data-h="值">全域範數 1.0</td></tr>
+    <tr><td data-h="項目">溫度<span class="sr">：</span></td><td data-h="值">學生 1.0、教師 0.5（抽樣與 KL 都用）；top-p 1.0</td></tr>
+    <tr><td data-h="項目">最大長度<span class="sr">：</span></td><td data-h="值">prompt 2,048；completion 512（Countdown-3）／1,024（Science、MedReason）</td></tr>
+    <tr><td data-h="項目">損失<span class="sr">：</span></td><td data-h="值">每個非 padding 位置在全詞彙上算 KL，對 completion token 取平均，再對樣本平均</td></tr>
+    <tr><td data-h="項目">gradient checkpointing<span class="sr">：</span></td><td data-h="值">on-policy 開、off-policy 關（只為記憶體）</td></tr>
+    <tr><td data-h="項目">光譜<span class="sr">：</span></td><td data-h="值">α = 0.2，c = 2 log 3，λ ∈ [−2, 2]</td></tr>
+    <tr><td data-h="項目">評估<span class="sr">：</span></td><td data-h="值">每資料集前 200 題，學生溫度 0.5、top-p 1.0，每題 1 個回答；pass@k 例外：每題 10 個回答，Countdown-3 溫度 1.0，Countdown-4E 溫度 0.5、completion 上限 4,096</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <h3>常見錯誤</h3>
+    <ol>
+      <li>把 OnPD 與 reverse KL 綁在一起：rollout 決定哪些前綴出現在訓練資料中，KL 方向決定在這些前綴上怎麼比較；全詞彙 KL 下兩者獨立（Sec. 3）。</li>
+      <li>以為 OnPD reverse KL 的更新就是序列層級 reverse KL 的梯度：stop-gradient 使它只是半梯度（App. C.5）。</li>
+      <li>在不同學習率下比較 OnPD 與 OffPD：學習率主導遺忘與稀疏度（Sec. 4.2），比較必須在相同學習率下配對。</li>
+      <li>$\lvert\lambda\rvert>1$ 的外插不加防護：會放大兩個模型都給低機率的 token；用遮罩 α = 0.2 與截斷 c = 2 log 3（App. D.5）。</li>
+      <li>把低 forward KL 當成 rollout 品質好：$D_{\mathrm{KL}}=\mathrm{CE}-H$，兩個大數相消也會得到小 KL（App. A.10）。</li>
+      <li>抽樣版 reverse KL 少了 stop-gradient：App. A.2 的替代損失對 log 比加 sg；若不加，對 log 比本身求導會多出一項，期望不再等於 reverse KL 的梯度 <span class="tag">本頁推導</span>。</li>
+      <li>只看 pass@1：在 Countdown-3 上，$\lambda>0$ 時兩種 KL 的 pass@1 相近，forward KL 的優勢只在 pass@10 看得到（Sec. 5.3）。</li>
+    </ol>
+  </div>
+</section>
+
+<!-- S12 -->
+<section class="ch" id="history" data-toc="12" data-tt="研究脈絡">
+  <div class="ch-num">12 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>logit 蒸餾（Hinton et al., 2015）讓學生對齊教師的輸出分布；序列層級蒸餾（Kim &amp; Rush, 2016）用教師生成的序列訓練學生，相當於 OffPD 的前身。Agarwal et al.（2023）定義了 on-policy 蒸餾：學生自己生成、教師逐 token 監督；Xu et al.（2024）交錯使用兩者的 token。2025–2026 年有幾篇研究把 on-policy 學習連到較少遺忘（Shenfeld et al., 2025；Chen et al., 2025）、較稀疏的更新（Mukherjee et al., 2025）與較好的泛化（Chu et al., 2025），另有研究指出學習率本身強烈影響遺忘（Rofin et al., 2026）。本文把這些說法當成假說，在只改 rollout 的設定中檢驗。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S13 -->
+<section class="ch" id="next" data-toc="13" data-tt="限制與延伸">
+  <div class="ch-num">13 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>作者寫明的限制（Sec. 7）：學生模型最多 1.5B 參數，任務的推理長度最多約 2,000 tokens；教師固定，未研究特定學生–教師組合下是否出現 OnPD 與 OffPD 的差異。作者建議未來的 on-policy 蒸餾研究把 OffPD 列為標準基準；並認為 SFT 與 RL 之間觀察到的多數差異難以只歸因於 rollout 策略，目標函數、獎勵、監督密度與最佳化程序值得進一步研究。</p>
+  </div>
+  <details class="more"><summary>完整符號與詞彙表（含定義章節）</summary><div class="tscroll"><table><thead><tr><th>符號／詞</th><th>意義</th><th>定義於</th></tr></thead><tbody>
+    <tr><td>token、$\mathcal V$<span class="sr">：</span></td><td>最小輸出單位、詞彙表<span class="sr">；</span></td><td>S1</td></tr>
+    <tr><td>$h_n$、$\rho$<span class="sr">：</span></td><td>前綴、rollout 策略<span class="sr">；</span></td><td>S1</td></tr>
+    <tr><td>SFT、RL、RLVR、GRPO<span class="sr">：</span></td><td>後訓練方法<span class="sr">；</span></td><td>S1</td></tr>
+    <tr><td>ID、OOD、$S_\tau$<span class="sr">：</span></td><td>評估類型、稀疏度<span class="sr">；</span></td><td>S3</td></tr>
+    <tr><td>pp<span class="sr">：</span></td><td>百分點<span class="sr">；</span></td><td>S4</td></tr>
+    <tr><td>logit、$r(v)$、$\Delta r$<span class="sr">：</span></td><td>softmax 前的向量、log 機率比、其範圍<span class="sr">；</span></td><td>S5</td></tr>
+    <tr><td>$J_\theta$、$B$、TV<span class="sr">：</span></td><td>Jacobian、其奇異值上界、total variation<span class="sr">；</span></td><td>S6a</td></tr>
+    <tr><td>$\varepsilon$、$\delta$、$R$<span class="sr">：</span></td><td>反例參數、log 比範圍的上界<span class="sr">；</span></td><td>S6b</td></tr>
+    <tr><td>勝算、$\lambda$、$\alpha$、$c$<span class="sr">：</span></td><td>機率比、光譜參數、遮罩門檻、截斷值<span class="sr">；</span></td><td>S7</td></tr>
+    <tr><td>pass@k<span class="sr">：</span></td><td>k 個回答至少一個正確的比例<span class="sr">；</span></td><td>S9</td></tr>
+    <tr><td>$H$、CE、nat<span class="sr">：</span></td><td>熵、交叉熵、資訊單位<span class="sr">；</span></td><td>S10（nat 於 S5）</td></tr>
+  </tbody></table></div></details>
+  <div class="prose"><h3>研究筆記（依閱讀順序）</h3></div>
+  <ol class="rl">
+    <li><div><a href="odd-lineage-hub.html">蒸餾動態研究（On-policy 與 off-policy）的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="knowledge-distillation-foundations.html">知識蒸餾基礎：logit 蒸餾與序列層級蒸餾</a><span>蒸餾的基本形式</span></div></li>
+    <li><div><a href="on-policy-distillation-imitation.html">On-policy 蒸餾與線上模仿學習</a><span>線上模仿</span></div></li>
+    <li><div><a href="odd-onpd-vs-offpd-setup.html">OnPD 與 OffPD 的定義：rollout policy 作為獨立變因</a><span>本文的名詞與設定</span></div></li>
+    <li><div><a href="odd-token-kl-direction-gradients.html">Token 層級的正向與反向 KL：梯度形式與對 rollout policy 的敏感度</a><span>KL 方向與梯度</span></div></li>
+    <li><div><a href="odd-on-policy-forgetting-sparsity-claims.html">On-policy 學習較不遺忘、更新較稀疏的既有說法</a><span>被檢驗的說法（一）</span></div></li>
+    <li><div><a href="odd-sft-vs-rl-generalization-claims.html">SFT 與 RL 的泛化比較，以及 on-policy 資料對泛化的說法</a><span>被檢驗的說法（二）</span></div></li>
+    <li><div><a href="odd-recent-opd-studies-2026.html">2026 年的 on-policy 蒸餾研究：演算法變體、診斷與失敗模式</a><span>同期研究</span></div></li>
+    <li><div><a href="odd-strong-to-weak-distillation-practice.html">強到弱蒸餾在後訓練中的使用與本論文的模型選擇</a><span>實務背景</span></div></li>
+    <li><div><a href="odd-learning-rate-adam-clipping-rlvr.html">學習率、Adam、梯度裁剪與蒸餾後的 RLVR</a><span>控制變因與 RLVR</span></div></li>
+  </ol>
+  <div class="prose"><h3>相關的既有筆記</h3></div>
+  <ol class="rl">
+    <li><div><a href="context-distillation-self-distillation.html">context distillation 與自蒸餾</a><span>風格轉移實驗的形式</span></div></li>
+    <li><div><a href="rlvr-grpo-credit-assignment.html">RLVR、GRPO 與信用分配瓶頸</a><span>蒸餾後的 RLVR</span></div></li>
+    <li><div><a href="ppo-grpo-dapo-llm-rl-objectives.html">PPO、GRPO、DAPO 與 LLM 的 RL 目標</a><span>RL 目標</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Julianna Piskorz, Antonin Berthon, Mihaela van der Schaar. On-Policy or Off-Policy Learning? A Systematic Study of Distillation Dynamics. Preprint, 2026. <a href="https://arxiv.org/abs/2609.35259">arXiv:2609.35259</a>.</p>
+  <p>本頁的方程式與數字取自論文 v1；標示「本頁推導」「示範值」「圖讀值」的內容不是論文正文的結論。C1–C4 的讀數在瀏覽器中即時計算，不重現論文的實驗。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2014, "title": "Adam: A Method for Stochastic Optimization", "authors_short": "Kingma & Ba", "arxiv": "1412.6980", "role": "論文用來解釋梯度範數與參數更新量的關係", "source": "2609.35259 附錄 A.1 + arXiv listing"}, {"year": 2015, "title": "Distilling the Knowledge in a Neural Network", "authors_short": "Hinton et al.", "arxiv": "1503.02531", "role": "知識蒸餾的基礎，off-policy 蒸餾的形式", "source": "2609.35259 §2 + arXiv listing"}, {"year": 2016, "title": "Sequence-Level Knowledge Distillation", "authors_short": "Kim & Rush", "arxiv": "1606.07947", "role": "序列層級蒸餾，OffPD 的前身", "source": "2609.35259 §2 + arXiv listing"}, {"year": 2023, "title": "On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes", "authors_short": "Agarwal et al.", "arxiv": "2306.13649", "role": "OnPD 的定義來源", "source": "2609.35259 §2-3 + arXiv abstract"}, {"year": 2024, "title": "Speculative Knowledge Distillation: Bridging the Teacher-Student Gap Through Interleaved Sampling", "authors_short": "Xu et al.", "arxiv": "2410.11325", "role": "學生與教師交錯取樣的混合式蒸餾", "source": "2609.35259 §2 + arXiv abstract"}, {"year": 2025, "title": "SFT Memorizes, RL Generalizes: A Comparative Study of Foundation Model Post-training", "authors_short": "Chu et al.", "arxiv": "2501.17161", "role": "RL 較能泛化的論據", "source": "2609.35259 §1 + arXiv abstract"}, {"year": 2025, "title": "Reinforcement Learning Finetunes Small Subnetworks in Large Language Models", "authors_short": "Mukherjee et al.", "arxiv": "2505.11711", "role": "RL 更新稀疏的論據與稀疏度量", "source": "2609.35259 §4.1 + arXiv abstract"}, {"year": 2025, "title": "On a few pitfalls in KL divergence gradient estimation for RL", "authors_short": "Tang & Munos", "arxiv": "2506.09477", "role": "KL 梯度估計的實作陷阱，論文引以處理取樣前綴不求導", "source": "2609.35259 §3 + arXiv abstract"}, {"year": 2025, "title": "RL's Razor: Why Online Reinforcement Learning Forgets Less", "authors_short": "Shenfeld et al.", "arxiv": "2509.04259", "role": "on-policy RL 較少遺忘的論據", "source": "2609.35259 §1 + arXiv abstract"}, {"year": 2025, "title": "Retaining by Doing: The Role of On-Policy Data in Mitigating Forgetting", "authors_short": "Chen et al.", "arxiv": "2510.18874", "role": "RL 遺忘少於 SFT 的比較", "source": "2609.35259 §1 + arXiv abstract"}, {"year": 2026, "title": "Self-Distillation Enables Continual Learning", "authors_short": "Shenfeld et al.", "arxiv": "2601.19897", "role": "以自蒸餾做 on-policy 學習並保留舊能力", "source": "2609.35259 §1 + arXiv abstract"}, {"year": 2026, "title": "Rethinking On-Policy Distillation of Large Language Models: Phenomenology, Mechanism, and Recipe", "authors_short": "Li et al.", "arxiv": "2604.13016", "role": "OPD 成功條件的系統性研究", "source": "2609.35259 §2, §4.1 + arXiv abstract"}, {"year": 2026, "title": "(How) Learning Rates Regulate Catastrophic Overtraining", "authors_short": "Rofin et al.", "arxiv": "2604.13627", "role": "學習率與遺忘取捨", "source": "2609.35259 §2 + arXiv abstract"}, {"year": 2026, "title": "On-Policy or Off-Policy Learning? A Systematic Study of Distillation Dynamics", "authors_short": "Piskorz, Berthon & van der Schaar", "arxiv": "2609.35259", "role": "本論文：分離 rollout policy、KL 方向與學習率", "source": "論文本身"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function frame(box,min,max,H){const W=widthOf(box,min,max),svg=box.querySelector('svg');svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);return{svg,W,H}}
+const pct=v=>(100*v).toFixed(1)+'%';
+const f4=v=>(Math.abs(v)<5e-5?0:v).toFixed(4).replace('-','−');
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+const lbl={};function setLabel(svg,id,s){clearTimeout(lbl[id]);lbl[id]=setTimeout(()=>svg.setAttribute('aria-label',s),500)}
+function segInit(box,opts,cur,label,onPick){box.textContent='';opts.forEach(o=>{const b=document.createElement('button');b.type='button';b.setAttribute('role','radio');
+    b.textContent=label?label(o):String(o);b.dataset.v=String(o);box.appendChild(b)});
+  const sync=v=>$$('button',box).forEach(b=>{const on=b.dataset.v===String(v);b.setAttribute('aria-checked',String(on));b.setAttribute('aria-pressed',String(on));b.tabIndex=on?0:-1});sync(cur);
+  box.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const v=opts.find(o=>String(o)===b.dataset.v);sync(v);onPick(v)});
+  box.addEventListener('keydown',e=>{const bs=$$('button',box),i=bs.findIndex(b=>b.tabIndex===0);let j=i;if(e.key==='ArrowRight'||e.key==='ArrowDown')j=(i+1)%bs.length;else if(e.key==='ArrowLeft'||e.key==='ArrowUp')j=(i-1+bs.length)%bs.length;else return;e.preventDefault();bs[j].focus();bs[j].click()});
+  return sync}
+function dl(box,rows){box.innerHTML=rows.map(([k,v,c])=>`<dt>${k}<span class="sr">：</span></dt><dd${c?' class="acc"':''}>${v}${c?' <span class="nr">非論文結果</span>':''}<span class="sr">；</span></dd>`).join('')}
+function axisLeft(svg,y,x0,ticks,fmt){ticks.forEach(t=>{el('line',{x1:x0,x2:x0-4,y1:y(t),y2:y(t),class:'axis'},svg);tx(svg,x0-7,y(t)+4,fmt(t),{class:'lab','text-anchor':'end'})})}
+
+/* ================= number formats (design.md 4, one definition) ================= */
+const SUP={'-':'⁻','0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹'};
+function fmtSci(x){if(x===0)return'0';const e=Math.floor(Math.log10(Math.abs(x))+1e-12);let m=x/10**e;if(Math.abs(m)>=9.995){m/=10;return fmtSci(m*10**(e+1))}return m.toFixed(2)+'×10'+String(e).split('').map(c=>SUP[c]).join('')}
+function fmtNum(x,d){const s=x.toFixed(d);return Number(s)===0?(0).toFixed(d):s.replace('-','−')}
+const fmtProb=x=>x<1e-3?fmtSci(x):x.toPrecision(3);
+const fmtGrad=x=>Math.abs(x)<5e-5?'≈ 0':fmtNum(x,2);
+
+/* ================= 2x2 design grid ================= */
+function renderGrid22(){$$('.grid22').forEach(g=>{const hl=g.dataset.hl,acc=k=>FIG1.ACC[k];
+  const cell=(r,k)=>{const a=hl==='fig1'?`<span>1e-5：<b>${acc(r+'|'+k+'|1')}</b></span><span>5e-5：<b>${acc(r+'|'+k+'|5')}</b></span>`:'<span>1e-5</span><span>5e-5</span>';
+    return `<div class="g-cell${(r==='On')===(k==='Rev')?' conv':''}"><div class="g-n">${r}PD·${k==='F'?'F':'Rev'}</div><div class="g-lr">${a}</div></div>`};
+  g.innerHTML=`<div class="g-h"></div><div class="g-h">forward（F）</div><div class="g-h">reverse（Rev）</div><div class="g-r">OnPD</div>${cell('On','F')}${cell('On','Rev')}<div class="g-r">OffPD</div>${cell('Off','F')}${cell('Off','Rev')}`})}
+
+/* ================= C1: paired differences on Fig. 1 (check.py C1) ================= */
+const FIG1={ACC:{'On|F|1':72,'On|F|5':72,'On|Rev|1':72,'On|Rev|5':35,'Off|F|1':71,'Off|F|5':73,'Off|Rev|1':35,'Off|Rev|5':49},
+            SPA:{'On|F|1':85.3,'On|F|5':51.9,'On|Rev|1':88.5,'On|Rev|5':58.5,'Off|F|1':88.8,'Off|F|5':59.5,'Off|Rev|1':89.6,'Off|Rev|5':60.0}};
+const C1F=['rollout','KL','LR'],C1LEV=[['On','Off'],['F','Rev'],['1','5']];
+const C1LN={rollout:{On:'OnPD',Off:'OffPD'},KL:{F:'forward',Rev:'reverse'},LR:{'1':'LR 1e-5','5':'LR 5e-5'}};
+const C1SH=['圓','方','三角','菱形'],C1SY=['●','■','▲','◆'],C1TT={rollout:'改 rollout（On→Off）',KL:'改 KL 方向（F→Rev）',LR:'改學習率（1e-5→5e-5）'};
+function pairDiffs(metric,factor){const f=C1F.indexOf(factor),o=[0,1,2].filter(i=>i!==f),M=FIG1[metric],out=[];
+  for(const a of C1LEV[o[0]])for(const b of C1LEV[o[1]]){const k1=[],k2=[];k1[o[0]]=k2[o[0]]=a;k1[o[1]]=k2[o[1]]=b;k1[f]=C1LEV[f][0];k2[f]=C1LEV[f][1];
+    const v1=M[k1.join('|')],v2=M[k2.join('|')];
+    const fx=[a,b].map((v,j)=>{const nm=C1F[o[j]];return nm==='LR'?(v==='1'?'1e-5':'5e-5'):v}).join('·');
+    out.push({fixed:fx,n1:C1LN[factor][C1LEV[f][0]],n2:C1LN[factor][C1LEV[f][1]],v1,v2,d:Math.round(Math.abs(v1-v2)*10)/10})}
+  return out}
+const c1s={metric:'SPA',sel:null};
+function c1RowText(f,r,i){return `${C1TT[f]}，固定 ${r.fixed}（${C1SH[i]}）：${r.n1} ${r.v1}，${r.n2} ${r.v2}，差 ${r.d} 個百分點`}
+function shape(svg,i,cx,cy,cls){const s=6;if(i===0)return el('circle',{cx,cy,r:s,class:cls},svg);if(i===1)return el('rect',{x:cx-s,y:cy-s,width:2*s,height:2*s,class:cls},svg);
+  if(i===2)return el('path',{d:`M${cx} ${cy-s-1}L${cx+s+1} ${cy+s}L${cx-s-1} ${cy+s}Z`,class:cls},svg);return el('path',{d:`M${cx} ${cy-s-2}L${cx+s+2} ${cy}L${cx} ${cy+s+2}L${cx-s-2} ${cy}Z`,class:cls},svg)}
+function renderC1(){const box=$('#c1-fig');box.innerHTML='';const tb=$('#c1-table tbody');tb.innerHTML='';
+  C1F.forEach(f=>{const rows=pairDiffs(c1s.metric,f);
+    const wrap=document.createElement('div');wrap.className='c1row';
+    wrap.innerHTML=`<div class="c1h"><b>${C1TT[f]}</b><span class="c1lg">${rows.map((r,i)=>`${C1SY[i]} ${r.fixed}`).join('　')}</span></div><svg role="group" aria-label="${C1TT[f]}的四組配對差，左右鍵切換"></svg>`;box.appendChild(wrap);
+    const svg=$('svg',wrap),W=Math.max(260,Math.floor(box.clientWidth||600)),H=66,L=14,R=W-18,x=lin(0,40,L,R),yc=30;svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+    el('line',{x1:L,x2:R,y1:yc,y2:yc,class:'grid'},svg);
+    (W<480?[0,20,40]:[0,10,20,30,40]).forEach(t=>{el('line',{x1:x(t),x2:x(t),y1:yc+12,y2:yc+16,class:'axis'},svg);tx(svg,x(t),H-4,t+(t===40?' pp':''),{class:'lab','text-anchor':'middle'})});
+    const ord=rows.map((r,i)=>i).sort((a,b)=>rows[a].d-rows[b].d),dy={};let prev=-1e9,k=0;ord.forEach(i=>{const px=x(rows[i].d);k=(px-prev<14)?k+1:0;dy[i]=[0,-11,11,-22][k%4];prev=px});
+    rows.forEach((r,i)=>{const g=el('g',{class:'c1pt',tabindex:i===0?'0':'-1',role:'button','aria-label':c1RowText(f,r,i),'data-f':f,'data-i':i},svg);
+      const on=c1s.sel&&c1s.sel.f===f&&c1s.sel.i===i;shape(g,i,x(r.d),yc+dy[i],on?'mk-sel':'mk');
+      g.addEventListener('click',()=>c1Select(f,i,true))});
+    svg.addEventListener('keydown',e=>{const pts=$$('.c1pt',svg),cur=pts.indexOf(document.activeElement);if(cur<0)return;let j=cur;
+      if(e.key==='ArrowRight'||e.key==='ArrowDown')j=(cur+1)%4;else if(e.key==='ArrowLeft'||e.key==='ArrowUp')j=(cur+3)%4;else if(e.key==='Enter'||e.key===' '){c1Select(f,cur,true);e.preventDefault();return}else return;
+      e.preventDefault();c1Select(f,j,true)});
+    tb.insertAdjacentHTML('beforeend',`<tr class="grp"><td colspan="4"><b>${C1TT[f]}</b></td></tr>`);
+    rows.forEach((r,i)=>{const on=c1s.sel&&c1s.sel.f===f&&c1s.sel.i===i;
+      tb.insertAdjacentHTML('beforeend',`<tr${on?' class="hl" aria-current="true"':''}><td data-h="固定組合">固定 ${r.fixed}（${C1SY[i]} ${C1SH[i]}）<span class="sr">：</span></td><td data-h="方法 1">${r.n1}：${fmtNum(r.v1,c1s.metric==='ACC'?0:1)}<span class="sr">；</span></td><td data-h="方法 2">${r.n2}：${fmtNum(r.v2,c1s.metric==='ACC'?0:1)}<span class="sr">；</span></td><td data-h="差" class="num">差 ${r.d.toFixed(c1s.metric==='ACC'?0:1)} pp</td></tr>`)})})}
+function c1Select(f,i,focus){c1s.sel={f,i};renderC1();const g=$(`#c1-fig .c1pt[data-f="${f}"][data-i="${i}"]`);
+  $$(`#c1-fig .c1pt[data-f="${f}"]`).forEach(p=>p.setAttribute('tabindex',p===g?'0':'-1'));if(focus&&g)g.focus();
+  announce('c1',c1RowText(f,pairDiffs(c1s.metric,f)[i],i))}
+function initC1(){segInit($('#c1-metric'),['ACC','SPA'],c1s.metric,m=>m==='ACC'?'ID 準確率':'更新稀疏度',m=>{c1s.metric=m;const s=c1s.sel;renderC1();if(s){const g=$(`#c1-fig .c1pt[data-f="${s.f}"][data-i="${s.i}"]`);$$(`#c1-fig .c1pt[data-f="${s.f}"]`).forEach(p=>p.setAttribute('tabindex',p===g?'0':'-1'))}announce('c1','指標：'+(m==='ACC'?'ID 準確率':'更新稀疏度'))});renderC1()}
+
+/* ================= C2: token KL and logit gradients (check.py C2) ================= */
+const SHAPE=[.4,.3,.2,.1],TOK5=['A','B','C','D','E'];
+const dist5=a=>[a,...SHAPE.map(s=>(1-a)*s)];
+function klParts(aS,aT){const S=dist5(aS),T=dist5(aT),r=S.map((s,i)=>Math.log(s)-Math.log(T[i]));
+  const DF=T.reduce((a,t,i)=>a+t*(Math.log(t)-Math.log(S[i])),0),DR=S.reduce((a,s,i)=>a+s*r[i],0);
+  const gF=S.map((s,i)=>s-T[i]),gR=S.map((s,i)=>s*(r[i]-DR)),n2=g=>Math.sqrt(g.reduce((a,x)=>a+x*x,0));
+  return{S,T,r,DF,DR,gF,gR,nF:n2(gF),nR:n2(gR),dr:Math.max(...r)-Math.min(...r),maxF:Math.max(...gF.map(Math.abs)),sumF:gF.reduce((a,b)=>a+b,0),sumR:gR.reduce((a,b)=>a+b,0)}}
+const c2s={aS:.5,aT:.01};
+const C2P=[['預設',.5,.01],['兩者相同',.3,.3],['教師給 A 的機率趨近 0',.5,1e-6],['學生給 A 的機率趨近 0',1e-6,.6]];
+function gradBars(boxId,g,ymax,hatch){const {svg,W,H}=frame($('#'+boxId),240,460,200),L=40,R=W-8,T=14,B=H-26,x=lin(0,5,L,R),y=lin(-ymax,ymax,B,T),bw=(R-L)/5*.56;
+  el('line',{x1:L,x2:R,y1:y(0),y2:y(0),class:'axis'},svg);[-ymax,0,ymax].forEach(t=>tx(svg,L-6,y(t)+4,fmtNum(t,ymax>=10?0:1),{class:'lab','text-anchor':'end'}));
+  if(!hatch){[-1,1].forEach(t=>el('line',{x1:L,x2:R,y1:y(t),y2:y(t),class:'ref-s'},svg));tx(svg,R,y(1)-4,'界 ±1',{class:'lab','text-anchor':'end'})}
+  g.forEach((v,i)=>{const cx=x(i+.5),y0=y(0),y1=y(v);el('rect',{x:cx-bw/2,y:Math.min(y0,y1),width:bw,height:Math.max(1,Math.abs(y1-y0)),class:hatch?'bar-h':'bar-s'},svg);
+    tx(svg,cx,v>=0?y1-5:y1+14,fmtGrad(v),{class:'lab','text-anchor':'middle'});tx(svg,cx,H-6,TOK5[i],{class:'lab13','text-anchor':'middle'})});return svg}
+function renderC2(){const o=klParts(c2s.aS,c2s.aT);$('#c2-so').textContent=fmtProb(c2s.aS);$('#c2-to').textContent=fmtProb(c2s.aT);
+  $('#c2-s').setAttribute('aria-valuetext','π_S(A) = '+fmtProb(c2s.aS));$('#c2-t').setAttribute('aria-valuetext','π_T(A) = '+fmtProb(c2s.aT));
+  const sf=gradBars('c2-f',o.gF,1,false),ym=Math.max(1,Math.max(...o.gR.map(Math.abs)))*1.1,sr=gradBars('c2-r',o.gR,ym,true);
+  dl($('#c2-read'),[['forward KL',fmtNum(o.DF,4)+' nats'],['reverse KL',fmtNum(o.DR,4)+' nats'],['‖g_F‖₂（界 √2）',fmtNum(o.nF,4)],['‖g_R‖₂（界 Δr，不緊）',fmtNum(o.nR,4)+' ≤ '+fmtNum(o.dr,4)],['A 的梯度 forward',fmtGrad(o.gF[0])],['A 的梯度 reverse',fmtGrad(o.gR[0])]]);
+  const s=`π_S(A) = ${fmtProb(c2s.aS)}，π_T(A) = ${fmtProb(c2s.aT)}；forward KL = ${fmtNum(o.DF,4)}，reverse KL = ${fmtNum(o.DR,4)}；A 的 logit 梯度 forward ${fmtGrad(o.gF[0])}、reverse ${fmtGrad(o.gR[0])}`;
+  announce('c2',s);setLabel(sf,'c2f','forward 梯度：'+o.gF.map((v,i)=>TOK5[i]+' '+fmtGrad(v)).join('，'));setLabel(sr,'c2r','reverse 梯度：'+o.gR.map((v,i)=>TOK5[i]+' '+fmtGrad(v)).join('，'))}
+function initC2(){const box=$('#c2-presets');C2P.forEach(([n,a,b])=>{const bt=document.createElement('button');bt.type='button';bt.className='chip';bt.textContent=n;
+    bt.addEventListener('click',()=>{c2s.aS=a;c2s.aT=b;$('#c2-s').value=Math.log10(a).toFixed(2);$('#c2-t').value=Math.log10(b).toFixed(2);renderC2()});box.appendChild(bt)});
+  $('#c2-s').addEventListener('input',e=>{c2s.aS=10**Number(e.target.value);renderC2()});$('#c2-t').addEventListener('input',e=>{c2s.aT=10**Number(e.target.value);renderC2()});
+  $('#c2-s').value=Math.log10(c2s.aS).toFixed(2);$('#c2-t').value=Math.log10(c2s.aT).toFixed(2);renderC2()}
+
+/* ================= C3: rollout-stability gap (check.py C3) ================= */
+function boundParts(delta,eps){const dr=Math.log1p(-delta)-Math.log(delta);
+  return{dr,rev:eps*Math.SQRT2/8*dr,fwd:eps*Math.SQRT2/2*(.5-delta),fbound:2*Math.SQRT2*eps,rbound:2*dr*eps}}
+const c3s={d:.01,e:.1},C3X=Math.log10(1/(1+Math.exp(16)));
+function renderC3(){const {d,e}=c3s,o=boundParts(d,e);$('#c3-do').textContent=fmtSci(d);$('#c3-eo').textContent=e.toFixed(2);
+  $('#c3-d').setAttribute('aria-valuetext','δ = '+fmtSci(d));$('#c3-e').setAttribute('aria-valuetext','ε = '+e.toFixed(2));
+  const {svg,W,H}=frame($('#c3-fig'),300,860,280),L=52,R=W-14,T=14,B=H-34,x=lin(-12,-.31,L,R),y=lin(-5,2,B,T),cl=v=>Math.max(-5,Math.min(2,v)),narrow=W<520;
+  for(let t=-5;t<=2;t++){el('line',{x1:L,x2:R,y1:y(t),y2:y(t),class:'grid'},svg);if(!narrow||t%2===0)tx(svg,L-6,y(t)+4,'10'+String(t).split('').map(c=>SUP[c]).join(''),{class:'lab','text-anchor':'end'})}
+  for(let t=-12;t<=0;t+=narrow?4:2){if(t>-.31)continue;el('line',{x1:x(t),x2:x(t),y1:B,y2:B+4,class:'axis'},svg);tx(svg,x(t),B+18,'10'+String(t).split('').map(c=>SUP[c]).join(''),{class:'lab','text-anchor':'middle'})}
+  tx(svg,R,H-2,'δ（對數）',{class:'lab','text-anchor':'end'});tx(svg,L,T-2,'更新差（對數）',{class:'lab'});
+  const pts=f=>{const a=[];for(let i=0;i<=200;i++){const lx=-12+(11.69)*i/200;a.push([x(lx),y(cl(Math.log10(f(10**lx))))])}return a};
+  el('path',{d:lp([[L,y(Math.log10(o.fbound))],[R,y(Math.log10(o.fbound))]]),class:'dot3-s'},svg);
+  el('path',{d:lp(pts(dd=>boundParts(dd,e).fwd)),class:'npar-s'},svg);
+  el('path',{d:lp(pts(dd=>boundParts(dd,e).rev)),class:'acc-s'},svg);
+  el('circle',{cx:x(C3X),cy:y(Math.log10(o.fbound)),r:6,class:'hollow'},svg);tx(svg,x(C3X)+9,y(Math.log10(o.fbound))-8,'交點 δ ≈ 1.1×10⁻⁷',{class:'lab13 halo'});
+  const ld=Math.log10(d);el('line',{x1:x(ld),x2:x(ld),y1:T,y2:B,class:'cur'},svg);
+  el('circle',{cx:x(ld),cy:y(cl(Math.log10(o.rev))),r:4.5,class:'acc-f'},svg);el('rect',{x:x(ld)-4,y:y(cl(Math.log10(o.fwd)))-4,width:8,height:8,class:'par-f'},svg);
+  dl($('#c3-read'),[['Δr = log((1−δ)/δ)',fmtNum(o.dr,4)],['reverse 更新差（Eq. 57）',fmtNum(o.rev,4)],['reverse 條件界 2Δr·ε（Eq. 59）',fmtNum(o.rbound,4)],['forward 更新差（同一反例）',fmtNum(o.fwd,4)],['forward 的界 2√2·ε（Eq. 27）',fmtNum(o.fbound,4)]]);
+  const s=`δ = ${fmtSci(d)}，ε = ${e.toFixed(2)}；reverse 更新差 ${fmtNum(o.rev,4)}，forward 更新差 ${fmtNum(o.fwd,4)}（界 ${fmtNum(o.fbound,4)}）`;announce('c3',s);setLabel(svg,'c3',s)}
+function initC3(){$('#c3-d').addEventListener('input',e=>{c3s.d=10**Number(e.target.value);renderC3()});$('#c3-e').addEventListener('input',e=>{c3s.e=Number(e.target.value);renderC3()});renderC3()}
+
+/* ================= C4: rollout-policy spectrum (check.py C4) ================= */
+const PS=[.45,.25,.15,.08,.05,.02],PT=[.03,.57,.25,.10,.0499,.0001],ALPHA=.2,CC=2*Math.log(3),TOK6=['A','B','C','D','E','F'];
+function softmax(z){const m=Math.max(...z),e=z.map(v=>Math.exp(v-m)),s=e.reduce((a,b)=>a+b,0);return e.map(v=>v/s)}
+function spectrum(lam,safe){lam=Math.round(lam*100)/100;const lS=PS.map(Math.log),lT=PT.map(Math.log),r=lS.map((a,i)=>a-lT[i]);
+  const zh=lS.map((a,i)=>(1+lam)/2*a+(1-lam)/2*lT[i]);let z;
+  if(!safe||Math.abs(lam)<=1)z=zh;
+  else if(lam>1){const mx=Math.max(...lS);z=lS.map((a,i)=>a+(lam-1)/2*((a>=mx+Math.log(ALPHA)?1:0)*Math.min(Math.max(r[i],0),CC)))}
+  else{const mx=Math.max(...lT);z=lT.map((a,i)=>a+(-lam-1)/2*((a>=mx+Math.log(ALPHA)?1:0)*Math.min(Math.max(-r[i],0),CC)))}
+  const p=softmax(z),anc=lam>1?lS:lam<-1?lT:null;let amp=null;
+  if(anc){const d=z.map((v,i)=>v-anc[i]);amp=Math.exp(Math.max(...d)-Math.min(...d))}return{p,amp,lam}}
+const c4s={lam:0,safe:true};
+const fb=v=>v<.01?'<0.01':v.toFixed(2);
+function renderC4(){const o=spectrum(c4s.lam,c4s.safe),lam=o.lam;$('#c4-lo').textContent=lam.toFixed(2);$('#c4-l').setAttribute('aria-valuetext','λ = '+lam.toFixed(2));
+  const box=$('#c4-fig'),narrow=(box.clientWidth||600)<520,ser=[[PS,'bS-r'],[PT,'bT-r'],[o.p,'bL-r']];let svg;
+  if(!narrow){const f=frame(box,300,860,250);svg=f.svg;const {W,H}=f,L=40,R=W-8,T=12,B=H-28,x=lin(0,6,L,R),y=lin(0,.8,B,T),gw=(R-L)/6,bw=gw*.24;
+    [0,.2,.4,.6,.8].forEach(t=>{el('line',{x1:L,x2:R,y1:y(t),y2:y(t),class:'grid'},svg);tx(svg,L-6,y(t)+4,t.toFixed(1),{class:'lab','text-anchor':'end'})});
+    TOK6.forEach((tk,i)=>{ser.forEach(([a,c],j)=>{const cx=L+gw*i+gw/2+(j-1)*(bw+3),v=a[i];el('rect',{x:cx-bw/2,y:y(v),width:bw,height:Math.max(1,B-y(v)),class:c},svg);tx(svg,cx,y(v)-4-(v<.05?(j%2)*13:0),fb(v),{class:'lab9','text-anchor':'middle'})});
+      tx(svg,L+gw*i+gw/2,H-8,tk,{class:'lab13','text-anchor':'middle'})})}
+  else{const f=frame(box,280,520,6*66+20);svg=f.svg;const {W}=f,L=22,R=W-44,x=lin(0,.8,L,R),bh=14;
+    TOK6.forEach((tk,i)=>{const y0=10+i*66;tx(svg,4,y0+28,tk,{class:'lab13'});ser.forEach(([a,c],j)=>{const yy=y0+j*(bh+4),v=a[i];el('rect',{x:L,y:yy,width:Math.max(1,x(v)-L),height:bh,class:c},svg);tx(svg,x(v)+4,yy+11,fb(v),{class:'lab'})})})}
+  dl($('#c4-read'),[['λ',lam.toFixed(2)],['防護',c4s.safe?'開':'關'],['最大勝算放大',o.amp===null?'—（內插區）':fmtNum(o.amp,2)+' 倍'],['π_λ(F)',fmtNum(o.p[5],4)]]);
+  const s=`λ = ${lam.toFixed(2)}，防護 ${c4s.safe?'開':'關'}；π_λ = ${o.p.map((v,i)=>TOK6[i]+' '+v.toFixed(3)).join('，')}；最大勝算放大 ${o.amp===null?'—':fmtNum(o.amp,2)}`;announce('c4',s);setLabel(svg,'c4',s)}
+function initC4(){const box=$('#c4-btns');[[-1,'λ = −1（OffPD）'],[0,'λ = 0'],[1,'λ = 1（OnPD）'],[2,'λ = 2']].forEach(([v,n])=>{const b=document.createElement('button');b.type='button';b.className='chip';b.textContent=n;
+    b.addEventListener('click',()=>{c4s.lam=v;$('#c4-l').value=v;renderC4()});box.appendChild(b)});
+  $('#c4-l').addEventListener('input',e=>{c4s.lam=Number(e.target.value);renderC4()});$('#c4-safe').addEventListener('change',e=>{c4s.safe=e.target.checked;renderC4()});renderC4()}
+
+/* ================= timeline groups ================= */
+const TL_GROUP={'1503.02531':['kd','knowledge-distillation-foundations'],'1606.07947':['kd','knowledge-distillation-foundations'],
+  '2306.13649':['opd','odd-onpd-vs-offpd-setup'],'2410.11325':['opd','odd-onpd-vs-offpd-setup'],
+  '2509.04259':['forget','odd-on-policy-forgetting-sparsity-claims'],'2510.18874':['forget','odd-on-policy-forgetting-sparsity-claims'],'2505.11711':['forget','odd-on-policy-forgetting-sparsity-claims'],'2601.19897':['forget','odd-on-policy-forgetting-sparsity-claims'],
+  '2501.17161':['gen','odd-sft-vs-rl-generalization-claims'],
+  '1412.6980':['opt','odd-learning-rate-adam-clipping-rlvr'],'2604.13627':['opt','odd-learning-rate-adam-clipping-rlvr'],'2506.09477':['opt','odd-token-kl-direction-gradients'],
+  '2604.13016':['recent','odd-recent-opd-studies-2026'],'2609.35259':['me','odd-lineage-hub']};
+const TL_NAME={kd:'蒸餾基礎',opd:'on-policy 蒸餾',forget:'被檢驗的說法：遺忘與稀疏',gen:'被檢驗的說法：泛化',opt:'最佳化與 KL 估計',recent:'同期 on-policy 蒸餾研究',me:'本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  data=data.slice().sort((a,b)=>(Number(a.year)||0)-(Number(b.year)||0));
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];if(!TL_GROUP[e.arxiv])console.warn('timeline: ungrouped',e.arxiv);used.add(g[0]);const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${g[1]?`<a href="${g[1]}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}});return data}
+
+/* ================= toc, theme ================= */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+
+/* ================= self test (design.md 6.3 and section 5) ================= */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t=5e-4)=>Math.abs(a-b)<=t+1e-12;
+  // C1
+  {const eq=(a,b)=>a.length===b.length&&a.every((v,i)=>v===b[i]),dd=(m,f)=>pairDiffs(m,f).map(r=>r.d);
+   ok(eq(dd('SPA','LR'),[33.4,30,29.3,29.6]),'C1 SPA LR');ok(eq(dd('SPA','rollout'),[3.5,7.6,1.1,1.5]),'C1 SPA rollout');ok(eq(dd('SPA','KL'),[3.2,6.6,.8,.5]),'C1 SPA KL');
+   ok(eq(dd('ACC','rollout'),[1,1,37,14]),'C1 ACC rollout');ok(eq(dd('ACC','KL'),[0,37,36,24]),'C1 ACC KL');ok(eq(dd('ACC','LR'),[0,37,2,14]),'C1 ACC LR');
+   ok($$('#c1-fig svg').every(s=>$$('.c1pt[tabindex="0"]',s).length===1),'C1 roving tabindex')}
+  // S5 two-token example
+  {const S=softmax([1,0]),T=[.5,.5],DF=T.reduce((a,t,i)=>a+t*Math.log(t/S[i]),0),DR=S.reduce((a,s,i)=>a+s*Math.log(s/T[i]),0);
+   ok(near(S[0],.7311,1e-4)&&near(DF,.1201,1e-4)&&near(DR,.1109,1e-4),'S5 two-token');
+   const p=$('#grad .prose').textContent;ok(['0.7311','0.1201','0.1109','0.2311','0.1966'].every(v=>p.includes(v)),'S5 numbers in prose')}
+  // C2
+  {const T2=[[.5,.01,[.6371,1.6145,.49,1.1488,.5587,1.3098,4.5951]],[.3,.3,[0,0,0,0,0,0,0]],[.5,1e-6,[.6931,6.2146,.5,3.4539,.5701,3.938,13.8155]],[1e-6,.6,[7.6163,.9163,-.6,0,.6841,0,14.221]],[.9,1e-6,[2.3026,12.1089,.9,1.4411,1.0262,1.6432,16.0127]]];
+   T2.forEach(([a,b,v])=>{const o=klParts(a,b),got=[o.DF,o.DR,o.gF[0],o.gR[0],o.nF,o.nR,o.dr];ok(got.every((g,i)=>near(g,v[i])),`C2 table ${a},${b}`);
+     ok(Math.abs(o.sumF)<1e-12&&Math.abs(o.sumR)<1e-9&&o.nR<=o.dr+1e-12&&o.maxF<=1,`C2 invariants ${a},${b}`)});
+   ok(fmtNum(-1.42e-5,2)==='0.00'&&fmtSci(1e-6)==='1.00×10⁻⁶'&&fmtGrad(-1.42e-5)==='≈ 0','C2 formats')}
+  // C3
+  {const T3=[[.1,.25,[1.0986,.0194,.0177,.2828,.2197]],[.1,.01,[4.5951,.0812,.0346,.2828,.919]],[.1,1e-4,[9.2102,.1628,.0353,.2828,1.842]],[.1,1e-8,[18.4207,.3256,.0354,.2828,3.6841]],[.1,1e-12,[27.631,.4885,.0354,.2828,5.5262]],[1,.01,[4.5951,.8123,.3465,2.8284,9.1902]],[1,1e-12,[27.631,4.8845,.3536,2.8284,55.262]]];
+   T3.forEach(([e,d,v])=>{const o=boundParts(d,e),got=[o.dr,o.rev,o.fwd,o.fbound,o.rbound];ok(got.every((g,i)=>near(g,v[i],1e-4)),`C3 table eps=${e} delta=${d}`)});
+   ok(near(boundParts(1/(1+Math.exp(16)),1).rev,2.828427,1e-6),'C3 crossing')}
+  // C4
+  {const T4=[[-2,1,[.022,.6313,.2367,.0733,.0366,.0001],1.51],[-2,0,[.0057,.6362,.2386,.0826,.0368,0],21.3542],[-1.5,1,[.0258,.6015,.2439,.0859,.0429,.0001],1.2288],[-1.5,0,[.0132,.6062,.2459,.0915,.0432,0],4.6211],
+     [-1,1,[.03,.57,.25,.1,.0499,.0001],null],[0,1,[.1403,.4558,.2338,.108,.0603,.0017],null],[1,1,[.45,.25,.15,.08,.05,.02],null],[1.5,1,[.5863,.1881,.1128,.0602,.0376,.015],1.7321],[1.5,0,[.6228,.1431,.0928,.0532,.0352,.0529],4.6211],[2,1,[.7105,.1316,.0789,.0421,.0263,.0105],3],[2,0,[.7175,.0682,.0478,.0295,.0206,.1164],21.3542]];
+   T4.forEach(([l,s,p,a])=>{const o=spectrum(l,!!s);ok(o.p.every((v,i)=>near(v,p[i]))&&(a===null?o.amp===null:near(o.amp,a)),`C4 table lam=${l} safe=${s}`)});
+   ok(spectrum(1,true).p.every((v,i)=>Math.abs(v-PS[i])<1e-12)&&spectrum(-1,false).p.every((v,i)=>Math.abs(v-PT[i])<1e-12),'C4 anchors');
+   let g=true;for(let i=0;i<=80;i++){const l=-2+.05*i,o=spectrum(l,true),lr=Math.round(l*100)/100;if(Math.abs(lr)<=1?o.amp!==null:!(o.amp<=3+1e-12))g=false}ok(g,'C4 grid amp<=3 and interior null')}
+  // LO prose checks (word-boundary regex + keyword)
+  {const P=id=>$$('#'+id+' .prose p').map(p=>p.textContent).join('\n'),num=(t,n)=>new RegExp('(?<![\\d.])'+n.replace('.','\\.')+'(?![\\d])').test(t);
+   const LO=[['setup',['stop-gradient','半梯度'],[]],['kl',['mode-seeking','全詞彙','Prop. C.4'],[]],['design',['稀疏度','150 步'],['7']],['main-results',['每一組配對'],['72','73','1.3','11.2','14.0','85.3','89.6','51.9','60.0']],
+     ['grad',['趨近 0','可任意大'],['1']],['bound-rev',['Eq. 26','完整輸出序列','一步的期望半梯度'],['2']],['spectrum',['勝算','幾何中點'],['0.2','3']],['spectrum-results',['學習率'],['80','5.2']],
+     ['beyond',['RLVR','可能有助於抑制','百分點或相對比例'],['10','300']],['robust',['偏樂觀','OffPD 尤其明顯','沒有一致的 OnPD–OffPD 差距'],['622','59.0']]];
+   LO.forEach(([id,kw,ns])=>{const t=P(id);ok(kw.every(k=>t.includes(k))&&ns.every(n=>num(t,n)),'LO prose '+id+' missing: '+[...kw.filter(k=>!t.includes(k)),...ns.filter(n=>!num(t,n))].join(','))})}
+  // DOM
+  ok($$('input[type=range]').every(r=>(r.getAttribute('aria-valuetext')||'').length>0),'aria-valuetext on all sliders');
+  ok($$('details.check').length===10,'check boxes: '+$$('details.check').length);
+  ok(['c1','c2','c3','c4'].every(id=>!!$('#'+id)),'plates present');
+  {const tl=JSON.parse($('#timeline-data').textContent);ok(tl.length===14&&tl.every(e=>TL_GROUP[e.arxiv]),'timeline groups')}
+  ok(!!document.querySelector('.katex')||typeof katex==='undefined','KaTeX rendered');
+  ok(!document.querySelector('.katex-error'),'no KaTeX errors');
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ================= boot ================= */
+document.body.insertAdjacentHTML('afterbegin','<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><pattern id="hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="5" height="5" fill="var(--surface)"/><line x1="0" y1="0" x2="0" y2="5" style="stroke:var(--ink-2)" stroke-width="2"/></pattern><pattern id="hatchA" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="5" height="5" fill="var(--surface)"/><line x1="0" y1="0" x2="0" y2="5" style="stroke:var(--accent)" stroke-width="2.4"/></pattern></defs></svg>');
+initTheme();initToc();renderGrid22();initC1();initC2();initC3();initC4();renderTimeline();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;clearTimeout(rz);rz=setTimeout(()=>{renderC1();renderC2();renderC3();renderC4()},150)});
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false})}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath()});
+if(/[?&]test\b/.test(location.search))addEventListener('load',()=>setTimeout(selfTest,50));
+})();
+</script>
+</body>
+</html>

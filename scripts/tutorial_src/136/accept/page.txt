@@ -1,0 +1,642 @@
+On-policy 或 off-policy 蒸餾
+
+跳到內容
+
+ No. 136
+ On-policy 或 off-policy 蒸餾
+
+00 摘要01 蒸餾目標02 KL 方向03 實驗設計04 主結果05 logit 梯度06a forward 的穩定性06b reverse 的敏感度07 rollout 光譜08 光譜實驗09 準確率以外10 穩健性11 實作12 研究脈絡13 限制與延伸
+
+00摘要
+01蒸餾目標
+02KL 方向
+03實驗設計
+04主結果
+05logit 梯度
+06aforward 的穩定性
+06breverse 的敏感度
+07rollout 光譜
+08光譜實驗
+09準確率以外
+10穩健性
+11實作
+12研究脈絡
+13限制與延伸
+
+ No. 136 · 互動教學 · arXiv 2609.35259 · preprint 2026
+
+ On-policy 或 off-policy：蒸餾動態的受控比較
+
+ 作者在相同流程下分別改變訓練文本由哪個模型生成、比較兩個機率分布的方式與學習率，發現文本由哪個模型生成不是主要因素。
+
+ Julianna Piskorz、Antonin Berthon（同等貢獻）、Mihaela van der Schaar（University of Cambridge，2026）〈On-Policy or Off-Policy Learning? A Systematic Study of Distillation Dynamics〉
+
+ 01 · 兩種蒸餾蒸餾（distillation）讓小模型（學生）模仿大模型（教師）每一步的下一個字詞機率。訓練用的文本可以由教師模型生成（off-policy，OffPD），也可以由學生模型生成（on-policy，OnPD）。
+
+ 02 · 三個因素分開改作者固定其他設定，只改變文本由哪個模型生成、比較機率的方式（KL 散度的兩個方向：以教師加權的 forward、以學生加權的 reverse）與學習率。生成文本的模型對最終準確率沒有一致的影響：最佳平均準確率 OnPD 72%、OffPD 73%。
+
+ 03 · 學習率學習率決定有多少參數幾乎沒動（變化小於 10⁻⁶ 的參數比例）：學習率 1×10⁻⁵ 時 85.3–89.6%，5×10⁻⁵ 時 51.9–60.0%。
+
+forward（F）
+reverse（Rev）
+OnPD
+OnPD·F
+1e-55e-5
+
+OnPD·Rev
+1e-55e-5
+
+OffPD
+OffPD·F
+1e-55e-5
+
+OffPD·Rev
+1e-55e-5
+
+ 本頁的 2×2 設計格：列是 rollout 策略（OnPD／OffPD），欄是 KL 方向（F＝forward、Rev＝reverse），每格左右兩半是兩個學習率。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · 蒸餾目標
+
+ 蒸餾目標對 rollout 中出現的前綴取平均
+
+ 語言模型把文字切成 token（模型輸出的最小單位），所有可能的 token 構成詞彙表 V $\mathcal V$ ，大小記為 ∣V∣ $\lvert\mathcal V\rvert$ （論文記為 M $M$ ）。給定輸入（prompt）x∼pdata $x\sim p_{\text{data}}$ ​ 與輸出序列 y=(y1,…,yLy) $y=(y_1,\dots,y_{L_y})$ ​,…,yLy​​)，第 n $n$ 個 token 之前的輸出 y<n=(y1,…,yn−1) $y_{\lt n}=(y_1,\dots,y_{n-1})$ ​=(y1​,…,yn−1​) 稱為前綴，記 hn=(x,y<n) $h_n=(x,y_{\lt n})$ ​=(x,y<n​)（Eq. 16）。模型在每個前綴上輸出一個下一個 token 的機率分布：學生是 πSθ(⋅∣hn) $\pi_S^\theta(\cdot\mid h_n)$ θ​(⋅∣hn​)（參數 θ $\theta$ ），教師是 πT(⋅∣hn) $\pi_T(\cdot\mid h_n)$ ​(⋅∣hn​)。
+
+ 後訓練常見的幾種方法：SFT（監督式微調，以示範答案做下一個 token 的交叉熵訓練）；RL（強化學習，以獎勵更新模型）；RLVR（以可驗證獎勵，例如答案對錯，做的 RL）；GRPO（一種以同一題多個回答的組內相對獎勵更新的 RL 演算法）。本文研究另一種常用方法：強到弱蒸餾（strong-to-weak distillation）：用較大的教師模型提供監督，讓較小的學生模型學習教師的推理行為（Sec. 1）。
+
+ 計算損失所用的輸出序列稱為 rollout，產生它的策略記為 ρ $\rho$ 。蒸餾目標寫成（Sec. 3，Eq. 1）：先對 prompt 與 rollout 取期望，再對 rollout 中每個位置的學生–教師差異取平均。
+
+ L(θ)=Ex∼pdata Ey∼ρ(⋅∣x)[1Ly∑n=1LyD(πSθ(⋅∣hn) ∥ πT(⋅∣hn))] $L(\theta)=\mathbb E_{x\sim p_{\text{data}}}\,\mathbb E_{y\sim\rho(\cdot\mid x)}\Big[\tfrac1{L_y}\textstyle\sum_{n=1}^{L_y}D\big(\pi_S^\theta(\cdot\mid h_n)\,\Vert\,\pi_T(\cdot\mid h_n)\big)\Big]$ ​​Ey∼ρ(⋅∣x)​[Ly​1​∑n=1Ly​​D(πSθ​(⋅∣hn​)∥πT​(⋅∣hn​))]
+Eq. 1
+
+ 其中 D $D$ 是比較兩個下一個 token 分布的距離函數，本文用 KL 散度（S2）。這個式子只在 rollout 中出現的前綴上比較兩個模型，所以 ρ $\rho$ 決定了學生在哪些前綴上受到監督。
+
+ OffPD 取 ρ=πT $\rho=\pi_T$ ​（教師產生軌跡），OnPD 取 ρ=πSθ $\rho=\pi_S^\theta$ θ​（學生產生軌跡）。在 OnPD 中，損失也透過抽樣 y∼πSθ $y\sim\pi_S^\theta$ θ​ 依賴 θ $\theta$ ；論文為了可計算，讓梯度不穿過抽樣，把抽到的軌跡視為固定（stop-gradient），得到的更新稱為半梯度（semi-gradient，Sec. 3、Eq. 19）。當 ρ $\rho$ 不依賴 θ $\theta$ （例如 OffPD）時，半梯度就是一般梯度。
+
+ 作者選擇蒸餾作為測試平台的理由（Sec. 1）：比較 SFT 與 RLVR 時，目標函數、監督來源與密度、最佳化程序都一起改變；蒸餾可以只換 rollout 的來源，其他流程保持不變。
+
+ 本節新符號
+符號意義
+
+ V $\mathcal V$ 、∣V∣ $\lvert\mathcal V\rvert$ ：詞彙表與其大小
+
+ x $x$ 、y $y$ 、Ly $L_y$ ​：輸入、輸出序列、輸出長度
+
+ y<n $y_{\lt n}$ ​、hn $h_n$ ​：前綴；hn=(x,y<n) $h_n=(x,y_{\lt n})$ ​=(x,y<n​)
+
+ πSθ $\pi_S^\theta$ θ​、πT $\pi_T$ ​：學生、教師的下一個 token 分布
+
+ ρ $\rho$ ：rollout 策略
+
+ D $D$ ：分布之間的距離函數
+
+ 延伸閱讀：知識蒸餾基礎、OnPD 與 OffPD 的定義、強到弱蒸餾在後訓練中的使用
+
+ 02 · KL 方向
+
+ KL 方向與 rollout 策略是兩個獨立選擇
+
+ KL 散度不對稱，所以有兩個方向（Sec. 3，Eq. 2–3）。本文在整個詞彙表上計算（兩個模型的完整輸出分布都取得到），不用抽樣 token 估計，以避免額外的變異。
+
+ DF-KL=∑v∈VπT(v)log⁡πT(v)πS(v)DR-KL=∑v∈VπS(v)log⁡πS(v)πT(v) $\begin{aligned}D_{\text{F-KL}}&=\textstyle\sum_{v\in\mathcal V}\pi_T(v)\log\frac{\pi_T(v)}{\pi_S(v)}\\ D_{\text{R-KL}}&=\textstyle\sum_{v\in\mathcal V}\pi_S(v)\log\frac{\pi_S(v)}{\pi_T(v)}\end{aligned}$ ​DR-KL​​=∑v∈V​πT​(v)logπS​(v)πT​(v)​=∑v∈V​πS​(v)logπT​(v)πS​(v)​​
+Eq. 2, 3
+
+ forward KL ∑vπTlog⁡(πT/πS) $\sum_v\pi_T\log(\pi_T/\pi_S)$ ​πT​log(πT​/πS​) 以教師機率加權，懲罰學生沒涵蓋教師給高機率的 token，因此常稱為 mode-covering；reverse KL ∑vπSlog⁡(πS/πT) $\sum_v\pi_S\log(\pi_S/\pi_T)$ ​πS​log(πS​/πT​) 以學生機率加權，懲罰學生把機率放在教師認為不太可能的 token，因此常稱為 mode-seeking（Eq. 2–3、Sec. 3）。
+
+ 習慣上 OffPD 配 forward KL、OnPD 配 reverse KL。這個慣例配對有兩個來源，而本文在全詞彙上算 KL，所以可以把兩者拆開。來源一：教師 rollout 加 forward KL、學生 rollout 加 reverse KL，正好是序列層級 KL 的兩種鏈式分解（Prop. C.4，條件是固定生成長度 H $H$ 、token 損失加總），但這只在目標值層級成立；因為梯度不穿過學生抽樣的前綴，OnPD reverse-KL 的更新一般不是序列層級 reverse KL 的完整梯度。來源二：在固定前綴下，只用一個抽樣 token 估計 KL 時，v∼πT $v\sim\pi_T$ ​ 的 log⁡[πT(v)/πS(v)] $\log[\pi_T(v)/\pi_S(v)]$ ​(v)/πS​(v)] 是 forward KL 的不偏估計，v∼πS $v\sim\pi_S$ ​ 的 log⁡[πS(v)/πT(v)] $\log[\pi_S(v)/\pi_T(v)]$ ​(v)/πT​(v)] 是 reverse KL 的不偏估計，所以 rollout 的 token 自然配上對應方向。本文在全詞彙上算 KL，KL 方向不限制 rollout；而且這兩個來源都不代表慣例配對較容易最佳化或表現較好（Sec. 3）。因此作者把 rollout 策略與 KL 方向當成兩個獨立的設計選擇。
+
+ 另外，實驗以每條輸出的實際長度 Ly $L_y$ ​ 正規化，實作的目標一般不是序列 KL 的常數倍（App. C.5 末段）。
+
+forward（F）
+reverse（Rev）
+OnPD
+OnPD·F
+1e-55e-5
+
+OnPD·Rev
+1e-55e-5
+
+OffPD
+OffPD·F
+1e-55e-5
+
+OffPD·Rev
+1e-55e-5
+
+ rollout 策略（列）× KL 方向（欄）四種組合都會被訓練，包括兩種「交叉配對」（OnPD·F 與 OffPD·Rev）。
+
+ 延伸閱讀：Token 層級的正向與反向 KL
+
+ 03 · 實驗設計
+
+ 實驗只改三個因素
+
+ 本文獨立改變三個因素：rollout（OnPD／OffPD）、KL 方向（forward／reverse）、學習率（1×10⁻⁵／5×10⁻⁵）。主實驗把 Llama-3.1-8B 教師蒸餾到 Llama-3.2-1B 學生，全參數微調 150 步，每個設定 3 個 seed。遺忘的量法是 7 個 OOD 基準平均分數在訓練前後的下降；稀疏度的量法是參數變化量絕對值小於 τ=10−6 $\tau=10^{-6}$ 的參數比例 Sτ=1P∑iI[∣θifinal−θiinit∣<τ] $S_\tau=\frac1P\sum_i\mathbb I[\lvert\theta_i^{\text{final}}-\theta_i^{\text{init}}\rvert\lt\tau]$ ​=P1​∑i​I[∣θifinal​−θiinit​∣<τ]（Sec. 4.1、App. D.4，沿用 Mukherjee et al., 2025）。
+
+ ID（in-distribution）指與訓練任務同分布的留出評估；OOD（out-of-distribution）指訓練任務以外的評估。教師與學生來自同一模型家族，共用 tokenizer 與詞彙表，才能直接比較兩者的 token 分布。因為同家族模型的能力重疊會限制知識轉移，作者為每個任務各訓練一個教師並在蒸餾時凍結，以建立足夠的能力差距（Sec. 4.1）。
+
+ 實驗設定（Sec. 4.1、App. D）項目設定
+
+ 因素：rollout × KL 方向 × 學習率（1×10⁻⁵、5×10⁻⁵）；Countdown-3 另掃 {1,…,6}×10⁻⁵（Fig. 2）
+
+ 模型：Llama-3.1-8B → Llama-3.2-1B；App. A.5 為 Qwen2.5-7B → Qwen2.5-1.5B
+
+ 教師：SFT 500 步；Science、MedReason 再做 GRPO。Llama 教師準確率：MedReason 85.5%、Science 67.5%、Countdown-3 99.0%（Table 2）
+
+ 任務：MedReason（醫學選擇題）、Science（SciKnowEval 科學選擇題）、Countdown-3（三個運算元的算術）；教師回答平均 94–135 tokens
+
+ OOD 基準：MMLU-Pro、TruthfulQA、IFEval、HumanEval、EQ-Bench、BBQ、ToxiGen（App. D.1.2）
+
+ 溫度：教師 0.5、學生 1.0，抽樣與計算 KL 用同一組溫度；唯一的介入是 rollout 分布是 πT $\pi_T$ ​ 還是 πSθ $\pi_S^\theta$ θ​（App. D.2.2）
+
+ 本節新符號
+符號意義
+
+ ID、OOD：同分布評估、訓練任務以外的評估
+
+ τ $\tau$ 、Sτ $S_\tau$ ​：稀疏度門檻（10−6 $10^{-6}$ ）與稀疏度
+
+ 延伸閱讀：On-policy 學習較不遺忘、更新較稀疏的既有說法
+
+ 04 · 主結果
+
+ rollout 策略沒有一致優勢，學習率主導遺忘與稀疏度
+
+ 主結果如下（Sec. 4.2）。最佳平均準確率 OnPD 72%、OffPD 73%；forward KL 在所有 rollout 與學習率下為 71–73%，reverse KL 為 35%–72%，且對學習率敏感得多。遺忘：低學習率時 OOD 平均最多變動 1.3 個百分點，高學習率時下降 11.2–14.0 個百分點。稀疏度：低學習率 85.3–89.6%，高學習率 51.9–60.0%，而且在每一組配對比較中 OffPD 的更新至少與 OnPD 一樣稀疏。
+
+ （「百分點」pp 指兩個百分比的差。）rollout 之間的遺忘差異相對小；使用 forward KL 時，降低學習率可以消除大部分遺忘，同時保持相近的 ID 準確率。KL 方向對稀疏度是次要因素：在 on-policy rollout 上，reverse KL 一般比 forward KL 稀疏。論文文字只給遺忘的範圍（低學習率最多 1.3 pp、高學習率 11.2–14.0 pp），逐格的遺忘值只畫在 Fig. 1 中，本頁不逐格列出。
+
+ 學習率掃描（Countdown-3，Fig. 2）：稀疏度隨學習率約線性下降，OOD 表現也一致變差，兩種 rollout 的趨勢相近；相同學習率下 OffPD 幾乎在每組比較中遺忘較少，但差異小於學習率的效果。forward KL 下，小學習率可以同時達到最佳任務表現而不損失既有能力。作者把「最終表現相近、但遺忘程度差很多」比作 Catalan-Tatjer 與 Geiping 在 SFT 中描述的「cliff」現象（引號內為作者引用的用詞）。
+
+ Fig. 1 長條上的數字標籤 圖讀值（三資料集平均、3 seeds；LR 1×10⁻⁵ / 5×10⁻⁵）——ID 準確率：OnPD·F 72 / 72，OnPD·Rev 72 / 35，OffPD·F 71 / 73，OffPD·Rev 35 / 49；更新稀疏度：OnPD·F 85.3 / 51.9，OnPD·Rev 88.5 / 58.5，OffPD·F 88.8 / 59.5，OffPD·Rev 89.6 / 60.0。下方 C1 用這些數字計算「只改一個因素時」的差。
+
+forward（F）
+reverse（Rev）
+OnPD
+OnPD·F
+1e-5：725e-5：72
+
+OnPD·Rev
+1e-5：725e-5：35
+
+OffPD
+OffPD·F
+1e-5：715e-5：73
+
+OffPD·Rev
+1e-5：355e-5：49
+
+ Fig. 1 的 ID 準確率放進設計格（每格：LR 1e-5 / 5e-5）。
+
+ C1只改一個因素時的配對差
+圖讀值
+
+ 假設：數值是 Fig. 1 長條上的標籤（三個資料集平均、3 seeds；準確率標籤為整數，每個差約 ±1 pp）。配對差＝只改一個因素、另兩個固定時的絕對差（百分點）；學習率兩個水準相差 5 倍，其他因素是二元選擇，大小比較依賴所選水準。這是描述統計，不是變異數分解或因果歸因。
+
+ 指標ID 準確率更新稀疏度
+
+ 改 rollout（On→Off）● F·1e-5　■ F·5e-5　▲ Rev·1e-5　◆ Rev·5e-5
+
+改 KL 方向（F→Rev）● On·1e-5　■ On·5e-5　▲ Off·1e-5　◆ Off·5e-5
+
+改學習率（1e-5→5e-5）● On·F　■ On·Rev　▲ Off·F　◆ Off·Rev
+
+ 配對差（方法名在前、數值在後）改的因素與固定組合方法 1方法 2差
+改 rollout（On→Off）
+固定 F·1e-5（● 圓）：OnPD：85.3；OffPD：88.8；差 3.5 pp
+固定 F·5e-5（■ 方）：OnPD：51.9；OffPD：59.5；差 7.6 pp
+固定 Rev·1e-5（▲ 三角）：OnPD：88.5；OffPD：89.6；差 1.1 pp
+固定 Rev·5e-5（◆ 菱形）：OnPD：58.5；OffPD：60.0；差 1.5 pp
+改 KL 方向（F→Rev）
+固定 On·1e-5（● 圓）：forward：85.3；reverse：88.5；差 3.2 pp
+固定 On·5e-5（■ 方）：forward：51.9；reverse：58.5；差 6.6 pp
+固定 Off·1e-5（▲ 三角）：forward：88.8；reverse：89.6；差 0.8 pp
+固定 Off·5e-5（◆ 菱形）：forward：59.5；reverse：60.0；差 0.5 pp
+改學習率（1e-5→5e-5）
+固定 On·F（● 圓）：LR 1e-5：85.3；LR 5e-5：51.9；差 33.4 pp
+固定 On·Rev（■ 方）：LR 1e-5：88.5；LR 5e-5：58.5；差 30.0 pp
+固定 Off·F（▲ 三角）：LR 1e-5：88.8；LR 5e-5：59.5；差 29.3 pp
+固定 Off·Rev（◆ 菱形）：LR 1e-5：89.6；LR 5e-5：60.0；差 29.6 pp
+
+ 數值讀自 Fig. 1；配對差為本頁計算。鍵盤：Tab 移到某一列的圖，左右鍵在 4 個點間移動。
+
+ 由 C1 的表可以讀出 本頁推導：稀疏度的學習率配對差 29.3–33.4 pp，rollout 配對差 1.1–7.6 pp，KL 配對差 0.5–6.6 pp；ID 準確率改 rollout 的配對差在 forward KL 下為 1 與 1 pp（在 ±1 pp 的捨入範圍內），在 reverse KL 下為 37 與 14 pp。後者對應 S5–S8 的主題：reverse KL 對 rollout 較敏感。準確率標籤是整數，0–2 pp 的差無法區分；學習率兩個水準相差 5 倍，而 rollout 與 KL 是二元選擇，所以「哪個因素的配對差較大」依賴所選的水準。這些是描述性的配對差，不是因果歸因。
+
+ 延伸閱讀：學習率、Adam、梯度裁剪與蒸餾後的 RLVR
+
+ 本節新符號
+pp：百分點，兩個百分比的差
+
+ 05 · logit 梯度
+
+ forward KL 的 logit 梯度有界，reverse KL 沒有
+
+ 先回顧從參數到損失的路徑。學生在一個前綴上先算出一個實數向量 zSθ $z_S^\theta$ θ​，稱為 logit，每個 token 一個數；softmax 把它變成機率 πSθ(v)=ezv/∑uezu $\pi_S^\theta(v)=e^{z_v}/\sum_ue^{z_u}$ θ​(v)=ezv​/∑u​ezu​；再用 KL 和教師比較。梯度沿這條路反向傳回參數，所以關鍵是「KL 對 logit 的導數」。
+
+ 兩個 token 的例子：學生 logit 為 (1,0) $(1,0)$ ，softmax 得 πS=(0.7311,0.2689) $\pi_S=(0.7311,0.2689)$ ​=(0.7311,0.2689)；教師為 (0.5,0.5) $(0.5,0.5)$ 。forward KL ＝ 0.1201 nats，reverse KL ＝ 0.1109 nats。forward KL 對 logit 的導數是 (0.2311,−0.2311) $(0.2311,-0.2311)$ ，reverse KL 的是 (0.1966,−0.1966) $(0.1966,-0.1966)$ 。梯度下降會減少第一個 token 的 logit、增加第二個，使學生往教師的 (0.5, 0.5) 靠近。（nat 是以自然對數計的資訊單位。）
+
+ softmax 的導數是 ∂πS(u)/∂zv=πS(u)(I[u=v]−πS(v)) $\partial\pi_S(u)/\partial z_v=\pi_S(u)(\mathbb I[u=v]-\pi_S(v))$ ​(u)/∂zv​=πS​(u)(I[u=v]−πS​(v))（Eq. 9）。固定前綴、教師分布與 θ $\theta$ 無關時，代入 Eq. 2–3 得到（Sec. 5.1，Eq. 4–5，推導見 App. B）：
+
+ ∇θDF-KL=∑v(πSθ(v)−πT(v))∇θ(zSθ)v∇θDR-KL=∑vπSθ(v)(log⁡πSθ(v)πT(v)−DR-KL)∇θ(zSθ)v $\begin{aligned}\nabla_\theta D_{\text{F-KL}}&=\textstyle\sum_v\big(\pi_S^\theta(v)-\pi_T(v)\big)\nabla_\theta(z_S^\theta)_v\\ \nabla_\theta D_{\text{R-KL}}&=\textstyle\sum_v\pi_S^\theta(v)\Big(\log\frac{\pi_S^\theta(v)}{\pi_T(v)}-D_{\text{R-KL}}\Big)\nabla_\theta(z_S^\theta)_v\end{aligned}$ ​DF-KL​∇θ​DR-KL​​=∑v​(πSθ​(v)−πT​(v))∇θ​(zSθ​)v​=∑v​πSθ​(v)(logπT​(v)πSθ​(v)​−DR-KL​)∇θ​(zSθ​)v​​
+Eq. 4, 5
+
+ forward KL 對學生 logit 的導數是 πS(v)−πT(v) $\pi_S(v)-\pi_T(v)$ ​(v)−πT​(v)：每個座標落在 [−1,1] $[-1,1]$ ，只要兩個分布不同就非零。reverse KL 對學生 logit 的導數是 πS(v)(log⁡πS(v)πT(v)−DR-KL) $\pi_S(v)\big(\log\frac{\pi_S(v)}{\pi_T(v)}-D_{\text{R-KL}}\big)$ ​(v)(logπT​(v)πS​(v)​−DR-KL​)：它以學生機率加權，學生機率趨近 0 時這個座標消失，所以 reverse KL 難以找回學生遺漏的教師 mode；反過來，學生給某 token 可觀機率而教師機率趨近 0 時，log 比 log⁡πSπT $\log\frac{\pi_S}{\pi_T}$ ​πS​​ 可任意大，導數可任意大（Eq. 4–5、Sec. 5.1）。reverse 式假設凡 πS(v)>0 $\pi_S(v)>0$ ​(v)>0 處 πT(v)>0 $\pi_T(v)>0$ ​(v)>0，否則 reverse KL 無限大（App. B）。
+
+ 作者認為：forward KL 在任何兩分布不一致的前綴都提供訊號；reverse KL 強調「學生支持、教師不支持」的 token，因此更依賴學生自己會產生的前綴，預期從 on-policy rollout 獲益較多（Sec. 5.1）。
+
+ 記 r(v)=log⁡πS(v)πT(v) $r(v)=\log\frac{\pi_S(v)}{\pi_T(v)}$ ​(v)πS​(v)​（log 機率比，Eq. 42），一個前綴上的範圍 Δr=max⁡vr(v)−min⁡vr(v) $\Delta r=\max_vr(v)-\min_vr(v)$ ​r(v)−minv​r(v)。論文證明 ∥∇zDR-KL∥2≤Δr $\lVert\nabla_zD_{\text{R-KL}}\rVert_2\le\Delta r$ ​DR-KL​∥2​≤Δr（Eq. 63–65）；此界不緊，只保證有限（下方 C2 中常差好幾倍）。兩個梯度向量的座標和都是 0 本頁推導（∑v(πS−πT)=0 $\sum_v(\pi_S-\pi_T)=0$ ​(πS​−πT​)=0；∑vπS(r−DR-KL)=DR-KL−DR-KL=0 $\sum_v\pi_S(r-D_{\text{R-KL}})=D_{\text{R-KL}}-D_{\text{R-KL}}=0$ ​πS​(r−DR-KL​)=DR-KL​−DR-KL​=0），也就是把所有 logit 加同一個常數不改變損失。
+
+ C2一個前綴上的 forward／reverse KL 與 logit 梯度
+示範值
+
+ 假設：詞彙表 5 個 token（A–E）；只有 token A 的機率可調，其餘機率依固定比例 0.4 : 0.3 : 0.2 : 0.1 分給 B–E，學生與教師用同一比例，所以 B–E 的 log 機率比彼此相同；直接 logit 參數化（Jacobian＝單位矩陣）。
+
+ 預設兩者相同教師給 A 的機率趨近 0學生給 A 的機率趨近 0
+
+ 學生給 A 的機率 π_S(A) 0.500
+
+ 教師給 A 的機率 π_T(A) 0.0100
+
+ forward KL 的 logit 梯度 π_S − π_T（縱軸固定 ±1）
+
+ reverse KL 的 logit 梯度（斜線；縱軸隨數值調整）
+
+ forward KL：0.6371 nats；reverse KL：1.6145 nats；‖g_F‖₂（界 √2）：0.5587；‖g_R‖₂（界 Δr，不緊）：1.3098 ≤ 4.5951；A 的梯度 forward：0.49；A 的梯度 reverse：1.15；
+ π_S(A) = 0.500，π_T(A) = 0.0100；forward KL = 0.6371，reverse KL = 1.6145；A 的 logit 梯度 forward 0.49、reverse 1.15
+
+ 讀數由本頁依 Eq. 2–5、Eq. 65 即時計算；座標和為 0 的檢查為本頁推導；B–E 比例為示範值。‖g_R‖₂ ≤ Δr 這個界不緊。
+
+ 「教師給 A 的機率趨近 0」按鈕下，reverse 的 A 座標 3.45，超出 forward 每座標的界 1；「學生給 A 的機率趨近 0」按鈕下，forward 的 A 座標 −0.60（梯度下降使 A 的 logit 上升），reverse 的 A 座標 ≈ 0。此按鈕下 reverse 的整個梯度向量都接近 0：B–E 共用同一比例、log 比相同，學生在 B–E 上已與教師成比例。這是玩具假設造成的；Sec. 5.1 的論述只針對 A 這一個座標。
+
+ 本節新符號
+
+ logit zSθ $z_S^\theta$ θ​：softmax 前的實數向量
+
+ r(v) $r(v)$ 、Δr $\Delta r$ ：log 機率比；它在一個前綴上的範圍
+
+ nat：以自然對數計的資訊單位
+
+ 延伸閱讀：Token 層級的正向與反向 KL：梯度形式與對 rollout policy 的敏感度
+
+ 06a · forward 的穩定性
+
+ rollout 相近時 forward KL 的更新也相近
+
+ S4 的實驗中 rollout 換來換去，forward KL 的表現幾乎不變。App. C 問的是：如果兩個 rollout 策略只差一點，用它們算出的期望更新會差多少？
+
+ 需要三個量。Jacobian Jθ(hn)=∂zSθ(hn)/∂θ $J_\theta(h_n)=\partial z_S^\theta(h_n)/\partial\theta$ ​(hn​)=∂zSθ​(hn​)/∂θ（Eq. 21）描述參數改變如何影響 logit；B $B$ 是 Jθ⊤ $J_\theta^\top$ ⊤​ 最大奇異值的上界，也就是「logit 空間的一個向量經 J⊤ $J^\top$ 映到參數空間時，長度最多放大幾倍」（Eq. 26）。total variation 距離 TV(P,Q)=12∥P−Q∥1 $\mathrm{TV}(P,Q)=\tfrac12\lVert P-Q\rVert_1$ 1​∥P−Q∥1​ 是兩個分布之間最多有多少機率質量不同；本文用在兩個 rollout 策略對完整輸出序列的分布之間。半梯度 ∇ˉθL(θ;ρ)=ExEy∼ρ[g(x,y)] $\bar\nabla_\theta L(\theta;\rho)=\mathbb E_x\mathbb E_{y\sim\rho}[g(x,y)]$ θ​L(θ;ρ)=Ex​Ey∼ρ​[g(x,y)]（Eq. 19、25），其中 g $g$ 是一條軌跡上各 token 梯度的平均（Eq. 24）。
+
+ Theorem C.1（forward KL 的 rollout 穩定性）：若對每個 prompt、兩個 rollout 策略下機率為正的每個輸出、每個位置都有 ∥Jθ⊤v∥2≤B∥v∥2 $\lVert J_\theta^\top v\rVert_2\le B\lVert v\rVert_2$ ⊤​v∥2​≤B∥v∥2​（Eq. 26），則
+
+ ∥∇ˉθLF-KL(θ;ρ)−∇ˉθLF-KL(θ;ρ′)∥2≤22 B  Ex[TV(ρ(⋅∣x),ρ′(⋅∣x))] $\begin{aligned}&\big\lVert\bar\nabla_\theta L_{\text{F-KL}}(\theta;\rho)-\bar\nabla_\theta L_{\text{F-KL}}(\theta;\rho')\big\rVert_2\\&\qquad\le2\sqrt2\,B\;\mathbb E_x\big[\mathrm{TV}(\rho(\cdot|x),\rho'(\cdot|x))\big]\end{aligned}$ ​​∇ˉθ​LF-KL​(θ;ρ)−∇ˉθ​LF-KL​(θ;ρ′)​2​≤22​BEx​[TV(ρ(⋅∣x),ρ′(⋅∣x))]​
+Eq. 27
+
+ 並且單一軌跡梯度的二階動差（平方範數的期望）不超過 2B2 $2B^2$ （Eq. 28）。常數只依賴 B $B$ ，不依賴學生與教師的機率比。
+
+ 證明（三步，App. C.2）
+
+ 1. 任兩個機率向量 ∥p−q∥2≤2 $\lVert p-q\rVert_2\le\sqrt2$ ​≤2​，所以每個 token 的參數梯度 ∥J⊤(πS−πT)∥2≤2B $\lVert J^\top(\pi_S-\pi_T)\rVert_2\le\sqrt2B$ (πS​−πT​)∥2​≤2​B（Eq. 30）。
+
+ 2. 一條軌跡的梯度是各 token 的平均，三角不等式給出 ∥g∥2≤2B $\lVert g\rVert_2\le\sqrt2B$ ​≤2​B（Eq. 33）。
+
+ 3. 對有界函數 g $g$ ，∥EP[g]−EQ[g]∥2≤2sup⁡∥g∥2 TV(P,Q) $\lVert\mathbb E_P[g]-\mathbb E_Q[g]\rVert_2\le2\sup\lVert g\rVert_2\,\mathrm{TV}(P,Q)$ ​[g]−EQ​[g]∥2​≤2sup∥g∥2​TV(P,Q)（Eq. 34），對每個 prompt 套用再取期望，得到 Eq. 27。
+
+ 本節新符號
+
+ Jθ $J_\theta$ ​、B $B$ ：logit 對參數的 Jacobian；J⊤ $J^\top$ 最大奇異值的上界
+
+ TV $\mathrm{TV}$ ：完整輸出序列分布之間的 total variation 距離
+
+ ∇ˉθL $\bar\nabla_\theta L$ θ​L：期望半梯度
+
+ 06b · reverse 的敏感度
+
+ reverse KL 的更新可以在 rollout 幾乎不變時大幅改變
+
+ Theorem C.2 說 reverse KL 沒有類似 Eq. 27 的上界：不存在與學生、教師分布無關的有限常數 C $C$ ，使更新差 ≤C Ex[TV] $\le C\,\mathbb E_x[\mathrm{TV}]$ ​[TV]（Eq. 46），即使詞彙只有兩個 token、Jacobian 最大奇異值為 1。反例（Eq. 47–57）：兩條長度 2 的軌跡 y(0) $y^{(0)}$ 、y(δ) $y^{(\delta)}$ 。y(0) $y^{(0)}$ 的每個前綴上學生與教師相同，梯度為 0；y(δ) $y^{(\delta)}$ 的第二個前綴上學生是 (12,12) $(\tfrac12,\tfrac12)$ 1​,21​)、教師是 (δ,1−δ) $(\delta,1-\delta)$ ，0<δ<12 $0\lt\delta\lt\tfrac12$ 1​，此處 logit 梯度 =14log⁡1−δδ (1,−1) $=\tfrac14\log\frac{1-\delta}\delta\,(1,-1)$ 1​logδ1−δ​(1,−1)（Eq. 51）。令 ρ′ $\rho'$ 只產生 y(0) $y^{(0)}$ ，ρ $\rho$ 以機率 1−ε $1-\varepsilon$ 產生 y(0) $y^{(0)}$ 、以機率 ε $\varepsilon$ 產生 y(δ) $y^{(\delta)}$ ，兩者 TV =ε $=\varepsilon$ （Eq. 55）。
+
+ 兩個 rollout 穩定性定理可以這樣陳述。Theorem C.1：若對每個 prompt、兩個 rollout 下機率為正的每個輸出與每個位置都有 ∥Jθ⊤v∥2≤B∥v∥2 $\lVert J_\theta^\top v\rVert_2\le B\lVert v\rVert_2$ ⊤​v∥2​≤B∥v∥2​（Eq. 26），則 forward KL 的期望更新差 ≤22B Ex[TV] $\le2\sqrt2B\,\mathbb E_x[\mathrm{TV}]$ ​BEx​[TV]，其中 TV 是兩個 rollout 策略對完整輸出序列的分布距離（Eq. 27）。Theorem C.2：在上面的兩 token 反例中 TV =ε $=\varepsilon$ ，reverse KL 的更新差 =ε28log⁡1−δδ $=\frac{\varepsilon\sqrt2}8\log\frac{1-\delta}\delta$ ε2​​logδ1−δ​（Eq. 57），δ→0 $\delta\to0$ 時發散，所以不存在與分布無關的常數。Corollary C.3：若每個前綴上 log 比的範圍不超過 R $R$ （Eq. 58），則恢復上界 2BR Ex[TV] $2BR\,\mathbb E_x[\mathrm{TV}]$ ​[TV]（Eq. 59）。反例中教師的每個機率都嚴格為正，所以它適用於 softmax 語言模型。
+
+ 這些定理不能推出「forward KL 下不同 rollout 會得到相同的最終表現」。定理只控制一步的期望半梯度，上界依賴完整軌跡分布的距離與 Jacobian 上界 B $B$ ；它不證明不同 rollout 會得到相似的模型或相似的表現，也不解釋遺忘與稀疏度的差異，也不主張 reverse KL 一定不穩定或學生 rollout 一定較好。實驗結果只能解讀為與定理一致，不是它的直接推論（App. C.2、C.4）。作者另指出：rollout 機率 ε $\varepsilon$ 的變動可被局部梯度 log⁡(1/δ) $\log(1/\delta)$ 放大成 εlog⁡(1/δ) $\varepsilon\log(1/\delta)$ 的更新差；全域梯度截斷能限制實際的梯度範數，緩解這種情形，但不等於施加 Eq. 58 的條件。
+
+ 同一反例改用 forward KL 本頁推導：第二前綴的 logit 梯度是 (12−δ)(1,−1) $(\tfrac12-\delta)(1,-1)$ 1​−δ)(1,−1)，更新差 =ε22(12−δ)≤24ε $=\varepsilon\frac{\sqrt2}2(\tfrac12-\delta)\le\frac{\sqrt2}4\varepsilon$ 2​​(21​−δ)≤42​​ε。這是同一反例下的值，不是 forward 的最壞情形；forward 的保證只有 Eq. 27 的上界。reverse 的更新差在 δ ≈ 1.1×10⁻⁷ 時超過 forward 的通用上界 22ε $2\sqrt2\varepsilon$ ​ε。兩者屬於不同的目標函數，這只是數字比較，不表示兩個界可以互換或直接比較。
+
+ C3rollout 相差 ε 時，更新差多少
+示範值本頁推導
+
+ 假設：論文 Theorem C.2 的兩 token 反例：學生 (1/2, 1/2)、教師 (δ, 1−δ)、直接 logit 參數化（B = 1）；rollout 以機率 ε 換成走到這個前綴的軌跡（TV = ε）。forward 曲線是本頁用同一反例算出的值，不是 forward 的最壞情形。B = 1 與預設的 δ = 0.01、ε = 0.1 是示範假設，非論文實驗。
+
+ 教師給 token 1 的機率 δ 1.00×10⁻²
+
+ rollout 的差 ε（= TV） 0.10
+
+ reverse 更新差（Eq. 57）forward 更新差，同一反例（本頁推導）forward 的界 2√2·ε（Eq. 27）
+
+ Δr = log((1−δ)/δ)：4.5951；reverse 更新差（Eq. 57）：0.0812；reverse 條件界 2Δr·ε（Eq. 59）：0.9190；forward 更新差（同一反例）：0.0346；forward 的界 2√2·ε（Eq. 27）：0.2828；
+ δ = 1.00×10⁻²，ε = 0.10；reverse 更新差 0.0812，forward 更新差 0.0346（界 0.2828）
+
+ Eq. 27、53、57、59 即時計算；forward 曲線與交點為本頁推導。圖畫的是未除以 ε 的更新差，ε 改變時三條線一起平移；交點的 δ 與 ε 無關。
+
+ 預設值（δ = 0.01、ε = 0.1）下 reverse 更新差 0.0812、forward 更新差 0.0346。δ 每小 10 倍，reverse 更新差增加 ε28ln⁡10≈0.407ε $\varepsilon\frac{\sqrt2}8\ln10\approx0.407\varepsilon$ 2​​ln10≈0.407ε 本頁推導；forward 更新差趨近 24ε $\frac{\sqrt2}4\varepsilon$ 2​​ε 後不再增加。
+
+ 本節新符號
+
+ ε $\varepsilon$ 、δ $\delta$ ：反例中 rollout 的混合機率、教師給 token 1 的機率
+
+ R $R$ ：Corollary C.3 中所有前綴上 Δr $\Delta r$ 的上界
+
+ 07 · rollout 光譜
+
+ 光譜 π_λ 在教師與學生之間連續內插與外插
+
+ 為了在實驗上檢驗 S5–S6 的敏感度，作者讓 rollout 策略隨一個參數 λ $\lambda$ 連續變化。這裡的「光譜」（spectrum）指這一族隨 λ $\lambda$ 變化的抽樣分布（Sec. 5.2，App. D.5）。兩個 token 的勝算（odds）是它們的機率比 π(v)/π(u) $\pi(v)/\pi(u)$ ；rv=log⁡πS(v)−log⁡πT(v) $r_v=\log\pi_S(v)-\log\pi_T(v)$ ​=logπS​(v)−logπT​(v) 是 S5 定義的 log 機率比。
+
+ (z^λ)v=12(log⁡πS(v)+log⁡πT(v))+λ2(log⁡πS(v)−log⁡πT(v))=1+λ2log⁡πS(v)+1−λ2log⁡πT(v) $\begin{aligned}(\hat z_\lambda)_v&=\tfrac12(\log\pi_S(v)+\log\pi_T(v))+\tfrac\lambda2(\log\pi_S(v)-\log\pi_T(v))\\&=\tfrac{1+\lambda}2\log\pi_S(v)+\tfrac{1-\lambda}2\log\pi_T(v)\end{aligned}$ λ​)v​​=21​(logπS​(v)+logπT​(v))+2λ​(logπS​(v)−logπT​(v))=21+λ​logπS​(v)+21−λ​logπT​(v)​
+Eq. 75–76
+
+ rollout 光譜的定義：πλ=softmax(z^λ) $\pi_\lambda=\mathrm{softmax}(\hat z_\lambda)$ ​=softmax(z^λ​)，其中 z^λ=1+λ2log⁡πS+1−λ2log⁡πT $\hat z_\lambda=\frac{1+\lambda}2\log\pi_S+\frac{1-\lambda}2\log\pi_T$ λ​=21+λ​logπS​+21−λ​logπT​。λ=−1 $\lambda=-1$ 時就是 πT $\pi_T$ ​（OffPD），λ=1 $\lambda=1$ 時就是 πS $\pi_S$ ​（OnPD），λ=0 $\lambda=0$ 是兩者正規化後的幾何中點。∣λ∣>1 $\lvert\lambda\rvert>1$ 時某一個係數變成負的，會放大兩個模型都給低機率、只是被偏好的一方給得相對較高的 token。作者的防護是：只對被偏好方機率至少為其最大機率 α=0.2 $\alpha=0.2$ 倍的 token（可信度遮罩，Eq. 77–78）加上 log 比加成，而且加成截斷在 c=2log⁡3 $c=2\log3$ （Eq. 79–80），使 λ∈[−2,2] $\lambda\in[-2,2]$ 內相對錨點策略的兩兩勝算放大最多 3 倍（Eq. 75–80、App. D.5）。
+
+ 完整寫法：bS(v)=MS(v)min⁡{max⁡{rv,0},c} $b_S(v)=M_S(v)\min\{\max\{r_v,0\},c\}$ ​(v)=MS​(v)min{max{rv​,0},c}，bT(v)=MT(v)min⁡{max⁡{−rv,0},c} $b_T(v)=M_T(v)\min\{\max\{-r_v,0\},c\}$ ​(v)=MT​(v)min{max{−rv​,0},c}；λ>1 $\lambda>1$ 時 z~λ=log⁡πS+λ−12bS $\tilde z_\lambda=\log\pi_S+\frac{\lambda-1}2b_S$ λ​=logπS​+2λ−1​bS​，λ<−1 $\lambda\lt-1$ 時 z~λ=log⁡πT+−λ−12bT $\tilde z_\lambda=\log\pi_T+\frac{-\lambda-1}2b_T$ λ​=logπT​+2−λ−1​bT​，∣λ∣≤1 $\lvert\lambda\rvert\le1$ 時 z~λ=z^λ $\tilde z_\lambda=\hat z_\lambda$ λ​=z^λ​；最後 πλ=softmax(z~λ) $\pi_\lambda=\mathrm{softmax}(\tilde z_\lambda)$ ​=softmax(z~λ​)。遮罩外的 token 保留錨點策略的機率，因此 π−1=πT $\pi_{-1}=\pi_T$ ​=πT​、π1=πS $\pi_1=\pi_S$ ​=πS​，在 ∣λ∣=1 $\lvert\lambda\rvert=1$ 處連續。
+
+ 3 倍的來由 本頁推導：λ>1 $\lambda>1$ 時 z~λ−log⁡πS=λ−12bS $\tilde z_\lambda-\log\pi_S=\frac{\lambda-1}2b_S$ λ​−logπS​=2λ−1​bS​，任兩個 token 的勝算比被乘上 exp⁡ ⁣(λ−12(bS(v)−bS(u)))≤exp⁡ ⁣(λ−12c) $\exp\!\big(\frac{\lambda-1}2(b_S(v)-b_S(u))\big)\le\exp\!\big(\frac{\lambda-1}2c\big)$ λ−1​(bS​(v)−bS​(u)))≤exp(2λ−1​c)，λ=2 $\lambda=2$ 時為 eln⁡3=3 $e^{\ln3}=3$ =3。不加防護時，同一倍數是 exp⁡ ⁣(λ−12(max⁡r−min⁡r)) $\exp\!\big(\frac{\lambda-1}2(\max r-\min r)\big)$ λ−1​(maxr−minr))，沒有上界。Fig. 4 確認這種抽樣方式確實改變了生成軌跡上學生與教師的似然。
+
+ C4rollout 光譜 π_λ
+示範值
+
+ 假設：單一前綴、6 個 token（A–F）、學生與教師分布固定；不模擬訓練，只顯示抽樣分布 π_λ。token F 兩個模型都給低機率，但學生給的機率是教師的 200 倍。
+
+ 光譜參數 λ（← 教師偏好　學生偏好 →） 0.00
+
+ λ = −1（OffPD）λ = 0λ = 1（OnPD）λ = 2
+ 使用遮罩與截斷（App. D.5）
+
+ π_S 學生（實心）π_T 教師（空心）π_λ（斜線）
+
+ λ：0.00；防護：開；最大勝算放大：—（內插區）；π_λ(F)：0.0017；
+ λ = 0.00，防護 開；π_λ = A 0.140，B 0.456，C 0.234，D 0.108，E 0.060，F 0.002；最大勝算放大 —
+
+ 依 Eq. 75–80（α = 0.2，c = 2 ln 3）即時計算；3 倍上界的推導為本頁內容；分布為示範值（π_S = 0.45, 0.25, 0.15, 0.08, 0.05, 0.02；π_T = 0.03, 0.57, 0.25, 0.10, 0.0499, 0.0001）。
+
+ 「λ = 2」按鈕下開啟防護時，A 的加成被截斷在 c，最大勝算放大正好 3.00；F 不在遮罩內（π_S(F) = 0.02 低於 0.2 × 0.45），π_λ(F) = 0.0105。關閉防護時 π_λ(F) 升到 0.1164，最大勝算放大 21.35 倍。這就是 App. D.5 要避免的情形：兩個模型都給低機率的 token 被外插放大。
+
+ 本節新符號
+
+ 勝算：兩個 token 的機率比
+
+ λ $\lambda$ 、α $\alpha$ 、c $c$ ：光譜參數；遮罩門檻 0.2；截斷值 2ln⁡3 $2\ln3$ 
+
+ MS $M_S$ ​、MT $M_T$ ​、bS $b_S$ ​、bT $b_T$ ​：可信度遮罩與截斷後的加成
+
+ 08 · 光譜實驗
+
+ 光譜上 forward KL 穩定，reverse KL 偏好學生 rollout
+
+ 作者沿用 S3 的設定，在 Countdown-3 上以 πλ $\pi_\lambda$ ​ 抽樣訓練 150 步（Sec. 5.2，Fig. 3）。forward KL 的準確率在整個光譜上都高於 80%，學習率 1×10⁻⁵ 時只變動 5.2 個百分點；reverse KL 的平均表現隨 λ $\lambda$ 大幅變化，數個設定 seed 間變異大，低學習率時明顯受益於學生偏好的 rollout（λ>0 $\lambda>0$ ），教師偏好的 rollout 表現變差，高學習率時仍不穩定，偶爾準確率驟降（論文用詞 collapse）。遺忘與稀疏度受 rollout 的影響相對小，主要由學習率決定（Sec. 5.2、Fig. 3）。
+
+ OnPD 加 forward KL 即使經過一段大量不連貫、高熵的 rollout 階段仍能有效學習（App. A.10，見 S10）；作者據此指出，最終表現相近可能掩蓋很不同的最佳化路徑。
+
+ Qwen2.5（Fig. 15，單一 seed 42）：forward KL 穩健；reverse KL 對教師偏好的 rollout（λ<0 $\lambda\lt0$ ）高度敏感，λ≥0 $\lambda\ge0$ 時大幅恢復並接近 forward KL。學習率 5×10⁻⁵ 下，學生偏好的 rollout（λ>0 $\lambda>0$ ）使 forward KL 的遺忘隨 λ $\lambda$ 愈來愈嚴重，reverse KL 一般也遺忘較多但不那麼單調；作者把它當作「on-policy 不必然減少遺忘」的額外證據。
+
+ 09 · 準確率以外
+
+ on-policy 資料改善較難任務的泛化，但 RLVR 後不保留
+
+ pass@k 是每題抽 k $k$ 個回答、至少一個正確的題目比例；pass@1 就是單次回答的準確率。這部分的評估每題抽 10 個回答（App. A.4）。pass@1 的改善不一定帶來 pass@k 的改善（Yue et al., 2025）。在 Countdown-3（LR 1×10⁻⁵）上，λ>0 $\lambda>0$ 時兩種 KL 的 pass@1 相近，但 forward KL 的 pass@10 明顯較高；Qwen 結果相同（Fig. 16）。作者的結論：KL 方向比 rollout 更影響輸出涵蓋度。
+
+ 本文在三個地方討論 on-policy 的優勢與限度。第一，Countdown-4E（四個運算元取自 1–10 的較難 OOD 任務，同一批 Countdown-3 checkpoint 不再訓練、直接評估）上，兩種 KL 方向下較 on-policy 的 rollout（λ>0 $\lambda>0$ ）的 pass@k 一致高 10–15%（論文寫「10 − 15% higher」，未說明是百分點或相對比例）；這是本文第一個 on-policy 明顯較好的設定。第二，OnPD 加 reverse KL 幾乎不轉移教師的西班牙文風格（0.0%／0.1%，每條件 1 次訓練），作者據此認為這個組合「可能有助於抑制」附帶的風格轉移。第三，後續 300 步 RLVR 後，最強的持續表現來自 off-policy checkpoint，on-policy 的初始優勢沒有可靠保留（Sec. 5.3）。
+
+ RLVR 的設定（App. D.6）：Countdown-4，300 步，GRPO 加 DAPO loss，無 KL 懲罰，LoRA rank 256，RLVR 學習率 2×10⁻⁶，正確給獎勵 2、否則 0，共 24 次訓練。LR 1×10⁻⁵ 蒸餾的 reverse-KL checkpoint 起初進步快（包括起始準確率低的 OffPD），後來獎勵驟降（論文用詞 reward collapse）；OffPD 加 forward KL（1×10⁻⁵）與 OffPD 加 reverse KL（5×10⁻⁵，Fig. 26）穩定進步，訓練結束時最高，雖然起點接近 0%。圖中的曲線是訓練獎勵，不是留出準確率；正確率等於平均獎勵的一半。這與 Zhang et al.（2026a）一致：初始表現最強的 checkpoint 不一定是後續 RLVR 最好的起點。
+
+ 風格轉移實驗（App. A.11、D.7）：Qwen2.5-3B 教師在每題得到正確示範，並被要求只用西班牙文推理；Qwen2.5-1.5B 學生在 Science（App. D.7 稱 ScienceQA）上蒸餾，用 GPT-5 判定回答語言。下表為 Fig. 24 的數字標籤 圖讀值。
+
+ 學生回答為西班牙文的比例（Fig. 24，每條件 1 次訓練）設定LR 1×10⁻⁵LR 5×10⁻⁵
+
+ OnPD·forward：LR 1e-5：90.6%；LR 5e-5：100.0%
+
+ OnPD·reverse：LR 1e-5：0.0%；LR 5e-5：0.1%
+
+ OffPD·forward：LR 1e-5：82.6%；LR 5e-5：99.9%
+
+ OffPD·reverse：LR 1e-5：61.7%；LR 5e-5：100.0%
+
+ 作者的解釋（假說）：在學生產生的英文前綴上，教師仍支持英文續寫；mode-seeking 的 reverse KL 可以對齊這個英文 mode，而不必涵蓋西班牙文。off-policy rollout 即使用 reverse KL 仍會轉移風格。（App. A.11 第二段有一句寫成「OnPD with forward KL」，與 Fig. 24 和 Sec. 5.3 不符；本頁依圖與 Sec. 5.3。）
+
+ 延伸閱讀：SFT 與 RL 的泛化比較、context distillation 與自蒸餾
+
+ 10 · 穩健性
+
+ 三項穩健性檢查不改變主要結論
+
+ 本文做了三項穩健性檢查（Sec. 6、App. A.1–A.3）。抽樣 KL：forward 仍穩健、reverse 仍敏感，學習率仍主導遺忘與稀疏度。移除梯度截斷：reverse KL 明顯變差、forward KL 在較大學習率仍有效（App. A.1：OffPD 尤其明顯），但整體沒有一致的 OnPD–OffPD 差距（Sec. 6）；Fig. 8 沒有數字標籤，論文未給數值。Numina–MATH（教師回答平均 622 tokens）：低學習率時 OnPD 加 reverse KL 的 MATH-500 最高（59.0%），但這是訓練軌跡上各 checkpoint 的最高值（作者註明可能偏樂觀），且每條件只有 1 次訓練，作者視為提示性。
+
+ 抽樣 KL（App. A.2）
+
+ forward 抽 yn∼πT $y_n\sim\pi_T$ ​∼πT​，損失 L^F-KL=−log⁡πSθ(yn∣hn) $\hat L_{\text{F-KL}}=-\log\pi_S^\theta(y_n\mid h_n)$ F-KL​=−logπSθ​(yn​∣hn​)；reverse 抽 yn∼πSθ $y_n\sim\pi_S^\theta$ ​∼πSθ​，替代損失 L^R-KL=sg[log⁡πSθ(yn∣hn)−log⁡πT(yn∣hn)] log⁡πSθ(yn∣hn) $\hat L_{\text{R-KL}}=\mathrm{sg}[\log\pi_S^\theta(y_n\mid h_n)-\log\pi_T(y_n\mid h_n)]\,\log\pi_S^\theta(y_n\mid h_n)$ R-KL​=sg[logπSθ​(yn​∣hn​)−logπT​(yn​∣hn​)]logπSθ​(yn​∣hn​)，sg 是 stop-gradient。這個額外的 token 在每個位置獨立抽樣，不必等於 rollout 中的 token（論文 App. A.2 一處寫成 xn $x_n$ ​，前後文應為 yn $y_n$ ​）。
+
+ 移除梯度截斷（App. A.1，Fig. 7–8）
+
+ 主實驗把全域梯度範數截斷在 1.0；截斷前的範數在多數訓練步驟超過 1.0（App. A.1），reverse KL 的範數更大、更不穩，早期有尖峰。移除截斷後 KL 方向之間的差異變大：reverse KL 明顯變差，forward KL 在較大學習率下仍有效；App. A.1 補充 forward KL 的這個表現在 OffPD 尤其明顯，而 Sec. 6 對 rollout 的總結是沒有一致的 OnPD–OffPD 差距。兩句不衝突：前者是 forward KL 內部的一個趨勢，後者是跨 KL 方向與學習率的整體判斷。Fig. 8 只有曲線、沒有數字標籤，所以本頁不寫數字。遺忘與稀疏度仍主要由學習率決定；App. A.1 另提 OnPD 加 forward KL 訓練後的 OOD 表現特別低。
+
+ 作者提出的可能解釋：Adam 以 m^t/(v^t+ϵ) $\hat m_t/(\sqrt{\hat v_t}+\epsilon)$ t​/(v^t​​+ϵ) 更新（m^t $\hat m_t$ t​、v^t $\hat v_t$ t​ 是梯度與其逐座標平方的移動平均），這個正規化抵銷均勻的梯度尺度變化；孤立的梯度尖峰會讓 mt $m_t$ ​ 偏向非典型的批次，並膨脹衰減較慢的 vt $v_t$ ​，壓抑之後的修正更新。作者推測這對 OnPD 特別不利，因為早期的破壞性更新會改變之後產生 rollout 的策略；而且這個機制可以損害任務學習卻不增加遺忘。
+
+ 較長的推理（App. A.3）
+
+ Qwen2.5-Math-1.5B-Instruct 蒸餾到 Qwen2.5-1.5B-Instruct，資料是 Numina–MATH 2 萬題（MATH 訓練集 7,498 題加 NuminaMath 合成題 12,502 題），1,000 步，每 100 步評估，生成溫度 0.7、top-p 0.8。未訓練時 MATH-500 為 53.1%，選出的 checkpoint 為 53.3%–59.0%。學習率 1×10⁻⁵ 時 OOD 大致保持、稀疏度 92–93%；5×10⁻⁵ 時 OOD 由約 41.4% 降到 33.7–35.9%、稀疏度 63–70%。OnPD 用 vLLM 生成時，以截斷在 2 的重要性權重修正 vLLM 與訓練後端的抽樣分布差異（沿用 Shenfeld et al., 2026）。A.3 的結論與前兩項相同：forward KL 仍比 reverse KL 穩健，遺忘與稀疏度仍由學習率主導（App. A.3）；OnPD 加 reverse KL 在低學習率的最高值只作提示。
+
+ 低 forward KL 可能掩蓋高熵的 rollout（App. A.10）
+
+ 熵 H(T)=−∑vT(v)ln⁡T(v) $H(T)=-\sum_vT(v)\ln T(v)$ ​T(v)lnT(v) 衡量分布的不確定性，交叉熵 CE(T,S)=−∑vT(v)ln⁡S(v) $\mathrm{CE}(T,S)=-\sum_vT(v)\ln S(v)$ ​T(v)lnS(v)；兩者滿足 DKL(T∥S)=CE(T,S)−H(T) $D_{\mathrm{KL}}(T\Vert S)=\mathrm{CE}(T,S)-H(T)$ ​(T∥S)=CE(T,S)−H(T)（Eq. 6）。Science 上 OnPD 加 forward KL 的第 10–20 步，forward KL 變小，但教師熵與交叉熵都接近詞彙表的尺度（12 nats，約 16.3 萬個等效 token 選擇）：小 KL 來自兩個大數幾乎相消，不是有把握的預測。低熵的區段沿軌跡往後推進；作者推測這是一個自我加強的過程：前段 token 改善後，教師才能在後段前綴上給出有用的監督。第 50 步時 Science 平均 37%、MedReason 56%，OOD 只降 1.3 與 0.8 個百分點。作者推測差距來自取樣溫度（評估 0.5、訓練 1.0）：把 Science 第 50 步的單一 checkpoint（seed 42）在同樣 20 個 prompt 上以 {0.3, 0.5, 0.7, 1.0} 重新取樣，準確率到 0.7 都高，1.0 時驟降，此時教師與學生的熵都超過 7 nats。
+
+ 生成溫度消融（App. A.12，MedReason）
+
+ 預設 OnPD 生成溫度 1.0、OffPD 0.5，把兩者互換（計算 KL 用的溫度不變）。forward KL：低學習率 OnPD 67.0→66.7%、OffPD 68.2→68.0%；高學習率 OnPD 55.7→63.0%、OffPD 62.8→60.7%。reverse KL：OnPD 69.3→67.5%（1×10⁻⁵）、59.3→36.0%（5×10⁻⁵，seed 間變異大）；OffPD 5.7→27.0%（1×10⁻⁵）、46.0→60.3%（5×10⁻⁵）。作者的限定：低學習率的 forward-KL 比較不能用預設溫度的差異解釋，但生成溫度對高學習率的 OnPD 有中等影響，reverse KL 對生成分布更敏感；段末與圖說的結論是 OnPD 與 OffPD 可達到的最佳表現不受生成溫度影響。
+
+ 本節新符號
+
+ H $H$ 、CE：熵、交叉熵
+
+ sg：stop-gradient
+
+ m^t $\hat m_t$ t​、v^t $\hat v_t$ t​：Adam 的一階、二階移動平均
+
+ 延伸閱讀：學習率、Adam、梯度裁剪與蒸餾後的 RLVR
+
+ 11 · 實作
+
+ 實作設定與常見錯誤
+
+ 蒸餾訓練設定（App. D.3 Table 3、D.5）項目值
+
+ 最佳化步數：150（主比較用第 150 步的 checkpoint）
+
+ 最佳化器：Fused AdamW，β₁ = 0.9，β₂ = 0.999，ε = 10⁻⁸，weight decay 0
+
+ 學習率排程：常數，前 10 步線性 warm-up
+
+ 批次：每裝置 1、梯度累積 32，每步 32 個 prompt；每個 prompt 1 條軌跡
+
+ 梯度截斷：全域範數 1.0
+
+ 溫度：學生 1.0、教師 0.5（抽樣與 KL 都用）；top-p 1.0
+
+ 最大長度：prompt 2,048；completion 512（Countdown-3）／1,024（Science、MedReason）
+
+ 損失：每個非 padding 位置在全詞彙上算 KL，對 completion token 取平均，再對樣本平均
+
+ gradient checkpointing：on-policy 開、off-policy 關（只為記憶體）
+
+ 光譜：α = 0.2，c = 2 log 3，λ ∈ [−2, 2]
+
+ 評估：每資料集前 200 題，學生溫度 0.5、top-p 1.0，每題 1 個回答；pass@k 例外：每題 10 個回答，Countdown-3 溫度 1.0，Countdown-4E 溫度 0.5、completion 上限 4,096
+
+ 常見錯誤
+
+ 把 OnPD 與 reverse KL 綁在一起：rollout 決定哪些前綴出現在訓練資料中，KL 方向決定在這些前綴上怎麼比較；全詞彙 KL 下兩者獨立（Sec. 3）。
+
+ 以為 OnPD reverse KL 的更新就是序列層級 reverse KL 的梯度：stop-gradient 使它只是半梯度（App. C.5）。
+
+ 在不同學習率下比較 OnPD 與 OffPD：學習率主導遺忘與稀疏度（Sec. 4.2），比較必須在相同學習率下配對。
+
+ ∣λ∣>1 $\lvert\lambda\rvert>1$ 的外插不加防護：會放大兩個模型都給低機率的 token；用遮罩 α = 0.2 與截斷 c = 2 log 3（App. D.5）。
+
+ 把低 forward KL 當成 rollout 品質好：DKL=CE−H $D_{\mathrm{KL}}=\mathrm{CE}-H$ ​=CE−H，兩個大數相消也會得到小 KL（App. A.10）。
+
+ 抽樣版 reverse KL 少了 stop-gradient：App. A.2 的替代損失對 log 比加 sg；若不加，對 log 比本身求導會多出一項，期望不再等於 reverse KL 的梯度 本頁推導。
+
+ 只看 pass@1：在 Countdown-3 上，λ>0 $\lambda>0$ 時兩種 KL 的 pass@1 相近，forward KL 的優勢只在 pass@10 看得到（Sec. 5.3）。
+
+ 12 · 研究脈絡
+
+ 研究脈絡
+
+ logit 蒸餾（Hinton et al., 2015）讓學生對齊教師的輸出分布；序列層級蒸餾（Kim & Rush, 2016）用教師生成的序列訓練學生，相當於 OffPD 的前身。Agarwal et al.（2023）定義了 on-policy 蒸餾：學生自己生成、教師逐 token 監督；Xu et al.（2024）交錯使用兩者的 token。2025–2026 年有幾篇研究把 on-policy 學習連到較少遺忘（Shenfeld et al., 2025；Chen et al., 2025）、較稀疏的更新（Mukherjee et al., 2025）與較好的泛化（Chu et al., 2025），另有研究指出學習率本身強烈影響遺忘（Rofin et al., 2026）。本文把這些說法當成假說，在只改 rollout 的設定中檢驗。每張卡片連到對應的研究筆記。
+
+ 蒸餾基礎on-policy 蒸餾被檢驗的說法：遺忘與稀疏被檢驗的說法：泛化最佳化與 KL 估計同期 on-policy 蒸餾研究本文
+
+ 2014最佳化與 KL 估計Adam: A Method for Stochastic Optimization
+Kingma & Ba
+論文用來解釋梯度範數與參數更新量的關係
+arXiv ↗筆記
+2015蒸餾基礎Distilling the Knowledge in a Neural Network
+Hinton et al.
+知識蒸餾的基礎，off-policy 蒸餾的形式
+arXiv ↗筆記
+2016蒸餾基礎Sequence-Level Knowledge Distillation
+Kim & Rush
+序列層級蒸餾，OffPD 的前身
+arXiv ↗筆記
+2023on-policy 蒸餾On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes
+Agarwal et al.
+OnPD 的定義來源
+arXiv ↗筆記
+2024on-policy 蒸餾Speculative Knowledge Distillation: Bridging the Teacher-Student Gap Through Interleaved Sampling
+Xu et al.
+學生與教師交錯取樣的混合式蒸餾
+arXiv ↗筆記
+2025被檢驗的說法：泛化SFT Memorizes, RL Generalizes: A Comparative Study of Foundation Model Post-training
+Chu et al.
+RL 較能泛化的論據
+arXiv ↗筆記
+2025被檢驗的說法：遺忘與稀疏Reinforcement Learning Finetunes Small Subnetworks in Large Language Models
+Mukherjee et al.
+RL 更新稀疏的論據與稀疏度量
+arXiv ↗筆記
+2025最佳化與 KL 估計On a few pitfalls in KL divergence gradient estimation for RL
+Tang & Munos
+KL 梯度估計的實作陷阱，論文引以處理取樣前綴不求導
+arXiv ↗筆記
+2025被檢驗的說法：遺忘與稀疏RL's Razor: Why Online Reinforcement Learning Forgets Less
+Shenfeld et al.
+on-policy RL 較少遺忘的論據
+arXiv ↗筆記
+2025被檢驗的說法：遺忘與稀疏Retaining by Doing: The Role of On-Policy Data in Mitigating Forgetting
+Chen et al.
+RL 遺忘少於 SFT 的比較
+arXiv ↗筆記
+2026被檢驗的說法：遺忘與稀疏Self-Distillation Enables Continual Learning
+Shenfeld et al.
+以自蒸餾做 on-policy 學習並保留舊能力
+arXiv ↗筆記
+2026同期 on-policy 蒸餾研究Rethinking On-Policy Distillation of Large Language Models: Phenomenology, Mechanism, and Recipe
+Li et al.
+OPD 成功條件的系統性研究
+arXiv ↗筆記
+2026最佳化與 KL 估計(How) Learning Rates Regulate Catastrophic Overtraining
+Rofin et al.
+學習率與遺忘取捨
+arXiv ↗筆記
+2026本文On-Policy or Off-Policy Learning? A Systematic Study of Distillation Dynamics
+Piskorz, Berthon & van der Schaar
+本論文：分離 rollout policy、KL 方向與學習率
+arXiv ↗筆記
+
+ 13 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 作者寫明的限制（Sec. 7）：學生模型最多 1.5B 參數，任務的推理長度最多約 2,000 tokens；教師固定，未研究特定學生–教師組合下是否出現 OnPD 與 OffPD 的差異。作者建議未來的 on-policy 蒸餾研究把 OffPD 列為標準基準；並認為 SFT 與 RL 之間觀察到的多數差異難以只歸因於 rollout 策略，目標函數、獎勵、監督密度與最佳化程序值得進一步研究。
+
+ 完整符號與詞彙表（含定義章節）
+符號／詞意義定義於
+
+ token、V $\mathcal V$ ：最小輸出單位、詞彙表；S1
+
+ hn $h_n$ ​、ρ $\rho$ ：前綴、rollout 策略；S1
+
+ SFT、RL、RLVR、GRPO：後訓練方法；S1
+
+ ID、OOD、Sτ $S_\tau$ ​：評估類型、稀疏度；S3
+
+ pp：百分點；S4
+
+ logit、r(v) $r(v)$ 、Δr $\Delta r$ ：softmax 前的向量、log 機率比、其範圍；S5
+
+ Jθ $J_\theta$ ​、B $B$ 、TV：Jacobian、其奇異值上界、total variation；S6a
+
+ ε $\varepsilon$ 、δ $\delta$ 、R $R$ ：反例參數、log 比範圍的上界；S6b
+
+ 勝算、λ $\lambda$ 、α $\alpha$ 、c $c$ ：機率比、光譜參數、遮罩門檻、截斷值；S7
+
+ pass@k：k 個回答至少一個正確的比例；S9
+
+ H $H$ 、CE、nat：熵、交叉熵、資訊單位；S10（nat 於 S5）
+
+ 研究筆記（依閱讀順序）
+
+ 蒸餾動態研究（On-policy 與 off-policy）的研究脈絡總覽總覽
+
+ 知識蒸餾基礎：logit 蒸餾與序列層級蒸餾蒸餾的基本形式
+
+ On-policy 蒸餾與線上模仿學習線上模仿
+
+ OnPD 與 OffPD 的定義：rollout policy 作為獨立變因本文的名詞與設定
+
+ Token 層級的正向與反向 KL：梯度形式與對 rollout policy 的敏感度KL 方向與梯度
+
+ On-policy 學習較不遺忘、更新較稀疏的既有說法被檢驗的說法（一）
+
+ SFT 與 RL 的泛化比較，以及 on-policy 資料對泛化的說法被檢驗的說法（二）
+
+ 2026 年的 on-policy 蒸餾研究：演算法變體、診斷與失敗模式同期研究
+
+ 強到弱蒸餾在後訓練中的使用與本論文的模型選擇實務背景
+
+ 學習率、Adam、梯度裁剪與蒸餾後的 RLVR控制變因與 RLVR
+
+ 相關的既有筆記
+
+ context distillation 與自蒸餾風格轉移實驗的形式
+
+ RLVR、GRPO 與信用分配瓶頸蒸餾後的 RLVR
+
+ PPO、GRPO、DAPO 與 LLM 的 RL 目標RL 目標
+
+ Julianna Piskorz, Antonin Berthon, Mihaela van der Schaar. On-Policy or Off-Policy Learning? A Systematic Study of Distillation Dynamics. Preprint, 2026. arXiv:2609.35259.
+
+ 本頁的方程式與數字取自論文 v1；標示「本頁推導」「示範值」「圖讀值」的內容不是論文正文的結論。C1–C4 的讀數在瀏覽器中即時計算，不重現論文的實驗。
+
+ ← Paper Master
+ 教學與筆記

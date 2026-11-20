@@ -1,0 +1,133 @@
+
+<!-- S5 -->
+<section class="ch" id="grad" data-toc="05" data-tt="logit 梯度">
+  <div class="ch-num">05 · logit 梯度</div>
+  <h2>forward KL 的 logit 梯度有界，reverse KL 沒有</h2>
+  <div class="prose">
+    <p>先回顧從參數到損失的路徑。學生在一個前綴上先算出一個實數向量 $z_S^\theta$，稱為 <b>logit</b>，每個 token 一個數；softmax 把它變成機率 $\pi_S^\theta(v)=e^{z_v}/\sum_ue^{z_u}$；再用 KL 和教師比較。梯度沿這條路反向傳回參數，所以關鍵是「KL 對 logit 的導數」。</p>
+    <p>兩個 token 的例子：學生 logit 為 $(1,0)$，softmax 得 $\pi_S=(0.7311,0.2689)$；教師為 $(0.5,0.5)$。forward KL ＝ 0.1201 nats，reverse KL ＝ 0.1109 nats。forward KL 對 logit 的導數是 $(0.2311,-0.2311)$，reverse KL 的是 $(0.1966,-0.1966)$。梯度下降會減少第一個 token 的 logit、增加第二個，使學生往教師的 (0.5, 0.5) 靠近。（nat 是以自然對數計的資訊單位。）</p>
+    <p>softmax 的導數是 $\partial\pi_S(u)/\partial z_v=\pi_S(u)(\mathbb I[u=v]-\pi_S(v))$（Eq. 9）。固定前綴、教師分布與 $\theta$ 無關時，代入 Eq. 2–3 得到（Sec. 5.1，Eq. 4–5，推導見 App. B）：</p>
+    <div class="eq" tabindex="0" role="region" aria-label="方程式 Eq. 4 與 Eq. 5，可左右捲動"><div class="eq-m">$$\begin{aligned}\nabla_\theta D_{\text{F-KL}}&amp;=\textstyle\sum_v\big(\pi_S^\theta(v)-\pi_T(v)\big)\nabla_\theta(z_S^\theta)_v\\ \nabla_\theta D_{\text{R-KL}}&amp;=\textstyle\sum_v\pi_S^\theta(v)\Big(\log\frac{\pi_S^\theta(v)}{\pi_T(v)}-D_{\text{R-KL}}\Big)\nabla_\theta(z_S^\theta)_v\end{aligned}$$</div><span class="eq-n">Eq. 4, 5</span></div>
+    <p>forward KL 對學生 logit 的導數是 $\pi_S(v)-\pi_T(v)$：每個座標落在 $[-1,1]$，只要兩個分布不同就非零。reverse KL 對學生 logit 的導數是 $\pi_S(v)\big(\log\frac{\pi_S(v)}{\pi_T(v)}-D_{\text{R-KL}}\big)$：它以學生機率加權，學生機率趨近 0 時這個座標消失，所以 reverse KL 難以找回學生遺漏的教師 mode；反過來，學生給某 token 可觀機率而教師機率趨近 0 時，log 比 $\log\frac{\pi_S}{\pi_T}$ 可任意大，導數可任意大（Eq. 4–5、Sec. 5.1）。reverse 式假設凡 $\pi_S(v)>0$ 處 $\pi_T(v)>0$，否則 reverse KL 無限大（App. B）。</p>
+    <p>作者認為：forward KL 在任何兩分布不一致的前綴都提供訊號；reverse KL 強調「學生支持、教師不支持」的 token，因此更依賴學生自己會產生的前綴，預期從 on-policy rollout 獲益較多（Sec. 5.1）。</p>
+    <p>記 $r(v)=\log\frac{\pi_S(v)}{\pi_T(v)}$（log 機率比，Eq. 42），一個前綴上的範圍 $\Delta r=\max_vr(v)-\min_vr(v)$。論文證明 $\lVert\nabla_zD_{\text{R-KL}}\rVert_2\le\Delta r$（Eq. 63–65）；此界不緊，只保證有限（下方 C2 中常差好幾倍）。兩個梯度向量的座標和都是 0 <span class="tag">本頁推導</span>（$\sum_v(\pi_S-\pi_T)=0$；$\sum_v\pi_S(r-D_{\text{R-KL}})=D_{\text{R-KL}}-D_{\text{R-KL}}=0$），也就是把所有 logit 加同一個常數不改變損失。</p>
+  </div>
+
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>一個前綴上的 forward／reverse KL 與 logit 梯度</h3><span class="tag demo">示範值</span></div>
+    <p class="plate-lead">假設：詞彙表 5 個 token（A–E）；只有 token A 的機率可調，其餘機率依固定比例 0.4 : 0.3 : 0.2 : 0.1 分給 B–E，學生與教師用同一比例，所以 B–E 的 log 機率比彼此相同；直接 logit 參數化（Jacobian＝單位矩陣）。</p>
+    <div class="ctl-row" id="c2-presets"></div>
+    <div class="pg two">
+      <div class="rng"><label class="lbl" for="c2-s">學生給 A 的機率 π_S(A) <output id="c2-so"></output></label><input type="range" id="c2-s" min="-6" max="-0.05" step="0.01" value="-0.3"></div>
+      <div class="rng"><label class="lbl" for="c2-t">教師給 A 的機率 π_T(A) <output id="c2-to"></output></label><input type="range" id="c2-t" min="-6" max="-0.05" step="0.01" value="-2"></div>
+    </div>
+    <div class="pg two">
+      <div class="fig" id="c2-f"><p class="cap">forward KL 的 logit 梯度 π_S − π_T（縱軸固定 ±1）</p><svg role="img" aria-label="forward KL 的 logit 梯度"></svg></div>
+      <div class="fig" id="c2-r"><p class="cap">reverse KL 的 logit 梯度（斜線；縱軸隨數值調整）</p><svg role="img" aria-label="reverse KL 的 logit 梯度"></svg></div>
+    </div>
+    <dl class="ro" id="c2-read"></dl>
+    <p class="sr" id="c2-live" aria-live="polite"></p>
+    <p class="plate-f">讀數由本頁依 Eq. 2–5、Eq. 65 即時計算；座標和為 0 的檢查為本頁推導；B–E 比例為示範值。‖g_R‖₂ ≤ Δr 這個界不緊。</p>
+  </div>
+  <div class="prose">
+    <p>「教師給 A 的機率趨近 0」按鈕下，reverse 的 A 座標 3.45，超出 forward 每座標的界 1；「學生給 A 的機率趨近 0」按鈕下，forward 的 A 座標 −0.60（梯度下降使 A 的 logit 上升），reverse 的 A 座標 ≈ 0。此按鈕下 reverse 的整個梯度向量都接近 0：B–E 共用同一比例、log 比相同，學生在 B–E 上已與教師成比例。這是玩具假設造成的；Sec. 5.1 的論述只針對 A 這一個座標。</p>
+  </div>
+  <details class="more mini"><summary>本節新符號</summary><div class="tscroll"><table><tbody>
+    <tr><td>logit $z_S^\theta$<span class="sr">：</span></td><td>softmax 前的實數向量</td></tr>
+    <tr><td>$r(v)$、$\Delta r$<span class="sr">：</span></td><td>log 機率比；它在一個前綴上的範圍</td></tr>
+    <tr><td>nat<span class="sr">：</span></td><td>以自然對數計的資訊單位</td></tr>
+  </tbody></table></div></details>
+  <p class="read">延伸閱讀：<a href="odd-token-kl-direction-gradients.html">Token 層級的正向與反向 KL：梯度形式與對 rollout policy 的敏感度</a></p>
+  <details class="check"><summary>檢查理解</summary><div class="qa"><p class="q">forward 與 reverse KL 對學生 logit 的導數是什麼？各在何時變大或消失？</p><p class="a">forward：$\pi_S-\pi_T$，每座標在 $[-1,1]$；reverse：$\pi_S(\log\frac{\pi_S}{\pi_T}-D_{\text{R-KL}})$，學生機率趨近 0 時消失，教師機率趨近 0 時可任意大。</p></div></details>
+</section>
+
+<!-- S6a -->
+<section class="ch" id="bound-fwd" data-toc="06a" data-tt="forward 的穩定性">
+  <div class="ch-num">06a · forward 的穩定性</div>
+  <h2>rollout 相近時 forward KL 的更新也相近</h2>
+  <div class="prose">
+    <p>S4 的實驗中 rollout 換來換去，forward KL 的表現幾乎不變。App. C 問的是：如果兩個 rollout 策略只差一點，用它們算出的期望更新會差多少？</p>
+    <p>需要三個量。<b>Jacobian</b> $J_\theta(h_n)=\partial z_S^\theta(h_n)/\partial\theta$（Eq. 21）描述參數改變如何影響 logit；$B$ 是 $J_\theta^\top$ 最大奇異值的上界，也就是「logit 空間的一個向量經 $J^\top$ 映到參數空間時，長度最多放大幾倍」（Eq. 26）。<b>total variation</b> 距離 $\mathrm{TV}(P,Q)=\tfrac12\lVert P-Q\rVert_1$ 是兩個分布之間最多有多少機率質量不同；本文用在兩個 rollout 策略對<b>完整輸出序列</b>的分布之間。<b>半梯度</b> $\bar\nabla_\theta L(\theta;\rho)=\mathbb E_x\mathbb E_{y\sim\rho}[g(x,y)]$（Eq. 19、25），其中 $g$ 是一條軌跡上各 token 梯度的平均（Eq. 24）。</p>
+    <p><b>Theorem C.1</b>（forward KL 的 rollout 穩定性）：若對每個 prompt、兩個 rollout 策略下機率為正的每個輸出、每個位置都有 $\lVert J_\theta^\top v\rVert_2\le B\lVert v\rVert_2$（Eq. 26），則</p>
+    <div class="eq" tabindex="0" role="region" aria-label="方程式 Eq. 27，可左右捲動"><div class="eq-m">$$\begin{aligned}&amp;\big\lVert\bar\nabla_\theta L_{\text{F-KL}}(\theta;\rho)-\bar\nabla_\theta L_{\text{F-KL}}(\theta;\rho')\big\rVert_2\\&amp;\qquad\le2\sqrt2\,B\;\mathbb E_x\big[\mathrm{TV}(\rho(\cdot|x),\rho'(\cdot|x))\big]\end{aligned}$$</div><span class="eq-n">Eq. 27</span></div>
+    <p>並且單一軌跡梯度的二階動差（平方範數的期望）不超過 $2B^2$（Eq. 28）。常數只依賴 $B$，不依賴學生與教師的機率比。</p>
+  </div>
+  <details class="more"><summary>證明（三步，App. C.2）</summary><div class="prose" style="padding:0 20px 8px">
+    <p>1. 任兩個機率向量 $\lVert p-q\rVert_2\le\sqrt2$，所以每個 token 的參數梯度 $\lVert J^\top(\pi_S-\pi_T)\rVert_2\le\sqrt2B$（Eq. 30）。</p>
+    <p>2. 一條軌跡的梯度是各 token 的平均，三角不等式給出 $\lVert g\rVert_2\le\sqrt2B$（Eq. 33）。</p>
+    <p>3. 對有界函數 $g$，$\lVert\mathbb E_P[g]-\mathbb E_Q[g]\rVert_2\le2\sup\lVert g\rVert_2\,\mathrm{TV}(P,Q)$（Eq. 34），對每個 prompt 套用再取期望，得到 Eq. 27。</p>
+  </div></details>
+  <details class="more mini"><summary>本節新符號</summary><div class="tscroll"><table><tbody>
+    <tr><td>$J_\theta$、$B$<span class="sr">：</span></td><td>logit 對參數的 Jacobian；$J^\top$ 最大奇異值的上界</td></tr>
+    <tr><td>$\mathrm{TV}$<span class="sr">：</span></td><td>完整輸出序列分布之間的 total variation 距離</td></tr>
+    <tr><td>$\bar\nabla_\theta L$<span class="sr">：</span></td><td>期望半梯度</td></tr>
+  </tbody></table></div></details>
+</section>
+
+<!-- S6b -->
+<section class="ch" id="bound-rev" data-toc="06b" data-tt="reverse 的敏感度">
+  <div class="ch-num">06b · reverse 的敏感度</div>
+  <h2>reverse KL 的更新可以在 rollout 幾乎不變時大幅改變</h2>
+  <div class="prose">
+    <p><b>Theorem C.2</b> 說 reverse KL 沒有類似 Eq. 27 的上界：不存在與學生、教師分布無關的有限常數 $C$，使更新差 $\le C\,\mathbb E_x[\mathrm{TV}]$（Eq. 46），即使詞彙只有兩個 token、Jacobian 最大奇異值為 1。反例（Eq. 47–57）：兩條長度 2 的軌跡 $y^{(0)}$、$y^{(\delta)}$。$y^{(0)}$ 的每個前綴上學生與教師相同，梯度為 0；$y^{(\delta)}$ 的第二個前綴上學生是 $(\tfrac12,\tfrac12)$、教師是 $(\delta,1-\delta)$，$0\lt\delta\lt\tfrac12$，此處 logit 梯度 $=\tfrac14\log\frac{1-\delta}\delta\,(1,-1)$（Eq. 51）。令 $\rho'$ 只產生 $y^{(0)}$，$\rho$ 以機率 $1-\varepsilon$ 產生 $y^{(0)}$、以機率 $\varepsilon$ 產生 $y^{(\delta)}$，兩者 TV $=\varepsilon$（Eq. 55）。</p>
+    <p>兩個 rollout 穩定性定理可以這樣陳述。Theorem C.1：若對每個 prompt、兩個 rollout 下機率為正的每個輸出與每個位置都有 $\lVert J_\theta^\top v\rVert_2\le B\lVert v\rVert_2$（Eq. 26），則 forward KL 的期望更新差 $\le2\sqrt2B\,\mathbb E_x[\mathrm{TV}]$，其中 TV 是兩個 rollout 策略對完整輸出序列的分布距離（Eq. 27）。Theorem C.2：在上面的兩 token 反例中 TV $=\varepsilon$，reverse KL 的更新差 $=\frac{\varepsilon\sqrt2}8\log\frac{1-\delta}\delta$（Eq. 57），$\delta\to0$ 時發散，所以不存在與分布無關的常數。Corollary C.3：若每個前綴上 log 比的範圍不超過 $R$（Eq. 58），則恢復上界 $2BR\,\mathbb E_x[\mathrm{TV}]$（Eq. 59）。反例中教師的每個機率都嚴格為正，所以它適用於 softmax 語言模型。</p>
+    <p>這些定理不能推出「forward KL 下不同 rollout 會得到相同的最終表現」。定理只控制一步的期望半梯度，上界依賴完整軌跡分布的距離與 Jacobian 上界 $B$；它不證明不同 rollout 會得到相似的模型或相似的表現，也不解釋遺忘與稀疏度的差異，也不主張 reverse KL 一定不穩定或學生 rollout 一定較好。實驗結果只能解讀為與定理一致，不是它的直接推論（App. C.2、C.4）。作者另指出：rollout 機率 $\varepsilon$ 的變動可被局部梯度 $\log(1/\delta)$ 放大成 $\varepsilon\log(1/\delta)$ 的更新差；全域梯度截斷能限制實際的梯度範數，緩解這種情形，但不等於施加 Eq. 58 的條件。</p>
+    <p>同一反例改用 forward KL <span class="tag">本頁推導</span>：第二前綴的 logit 梯度是 $(\tfrac12-\delta)(1,-1)$，更新差 $=\varepsilon\frac{\sqrt2}2(\tfrac12-\delta)\le\frac{\sqrt2}4\varepsilon$。這是同一反例下的值，不是 forward 的最壞情形；forward 的保證只有 Eq. 27 的上界。reverse 的更新差在 δ ≈ 1.1×10⁻⁷ 時超過 forward 的通用上界 $2\sqrt2\varepsilon$。兩者屬於不同的目標函數，這只是數字比較，不表示兩個界可以互換或直接比較。</p>
+  </div>
+
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>rollout 相差 ε 時，更新差多少</h3><span class="tag demo">示範值</span><span class="tag">本頁推導</span></div>
+    <p class="plate-lead">假設：論文 Theorem C.2 的兩 token 反例：學生 (1/2, 1/2)、教師 (δ, 1−δ)、直接 logit 參數化（B = 1）；rollout 以機率 ε 換成走到這個前綴的軌跡（TV = ε）。forward 曲線是本頁用同一反例算出的值，不是 forward 的最壞情形。B = 1 與預設的 δ = 0.01、ε = 0.1 是示範假設，非論文實驗。</p>
+    <div class="pg two">
+      <div class="rng"><label class="lbl" for="c3-d">教師給 token 1 的機率 δ <output id="c3-do"></output></label><input type="range" id="c3-d" min="-12" max="-0.31" step="0.01" value="-2"></div>
+      <div class="rng"><label class="lbl" for="c3-e">rollout 的差 ε（= TV） <output id="c3-eo"></output></label><input type="range" id="c3-e" min="0.01" max="1" step="0.01" value="0.1"></div>
+    </div>
+    <div class="fig" id="c3-fig"><svg role="img" aria-label="更新差對 δ 的曲線"></svg></div>
+    <div class="legend"><span class="lg acc">reverse 更新差（Eq. 57）</span><span class="lg npar">forward 更新差，同一反例（本頁推導）</span><span class="lg dot3">forward 的界 2√2·ε（Eq. 27）</span></div>
+    <dl class="ro" id="c3-read"></dl>
+    <p class="sr" id="c3-live" aria-live="polite"></p>
+    <p class="plate-f">Eq. 27、53、57、59 即時計算；forward 曲線與交點為本頁推導。圖畫的是未除以 ε 的更新差，ε 改變時三條線一起平移；交點的 δ 與 ε 無關。</p>
+  </div>
+  <div class="prose">
+    <p>預設值（δ = 0.01、ε = 0.1）下 reverse 更新差 0.0812、forward 更新差 0.0346。δ 每小 10 倍，reverse 更新差增加 $\varepsilon\frac{\sqrt2}8\ln10\approx0.407\varepsilon$ <span class="tag">本頁推導</span>；forward 更新差趨近 $\frac{\sqrt2}4\varepsilon$ 後不再增加。</p>
+  </div>
+  <details class="more mini"><summary>本節新符號</summary><div class="tscroll"><table><tbody>
+    <tr><td>$\varepsilon$、$\delta$<span class="sr">：</span></td><td>反例中 rollout 的混合機率、教師給 token 1 的機率</td></tr>
+    <tr><td>$R$<span class="sr">：</span></td><td>Corollary C.3 中所有前綴上 $\Delta r$ 的上界</td></tr>
+  </tbody></table></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa"><p class="q">Theorem C.1 的上界是什麼？Theorem C.2 的反例給出多大的更新差？</p><p class="a">C.1：在 Eq. 26 條件下 $\le2\sqrt2B\,\mathbb E_x[\mathrm{TV}]$；C.2：$\frac{\varepsilon\sqrt2}8\log\frac{1-\delta}\delta$，$\delta\to0$ 時發散；C.3：$2BR\,\mathbb E_x[\mathrm{TV}]$。</p><p class="q">這些定理能否推出「forward KL 下不同 rollout 得到相同最終表現」？</p><p class="a">不能；定理只控制一步的期望半梯度。</p></div></details>
+</section>
+
+<!-- S7 -->
+<section class="ch" id="spectrum" data-toc="07" data-tt="rollout 光譜">
+  <div class="ch-num">07 · rollout 光譜</div>
+  <h2>光譜 π_λ 在教師與學生之間連續內插與外插</h2>
+  <div class="prose">
+    <p>為了在實驗上檢驗 S5–S6 的敏感度，作者讓 rollout 策略隨一個參數 $\lambda$ 連續變化。這裡的「光譜」（spectrum）指這一族隨 $\lambda$ 變化的抽樣分布（Sec. 5.2，App. D.5）。兩個 token 的<b>勝算</b>（odds）是它們的機率比 $\pi(v)/\pi(u)$；$r_v=\log\pi_S(v)-\log\pi_T(v)$ 是 S5 定義的 log 機率比。</p>
+    <div class="eq" tabindex="0" role="region" aria-label="方程式 Eq. 75 與 Eq. 76，可左右捲動"><div class="eq-m">$$\begin{aligned}(\hat z_\lambda)_v&amp;=\tfrac12(\log\pi_S(v)+\log\pi_T(v))+\tfrac\lambda2(\log\pi_S(v)-\log\pi_T(v))\\&amp;=\tfrac{1+\lambda}2\log\pi_S(v)+\tfrac{1-\lambda}2\log\pi_T(v)\end{aligned}$$</div><span class="eq-n">Eq. 75–76</span></div>
+    <p>rollout 光譜的定義：$\pi_\lambda=\mathrm{softmax}(\hat z_\lambda)$，其中 $\hat z_\lambda=\frac{1+\lambda}2\log\pi_S+\frac{1-\lambda}2\log\pi_T$。$\lambda=-1$ 時就是 $\pi_T$（OffPD），$\lambda=1$ 時就是 $\pi_S$（OnPD），$\lambda=0$ 是兩者正規化後的幾何中點。$\lvert\lambda\rvert>1$ 時某一個係數變成負的，會放大兩個模型都給低機率、只是被偏好的一方給得相對較高的 token。作者的防護是：只對被偏好方機率至少為其最大機率 $\alpha=0.2$ 倍的 token（可信度遮罩，Eq. 77–78）加上 log 比加成，而且加成截斷在 $c=2\log3$（Eq. 79–80），使 $\lambda\in[-2,2]$ 內相對錨點策略的兩兩勝算放大最多 3 倍（Eq. 75–80、App. D.5）。</p>
+    <p>完整寫法：$b_S(v)=M_S(v)\min\{\max\{r_v,0\},c\}$，$b_T(v)=M_T(v)\min\{\max\{-r_v,0\},c\}$；$\lambda>1$ 時 $\tilde z_\lambda=\log\pi_S+\frac{\lambda-1}2b_S$，$\lambda\lt-1$ 時 $\tilde z_\lambda=\log\pi_T+\frac{-\lambda-1}2b_T$，$\lvert\lambda\rvert\le1$ 時 $\tilde z_\lambda=\hat z_\lambda$；最後 $\pi_\lambda=\mathrm{softmax}(\tilde z_\lambda)$。遮罩外的 token 保留錨點策略的機率，因此 $\pi_{-1}=\pi_T$、$\pi_1=\pi_S$，在 $\lvert\lambda\rvert=1$ 處連續。</p>
+    <p>3 倍的來由 <span class="tag">本頁推導</span>：$\lambda>1$ 時 $\tilde z_\lambda-\log\pi_S=\frac{\lambda-1}2b_S$，任兩個 token 的勝算比被乘上 $\exp\!\big(\frac{\lambda-1}2(b_S(v)-b_S(u))\big)\le\exp\!\big(\frac{\lambda-1}2c\big)$，$\lambda=2$ 時為 $e^{\ln3}=3$。不加防護時，同一倍數是 $\exp\!\big(\frac{\lambda-1}2(\max r-\min r)\big)$，沒有上界。Fig. 4 確認這種抽樣方式確實改變了生成軌跡上學生與教師的似然。</p>
+  </div>
+
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>rollout 光譜 π_λ</h3><span class="tag demo">示範值</span></div>
+    <p class="plate-lead">假設：單一前綴、6 個 token（A–F）、學生與教師分布固定；不模擬訓練，只顯示抽樣分布 π_λ。token F 兩個模型都給低機率，但學生給的機率是教師的 200 倍。</p>
+    <div class="rng"><label class="lbl" for="c4-l">光譜參數 λ（← 教師偏好　學生偏好 →） <output id="c4-lo"></output></label><input type="range" id="c4-l" min="-2" max="2" step="0.05" value="0"></div>
+    <div class="ctl-row"><div class="ctl-row" id="c4-btns"></div><label class="chk"><input type="checkbox" id="c4-safe" checked> 使用遮罩與截斷（App. D.5）</label></div>
+    <div class="fig" id="c4-fig"><svg role="img" aria-label="π_S、π_T 與 π_λ 的長條圖"></svg></div>
+    <div class="legend"><span class="lg bS">π_S 學生（實心）</span><span class="lg bT">π_T 教師（空心）</span><span class="lg bL">π_λ（斜線）</span></div>
+    <dl class="ro" id="c4-read"></dl>
+    <p class="sr" id="c4-live" aria-live="polite"></p>
+    <p class="plate-f">依 Eq. 75–80（α = 0.2，c = 2 ln 3）即時計算；3 倍上界的推導為本頁內容；分布為示範值（π_S = 0.45, 0.25, 0.15, 0.08, 0.05, 0.02；π_T = 0.03, 0.57, 0.25, 0.10, 0.0499, 0.0001）。</p>
+  </div>
+  <div class="prose">
+    <p>「λ = 2」按鈕下開啟防護時，A 的加成被截斷在 c，最大勝算放大正好 3.00；F 不在遮罩內（π_S(F) = 0.02 低於 0.2 × 0.45），π_λ(F) = 0.0105。關閉防護時 π_λ(F) 升到 0.1164，最大勝算放大 21.35 倍。這就是 App. D.5 要避免的情形：兩個模型都給低機率的 token 被外插放大。</p>
+  </div>
+  <details class="more mini"><summary>本節新符號</summary><div class="tscroll"><table><tbody>
+    <tr><td>勝算<span class="sr">：</span></td><td>兩個 token 的機率比</td></tr>
+    <tr><td>$\lambda$、$\alpha$、$c$<span class="sr">：</span></td><td>光譜參數；遮罩門檻 0.2；截斷值 $2\ln3$</td></tr>
+    <tr><td>$M_S$、$M_T$、$b_S$、$b_T$<span class="sr">：</span></td><td>可信度遮罩與截斷後的加成</td></tr>
+  </tbody></table></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa"><p class="q">$\pi_\lambda$ 在 $\lambda=-1,0,1$ 是什麼？$\lvert\lambda\rvert>1$ 時如何防護？</p><p class="a">$\pi_T$、正規化幾何中點、$\pi_S$；遮罩 $\alpha=0.2$ 加截斷 $c=2\log3$，勝算放大最多 3 倍。</p></div></details>
+</section>
