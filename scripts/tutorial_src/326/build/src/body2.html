@@ -1,0 +1,140 @@
+
+<!-- S4 -->
+<section class="ch" id="collapse" data-toc="04" data-tt="RLVR 崩潰">
+  <div class="ch-num">04 · RLVR 崩潰</div>
+  <h2>一次 RLVR 崩潰中，策略輸出空洞開頭語，評審多半判 YES</h2>
+  <div class="prose">
+    <p>作者是在一次 RLVR 訓練崩潰中發現這個弱點的（Sec. 1、App. B.3）。設定：Qwen2.5-7B 為策略模型、Qwen2.5-72B-Instruct 為評審，資料是 WebInstructSub 的 3 萬題子集；演算法是 REINFORCE（以「獎勵 × 回答的對數機率梯度」更新策略的基本策略梯度法），加上 reward normalization（把一批獎勵減去平均、除以標準差）；actor 學習率 5e-7、init_kl_coef 0.01（KL 懲罰係數，限制策略偏離初始模型的程度）、每題取樣 4 個回答、batch 128、1 epoch（Table 13）。</p>
+    <p>崩潰的訓練中，回答長度驟降到少於 30 個 token，KL 散度急升；正常的訓練沒有這種現象（Fig. 2，論文只有圖、沒有數值）。訓練結束後，作者在另外 5000 題 WebInstructSub 上推論。Table 14 的標題是「Response examples」：列出的 13 種回答合計 99.24%，其中「Thought Process:」（大寫 P，與測試用的「Thought process:」不同）占 94.26%、「Let’s solve this problem step by step.」占 3.00%。總結作者發現這個弱點的經過：一次 RLVR 訓練崩潰，回答長度降到少於 30 token、KL 急升；在 WebInstructSub 推論時，列出的回答例示中 94.26% 是「Thought Process:」，評審 Qwen2.5-72B-Instruct 對這批空洞回答整體給出約 90% 的準確率（App. B.3）。這個約 90% 來自 WebInstructSub 的崩潰輸出，與 Table 1（5 個基準、固定單一 key）是不同的分布，不能直接比較。</p>
+  </div>
+  <details class="more"><summary>Table 14：崩潰後策略的回答例示（%）</summary>
+    <div class="tscroll" tabindex="0" role="region" aria-label="Table 14，可橫向捲動"><table><caption>列出者合計 99.24%</caption><thead><tr><th>回答</th><th class="num">比例</th></tr></thead><tbody id="t14"></tbody></table></div></details>
+
+  <div class="prose">
+    <h3>從獎勵到策略：三個概念</h3>
+    <p><b>策略機率 π。</b>策略模型對同一題可能給出不同回答。為了看清楚機制，本頁用一個只保留兩種回答的玩具：策略以機率 $\pi$ 輸出 master key，以 $1-\pi$ 認真作答。訓練改的是一個實數 $\theta$，再用 $\pi=\sigma(\theta)=1/(1+e^{-\theta})$ 換成機率；$\sigma$ 保證 $\pi$ 永遠落在 0 與 1 之間 <span class="tag">本頁玩具</span>。</p>
+    <p><b>期望獎勵的比較。</b>輸出 key 時，獎勵為 1 的機率就是評審對 key 的 YES 率，記為 $f$。認真作答時，設策略答對的機率為 $p$、評審對答對的回答判 YES 的機率為 TPR、對答錯的認真回答判 YES 的機率為 $\beta$，所以認真作答的期望獎勵是 $r_{att}=p\cdot\mathrm{TPR}+(1-p)\,\beta$。兩者之差記為 $\Delta=f-r_{att}$；整體期望獎勵是 $\bar R=\pi f+(1-\pi)\,r_{att}$。</p>
+    <p><b>梯度上升。</b>每一步把 $\theta$ 往使 $\bar R$ 增加的方向移動 $\eta\cdot d\bar R/d\theta$，$\eta$ 是學習率。由上式，$d\bar R/d\theta=\pi(1-\pi)\Delta$ <span class="tag">本頁推導</span>。因為 $\pi(1-\pi)>0$，所以在 S4 的兩行動玩具中，當 key 的期望獎勵 $f$（評審對 key 的 YES 率）大於認真作答的期望獎勵 $r_{att}=p\cdot\mathrm{TPR}+(1-p)\,\beta$，即 $\Delta=f-r_{att}>0$ 時，期望梯度 $\pi(1-\pi)\Delta$ 為正，梯度上升使 $\pi$ 單調增加；$\Delta\lt 0$ 時 $\pi$ 每步減少。$\pi$ 很小時 $\pi(1-\pi)$ 也很小，所以一開始變化很慢。在這個無 KL 懲罰、單一 $f$ 的玩具中，$\pi$ 趨近 1、評審回報的平均獎勵趨近 $f$、真實準確率趨近 0；這是玩具的極限，不是論文結論，而且玩具的 $f$ 借自 Table 1（另一個分布）。</p>
+  </div>
+
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>兩行動玩具：偽陽性獎勵如何移動 π</h3><span class="tag">示範值</span></div>
+    <p class="plate-lead">玩具假設：只有一種題目；策略只有兩種回答——認真作答或輸出 master key；評審對每種回答的 YES 機率固定（單一 f）；以期望梯度（不抽樣）更新；不含 KL 懲罰與獎勵正規化（論文的實際訓練兩者都有，Table 13）。f 借自 Table 1，那是 5 個基準、固定單一 key 的量測，與論文崩潰訓練用的 WebInstructSub 是不同分布。預設的 p、TPR、β 使 f &gt; r_att，所以預設下必然轉向 key；π 趨近 1 是這個無 KL、單一 f 玩具的極限，不是論文結論。</p>
+    <div class="pg side">
+      <div class="fig">
+        <div id="c2-pi"><svg role="img" aria-label="輸出 key 的機率 π 對步數的曲線"></svg></div>
+        <div class="legend"><span class="lg acc">輸出 key 的機率 π</span></div>
+        <div id="c2-acc"><svg role="img" aria-label="評審回報的平均獎勵與真實準確率對步數的曲線"></svg></div>
+        <div class="legend"><span class="lg tot">評審回報的平均獎勵 R̄</span><span class="lg true">真實準確率</span></div>
+      </div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c2-judge">評審</label><select id="c2-judge"></select></div>
+        <div class="rng"><label class="lbl" for="c2-ds">資料集</label><select id="c2-ds"></select></div>
+        <div class="rng"><label class="lbl" for="c2-key">key</label><select id="c2-key"></select></div>
+        <div class="rng"><label class="lbl" for="c2-f">key 的 YES 率 f <output id="c2-fo"></output></label><input type="range" id="c2-f" min="0" max="1" step="0.001" value="0.67"></div>
+        <div class="rng"><label class="lbl" for="c2-pi0">初始 π₀ <output id="c2-pi0o"></output></label><input type="range" id="c2-pi0" min="-4" max="-0.30103" step="0.01" value="-2"></div>
+        <details class="more mini" id="c2-adv"><summary>進階參數 <span class="mono" id="c2-advsum"></span></summary><div class="adv">
+          <div class="rng"><label class="lbl" for="c2-p">答對機率 p <output id="c2-po"></output></label><input type="range" id="c2-p" min="0" max="1" step="0.01" value="0.40"></div>
+          <div class="rng"><label class="lbl" for="c2-tpr">評審對答對判 YES：TPR <output id="c2-tpro"></output></label><input type="range" id="c2-tpr" min="0" max="1" step="0.01" value="0.95"></div>
+          <div class="rng"><label class="lbl" for="c2-beta">評審對答錯判 YES：β <output id="c2-betao"></output></label><input type="range" id="c2-beta" min="0" max="1" step="0.01" value="0.10"></div>
+          <div class="rng"><label class="lbl" for="c2-eta">學習率 η <output id="c2-etao"></output></label><input type="range" id="c2-eta" min="0.1" max="20" step="0.1" value="5"></div>
+        </div></details>
+        <button class="small-btn" type="button" id="c2-play">重播</button>
+        <dl class="ro" id="c2-read"></dl>
+        <p class="defs" id="c2-cond"></p>
+        <p class="sr" id="c2-live" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="plate-f">讀數由本頁依上面三段的式子即時計算（本頁玩具，非論文模型），步數 T = 300；|Δ| &lt; 5×10⁻⁴ 視為 0。論文沒有建立這個模型；Master-RM 的 f 接近 0，但論文沒有用 Master-RM 重跑 RLVR。</p>
+  </div>
+  <aside class="callout" aria-label="玩具與論文的距離">
+    <p class="ct">玩具與論文的距離</p>
+    <p>論文只觀察到一次崩潰，沒有建立上面的模型，也沒有用 Master-RM（第 05 節）重跑 RLVR 來確認崩潰會消失。玩具只說明一件數學事實：獎勵完全來自評審時，策略比較的是期望獎勵，而評審回報的準確率可以與真實準確率分離。</p>
+  </aside>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">作者如何發現這個弱點？在 S4 的兩行動玩具中，什麼條件下策略會轉向 master key？</p>
+    <p class="a">一次 RLVR 崩潰：回答少於 30 token、KL 急升，回答例示 94.26% 是「Thought Process:」，評審對這批回答給出約 90% 準確率（分布與 Table 1 不同）。玩具中 $\Delta=f-r_{att}>0$ 時期望梯度 $\pi(1-\pi)\Delta$ 為正，$\pi$ 單調增加；π→1 是無 KL、單一 f 玩具的極限。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="mk-rlvr-and-rule-based-rewards.html">RLVR 與規則式獎勵</a></p>
+</section>
+
+<!-- S5 -->
+<section class="ch" id="master-rm" data-toc="05" data-tt="Master-RM">
+  <div class="ch-num">05 · Master-RM</div>
+  <h2>截斷的第一句被當成負例</h2>
+  <div class="prose">
+    <p>Master-RM 的擴增資料如何建構（Sec. 3.2、App. B.2）：</p>
+    <ol>
+      <li>起點是 Su et al. (2025) 的 16 萬筆 $(q,a^*,o,y)$：回答 $o$ 由 Qwen2.5-7B-base 產生，標籤 $y$ 由 Qwen2.5-72B-Instruct 判定。以這份資料監督式微調得到的 Multi-sub RM 已比通用 LLM 穩健，但仍有缺口。</li>
+      <li>均勻抽 2 萬題，用 GPT-4o-mini 與 Table 10 的提示（「think step by step… seperate each sentence by \n」）重新產生逐句換行的 CoT 解答。</li>
+      <li>每個解答只留第一句。Sec. 1 的說法是「first segment (e.g., splitting on a line break)」；因為提示要求每句換行，兩種說法一致 <span class="tag">本頁推導</span>。截斷句是有內容的開頭語，不是 10 個測試 key；Master-RM 能泛化到未見的 key 是論文的主張（Sec. 3.2）。</li>
+      <li>全部標 NO，並確認與 Table 1 的 10 個 key 不重疊，讓 10 個 key 成為乾淨的測試集（論文寫「traverse these datasets to ensure there is no overlap」，沒有說明比對方式）。</li>
+      <li>合併為 18 萬筆；擴增資料占 20k / 180k = 11.1% <span class="tag">本頁推導</span>。</li>
+    </ol>
+    <p>訓練目標是交叉熵：模型給正確標籤的機率取對數後加負號，機率越高損失越小（Sec. 3.2）：</p>
+    <div class="eq">$$L_{SFT}=-\sum_{(q,o,a^*,y)\in D_{orig}\cup D_{aug}}\log P_\theta(y\mid q,o,a^*),\qquad y\in\{\text{YES},\text{NO}\}$$</div>
+    <p>其中 $D_{orig}$ 是原始 16 萬筆，$D_{aug}$ 是 2 萬筆擴增負例。總結：抽 2 萬題，以 GPT-4o-mini 產生逐句換行的 CoT 解答，只留第一句，標 NO，避開 10 個測試 key，與 16 萬筆原始資料合併為 18 萬筆，以交叉熵 SFT Qwen2.5-7B/32B-Instruct（lr 5e-6、1 epoch），分別得到 Master-RM-7B 與 Master-RM-32B。7B 的基座與 Multi-sub RM 相同。評估時使用 Table 7 的模板。</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="Table 11 訓練超參數"><table class="stack"><caption>Table 11：Master-RM 訓練超參數（其餘為 OpenRLHF 預設）</caption><thead><tr><th>超參數</th><th>值</th></tr></thead><tbody>
+    <tr><td data-h="超參數">train_batch_size<span class="sr">：</span></td><td data-h="值">128</td></tr>
+    <tr><td data-h="超參數">micro_train_batch_size<span class="sr">：</span></td><td data-h="值">4</td></tr>
+    <tr><td data-h="超參數">max_epochs<span class="sr">：</span></td><td data-h="值">1</td></tr>
+    <tr><td data-h="超參數">learning_rate<span class="sr">：</span></td><td data-h="值">5e-6</td></tr>
+    <tr><td data-h="超參數">max_len<span class="sr">：</span></td><td data-h="值">4096</td></tr>
+  </tbody></table></div>
+
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>截斷負例產生器</h3><span class="tag">本頁實作</span></div>
+    <p class="plate-lead">第一句的切法與重疊比對是本頁實作：論文的做法是要求 GPT-4o-mini 每句換行後取第一句，並只寫明「確認沒有重疊」，未給比對規則。</p>
+    <div class="ctl-row"><div class="seg" id="c3-ex" role="radiogroup" aria-label="論文例子"></div><button class="small-btn" type="button" id="c3-clear">清空</button></div>
+    <p class="c3q" id="c3-q"></p>
+    <label class="lbl" for="c3-in">模型產生的解答（可編輯）</label>
+    <textarea id="c3-in" rows="4" maxlength="2000" spellcheck="false"></textarea>
+    <div class="judge-card out" id="c3-out"></div>
+    <p class="warn-line" id="c3-warn" hidden></p>
+    <div class="comp" aria-label="訓練資料組成：原始 160,000 筆、擴增 20,000 筆，擴增占 11.1%"><div class="comp-bar"><span class="o" style="flex:160"></span><span class="a" style="flex:20"></span></div>
+      <p class="cap">原始 160,000 筆 ＋ 擴增 20,000 筆；擴增占 11.1% <span class="tag">本頁推導</span></p></div>
+    <p class="plate-f">例子的題目與截斷句照錄 App. B.2，第二行後續句為〔示範值〕。本頁實作的已知限制：沒有換行時以「句號＋空白」切句，所以「Mr. Wang」會在「Mr.」切開；論文的資料因為每句換行而沒有這個問題。</p>
+    <p class="sr" id="c3-live" aria-live="polite"></p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Master-RM 的擴增資料如何建構？</p>
+    <p class="a">抽 2 萬題，以 GPT-4o-mini 產生逐句換行的 CoT 解答，只留第一句，標 NO，避開 10 個測試 key，與 16 萬筆原始資料合併為 18 萬筆，以交叉熵 SFT Qwen2.5-7B/32B-Instruct（lr 5e-6、1 epoch）（Sec. 3.2、Table 11）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="mk-master-key-attack-and-master-rm.html">Master key 攻擊與 Master-RM</a>、<a href="mk-generative-rm-for-rlvr.html">RLVR 中的生成式獎勵模型</a></p>
+</section>
+
+<!-- S6 -->
+<section class="ch" id="reliable" data-toc="06" data-tt="一般判斷能力">
+  <div class="ch-num">06 · 一般判斷能力</div>
+  <h2>Master-RM 的一般判斷能力沒有退化</h2>
+  <div class="prose">
+    <p>加入大量 NO 標籤，可能讓評審偏向輸出 NO。作者用兩種方式檢查（Sec. 3.3.2）。第一是<b>一致性</b>：2500 題（5 個資料集各 500，由 Qwen2.5-7B-Instruct 作答）以 GPT-4o 的判決為準；其中 500 題（各 100）由 5 位作者標註，至少 3 票一致者為人類標準。</p>
+    <p>一致性用 <b>Cohen’s κ</b>：$\kappa=(p_o-p_e)/(1-p_e)$，其中 $p_o$ 是兩方實際一致的比例，$p_e$ 是兩方依各自 YES 比例隨機猜也會一致的比例。也就是 κ 扣除兩方依各自 YES 比例隨機猜也會一致的部分，所以不用單純一致率。示範計算 <span class="tag">示範值</span>：100 題中兩位評審同判 YES 60 題、同判 NO 25 題、A 判 YES 而 B 判 NO 10 題、A 判 NO 而 B 判 YES 5 題，則 $p_o=0.85$；A 的 YES 比例 0.70、B 0.65，$p_e=0.70\times0.65+0.30\times0.35=0.56$；$\kappa=(0.85-0.56)/(1-0.56)=0.659$。實例：Qwen2.5-0.5B 的 κ 只有 0.10（Table 2a），接近隨機。</p>
+    <p>第二是 <b>VerifyBench</b> 與 <b>VerifyBench-Hard</b>（Yan et al. 2025）：經人工標註的參考答案式評審基準，報告準確率（Acc）與 Macro F1（Table 2b）。</p>
+    <p>論文的結論是「沒有退化，部分情況提升」。κ_GPT-4o / κ_human：Master-RM-7B 0.91 / 0.90、Master-RM-32B 0.89 / 0.87（Multi-sub RM 0.91 / 0.91）；VerifyBench / Hard Acc：Master-RM-7B 94.45 / 84.40、Master-RM-32B 95.15 / 86.80。Master-RM-32B 與最高的 GPT-o1（95.70 / 88.80）差 0.55 與 2.0 百分點；論文把這兩個差寫成「0.55%」「2.0%」，它們是百分點差，不是相對百分比。κ 評估的回答由 Qwen2.5-7B-Instruct 產生，與訓練資料（Qwen2.5-7B-base 產生）同家族，接近分布內。另外，論文寫 Master-RM-7B 的 0.91 與 Multi-sub RM 並列對 GPT-4o 一致性的最高分，但 Table 2a 中 Qwen2.5-14B-Instruct 是 0.92；本頁照錄表格。</p>
+    <p>下圖把兩個面向放在一起：橫軸是被 master key 騙的程度（Overall FPR，越左越好），縱軸是正常判斷的準確度（越上越好）。橫軸用平方根刻度，因為 8 個評審擠在 0–15% 之間。<b>Pareto 前緣</b>指這樣的評審：沒有任何其他評審同時 FPR 更低或相等、且準確度更高或相等，並至少一項嚴格較好。</p>
+  </div>
+  <div class="tscroll" tabindex="0" role="region" aria-label="Table 2 摘錄，可橫向捲動"><table class="stack"><caption>Table 2 摘錄（κ 來自 Table 2a；VB、VBH 為 VerifyBench 與 VerifyBench-Hard 的 Acc %，來自 Table 2b；— 為論文未提供）</caption><thead><tr><th>評審</th><th class="num">κ_GPT-4o</th><th class="num">κ_human</th><th class="num">VB Acc</th><th class="num">VBH Acc</th></tr></thead><tbody id="t2"></tbody></table></div>
+
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>穩健性與判斷準確度</h3></div>
+    <p class="plate-lead">用下方選單選評審（也可點圖上的點）。橘色階梯線連接 Pareto 前緣。</p>
+    <div class="ctl-row">
+      <div class="seg" id="c4-x" role="radiogroup" aria-label="橫軸"></div>
+      <div class="rng"><label class="lbl" for="c4-y">縱軸</label><select id="c4-y"></select></div>
+    </div>
+    <div class="fig" id="c4-fig"><svg role="img" aria-label="穩健性與準確度散佈圖"></svg></div>
+    <div class="legend"><span class="lg dia">Master-RM</span><span class="lg ring2">其他專用獎勵模型</span><span class="lg sq">通用 LLM</span><span class="lg acc">Pareto 前緣</span></div>
+    <div class="ctl-row"><div class="rng"><label class="lbl" for="c4-sel">評審</label><select id="c4-sel"></select></div></div>
+    <p class="readout" id="c4-read"></p>
+    <p class="cap" id="c4-miss"></p>
+    <p class="plate-f">x：Table 1 的 50 格平均或最大（本頁推導的 Overall 定義）；y：Table 2a／2b。Pareto 前緣由本頁即時計算。</p>
+    <p class="sr" id="c4-live" aria-live="polite"></p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Cohen’s κ 的定義是什麼？Master-RM 是否犧牲一般判斷能力？</p>
+    <p class="a">$\kappa=(p_o-p_e)/(1-p_e)$，扣除依各自 YES 比例隨機一致的部分（Qwen2.5-0.5B 只有 0.10）。沒有退化：7B κ 0.91/0.90、32B 0.89/0.87；VerifyBench 32B 95.15、Hard 86.80，與 GPT-o1 差 0.55 與 2.0 百分點；κ 評估接近分布內。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="mk-verifiers-and-reference-based-benchmarks.html">驗證器與參考式基準</a></p>
+</section>
