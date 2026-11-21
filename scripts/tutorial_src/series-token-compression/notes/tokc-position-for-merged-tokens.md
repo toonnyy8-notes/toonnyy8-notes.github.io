@@ -6,7 +6,7 @@ kind: topic
 tags: [RoPE, proportional-attention, positional-embedding, merged-token]
 arxiv: ["2210.09461", "2603.06351", "2401.11605", "2603.12245", "2107.14795", "2608.29281", "2611.22962"]
 sources: ["2210.09461 全文 §3", "2603.06351 全文（擷取）", "2401.11605 全文", "2603.12245 全文", "RTI §3.4、§4.2、Tab. 4 與 HiT 附錄 B.1、Tab. 9 之描述取自 lineage.md §3.25-§3.26, §5.2, W4，未重讀兩篇全文", "Dirichlet 核公式為 lineage.md W4 數值驗證"]
-related: ["tokc-vit-pruning-and-merging", "tokc-hourglass-and-latent-interfaces", "tokc-dynamic-chunking-bytes-to-pixels", "tokc-lineage-hub", "rti-lineage-hub", "hit-lineage-hub"]
+related: ["rti-read-write-interface", "hit-compact-position-and-joint-grouping", "tokc-vit-pruning-and-merging", "tokc-hourglass-and-latent-interfaces", "tokc-dynamic-chunking-bytes-to-pixels", "tokc-lineage-hub", "rti-lineage-hub", "hit-lineage-hub"]
 ---
 # 合併後 token 的位置處理
 
@@ -21,8 +21,8 @@ ToMe（arXiv 2210.09461）在 logit 加 log s：softmax(QKᵀ/√d + log s)，s 
 - 保留原位置：DC-DiT（arXiv 2603.06351）對選取的邊界 token 加上依原始 2D 座標的正弦位置嵌入。
 - 軸向 RoPE：HDiT（arXiv 2401.11605）使用 RoPE 的改作（axial），分組固定為 2×2。
 - latent 位置：Perceiver IO 類的 latent 無位置；ELIT（arXiv 2603.12245）以可學位置嵌入初始化 latent，並在群組間重用以編碼群內位置。
-- 平均 RoPE 相量（RTI §3.4）：位置取區域內各 patch RoPE 相量的平均。長度 L 的連續區間、頻率 ω 的平均相量長度為 |sin(Lω/2) / (L·sin(ω/2))|（Dirichlet 核）：波長長於區域範圍時接近單位圓，短於區域範圍時趨近零，相當於依區域大小做低通。
-- HiT（附錄 B.1）：預設 compact 層不加 RoPE，全解析度層保留 RoPE；可選硬或軟質心 RoPE，或學得 RoPE（衰減為 exp(−γω²v_g/2)）。學得 RoPE 加 per-group MLP 使主模型 FID 由 6.61 改善為 6.25（Tab. 9）。
+- 平均 RoPE 相量（RTI §3.4）：位置取區域內各 patch RoPE 相量的平均，等於依區域大小做低通；公式見 [Read / Write 介面](rti-read-write-interface.html)。
+- HiT（附錄 B.1）：預設 compact 層不加 RoPE、全解析度層保留 RoPE，另有質心與學得 RoPE 變體；細節與 FID 見 [HiT 的 compact 階段位置編碼](hit-compact-position-and-joint-grouping.html)。
 
 ## 位置是否必要
 

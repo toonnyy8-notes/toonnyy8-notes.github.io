@@ -12,7 +12,7 @@ related: ["hit-compression-budget", "hit-affinity-grouping", "tokc-dynamic-chunk
 
 ## 兩個前驅工作
 
-Byte Latent Transformer（BLT，Pagnoni 等，2412.09871）把 byte 編碼成大小可變的 patch，patch 依下一個 byte 的熵切分，把計算配置到資料較複雜之處。Dynamic Chunking for End-to-End Hierarchical Sequence Modeling（H-Net，Hwang、Wang 與 Gu，2507.07955）以內容與上下文相關的動態切塊機制，與模型其餘部分聯合學習，取代 tokenization 流程；摘要指出階層可以疊代為多階段。論文引言也提到 Cartesia 的部落格文章（參考文獻 [4]）示範了學得的切塊用於 pixel-space 影像生成；該文章不是 arXiv 論文，本筆記不引用其內容。
+BLT（2412.09871）依下一個 byte 的熵切成動態長度 patch；H-Net（2507.07955）以聯合學習的動態切塊取代 tokenization，階層可疊代為多階段。兩者的機制與數字見 [從 byte 到 pixel 的動態切塊](tokc-dynamic-chunking-bytes-to-pixels.html)。
 
 ## HiT 沿用的部分
 

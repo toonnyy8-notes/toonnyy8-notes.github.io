@@ -6,7 +6,7 @@ kind: topic
 tags: [dynamic-chunking, BLT, H-Net, DC-DiT, ratio-loss]
 arxiv: ["2412.09871", "2507.07955", "2603.06351", "2608.29281", "2611.22962"]
 sources: ["2507.07955 全文（擷取）", "2603.06351 全文（擷取）", "2412.09871 arXiv 摘要", "research/lineage.md §3.22-§3.24, §5.1, §5.4", "RTI 與 HiT 的描述取自 lineage.md，未重讀兩篇全文"]
-related: ["tokc-hourglass-and-latent-interfaces", "tokc-content-adaptive-tokenization", "tokc-lineage-hub", "rti-lineage-hub", "hit-lineage-hub"]
+related: ["hit-hnet-blt-to-image-groups", "tokc-hourglass-and-latent-interfaces", "tokc-content-adaptive-tokenization", "tokc-lineage-hub", "rti-lineage-hub", "hit-lineage-hub"]
 ---
 # 動態切塊：從 byte 到 pixel
 
@@ -14,11 +14,11 @@ related: ["tokc-hourglass-and-latent-interfaces", "tokc-content-adaptive-tokeniz
 
 ## BLT（arXiv 2412.09871，僅讀摘要）
 
-依下一個 byte 的熵把 byte 切成動態長度 patch，資料可預測時用長 patch。摘要稱首次在 FLOP 控制下把 byte 層級模型擴展到 8B 參數、4T 訓練 byte。
+Byte Latent Transformer（Pagnoni 等）依下一個 byte 的熵把 byte 切成動態長度 patch，資料可預測時用長 patch。摘要稱首次在 FLOP 控制下把 byte 層級模型擴展到 8B 參數、4T 訓練 byte。
 
 ## H-Net（arXiv 2507.07955）
 
-結構為 encoder、chunking、main network、dechunking、decoder，可遞迴多階段。
+Dynamic Chunking for End-to-End Hierarchical Sequence Modeling（Hwang、Wang 與 Gu）以內容與上下文相關的動態切塊機制，與模型其餘部分聯合學習，取代 tokenization 流程。HiT 引言另提到 Cartesia 的部落格文章（HiT 參考文獻 [4]）示範了學得的切塊用於 pixel-space 影像生成；該文章不是 arXiv 論文，此處不引用其內容。結構為 encoder、chunking、main network、dechunking、decoder，可遞迴多階段。
 
 - 路由：q_t = W_q x̂_t、k_t = W_k x̂_t，邊界機率 p_t = ½(1 − cos(q_t, k_{t−1}))，b_t = 1{p_t ≥ 0.5}（p₁ = 1）。downsampler 直接選取邊界位置的向量。
 - 平滑：z̄_t = P_t ẑ_t + (1 − P_t) z̄_{t−1}（EMA），使低信心邊界被平滑；upsampler 重複每個壓縮向量直到下一邊界。
@@ -31,4 +31,4 @@ related: ["tokc-hourglass-and-latent-interfaces", "tokc-content-adaptive-tokeniz
 
 ## 與 RTI、HiT 的關係
 
-HiT 明言受 H-Net 啟發（q/k 投影、ratio loss、巢狀 encoder/main/decoder），HiT 附錄 A.2 證明其 compression loss 與 H-Net 的 ratio loss 代數等價。RTI 以 Hilbert 序把 2D 化為 1D，依相鄰特徵落差切塊，可視為把 H-Net 式切塊搬到 2D 的無參數作法，並以精確的 R 取代門檻 0.5。機制見 [HiT 研究脈絡總覽](hit-lineage-hub.html) 與 [RTI 研究脈絡總覽](rti-lineage-hub.html)。DC-DiT 在已吸收冗餘的 VAE latent 上運作，且只控制平均比例而非精確預算（RTI §2 的批評）。
+HiT 明言受 H-Net 啟發（q/k 投影、ratio loss、巢狀 encoder/main/decoder），HiT 附錄 A.2 證明其 compression loss 與 H-Net 的 ratio loss 代數等價。RTI 以 Hilbert 序把 2D 化為 1D，依相鄰特徵落差切塊，可視為把 H-Net 式切塊搬到 2D 的無參數作法，並以精確的 R 取代門檻 0.5。HiT 對 H-Net 的直接使用與差異見 [H-Net 與 BLT：從動態切塊到影像分組](hit-hnet-blt-to-image-groups.html)；機制見 [HiT 研究脈絡總覽](hit-lineage-hub.html) 與 [RTI 研究脈絡總覽](rti-lineage-hub.html)。DC-DiT 在已吸收冗餘的 VAE latent 上運作，且只控制平均比例而非精確預算（RTI §2 的批評）。
