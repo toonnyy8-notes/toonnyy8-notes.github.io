@@ -1,0 +1,724 @@
+Token 縮減系譜
+
+跳到內容
+
+ 系列
+ Transformer 的 token 縮減與解析度還原
+
+00 摘要01 先備02 成本03 設計軸04 第 0 期05 第 1 期06 第 2 期07 縮減位置08 第 3 期09 第 4–5 期10 分組規則11 預算與量測12 還原13 RTI 與 HiT14 對照表15 時間線16 開放問題
+
+00摘要
+01先備
+02成本
+03設計軸
+04第 0 期
+05第 1 期
+06第 2 期
+07縮減位置
+08第 3 期
+09第 4–5 期
+10分組規則
+11預算與量測
+12還原
+13RTI 與 HiT
+14對照表
+15時間線
+16開放問題
+
+ 系列教學 · No. 217 RTI × No. 585 HiT · 2020–2026
+
+ Transformer 的 token 縮減與解析度還原
+
+ 從 ViT 的 token 合併到像素擴散的 RTI 與 HiT，七期研究在八個設計軸上的選擇。
+
+ 起點論文：〈Elastic Token Compression for Pixel-Space Diffusion Transformers〉（RTI，2026）與〈Hierarchical Diffusion Transformer for End-to-End Image Generation〉（HiT，2026）
+
+ 第 0 期2020–21第 1 期2021–22第 2 期2023–24第 3 期2022–25第 4 期2023–25第 5 期2023–25第 6 期2026
+
+ 01 · 成本Transformer 每層的計算量大約與 token 數成正比；擴散模型每一步、每一層都對每個 patch 付相同的計算。
+
+ 02 · 取捨七期研究的差別在於：哪些 token 合成一組、在網路哪裡合、合完之後怎麼回到每個 patch。
+
+ 03 · 兩個端點RTI 把相鄰且相似的 patch 合成連續區域，用來加速現成模型；HiT 讓模型自己學分組、允許相隔很遠的 patch 同組，從頭訓練以提升品質。
+
+ RTI 互動教學
+ HiT 互動教學
+ 關聯圖：RTI
+ 關聯圖：HiT
+ 關聯圖：JiT
+ 研究筆記總覽
+
+ 01 · 先備
+
+ 先備：擴散 Transformer 與評估指標
+
+ 本頁假設讀者知道 Transformer 的注意力（attention）：一張影像先切成固定大小的方塊（patch），每個 patch 變成一個向量，稱為 token；每一層讓所有 token 兩兩計算注意力，再各自通過一個 MLP。以下只定義後文會用到的詞。
+
+ 擴散模型與 DiT。擴散模型從純噪聲出發，反覆用一個網路把噪聲一步步去除，得到影像。以 Transformer 作為這個去噪網路的模型稱為 DiT（Diffusion Transformer）。本頁採用 RTI 與 JiT 的時間方向：取樣狀態寫成 xt=t x+(1−t) ε $x_t=t\,x+(1-t)\,\varepsilon$ ​=tx+(1−t)ε，其中 x $x$ 是乾淨影像、ε $\varepsilon$ 是標準高斯噪聲；t=1 $t=1$ 時是乾淨影像，t=0 $t=0$ 時是純噪聲。生成時從 t=0 $t=0$ 走到 t=1 $t=1$ ，每一個取樣步（sampling step）都要把整個網路跑一次。
+
+ x-prediction。網路直接輸出它對乾淨影像 x $x$ 的預測，稱為 x-prediction。JiT 與 RTI 所改造的 MiniT2I 都屬於這一類。因為要對每個 patch 都輸出一個預測，擴散模型的輸出是稠密的。
+
+ 注意力的三個詞。每個 token 經三個線性投影得到 query、key、value：query 是「要找什麼」，key 是「我有什麼」，value 是「被取走的內容」；一個 token 的輸出是所有 value 的加權平均，權重由它的 query 與各 key 的內積決定。softmax 把一組數 zi $z_i$ ​ 轉成總和為 1 的正權重 ezi/∑kezk $e^{z_i}/\sum_k e^{z_k}$ ​/∑k​ezk​。兩個向量的餘弦相似度是它們夾角的餘弦 a⊤b/(∥a∥∥b∥) $a^\top b/(\lVert a\rVert\lVert b\rVert)$ b/(∥a∥∥b∥)，介於 −1 與 1，越接近 1 表示方向越像。
+
+ CFG。Classifier-free guidance：每一步分別跑一次有條件（例如給文字）與無條件的預測，再把兩者的差放大後相加。所以一步其實要跑兩個分支。
+
+ latent 與 pixel-space。latent 擴散先用一個另外訓練的 VAE 把影像壓成較小的格點，再在那個空間生成；pixel-space（像素空間）擴散直接在像素上生成，不需要 VAE。
+
+ 評估指標。FID 衡量生成影像與真實影像的分布距離，越低越好；GenEval 衡量文字到影像模型是否畫對物件、數量、顏色與位置，是正確率，越高越好。牆鐘時間（wall-clock time）是實際花費的秒數，FLOPs 是浮點運算次數；兩者不一定成正比。
+
+ LoRA 與 RoPE。LoRA 凍結原本的權重，只訓練一個低秩的增量。RoPE（rotary position embedding）以一組不同頻率的旋轉相量 eiωp $e^{i\omega p}$ 表示位置 p $p$ ，注意力只看兩個 token 的相位差。
+
+ 延伸閱讀：Pixel-space diffusion：latent 層是否必要的第三路線、x-prediction 與流形觀點：JiT 與 pixel-space 的近期結果、影像生成評估指標的演進
+
+ 02 · 成本
+
+ token 數決定 Transformer 的成本
+
+ 考慮一個標準 Transformer block，序列長度（token 數）為 L $L$ 、模型寬度為 d $d$ 、MLP 的隱藏寬度為 m⋅d $m\cdot d$ （擴張比 m $m$ ）。把一次乘加計為 2 次運算，前向 FLOPs 由三部分組成：QKV 與輸出投影 8Ld2 $8Ld^2$ ；MLP 4mLd2 $4mLd^2$ ；注意力分數 QK⊤ $QK^\top$ 與加權 AV $AV$ 共 4L2d $4L^2d$ d。
+
+ C(L)=(8+4m) L d2+4L2d  =m=4  24Ld2+4L2d $C(L)=(8+4m)\,L\,d^2+4L^2d\;\overset{m=4}{=}\;24Ld^2+4L^2d$ +4L2d=m=424Ld2+4L2d
+本頁推導
+
+ 一個 block 的 FLOPs 在 m=4 $m=4$ 時是 C(L)=24Ld2+4L2d $C(L)=24Ld^2+4L^2d$ +4L2d。其中注意力的二次項占總成本的比例是 4L2d/(24Ld2+4L2d)=L/(6d+L) $4L^2d/(24Ld^2+4L^2d)=L/(6d+L)$ d/(24Ld2+4L2d)=L/(6d+L)；取 d=768 $d=768$ 、L=1024 $L=1024$ ，二次項只占 18.2%（L=256 $L=256$ 為 5.3%，L=4096 $L=4096$ 為 47.1%，L=16384 $L=16384$ 為 78.1%）。所以在 DiT 常見的 256–1024 個 token 下，成本大約與 token 數成正比：token 減半，block 成本約減半；注意力的二次項要到數千個 token 以上才成為主項。本頁推導這也與 ToMeSD、ToDo 在大圖上加速最多一致（ToDo 摘要：一般尺寸至多 2×，2048×2048 至多 4.5× 以上僅摘要）；ToMeSD 作者對小圖加速較少的解釋是「擴散模型不是瓶頸」（ToMeSD Sec. 5）。
+
+ 第二點：牆鐘時間可能比 FLOPs 下降得更快。RTI App. A（Fig. 10）在 RTX 4090、batch 4 下量測，每個預算的實際時間都低於解析 FLOPs 曲線，作者歸因於這些長度下的注意力受記憶體頻寬限制。
+
+ pixel-space 模型的 token 特別多。JiT（Li 與 He，2025）以 patch 16 處理 256² 影像，得到 16×16 = 256 個 token；RTI 改造的文字到影像模型 MiniT2I-B/16 在 512²、patch 16 下有 32×32 = 1024 個 token（RTI Sec. 3.1）。RTI 的說法是：latent 模型在 VAE 中「一次付清」低階空間冗餘，pixel-space 模型則在每個 block 都付一次（RTI Sec. 1）。HiT 的出發點不同：一個 patch 一個 token 貫穿整個骨幹，不鼓勵模型在較粗的層級上總結內容，所以 HiT 把分組當作提升品質與訓練效率的手段，而不只是加速（HiT Sec. 1）。
+
+ 本節重點：一個 block 的 FLOPs 是 C(L)=24Ld2+4L2d $C(L)=24Ld^2+4L^2d$ +4L2d（m=4 $m=4$ ）；d=768 $d=768$ 、L=1024 $L=1024$ 時注意力二次項比例 L/(6d+L)=18.2% $L/(6d+L)=18.2\%$ ；在 256–1024 個 token 下成本約與 token 數成正比，token 減半成本約減半；二次項要到數千個 token 以上才成為主項。
+
+ 延伸閱讀：Pixel 空間的 patchify 設定：JiT、PixelFlow 與 DiT
+
+ 03 · 設計軸
+
+ 每個方法都在八個設計軸上做選擇
+
+ 要減少 token，每個方法都必須在八個設計軸上做選擇：縮減什麼（A）、如何分組（B）、在網路哪裡縮減（C）、如何還原成每個 patch 一個輸出（D）、如何訓練（E）、預算由誰決定（F）、合併後的位置怎麼表示（G），以及擴散特有的問題（H）。後文以 A–H 代號引用這些軸；各軸裡的術語在第一次用到的章節才定義。
+
+ 八個設計軸
+ 軸問題常見選項
+
+ A 縮減被縮減的 token 怎麼處理丟棄（剪枝、跳過）；合併（平均）；匯聚到學得的 latent；切塊選代表；只縮 K/V
+
+ B 分組哪些 token 歸成一組固定（步幅、網格）；啟發式相似度；重要性分數；學得；無參數但隨內容調整
+
+ C 位置層在網路哪裡縮減每個 block 合併後立刻還原；逐層累進；只縮中段（兩端全長）；多層巢狀
+
+ D 還原怎麼回到每個 patch 一個輸出不需要（分類）；複製回來源；殘差寫回；skip connection；注意力上採樣
+
+ E 訓練是否需要訓練免訓練；在預訓練模型上微調或適配；從頭訓練
+
+ F 預算token 數由誰決定固定比例；逐層、逐時間步不同；批次平均、單張可變；彈性（一個 checkpoint 支援多種預算）
+
+ G 位置合併 token 的位置怎麼表示不處理；ToMe 的對數大小項（S05 定義）；原始 2D 座標；平均 RoPE 相量；不加或學得
+
+ H 擴散擴散特有的限制輸出稠密；冗餘隨時間步變化；CFG 兩分支要一致或刻意不對稱；每步重新分組
+
+ 符號表（含易混淆的符號）
+
+ 符號意義首次易混淆
+
+ x,ε,xt,t $x,\varepsilon,x_t,t$ ​,t乾淨影像、標準高斯噪聲、取樣狀態、擴散時間（t=1 $t=1$ 乾淨）S01與文字 token 數 ntxt $n_{\text{txt}}$ ​ 無關
+
+ L,d,m,C(L) $L,d,m,C(L)$ 序列長度、模型寬度、MLP 擴張比、block FLOPsS02d $d$ 只指寬度；相鄰特徵距離另記 uj $u_j$ ​
+
+ A、B、r $r$ 、s $s$ ToMe 的兩個集合、每層合併數、token 代表的 patch 數S05r $r$ （合併數）不是 R $R$ （區域數）；s $s$ （大小）不是 Sij $S_{ij}$ ​（親和度）
+
+ src、dst被併入的 token、接收的 tokenS06—
+
+ N,ntxt,κ $N,n_{\text{txt}},\kappa$ ​,κ影像 token 數、文字 token 數（不縮）、保留比例S07—
+
+ pt,bt,F,G,NH $p_t,b_t,F,G,N_{\text H}$ ​,bt​,F,G,NH​H-Net 的邊界機率、邊界指示、實際與平均邊界比例、目標壓縮比S09論文把 NH $N_{\text H}$ ​ 寫成 N $N$ 
+
+ R,π,uj,Sij,τ,ρ $R,\pi,u_j,S_{ij},\tau,\rho$ ​,Sij​,τ,ρ區域數、Hilbert 順序、相鄰特徵距離、HiT 親和度、合併門檻、目標保留比例S10–S11RTI 原文把 uj $u_j$ ​ 寫成 dj $d_j$ ​
+
+ c(j) $c(j)$ patch j $j$ 所屬的組S11—
+
+ yj,hj,β $y_j,h_j,\beta$ ​,hj​,β目標（乾淨 patch）、核心前特徵、還原係數S12—
+
+ 本節重點：八個設計軸：A 縮減什麼、B 如何分組、C 在哪裡縮減、D 如何還原、E 如何訓練、F 預算由誰決定、G 位置表示、H 擴散特有問題。
+
+ 04 · 第 0 期（2020–2021）
+
+ 第 0 期：沙漏結構讓中段在短序列上運算
+
+ 第 0 期2020–21第 1 期2021–22第 2 期2023–24第 3 期2022–25第 4 期2023–25第 5 期2023–25第 6 期2026
+
+ 最早的問題來自語言模型：長序列讓 Transformer 太貴，但語言建模需要每個 token 都有輸出，所以縮短之後還得還原。Funnel-Transformer（2020）逐步把隱藏序列壓短，把省下的 FLOPs 用來加深或加寬模型；需要逐 token 輸出時，再以解碼器從短序列還原僅摘要。
+
+ Hourglass（Nawrot 等人，2021）的結構是：shorten（以縮短係數 k $k$ 把相鄰 token 合成一個）→ 中段 Transformer 只在短序列上運算 → upsample 並加上殘差 → 全長的 Transformer 層，所以兩端保持全長、只有中段變短。在自回歸設定下，縮短前要先把序列右移 k−1 $k-1$ 個 token，避免偷看未來（Sec. 2）。它的分組是固定步幅，與內容無關：每 k $k$ 個相鄰 token 一組，不看那些 token 是什麼。
+
+ Hourglass 也比較了三種上採樣（Sec. 2.3）：直接重複（無法區分組內位置）、線性上採樣（每個組內位置一個投影）、以及注意力上採樣 x=U(x,x′)+Attention(Q=U(x,x′),K=V=x′) $x=U(x,x')+\mathrm{Attention}(Q=U(x,x'),K=V=x')$ )+Attention(Q=U(x,x′),K=V=x′)，其中 U(x,x′)=x+LinearUpsampling(x′) $U(x,x')=x+\mathrm{LinearUpsampling}(x')$ )=x+LinearUpsampling(x′)。這個結構在 ImageNet32 影像生成達到 3.741 bits/dim（Sec. 3.4）。
+
+ 同期的 Perceiver IO（2021）走另一條路：以固定數量的 latent 向量經 cross-attention 讀入任意長度的輸入，在 latent 上運算，再以輸出查詢讀出，成本對輸入輸出長度呈線性僅摘要。它不做空間分組；RTI 在凍結骨幹上重實作的 Latent Array 基線同時失去了分組、連續與位置（RTI Sec. 4.2）。
+
+ 這一期證明「中段在短序列上運算、兩端保持全長」可行。限制是分組完全固定，與內容無關。
+
+ 延伸閱讀：沙漏結構與 latent 介面：Funnel、Hourglass、HDiT、Perceiver IO、RIN、ELIT
+
+ 05 · 第 1 期（2021–2022）
+
+ 第 1 期：ViT 分類以剪枝與合併減少 token
+
+ 第 0 期2020–21第 1 期2021–22第 2 期2023–24第 3 期2022–25第 4 期2023–25第 5 期2023–25第 6 期2026
+
+ Vision Transformer（ViT）對每個 patch 等量計算，背景 patch 也一樣。DynamicViT（2021）用一個預測模組估計每個 token 的重要性並剪掉不重要的 token；剪去 66% 的 token 時 FLOPs 降低 31%–37%，精度下降 0.5% 以內僅摘要。剪枝的缺點是被剪掉的資訊就消失了。
+
+ ToMe（Token Merging，Bolya 等人，2022）改成合併。它在每個 block 中執行二部軟配對（bipartite soft matching）：ToMe 每層把 token 交替分成 A、B 兩個集合（程式碼中 A 取偶數索引、B 取奇數索引），每個 A 連一條邊到 B 中最相似的 token（以 key 的餘弦相似度衡量），保留最相似的 r $r$ 條邊，把相連的 token 依大小加權平均合併，最後把兩個集合串回去（Sec. 3）。所以每層減少 r $r$ 個 token，而且全部可以平行計算，不需要迭代的分群演算法。
+
+ 合併後，一個 token 可能代表好幾個原始 patch；記它代表的 patch 數為 s $s$ （token 大小）。若不處理，兩個相同的 key 合成一個後，在 softmax 中的權重就變小了。ToMe 的 proportional attention（Eq. 1）在注意力 logit 上加 log⁡s $\log s$ ：
+
+ A=softmax ⁣(QK⊤d+log⁡s) $A=\mathrm{softmax}\!\Big(\frac{QK^\top}{\sqrt d}+\log s\Big)$ ​QK⊤​+logs)
+ToMe Eq. 1
+
+ 本頁推導因為 e q⋅k/d+log⁡s=s e q⋅k/d $e^{\,q\cdot k/\sqrt d+\log s}=s\,e^{\,q\cdot k/\sqrt d}$ ​+logs=seq⋅k/d​，加 log⁡s $\log s$ 等於把該 key（以及它的 value）複製 s $s$ 份。下一節的 C1 會數值驗證這個恆等式。
+
+ ToMe 能直接用在現成模型、不需要訓練：ViT-L@512 與 ViT-H@518 吞吐量提高 2×，精度下降 0.2–0.3%僅摘要。它在分類中不需要還原：分類只用 CLS token 的輸出，被合併的 token 不必回到原本的位置。這也是它的限制：把同樣的做法搬到需要每個 patch 都有輸出的擴散模型時，沒有還原機制；而且它只依外觀分組，不顧空間位置。
+
+ 本節重點：ToMe 每層把 token 交替分成 A、B 兩個集合，每個 A 連到最相似的 B（key 的餘弦相似度），保留最相似的 r $r$ 條邊，依大小加權平均合併；proportional attention 加 log⁡s $\log s$ ，等於把該 key 複製 s $s$ 份；分類只用 CLS token 的輸出，被合併的 token 不必回到原位置，所以不需要還原。
+
+ 延伸閱讀：ViT 的 token 剪枝與合併：DynamicViT、EViT、ToMe、合併後 token 的位置處理
+
+ 06 · 第 2 期（2023–2024）
+
+ 第 2 期：擴散的稠密輸出需要把合併還原
+
+ 第 0 期2020–21第 1 期2021–22第 2 期2023–24第 3 期2022–25第 4 期2023–25第 5 期2023–25第 6 期2026
+
+ 擴散模型要對每個 token 預測，CFG 每步要跑兩個分支，而且同一張圖在幾十個取樣步中重複計算。以下把被併入別人的 token 稱為 src，接收的 token 稱為 dst；把合併結果送回原本每個位置的動作稱為 unmerge。
+
+ ToMeSD（Bolya 與 Hoffman，2023）在每個元件（self-attention、cross-attention、MLP）之前合併、之後 unmerge。它的 unmerge 是直接複製：若 x1,2∗=(x1+x2)/2 $x^*_{1,2}=(x_1+x_2)/2$ ∗​=(x1​+x2​)/2，則 x1′=x2′=x1,2∗ $x'_1=x'_2=x^*_{1,2}$ ′​=x2′​=x1,2∗​（Sec. 3.1，Eq. 1）。ToMeSD 的 unmerge 把合併結果複製回所有來源位置，同一組的 token 因此完全相同。它也改以比例 r% $r\%$ 取代固定個數。
+
+ 分割方式（Sec. 4.1）：ToMe 的交替分割使 dst 形成規則的欄位，等於沿列方向把解析度減半。ToMeSD 因此改用隨機 2×2 dst——每個 2×2 區域隨機挑一個 dst——並且在整個 batch 固定隨機性，讓 CFG 的條件與無條件分支以相同方式配置 dst，兩個分支才一致。設計實驗顯示只對 self-attention 合併最划算（Tab. 3）。ToMeSD 在 SD v1.5、512² 上的結果（Tab. 4）：基線 FID 33.12、每張 3.09 秒；r=50% $r=50\%$ 時 FID 33.02、每張 1.65 s/im；r=60% $r=60\%$ 時 FID 33.37、1.52 s/im。
+
+ ToDo（2024）換一個假設：空間相鄰的 token 本來就相似，所以用最近鄰下採樣 D(⋅) $D(\cdot)$ 取代相似度配對，成本 O(n) $O(n)$ （Sec. 2.2）。更重要的是它只對 key、value 下採樣，保留全部 query：
+
+ Attention(Q,K,V)=softmax ⁣(Q D(K)⊤dk)D(V) $\mathrm{Attention}(Q,K,V)=\mathrm{softmax}\!\Big(\frac{Q\,D(K)^\top}{\sqrt{d_k}}\Big)D(V)$ ​​QD(K)⊤​)D(V)
+ToDo Sec. 2.2
+
+ ToDo 只對 K、V 下採樣、保留全部 query，每個 query 仍各自得到一個輸出，輸出仍是全長，所以不需要 unmerge。ToDo 的合併比例 0.75、0.89 指被移除的比例，等於 2×、3× 下採樣（Sec. 3）。同期的 AT-EDM 以注意力圖排序剪枝並依去噪步調整剪枝預算，Importance-Based Token Merging 以 CFG 等現成訊號保護重要 token僅摘要。
+
+ 這一期第一次把 token 縮減用在稠密生成上而不需訓練，並開始處理 CFG 與時間步。限制是群組仍由外觀相似度決定，可能把畫面兩端的 patch 併在一起；unmerge 是純複製；ToDo 只省注意力項。
+
+ C1ToMe 一層合併、ToMeSD 分割與 unmerge
+
+ 玩具設定：16 個 token 排成 4×4，特徵是 RGB 三個數（天空、太陽、樹、樹幹、草），key 是減去平均後的特徵；注意力尺度為推定值。改變 r 與分割方式，看哪些 token 被合併、unmerge 後剩下什麼。
+
+ 交替（ToMe）每個 2×2 隨機一個 dst（ToMeSD）
+
+ 重新抽樣
+
+ 合併數 r4
+
+ 合併前（點選 token 作為 query）
+
+ 合併後
+
+ unmerge 後
+
+ A 集合（空心）B 集合／dst（實心方形）保留的邊（實線）未保留的邊（虛線）
+
+ 分割 B（dst）＝1、3、5、7、9、11、13、15
+合併組 {4,5} {8,9} {12,13} {14,15}
+unmerge MSE 5.62×10⁻⁵
+query 0（天空） 與原始注意力的差：不加 log s 6.12×10⁻³；加 log s 1.82×10⁻⁴
+加 log s 對複製 key s 份的差 < 1e-12
+
+ 讀數由本頁依 ToMe Sec. 3、Eq. 1 與 ToMeSD Sec. 3.1、4.1 即時計算。注意力：q = 4·(query 特徵 − 平均)，k 同理，logit = q·k/√3（尺度 4 為推定值，讓 softmax 不至於均勻）；value 為特徵。「加 log s 等於複製」為本頁推導的恆等式；組內差異大時加 log s 不一定更接近原始注意力，照實顯示。
+
+ r = 4，合併 4 組，unmerge MSE 5.62×10⁻⁵
+
+ 本節重點：ToMeSD 的 unmerge 把合併結果複製回所有來源位置；交替分割使 dst 形成規則欄位，所以改為每個 2×2 隨機一個 dst，並在整個 batch 固定隨機性，讓 CFG 兩分支一致；ToDo 只對 K、V 下採樣、保留全部 query，輸出仍是全長，因此不需要 unmerge。ToMeSD 在 r=50% $r=50\%$ 時 FID 33.02（基線 33.12），每張 1.65 對 3.09 s/im（Tab. 4）。
+
+ 延伸閱讀：免訓練的擴散 token 合併：ToMeSD、ToDo、AT-EDM、Importance-Based Token Merging
+
+ 07 · 縮減位置
+
+ 縮減的位置決定加速上限
+
+ 把 S02 的 C(L) $C(L)$ 套到整個網路，就能比較「在哪裡縮減」（軸 C）。記影像 token 數為 N $N$ 、文字 token 數為 ntxt $n_{\text{txt}}$ ​（不縮減），縮減後影像 token 剩 κN $\kappa N$ ，κ $\kappa$ 為保留比例。
+
+ 本節用到兩種配置。RTI 改造的 MiniT2I-B/16 有 17 個 block：前 3 個與後 3 個保持全解析度，中間 11 個（核心）在縮短的序列上運算，記作 3＋11＋3（RTI Sec. 3.2）。HiT 有 18 個 block，分成 3/3/6/3/3 五段：最外兩段全解析度，中間兩段縮一次，核心再縮一次（HiT Sec. 3.1；細節在 S10、S13）。每種策略都和「相同 block 數的稠密模型」比較。
+
+ Amdahl 定律指出：只加速系統的一部分時，總加速受不加速部分的比例限制。RTI B/16 的 3＋11＋3 個 block 只縮中段時，即使核心的成本降到 0，兩端 6 個 block 仍要全長計算，所以不計文字時加速上限是 17/6=2.83× $17/6=2.83\times$ ：3＋11＋3＝17 個 block，若中段 11 個的成本為 0，仍剩下 6 個全長 block，稠密成本 17 除以剩下的 6 就是上限 17/6 $17/6$ 。RTI B/16 在 R=256 $R=256$ （κ=0.25 $\kappa=0.25$ ）實測 2.15×，加速約在 2.5× 飽和（Tab. 1、Sec. 4.2）；實測高於本頁 FLOPs 模型的 2.03×，因為牆鐘時間比 FLOPs 下降得快（App. A）。文字流全長也是 RTI 上限的一部分：ntxt=256 $n_{\text{txt}}=256$ ​=256 時模型上限降為 2.17×（RTI Sec. 5 把文字流列為限制）。
+
+ ToDo 只縮短注意力分數裡 K、V 的長度。1024 個 token 時二次項只占 18%，所以 ToDo 式效益小：在本頁「K、V 投影仍在全長上計算」的假設下（ToDo 原文未說明投影在下採樣前或後），κ=0.25 $\kappa=0.25$ 只有 1.16×。到 16384 個 token 時二次項占 78%，ToMeSD 式與 ToDo 式反而超過只縮中段。
+
+ C2四種縮減位置的加速（FLOPs 模型）
+
+ 玩具設定：本頁推導的 FLOPs 模型 C(L) = 24Ld² + 4L²d，不計合併與還原成本；ToMeSD 式只在 self-attention 前合併（MLP 全長，對應 ToMeSD Tab. 3），ToDo 式假設 K、V 投影仍全長。調整解析度與保留比例，比較四種策略。
+
+ 只縮中段（3＋11＋3）兩層巢狀（3/3/6/3/3）ToMeSD 式ToDo 式上限RTI 實測（牆鐘）
+
+ 影像 token 數 N
+2561024409616384
+
+ 寬度 d
+38476811521536
+
+ 文字 token 數0
+
+ 保留比例 κ0.250
+
+ 顯示 RTI 實測點
+
+單一 block：線性項 81.8%，注意力二次項 18.2%
+
+ κ = 0.250
+只縮中段 2.030×
+兩層巢狀 1.796×
+ToMeSD 式 1.600×
+ToDo 式 1.158×
+只縮中段上限 2.833×
+二次項比例（L = 1024）18.2%
+
+ 讀數由本頁依 S02 的 C(L) 即時計算（本頁推導，不是任何論文的數字）。256 = JiT 256²/p16，1024 = MiniT2I 512²/p16。RTI 實測點取自 RTI Tab. 1（B/16，κ = 0.5 為 1.84×、κ = 0.25 為 2.15×，RTX 4090 牆鐘），只在 N = 1024 時顯示；模型為 FLOPs，未計文字流。縱軸上限：N = 16384 為 7×、其他 3.5×，超出部分在上緣截斷並標「超出」。
+
+ κ = 0.250，只縮中段 2.03 倍，ToDo 式 1.16 倍
+
+ 本節重點：3＋11＋3 只縮中段時，不計文字的加速上限是 17/6=2.83× $17/6=2.83\times$ ，因為兩端 6 個 block 不縮；RTI B/16 在 R=256 $R=256$ 實測 2.15×，加速約在 2.5× 飽和；ToDo 只縮短注意力分數的 K/V 長度，1024 token 時二次項只占 18%，在本頁「K、V 投影仍全長」的假設下 κ=0.25 $\kappa=0.25$ 只有 1.16×。
+
+ 08 · 第 3 期（2022–2025）
+
+ 第 3 期：學得的路由讓比例可學，但刪除而非總結
+
+ 第 0 期2020–21第 1 期2021–22第 2 期2023–24第 3 期2022–25第 4 期2023–25第 5 期2023–25第 6 期2026
+
+ 免訓練方法的比例要手調，而且與層、時間步無關。這一期的代表做法是讓模型學「哪些 token 要算」。Mixture-of-Depths（MoD，2024，語言模型）在每層放一個 router，選出 top-k $k$ 個 token 進入注意力與 MLP，其餘 token 沿殘差流直接跳過這一層。DiffCR（2024）把同樣的想法用在 DiT：每層一個 router 預測 token 重要性，並讓每層、每個時間步的壓縮比例也可微地學出來；在 PixArt-Σ 上品質與未壓縮模型相當，同時省下 20.68% 延遲與 8.33% 記憶體（Sec. 4）。
+
+ 學得路由（MoD、DiffCR）屬於跳過，也就是刪除：未被選中的 token 沿殘差流繞過 block，不被總結，它們的資訊不參與這一層的計算。RTI 在凍結的 MiniT2I 上重實作了這類方法（Token Skip）：GenEval 82.3，只有 1.19× 加速，比 RTI（2.15×）低 2.4 點；作者指出 Token Skip 的 576 個 token 不是同一種預算，而它的速度又慢得多，所以 2.4 點低估了差距（Tab. 1、Sec. 4.2）。
+
+ 其他同類方法只列出：DyDiT 依時間步調整寬度並跳過不必要的空間位置，DiT-XL FLOPs 降低 51%、加速 1.73×；FlexiDiT 把預訓練 DiT 轉為多預算模型；Sparse Guidance 以 token 稀疏度作為引導訊號僅摘要。架構層級的 RIN 以一組 latent 承擔全域注意力，U-ViT 以長 skip 連接淺層與深層僅摘要。它們在 S14 的對照表中各占一列。
+
+ 延伸閱讀：學得路由與動態 DiT：DyDiT、DiffCR、FlexiDiT、Sparse Guidance、深度冗餘的相鄰路線：Mixture-of-Depths、深度剪枝、MoEUT、MoE 與條件式計算的發展
+
+ 09 · 第 4–5 期（2023–2025）
+
+ 第 4–5 期：像素擴散用固定網格，動態切塊讓切分可學
+
+ 第 0 期2020–21第 1 期2021–22第 2 期2023–24第 3 期2022–25第 4 期2023–25第 5 期2023–25第 6 期2026
+
+ 第 4 期：pixel-space 擴散的回歸。latent 擴散依賴另外訓練的 VAE；直接在像素上建模則 token 太多。HDiT（Crowson 等人，2024）把 Hourglass 結構帶到像素擴散：編碼端每一層以 Pixel-UnShuffle 把 2×2 個 token 合併成一個，解碼端以 Pixel-Shuffle 拆開，skip 以可學係數線性插值（lerp）合併；高解析度層用鄰域注意力、最內層用全域注意力，整體成本對像素數為 O(n) $O(n)$ ，在 FFHQ-1024² 達到 FID 5.23（Tab. 3）。RTI 與 HiT 都沒有引用 HDiT，本頁依主題補入。JiT（2025）則以 x-prediction 搭配大 patch（16、32）的單純 Transformer 在像素上生成僅摘要。JiT 用大 patch（16、32），HDiT 用固定 2×2 Pixel-UnShuffle 合併的沙漏結構，兩者控制 token 數的方式都與內容無關：平坦的天空與細節多的招牌分到同樣多的 token。這是 RTI 與 HiT 的共同起點。
+
+ 第 5 期：內容自適應的切分。Quadformer 以 quadtree 產生大小不一的 patch，BLT 依下一個 byte 的熵切出長度不一的 patch僅摘要。H-Net（Hwang 等人，2025）讓切塊與主任務一起訓練。它的 routing（Eq. 4）以兩個學得投影 qt=Wqx^t $q_t=W_q\hat x_t$ ​=Wq​x^t​、kt=Wkx^t $k_t=W_k\hat x_t$ ​=Wk​x^t​ 比較相鄰向量：
+
+ pt=12(1−qt⊤kt−1∥qt∥ ∥kt−1∥)∈[0,1],bt=1{pt≥0.5} $p_t=\tfrac12\Big(1-\frac{q_t^\top k_{t-1}}{\lVert q_t\rVert\,\lVert k_{t-1}\rVert}\Big)\in[0,1],\qquad b_t=\mathbb 1\{p_t\ge0.5\}$ ​=21​(1−∥qt​∥∥kt−1​∥qt⊤​kt−1​​)∈[0,1],bt​=1{pt​≥0.5}
+H-Net Eq. 4
+
+ H-Net 以相鄰向量的餘弦決定邊界：pt=12(1−cos⁡(qt,kt−1)) $p_t=\tfrac12(1-\cos(q_t,k_{t-1}))$ ​=21​(1−cos(qt​,kt−1​)) 是邊界機率，pt≥0.5 $p_t\ge0.5$ ​≥0.5 的位置就是邊界（p1=1 $p_1=1$ ​=1）。downsampler 只保留邊界位置的向量；還原時先以 EMA 平滑，再把每個壓縮向量重複到下一個邊界，並乘上 straight-through 的信心值（Sec. 2.2）。壓縮程度由 ratio loss（一個額外的損失項：實際切塊比例偏離目標時變大）控制（Sec. 2.2.3，Eq. 10）：
+
+ Lratio=NHNH−1((NH−1)FG+(1−F)(1−G)) $\mathcal L_{\text{ratio}}=\frac{N_{\text H}}{N_{\text H}-1}\big((N_{\text H}-1)FG+(1-F)(1-G)\big)$ ​=NH​−1NH​​((NH​−1)FG+(1−F)(1−G))
+H-Net Eq. 10
+
+ 其中 NH $N_{\text H}$ ​ 是目標壓縮比（論文記為 N $N$ ），F $F$ 是實際被選為邊界的比例（不可微），G $G$ 是平均邊界機率（可微）；F=G=1/NH $F=G=1/N_{\text H}$ ​ 時損失達到最小值 1。這個 ratio loss 只控制平均比例：個別序列的切塊數可以多於或少於目標。
+
+ 這一期讓 token 數隨內容變化，並證明切塊可以和主任務一起訓練。限制是 H-Net 處理一維序列；tokenizer 類方法改變輸入表示，不能用在已釋出的 checkpoint（RTI Sec. 2）。
+
+ 本節重點：JiT 用大 patch（16、32），HDiT 用固定 2×2 Pixel-UnShuffle 合併的沙漏結構，兩者都與內容無關；H-Net 以相鄰向量的餘弦 pt=12(1−cos⁡(qt,kt−1)) $p_t=\tfrac12(1-\cos(q_t,k_{t-1}))$ ​=21​(1−cos(qt​,kt−1​)) 決定邊界，pt≥0.5 $p_t\ge0.5$ ​≥0.5 為邊界，ratio loss 只控制平均比例。
+
+ 延伸閱讀：動態切塊：BLT、H-Net、DC-DiT 到影像的系譜、內容自適應的 tokenization：Quadformer 與空間序列化；資料庫中的相鄰論文：Rethinking the Design Space of Vanilla Pixel Diffusion Transformers
+
+ 10 · 第 6 期（2026）
+
+ 第 6 期：三種分組規則——固定網格、Hilbert 切割、平均連結
+
+ 第 0 期2020–21第 1 期2021–22第 2 期2023–24第 3 期2022–25第 4 期2023–25第 5 期2023–25第 6 期2026
+
+ 2026 年的方法在擴散 Transformer 中加入彈性或自適應的 token。ELIT 在 DiT 中插入可變長度的 latent 介面，以 Read、Write 兩個 cross-attention 在空間 token 與 latent 之間搬移資訊；為了省成本，它把空間 token 分成固定網格的群組，訓練時隨機丟棄尾端 latent，使一個模型支援多種預算（彈性預算）。DC-DiT 把 H-Net 式的動態切塊帶到 2D latent DiT，router 以局部可預測性給出邊界機率。以下用三條規則說明這一期的分組選擇。
+
+ (a) 固定網格。HDiT 的 2×2 合併與 ELIT 的空間群組都是固定網格：每一組的形狀與位置事先決定，與內容無關。下方 C3 以 Hilbert 序列等長切段實作固定網格：R=16 $R=16$ 、64 時每段是正方形，R=32 $R=32$ 、128 時是 2:1 的長方形。
+
+ 圖8×8 格上的 Hilbert 曲線
+
+ 折線依序號走遍 64 格，相鄰序號一定是上下左右相鄰的格。斜線區是序號 21–33 這一段：任何一段連續序號都構成一塊連通的區域。
+
+ (b) Hilbert 切割（RTI）。Hilbert 曲線是一條走遍 2k×2k $2^k\times2^k$ ×2k 格子的路徑，曲線上相鄰的序號在格子上一定是上下左右的鄰居；相鄰索引是格點鄰居，所以曲線上任一段區間都是一條連通路徑。RTI 沿這條曲線把 patch 排成一列，記順序為 π $\pi$ ，計算相鄰兩個 patch 的特徵距離 uj=∥hπ(j+1)−hπ(j)∥2 $u_j=\lVert h_{\pi(j+1)}-h_{\pi(j)}\rVert_2$ ​=∥hπ(j+1)​−hπ(j)​∥2​（RTI 原文記為 dj $d_j$ ​，Eq. 1），然後在最大的 R−1 $R-1$ 個 uj $u_j$ ​ 處切開，得到 R $R$ 段（Eq. 2）。Hilbert 上相鄰序號必為格點鄰居，所以每一段連續區間都連通：RTI 的每個區域保證是一塊相連的面積。這個切割無參數、成本 O(N) $O(N)$ ，每個取樣步依當前特徵重切；每張圖精確得到 R $R$ 個區域。切出的區域再經 READ 匯集成區域 token、經 WRITE 寫回每個 patch，細節在 RTI 互動教學。
+
+ (c) 平均連結（HiT）。平均連結（average linkage）從每個 token 自成一群開始，反覆合併「平均親和度」最高的兩群，並記錄每次合併的分數，得到一棵合併樹（dendrogram）。HiT 的親和度是 Sij=12(qi⊤kj+qj⊤ki) $S_{ij}=\tfrac12(q_i^\top k_j+q_j^\top k_i)$ ​=21​(qi⊤​kj​+qj⊤​ki​)，q,k $q,k$ 是兩個學得的投影（Eq. 2）；兩群 U,V $U,V$ 的平均親和度 s(U,V)=1∣U∣∣V∣∑i∈U∑j∈VSij $s(U,V)=\frac1{|U||V|}\sum_{i\in U}\sum_{j\in V}S_{ij}$ 1​∑i∈U​∑j∈V​Sij​（Eq. 8）。HiT 只保留分數不低於門檻 τ $\tau$ 的合併。因為親和度只看特徵、不看位置，同一群的 token 在畫面上可以不相鄰，本頁稱為非局部分組。池化與還原用的軟權重、壓縮損失與群組引導，細節在 HiT 互動教學。
+
+ 延伸閱讀：RTI 研究脈絡總覽：從 token 縮減到 Hilbert 區域 token、HiT 研究脈絡總覽：從潛空間階層到可學習的影像分組、內容自適應的 tokenization：Quadformer 與空間序列化
+
+ 11 · 預算與量測
+
+ 預算型態與兩個量測：EV 與連通性
+
+ 比較分組規則需要量測。記 patch j $j$ 所屬的組為 c(j) $c(j)$ ，組內特徵平均為 hˉc(j) $\bar h_{c(j)}$ c(j)​，全部 patch 的平均為 hˉ $\bar h$ 。RTI 用保留變異 EV（App. C.1，Eq. 5）衡量「用組平均代表每個 patch」後還剩多少資訊：
+
+ EV=1−∑j∥hj−hˉc(j)∥2∑j∥hj−hˉ∥2 $\mathrm{EV}=1-\frac{\sum_j\lVert h_j-\bar h_{c(j)}\rVert^2}{\sum_j\lVert h_j-\bar h\rVert^2}$ ​∥hj​−hˉ∥2∑j​∥hj​−hˉc(j)​∥2​
+RTI Eq. 5
+
+ EV = 1 表示組平均完整攜帶原本的特徵，EV = 0 表示不比一個常數好。另外兩個量測看位置：spread 是每個 patch 到其組中心的平均距離（單位為格；本頁對全部 patch 平均，RTI Tab. 4 對每組平均）；連通組比例是在格子上相連成一塊的組所占的比例。
+
+ 分組規則也決定預算型態（軸 F）。RTI 每張精確 R $R$ 個區域；固定網格與 ToMe 式合併也是每張固定個數。門檻法則不同：HiT 的群組數由門檻與內容決定，只有整個批次的平均保留比例受壓縮損失約束（Eq. 4，目標 ρ=1/r $\rho=1/r$ ），門檻 τ $\tau$ 在訓練前以 1,024 個雜訊樣本校準後凍結（Sec. 4.1）。所以 HiT 單張影像、單個時間步的群組數可以多於或少於目標。
+
+ RTI 量到相似度分組的代價：以 ToMe 式相似度分組（Feat Sim）在同一介面中取代 Hilbert 區域，Feat Sim 的群組散布 5.16 格，RTI 只有 0.49 格（Tab. 4，R=256 $R=256$ ），GenEval 低 4.2 點（Sec. 4.2）。RTI 的結論是失去連續性就失去位置。
+
+ 冗餘也隨時間步改變：RTI 的探測顯示取樣進行時（影像逐漸成形）保留比例上升（Fig. 2b），DiffCR 學到的壓縮比在雜訊大的時間步較高。下方的玩具只用乾淨影像，不模擬時間步。
+
+ C3分組規則在同一批影像上的差異
+
+ 玩具設定：特徵是 8×8 patch 的原始像素（代替模型內部特徵），風景與棋盤兩張 128×128 影像各 256 個 patch，構成一個批次；方法 5 的親和度用置中特徵的餘弦（q = k），不是 HiT 學得的投影。點選或用方向鍵移動游標、Enter 選取 patch，突顯它所屬的組。
+
+ 1 固定網格2 ToMe 式合併3 Hilbert 最大落差（RTI）4 Hilbert＋批次配額5 平均連結＋批次配額
+
+ 進階：顯示方法 4、5
+
+ 預算 R
+163264128
+
+ 影像
+風景棋盤
+
+ 每種方法的群組數與量測（風景／棋盤）方法K 風景K 棋盤EVspread連通最大組
+
+ 讀數由本頁依 RTI Eq. 1–2、5 與 HiT Eq. 8 即時計算；spread 為本頁定義（每個 patch 到組中心的平均距離）。方法 4 是本頁為了隔離「預算型態」而構造的對照，不是任何論文的方法。方法 4、5 讓兩張圖共用配額，使群組數總和恰好等於 2R：這是理想化——HiT 實際以凍結的門檻運作，批次平均只由壓縮損失鼓勵。EV、spread、連通的欄位為目前選取影像的值。
+
+ 在玩具中，R=32 $R=32$ 時風景圖的 EV：固定網格 0.723、ToMe 式 0.837、RTI 0.901；但 ToMe 式只有 21.9% 的組是連通的，spread 3.947 格，RTI 為 1.913 格。打開進階後，批次配額把群組從簡單的棋盤移給複雜的風景：方法 5 在風景用了 62 群、棋盤只用 2 群——棋盤兩種顏色各成一群，同色的 8 個方格雖不相鄰仍同組。這就是非局部分組，也是「單張可變」的意思。方法 5 的風景 EV 0.997 雖然最高，但它用了 62 個群組，與 RTI 的 32 個不是同一預算。
+
+ 本節重點：Hilbert 上相鄰序號必為格點鄰居，所以 RTI 的每一段連續區間都連通；RTI 每張精確 R $R$ 個區域，門檻法（HiT）的群組數由內容決定、只有批次平均受壓縮損失約束；相似度分組 Feat Sim 的群組散布 5.16 格，RTI 為 0.49 格，GenEval 低 4.2 點。
+
+ 12 · 還原
+
+ 還原方式決定同一組內能否各自更新
+
+ 縮短的核心只為每一組產生一個結果，但擴散模型要對每個 patch 輸出（軸 D）。進入縮短段之前每個 patch 的特徵稱為核心前特徵，記為 hj $h_j$ ​。前面各期出現過五種還原：不需要（分類）、複製回來源（ToMeSD 的 unmerge，也稱廣播，broadcast）、殘差寫回、skip connection（U-ViT、HDiT 的 lerp、HiT 的投影 skip），以及 Hourglass 的注意力上採樣。
+
+ 本頁推導廣播只能讓同組共用一個更新：同一組的 patch 拿到同一個值。若第 j $j$ 個 patch 的理想輸出是 yj $y_j$ ​，同組共用一個值時，最好的選擇是組平均 yˉc $\bar y_{c}$ ​c​，最小誤差就是目標在組內的變異 ∑c∑j∈c∥yj−yˉc∥2 $\sum_c\sum_{j\in c}\lVert y_j-\bar y_c\rVert^2$ ​∑j∈c​∥yj​−yˉ​c​∥2。殘差寫回則保留每個 patch 的核心前特徵，並據此個別化更新。RTI 的 WRITE（Eq. 4）是
+
+ hjout=hjin+g([ hjin ∥ zc(j)′−zc(j) ]) $h_j^{\text{out}}=h_j^{\text{in}}+g\big([\,h_j^{\text{in}}\,\Vert\,z'_{c(j)}-z_{c(j)}\,]\big)$ out​=hjin​+g([hjin​∥zc(j)′​−zc(j)​])
+RTI Eq. 4
+
+ 其中 hin $h^{\text{in}}$ 、hout $h^{\text{out}}$ 是核心前、後的特徵（論文以層索引 s0 $s_0$ ​、s1+1 $s_1+1$ ​+1 表示），zc $z_c$ ​、zc′ $z'_c$ ′​ 是區域 token 進、出核心時的值，g $g$ 是小型可學映射：每個 patch 以自己的特徵與區域的變化量產生自己的更新。HiT 則以同一組軟權重把核心處理後的群組特徵混回每個 token（軟混合：每個 token 得到所有群組結果的加權平均，權重是它對各群組的軟指派），再加上一個投影 skip（把核心前的特徵乘上一個可學的線性投影後直接加回，HiT 初始化為恆等）。
+
+ 哪個消融只改還原？HiT 只改讀回方式的消融：把軟混合換成硬查表（每個 token 只取自己所屬群組的結果），FID 由 6.61 惡化為 7.97（Tab. 3）。RTI 以平均池化＋廣播取代整個 READ/WRITE，GenEval 低 7.2（Sec. 4.3），但這同時改變了池化與還原，不能只歸因於還原。
+
+ C4還原：廣播與殘差寫回
+
+ 純玩具，不是 RTI 或 HiT 的行為：目標 y 為乾淨風景 patch，核心前特徵 h 為取樣狀態 x_t 的 patch（原始像素），分組沿用 C3 的方法與 R，並假設核心對每組恰好輸出目標的組平均。只示範廣播的誤差下界與殘差路徑的作用。
+
+ x_t（核心前）
+
+還原結果 ŷ(β)
+
+ 擴散時間 t0.95
+
+ 還原係數 β0.00
+
+ 廣播 β = 0殘差 β = 1最佳 β*
+
+ 還原：ŷ_j(β) = ȳ_c + β(h_j − h̄_c)。β = 0 為廣播；β = 1 為殘差加回，與 RTI Eq. 4 只是類比（Eq. 4 的 g 作用在串接上、為學得映射）；β* 為最小平方最佳。相對誤差 E(β) 以「全部用一個平均值」的誤差為分母。E(0) = 1 − EV（以目標計算）與 E(β*) ≤ min(E(0), E(1)) 為本頁推導。
+
+ 在這個玩具中（RTI 分組、R=32 $R=32$ ），t=1 $t=1$ 時廣播留下 9.85% 的組內變異，β=1 $\beta=1$ 的誤差為 0；t=0.95 $t=0.95$ 時三者為廣播 0.0985、殘差 0.0347、最佳 β∗=0.760 $\beta^*=0.760$ =0.760 時 0.0277。換成固定網格，廣播誤差升到 0.2768，殘差誤差幾乎不變（0.0353）：廣播的誤差直接由分組決定，殘差路徑讓分組的影響變小。原始像素帶有噪聲，所以 t=0.8 $t=0.8$ 時 β∗ $\beta^*$ 降到 0.127。
+
+ 本節重點：廣播只能讓同組共用一個更新，最小誤差是目標在組內的變異；殘差寫回保留每個 patch 的核心前特徵並據此個別化更新；只改還原的證據是 HiT 的消融：硬查表讀回 FID 7.97，軟混合 6.61；RTI 的 −7.2 同時改了池化與還原。
+
+ 13 · RTI 與 HiT
+
+ RTI 與 HiT 在八個設計軸上的選擇對照
+
+ RTI 的目的是推論加速：凍結骨幹＋LoRA 加速，只訓練 rank-32 的 LoRA 與 READ/WRITE（B/16 可訓練參數 16.3M，5.9%）；分組是無參數的 Hilbert 連續區域；預算是每張精確 R $R$ 個，訓練時每步自 {64, 128, 256, 512} 隨機抽 R $R$ ，所以一個 checkpoint 支援任意預算（彈性），連未見過的預算也能用；位置以區域內 patch 的平均 RoPE 相量表示。結果（Tab. 1，512²）：B/16 稠密 GenEval 87.2，RTI R=512 $R=512$ 為 87.8（1.84×）、R=256 $R=256$ 為 84.7（2.15×）；L/16 在 R=256 $R=256$ 為 86.3（2.59×）。
+
+ HiT 的目的是品質與訓練效率：從頭訓練求品質；分組用學得親和度＋平均連結、可非局部；預算是批次平均、單張可變；compact 層預設不加 RoPE。結果：ImageNet-256 上 HiT-XL/16 在 600 epochs 達到 FID 1.48（Tab. 1），FID ≈ 2.16 時訓練計算比 JiT-H/16 少 2.4×（Fig. 1d）；文字到影像 512² 五項平均 65.93，MiniT2I-B/16 為 64.64，名目 GFLOPs 139.4 對 201.6（乘加計 1、以目標群組數計，Tab. 2、Sec. 4.1）。學得分組優於固定空間配對（FID 6.61 對 7.11，Tab. 7）。
+
+ 逐軸對照（數字出處見內文）
+ 軸RTI（No. 217）HiT（No. 585）
+
+ 目的推論加速（凍結骨幹，2×–2.6× 牆鐘）品質與訓練效率（從頭訓練）
+
+ A 池化只在區域內做單查詢 softmax每群對所有 token 軟加權（限制在硬群內：FID 6.61 → 10.16–10.32）
+
+ B 分組無參數，Hilbert 最大特徵落差，保證空間連續學得親和度＋平均連結＋門檻，允許非局部
+
+ C 層級一層（1024 → R → 1024）兩層（256 → 128 → 64 → 128 → 256）
+
+ D 還原寫回區域變化量，以每個 patch 的核心前特徵個別化（g）以同一組軟權重混回，再加投影 skip
+
+ E 訓練凍結骨幹，只訓練 LoRA 與 READ/WRITE（16.3M，5.9%）從頭訓練（壓縮損失權重 λ = 0.01）
+
+ F 預算每張精確 R，訓練隨機抽 R，推論可設未見過的 R批次平均 ρ，單張、單步群組數由內容決定
+
+ G 位置平均 RoPE 相量（換成無位置的 Latent Array 低 39.0，但該基線同時失去分組與連續）compact 層預設不加 RoPE（學得 RoPE 只 6.61 → 6.25）
+
+ H 擴散每個取樣步依當前特徵重切；文字流不縮每步重新分組；T2I 時文字與影像共同分組；group guidance（App. A.6）
+
+ 兩者都把全解析度 block 放在兩端：RTI Fig. 2c 顯示首末 block 對每個 patch 都敏感；HiT 把 block 從核心移到外層（2/2/10/2/2 → 3/3/6/3/3）使 FID 由 8.48 改善為 6.61（Tab. 5），但前向成本也由 18.3 升到 22.2 GFLOPs，計算量與位置同時改變。
+
+ 位置處理的差異很大：RTI 中移除位置的代價很高，HiT 中加入學得 RoPE 只改善一點。一個可能的解釋（作者未驗證，本頁推論）：凍結的骨幹無法學習新的位置機制，必須給它讀得懂的位置；從頭訓練的模型可以從 skip 與全解析度層取得位置。
+
+ No. 217RTI 互動教學
+Hilbert 順序、內容自適應切割、READ／WRITE、成本與速度上限。
+
+ No. 585HiT 互動教學
+親和度與平均連結、軟權重、壓縮損失、群組引導。
+
+ 本節重點：RTI 選擇凍結骨幹＋LoRA 加速、無參數 Hilbert 連續區域、每張精確 R $R$ 的彈性預算、平均 RoPE 相量；HiT 選擇從頭訓練求品質、學得親和度＋平均連結（可非局部）、批次平均且單張可變的預算、compact 層預設不加 RoPE。
+
+ 14 · 對照表
+
+ 十六種方法的設計軸對照
+
+ 下表把各期的代表方法放在同一組軸上。點選上方的軸，表格會標出那一欄；窄螢幕時每個方法一張卡片，只列被選中的軸。FlexiDiT 與 Sparse Guidance 的機制未逐行核對，不列入。
+
+ A 縮減B 分組C 位置層D 還原E 訓練F 預算G 位置空間連續
+
+ 設計軸對照（粗體列為兩篇起點論文）方法期別A 縮減B 分組C 位置層D 還原E 訓練F 預算G 位置空間連續
+Hourglass0線性池化固定步幅中段注意力上採樣＋殘差從頭固定—是
+Perceiver IO／RIN0／3匯聚到 latent學得（全域 cross-attention）全程輸出查詢／cross-attn 寫回從頭固定latent（RTI 的 Latent Array 基線無位置）否
+DynamicViT1剪枝學得重要性逐層累進不需（分類）訓練固定比例原位置否
+ToMe1合併key 相似度二部配對每層累進不需（分類）免訓練每層 rlog s否
+ToMeSD2合併相似度＋隨機 2×2 dst每 block 合併後還原unmerge 複製免訓練固定比例—否
+ToDo2只縮 K/V固定網格注意力不需（query 全長）免訓練固定比例原 query是
+AT-EDM2剪枝注意力排序每層相似度恢復免訓練隨時間步—否
+MoD／DiffCR3跳過學得 router交替層／每層殘差直通訓練／微調固定容量／學得逐層逐步原位置否
+DyDiT3跳過＋縮寬學得每層直通微調隨時間步原位置否
+HDiT4合併 2×2固定多層巢狀Pixel-Shuffle＋lerp skip從頭固定軸向 RoPE是
+JiT4大 patch固定輸入線性頭從頭固定RoPE是
+H-Net5切塊選代表學得相鄰相似度多階段平滑＋重複＋殘差從頭ratio loss 平均序列是（一維）
+ELIT6匯聚到 latent學得 cross-attn，固定網格群組中段Write cross-attn從頭／插入彈性（尾端丟棄）每群學得位置嵌入（未逐行核對）群內否、群間是
+DC-DiT6選代表 token學得局部可預測性骨幹前de-chunk＋門控殘差從頭／upcycle彈性（比例）原始 2D 座標否（選點）
+RTI6區域內加權池化無參數 Hilbert 最大落差單層中段殘差 WRITE凍結＋LoRA彈性、每張精確 R平均 RoPE 相量＋大小嵌入是（保證）
+HiT6軟加權池化學得親和度＋平均連結兩層巢狀軟混合＋投影 skip從頭批次平均、單張可變預設不加否（允許非局部）
+
+ Hourglass 第 0 期
+B 分組固定步幅
+D 還原注意力上採樣＋殘差
+F 預算固定
+
+Perceiver IO／RIN 第 0／3 期
+B 分組學得（全域 cross-attention）
+D 還原輸出查詢／cross-attn 寫回
+F 預算固定
+
+DynamicViT 第 1 期
+B 分組學得重要性
+D 還原不需（分類）
+F 預算固定比例
+
+ToMe 第 1 期
+B 分組key 相似度二部配對
+D 還原不需（分類）
+F 預算每層 r
+
+ToMeSD 第 2 期
+B 分組相似度＋隨機 2×2 dst
+D 還原unmerge 複製
+F 預算固定比例
+
+ToDo 第 2 期
+B 分組固定網格
+D 還原不需（query 全長）
+F 預算固定比例
+
+AT-EDM 第 2 期
+B 分組注意力排序
+D 還原相似度恢復
+F 預算隨時間步
+
+MoD／DiffCR 第 3 期
+B 分組學得 router
+D 還原殘差直通
+F 預算固定容量／學得逐層逐步
+
+DyDiT 第 3 期
+B 分組學得
+D 還原直通
+F 預算隨時間步
+
+HDiT 第 4 期
+B 分組固定
+D 還原Pixel-Shuffle＋lerp skip
+F 預算固定
+
+JiT 第 4 期
+B 分組固定
+D 還原線性頭
+F 預算固定
+
+H-Net 第 5 期
+B 分組學得相鄰相似度
+D 還原平滑＋重複＋殘差
+F 預算ratio loss 平均
+
+ELIT 第 6 期
+B 分組學得 cross-attn，固定網格群組
+D 還原Write cross-attn
+F 預算彈性（尾端丟棄）
+
+DC-DiT 第 6 期
+B 分組學得局部可預測性
+D 還原de-chunk＋門控殘差
+F 預算彈性（比例）
+
+RTI 第 6 期
+B 分組無參數 Hilbert 最大落差
+D 還原殘差 WRITE
+F 預算彈性、每張精確 R
+
+HiT 第 6 期
+B 分組學得親和度＋平均連結
+D 還原軟混合＋投影 skip
+F 預算批次平均、單張可變
+
+ 15 · 時間線
+
+ 研究時間線
+
+ 23 篇論文依年份排列，標出所屬分期。每張卡片連到 arXiv、對應的研究筆記，以及它在 S14 對照表中的那一列；三篇在資料庫中的論文另有關聯圖連結。
+
+ 第 0 期第 1 期第 2 期第 3 期第 4 期第 5 期第 6 期
+
+ 2020第 0 期Funnel-Transformer: Filtering out Sequential Redundancy for Efficient Language Processing
+Dai et al.
+逐步縮短隱藏序列並以解碼器還原；序列縮短的原型
+arXiv ↗筆記
+2021第 0 期Perceiver IO: A General Architecture for Structured Inputs & Outputs
+Jaegle et al.
+固定大小 latent 以 cross-attention 讀寫任意輸入輸出
+arXiv ↗筆記對照表
+2021第 1 期DynamicViT: Efficient Vision Transformers with Dynamic Token Sparsification
+Rao et al.
+學得重要性的階層式 token 剪枝
+arXiv ↗筆記對照表
+2021第 0 期Hierarchical Transformers Are More Efficient Language Models
+Nawrot et al.
+Hourglass；shorten、中段處理、upsample 加殘差
+arXiv ↗筆記對照表
+2022第 1 期Token Merging: Your ViT But Faster
+Bolya et al.
+ToMe；二部軟配對的免訓練 token 合併與 proportional attention
+arXiv ↗筆記對照表
+2022第 3 期Scalable Adaptive Computation for Iterative Generation
+Jabri et al.
+RIN；以 latent 承擔全域注意力並讀寫路由
+arXiv ↗筆記對照表
+2022第 3 期All are Worth Words: A ViT Backbone for Diffusion Models
+Bao et al.
+U-ViT；長 skip 連接淺層與深層
+arXiv ↗筆記
+2023第 4 期Simple diffusion: End-to-end diffusion for high resolution images
+Hoogeboom et al.
+pixel-space 端對端擴散；下採樣避免高解析度特徵圖
+arXiv ↗筆記
+2023第 2 期Token Merging for Fast Stable Diffusion
+Bolya & Hoffman
+ToMeSD；定義 unmerge 並處理 CFG 一致性
+arXiv ↗筆記對照表
+2023第 5 期Vision Transformers with Mixed-Resolution Tokenization
+Ronen et al.
+Quadformer；quadtree 加顯著性的大小不一 patch
+arXiv ↗筆記
+2024第 4 期Scalable High-Resolution Pixel-Space Image Synthesis with Hourglass Diffusion Transformers
+Crowson et al.
+HDiT；pixel-space 沙漏 DiT，O(n) 成本
+arXiv ↗筆記對照表
+2024第 2 期ToDo: Token Downsampling for Efficient Generation of High-Resolution Images
+Smith et al.
+僅下採樣 K/V，免 unmerge 的免訓練加速
+arXiv ↗筆記對照表
+2024第 3 期Mixture-of-Depths: Dynamically allocating compute in transformer-based language models
+Raposo et al.
+top-k router 讓部分 token 跳過 block
+arXiv ↗筆記對照表
+2024第 3 期Dynamic Diffusion Transformer
+Zhao et al.
+DyDiT；時間步相依寬度與空間動態 token
+arXiv ↗筆記對照表
+2024第 3 期Layer- and Timestep-Adaptive Differentiable Token Compression Ratios for Efficient Diffusion Transformers
+You et al.
+DiffCR；逐層、逐時間步可微壓縮比與 router
+arXiv ↗筆記對照表
+2024第 5 期Byte Latent Transformer: Patches Scale Better Than Tokens
+Pagnoni et al.
+BLT；依熵切分動態長度 patch
+arXiv ↗筆記
+2025第 5 期Dynamic Chunking for End-to-End Hierarchical Sequence Modeling
+Hwang et al.
+H-Net；可學切塊、EMA 平滑與 ratio loss
+arXiv ↗筆記對照表
+2025第 4 期Back to Basics: Let Denoising Generative Models Denoise
+Li & He
+JiT；x-prediction 與大 patch，RTI 與 HiT 的共同骨幹家族
+arXiv ↗筆記對照表關聯圖
+2026第 3 期Guiding Token-Sparse Diffusion Models
+Krause et al.
+推論時利用 token 層級稀疏度作為引導訊號（依摘要）；HiT 的 group guidance 寫明受其啟發（HiT App. A.6）
+arXiv ↗筆記
+2026第 6 期DC-DiT: Adaptive Compute and Elastic Inference for Visual Generation via Dynamic Chunking
+Haridas et al.
+2D latent DiT 的動態切塊與彈性推論
+arXiv ↗筆記對照表
+2026第 6 期One Model, Many Budgets: Elastic Latent Interfaces for Diffusion Transformers
+Haji-Ali et al.
+ELIT；可變長度 latent 介面與尾端丟棄
+arXiv ↗筆記對照表
+2026第 6 期 · 起點Elastic Token Compression for Pixel-Space Diffusion Transformers
+Zamfir et al.
+RTI；終點之一，凍結骨幹上以 Hilbert 序切出連續區域 token
+arXiv ↗筆記對照表關聯圖
+2026第 6 期 · 起點Hierarchical Diffusion Transformer for End-to-End Image Generation
+Wu et al.
+HiT；終點之一，從頭訓練的學得階層分組
+arXiv ↗筆記對照表關聯圖
+
+ 16 · 開放問題
+
+ 開放問題與延伸閱讀
+
+ 分組必須空間連續嗎？
+
+ −4.2RTI：相似度分組（Feat Sim）比 Hilbert 區域低的 GenEval 點數，散布 5.16 格對 0.49 格
+
+ 6.61 / 7.11HiT：學得分組對固定空間配對的 FID
+
+ 這兩個結果看起來指向不同方向，但不能直接比較。RTI 的對照是凍結骨幹上的免學習相似度分組，骨幹依賴 RoPE；HiT 的對照是形狀固定的空間配對（第一階段水平、第二階段垂直，本身連續），而且 HiT 的軟池化讓每個 token 都能貢獻給每個群。兩篇都沒有在同一設定下比較「內容自適應且連續」與「學得且非局部」兩種分組。
+
+ 精確預算與內容自適應預算的結合：RTI 的 R $R$ 由使用者決定；H-Net、DC-DiT、HiT 只控制平均。
+
+ 文字流壓縮：RTI 的加速上限部分來自文字流全長。
+
+ 合併 token 的位置表示仍無定論：HiT 各位置變體的差距小。
+
+ 與步數縮減的關係：RTI App. B.3（Fig. 7，MiniT2I-L/16、R=256 $R=256$ ）中，每張影像低於約 3 秒時 token 壓縮優於減少步數（1.8 秒：少步稠密 GenEval 65.9、RTI 82.7），高於約 5 秒時相反（11.2 秒：稠密 87.6、RTI 86.3）。
+
+ HiT 的平均連結在 N $N$ 增大時的實際成本未報告；它的 GFLOPs 是以目標群組數計的名目值，實際成本隨每張影像與時間步的群組數改變（HiT Sec. 4.1）。
+
+ 研究筆記（依閱讀順序）
+
+ Transformer 的 token 縮減與階層：從序列縮短到 RTI 與 HiT 的研究脈絡總覽總覽
+
+ 沙漏結構與 latent 介面：Funnel、Hourglass、HDiT、Perceiver IO、RIN、ELIT第 0、4、6 期
+
+ ViT 的 token 剪枝與合併：DynamicViT、EViT、ToMe第 1 期
+
+ 免訓練的擴散 token 合併：ToMeSD、ToDo、AT-EDM、Importance-Based Token Merging第 2 期
+
+ 學得路由與動態 DiT：DyDiT、DiffCR、FlexiDiT、Sparse Guidance第 3 期
+
+ 內容自適應的 tokenization：Quadformer 與空間序列化第 5 期
+
+ 動態切塊：BLT、H-Net、DC-DiT 到影像的系譜第 5–6 期
+
+ 合併後 token 的位置處理橫跨各期
+
+ RTI 研究脈絡總覽：從 token 縮減到 Hilbert 區域 token起點論文 No. 217
+
+ HiT 研究脈絡總覽：從潛空間階層到可學習的影像分組起點論文 No. 585
+
+ RTI 互動教學單篇教學
+
+ HiT 互動教學單篇教學
+
+ Pixel-space diffusion：latent 層是否必要的第三路線站內既有筆記
+
+ 深度冗餘的相鄰路線：Mixture-of-Depths、深度剪枝、MoEUT站內既有筆記
+
+ 影像生成評估指標的演進：gFID 之外站內既有筆記
+
+ 資料庫中的相鄰論文：Rethinking the Design Space of Vanilla Pixel Diffusion Transformers、V-CoLA: Vision Token Compression with Linear Attention（兩篇內容本頁未讀，只列標題）。
+
+ Eduard Zamfir 等人，Elastic Token Compression for Pixel-Space Diffusion Transformers，arXiv:2608.29281。Xiaoyu Wu 等人，Hierarchical Diffusion Transformer for End-to-End Image Generation，arXiv:2611.22962。
+
+ 本頁的方程式與數字取自各論文原文；「僅摘要」表示數字只出自摘要，「本頁推導」表示本頁自行推導、並非論文結論。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記
