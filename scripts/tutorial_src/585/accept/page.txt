@@ -1,0 +1,723 @@
+HiT 階層擴散 Transformer
+
+跳到內容
+
+ No. 585
+ HiT：在像素空間擴散 Transformer 裡學出視覺階層
+
+00 摘要01 出發點02 骨幹03 親和度04 軟權重05 解組06 壓縮預算07 消融08 學到的群組09 群組引導10 結果11 實作12 與 RTI 比較13 研究脈絡14 限制與延伸
+
+00摘要
+01出發點
+02骨幹
+03親和度
+04軟權重
+05解組
+06壓縮預算
+07消融
+08學到的群組
+09群組引導
+10結果
+11實作
+12與 RTI 比較
+13研究脈絡
+14限制與延伸
+
+ No. 585 · 互動教學 · arXiv 2611.22962 · 2026
+
+ HiT：在像素空間擴散 Transformer 裡學出視覺階層
+
+ HiT 把相關的 patch token 合併成群組 token，讓中間的 Transformer 處理較短的序列，群組數由一個批次層級的預算決定。
+
+ Xiaoyu Wu、Yifei Wang、Weihang Guo、Chen Wei、Lydia E Kavraki、Niloofar Mireshghallah、Zhiwei Steven Wu（2026）〈Hierarchical Diffusion Transformer for End-to-End Image Generation〉
+
+ 256
+
+ 128
+
+ 64
+
+ 128
+
+ 256
+
+ token 數變化圖：ImageNet 256、HiT-B/16 各段的目標平均影像 token 數（Table 4）。
+
+ 01 · 分組HiT 把特徵相近的 patch token 合併成一個群組 token；相距很遠的 patch 也能同組。
+
+ 02 · 預算群組數不固定：訓練只要求每一個分組階段在整個批次上平均保留一半的 token（兩階段後為四分之一），每張圖、每個噪聲程度可以不同。
+
+ 03 · 結果在 ImageNet 256 的影像品質指標 FID（越低越好）上達到 1.48；達到同樣品質時，比沒有分組的像素空間基準模型 JiT 少用 2.4 倍訓練計算（Fig. 1，FID ≈ 2.16）。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+ 系列教學：token 壓縮
+
+ 01 · 出發點
+
+ 像素空間模型每個 patch 都保留一個 token
+
+ 影像生成的擴散模型有兩條路線。潛空間（latent space）擴散先用另外訓練的編碼器把影像壓成精簡的特徵，再在那個特徵空間學習生成；編碼器提供了由像素到精簡表示的階層，但這個階層是在生成訓練之外決定的。像素空間（pixel space）擴散直接在像素上生成，一個階段端到端訓練，不需要另外的視覺編碼器，但品質與訓練效率仍落後於領先的潛空間模型（Sec. 1）。
+
+ 常見的像素空間 Transformer 把影像切成固定大小的 patch（例如 16×16 像素），每個 patch 經線性投影成一個 token。ImageNet 256×256 的影像因此有 16×16=256 $16\times16=256$ 個 token，而且每一層都處理同樣的 256 個。
+
+ 作者的假設是：像素空間 Transformer 落後潛空間模型的部分原因，在於骨幹從頭到尾每個 patch 保留一個 token，沒有鼓勵模型形成「把相關內容在逐漸變粗的層級彙整」的視覺階層（Abstract、Sec. 1）。規則的 patch 網格給每個等大區域相同數量的 token，不管區域內容多寡；作者因此主張讓模型自己學「哪些資訊可以共用一個表示、要用幾個表示」，而不是用固定的空間切割決定。
+
+ 背景：x-prediction 與訓練損失
+
+ HiT 沿用 JiT（Li 與 He，〈Back to Basics〉）的像素空間設定。帶噪影像寫成 xt=t x+(1−t) ϵ $x_t=t\,x+(1-t)\,\epsilon$ ​=tx+(1−t)ϵ，其中 x $x$ 是乾淨影像、ϵ $\epsilon$ 是標準高斯噪聲；t=1 $t=1$ 是乾淨影像，t=0 $t=0$ 是純噪聲。網路 fθ $f_\theta$ ​ 直接輸出乾淨影像（x-prediction），損失寫成（App. A.3）：
+
+ Ldiff=E[MSE(fθ(xt,t,c),x)max⁡(1−t, amin⁡)2],amin⁡=0.05 $\mathcal L_{\text{diff}}=\mathbb E\left[\frac{\mathrm{MSE}\big(f_\theta(x_t,t,c),x\big)}{\max(1-t,\,a_{\min})^2}\right],\quad a_{\min}=0.05$ ​=E[max(1−t,amin​)2MSE(fθ​(xt​,t,c),x)​],amin​=0.05
+Eq. 12
+
+ 分母把乾淨影像的誤差換算成速度的誤差（論文稱為 velocity loss），amin⁡=0.05 $a_{\min}=0.05$ ​=0.05 避免 t→1 $t\to1$ 時除以 0。c $c$ 是條件（類別或文字）。
+
+ 符號表
+
+ 符號意義
+
+ N $N$ 、d $d$ 某分組階段輸入的 token 數；特徵寬度（B：768）
+
+ Kℓ $K_\ell$ ​、K $K$ 第 ℓ $\ell$ 層的群組數；單一階段內簡寫 K $K$ 
+
+ hi $h_i$ ​、H $H$ 第 i $i$ 個 token 的特徵；所有 token 疊成的矩陣
+
+ qi,ki $q_i,k_i$ ​,ki​兩個學到的投影，各自正規化為單位長度
+
+ Sij $S_{ij}$ ​、s(U,V) $s(U,V)$ 對稱親和度；兩群組成員間的平均親和度
+
+ τ $\tau$ 合併門檻
+
+ Gg $G_g$ ​、A $A$ 、P $P$ 第 g $g$ 個硬群組；軟權重；池化矩陣
+
+ Tr $T_r$ ​、Tb $T_b$ ​軟權重溫度（0.05）；群組數估計的溫度（0.1）
+
+ r $r$ 、ρ $\rho$ 每階段目標壓縮比與目標保留比例 ρ=1/r $\rho=1/r$ 
+
+ fh $f_h$ ​、fs $f_s$ ​實際保留比例；其可微估計
+
+ λ $\lambda$ 壓縮損失權重（0.01）
+
+ rc,ru $r_c,r_u$ ​,ru​、w $w$ 群組引導的群組數倍率；引導強度（論文寫 s $s$ ）
+
+ 延伸閱讀：HiT 的出發點：潛空間的階層與 pixel-space 的固定 token 格點、Pixel-space diffusion、x-prediction 與流形觀點
+
+ 02 · 骨幹
+
+ 骨幹由編碼器、精簡核心與解碼器遞迴組成
+
+ HiT 把 Transformer 區塊排成巢狀的三段：編碼器、精簡網路與解碼器（Sec. 3.1、Fig. 2）。Transformer 區塊本身不改變 token 數與特徵寬度；token 數只在兩種新運算中改變。分組（grouping）把多個 token 合併成較少的群組 token；解組（ungrouping）把群組 token 的特徵送回原來的 token 位置。解組之後，再把分組前的特徵經線性投影加回來，稱為跳接（skip connection）。有 J $J$ 層分組時，token 數依序為
+
+ N→K1→⋯→KJ→⋯→K1→N $N\to K_1\to\cdots\to K_J\to\cdots\to K_1\to N$ ​→⋯→KJ​→⋯→K1​→N
+Eq. 1
+
+ 帶噪影像 → 線性 patch 投影
+
+ Transformer × 3 · 256 token
+
+ ↓ 分組
+
+ Transformer × 3 · 128 token
+
+ ↓ 分組
+
+ Transformer × 6 · 64 token
+
+ ↓ 解組 ＋ 跳接（來自 128 token 段）
+
+ Transformer × 3 · 128 token
+
+ ↓ 解組 ＋ 跳接（來自 256 token 段）
+
+ Transformer × 3 · 256 token
+
+ 預測 head → 乾淨影像
+
+ 依 Fig. 2 重繪。寬度表示目標 token 數；特徵寬度 d $d$ 各段相同。
+
+ ImageNet 256 的 HiT-B/16 骨幹以 18 個區塊、兩次 2× 分組為參考設定（Sec. 4.5）。論文用五個數字描述區塊分配，例如 3/3/6/3/3。ImageNet 256 的 HiT-B/16（18 區塊）目標平均 token 數依序是 256→128→64→128→256；layout 3/3/6/3/3 的五個數字依序是全解析度編碼器、中間編碼器、精簡核心、中間解碼器、全解析度解碼器的區塊數（Eq. 1、Sec. 4.5、Table 4）。這組數字只適用於 ImageNet 256；文字到影像的設定見第 08 章。
+
+ 條件資訊以 token 的形式加入：8 個類別 token 與 1 個時間 token 從第一個區塊開始參與注意力，但不參與分組與解組，也不計入壓縮預算與跳接（App. A.4）。
+
+ 以「區塊數 × token 數」粗估線性運算量本頁推導：3/3/6/3/3 為 3⋅256+3⋅128+6⋅64+3⋅128+3⋅256=2688 $3\cdot256+3\cdot128+6\cdot64+3\cdot128+3\cdot256=2688$ ，18 個區塊都不分組則為 18⋅256=4608 $18\cdot256=4608$ 。第 07 章的元件給出完整的推定成本。
+
+ 延伸閱讀：Hourglass 與 latent 介面（系列筆記）
+
+ 03 · 親和度
+
+ 親和度與平均連結法決定硬群組
+
+ 分組要先決定「哪些 token 屬於同一群」。在分組階段 ℓ $\ell$ ，令 H∈RN×d $H\in\mathbb R^{N\times d}$ 為前面 Transformer 區塊輸出的 token 特徵，第 i $i$ 列為 hi $h_i$ ​。作者學兩個線性投影，並把投影結果正規化為長度 1，得到 qi $q_i$ ​ 與 ki $k_i$ ​。兩個單位向量的內積 qi⊤kj $q_i^\top k_j$ ⊤​kj​ 等於夾角的餘弦（cosine similarity），範圍是 [−1,1] $[-1,1]$ ：方向相同為 1，相反為 −1。
+
+ Sij=12(qi⊤kj+qj⊤ki) $S_{ij}=\tfrac12\big(q_i^\top k_j+q_j^\top k_i\big)$ ​=21​(qi⊤​kj​+qj⊤​ki​)
+Eq. 2
+
+ 因為 q≠k $q\ne k$ =k，qi⊤kj $q_i^\top k_j$ ⊤​kj​ 一般不等於 qj⊤ki $q_j^\top k_i$ ⊤​ki​；Eq. 2 取兩者平均，讓親和度矩陣 S $S$ 對稱。兩個群組 U,V $U,V$ 之間的親和度定義為所有成員配對的平均（App. A.1）：
+
+ s(U,V)=1∣U∣ ∣V∣∑i∈U∑j∈VSij $s(U,V)=\frac{1}{|U|\,|V|}\sum_{i\in U}\sum_{j\in V}S_{ij}$ 1​i∈U∑​j∈V∑​Sij​
+Eq. 8
+
+ 平均連結法（average linkage）是一種由下而上的階層式分群：從每個 token 自成一群開始，每一步合併 s(U,V) $s(U,V)$ 最高的兩群，直到只剩一群，得到一棵合併樹（共 N−1 $N-1$ 次合併）。把合併樹畫成樹狀圖時，縱軸是每次合併的分數。
+
+ 三個 token 的例子：若三個單位向量的角度是 10°、22°、150°，則 S12=0.9781 $S_{12}=0.9781$ ​=0.9781、S13=−0.7660 $S_{13}=-0.7660$ ​=−0.7660、S23=−0.6157 $S_{23}=-0.6157$ ​=−0.6157。第一次合併分數最高的 {1,2}（0.9781）；第二次合併 {1,2} 與 {3}，分數是 (−0.7660−0.6157)/2=−0.6909 $(-0.7660-0.6157)/2=-0.6909$ 。門檻 τ=0.8 $\tau=0.8$ 時只保留第一次合併，得到兩個群組 {1,2} 與 {3}。
+
+ Sij $S_{ij}$ ​ 的算法是 Sij=12(qi⊤kj+qj⊤ki) $S_{ij}=\tfrac12(q_i^\top k_j+q_j^\top k_i)$ ​=21​(qi⊤​kj​+qj⊤​ki​)，其中 q,k $q,k$ 為單位向量；平均連結法反覆合併平均親和度最高的兩群，並保留分數 ≥τ $\ge\tau$ 的合併（Eq. 2、Eq. 8、Sec. 3.2，原文為「We retain merges with affinity at least τ」），保留下來的合併形成 K $K$ 個硬群組 G1,…,GK $G_1,\dots,G_K$ ​,…,GK​。在精確的平均連結法下，合併分數沿合併順序不增，所以「保留分數 ≥τ $\ge\tau$ 的合併」等於「最高分數低於 τ $\tau$ 時停止」本頁推導。
+
+ 空間上不相連的 patch 能在同一群組，原因是親和度只由特徵投影 q,k $q,k$ 計算，不含位置；HiT 在雙向的影像特徵上分組，不像 H-Net 沿因果序列切出相鄰的區塊（Sec. 2、Sec. 3.2）。Fig. 1 中兩根香蕉的 patch 屬於同一群組，Fig. 4c 中分開的車身標記也屬於同一群組。
+
+ 門檻 τ $\tau$ 在訓練前校準後固定（第 06 章）。即使 τ $\tau$ 固定，每一個去噪步驟的特徵不同，群組成員與群組數也跟著改變（Sec. 3.2）。
+
+ 為什麼合併分數不增〔本頁推導〕
+
+ 平均連結法滿足可約性（reducibility）：若 U,V $U,V$ 是目前分數最高的一對，合併後的新群組 U∪V $U\cup V$ 對任何其他群組 W $W$ 的分數 s(U∪V,W)=∣U∣s(U,W)+∣V∣s(V,W)∣U∣+∣V∣ $s(U\cup V,W)=\frac{|U|s(U,W)+|V|s(V,W)}{|U|+|V|}$ ∣U∣s(U,W)+∣V∣s(V,W)​ 是兩個不大於 s(U,V) $s(U,V)$ 的數的加權平均，所以下一次合併的分數不會超過這一次。本頁的驗算腳本對 200 組隨機輸入確認合併分數不增。
+
+ 與 ToMe、H-Net 的差異
+
+ ToMe 與 ToMeSD 依相似度合併 token，但每層合併的數量或比例是預先設定的；HiT 的群組數由門檻與壓縮預算決定（Sec. 2）。H-Net 與 BLT 在序列上形成長度可變的區塊，但區塊沿序列連續；HiT 用親和度分組，不相鄰的位置也能同組（Sec. 2）。
+
+ 延伸閱讀：GroupViT 到 HiT：親和度、平均連結與軟分組、ToMe 與 ToMeSD 在 HiT 中的位置、H-Net 與 BLT：從動態切塊到影像分組；系列筆記 ViT 的剪枝與合併、動態切塊
+
+ 04 · 軟權重
+
+ 每個群組 token 由所有輸入 token 加權平均而成
+
+ 硬分組是離散的：一個 token 屬於某一群就是 1，否則是 0。這種指派沒有梯度，訓練時無法調整產生 q,k $q,k$ 的投影（Sec. 3.2）。作者因此另外算一組連續的軟權重，用來建立群組 token。
+
+ 對 token i $i$ 與硬群組 Gg $G_g$ ​，先算 i $i$ 對該群成員的平均親和度 eig $e_{ig}$ ​，再對所有群組做 softmax。softmax 的溫度 Tr $T_r$ ​ 越小，最大的 eig $e_{ig}$ ​ 分到的權重越接近 1：
+
+ eig=1∣Gg∣∑j∈GgSij,Aig=exp⁡(eig/Tr)∑g′=1Kexp⁡(eig′/Tr) $e_{ig}=\frac{1}{|G_g|}\sum_{j\in G_g}S_{ij},\qquad A_{ig}=\frac{\exp(e_{ig}/T_r)}{\sum_{g'=1}^{K}\exp(e_{ig'}/T_r)}$ ​=∣Gg​∣1​j∈Gg​∑​Sij​,Aig​=∑g′=1K​exp(eig′​/Tr​)exp(eig​/Tr​)​
+Eq. 9
+
+ A∈RN×K $A\in\mathbb R^{N\times K}$ 的每一列和為 1，描述一個 token 與各群組的關聯。把 A $A$ 的每一行（column）除以該行總和，得到池化矩陣 P $P$ ，第 g $g$ 個群組 token 是所有輸入特徵的加權平均：
+
+ Pig=Aig∑jAjg,zg=∑i=1NPig hi=∑i=1NAighi∑i=1NAig $P_{ig}=\frac{A_{ig}}{\sum_jA_{jg}},\qquad z_g=\sum_{i=1}^{N}P_{ig}\,h_i=\frac{\sum_{i=1}^{N}A_{ig}h_i}{\sum_{i=1}^{N}A_{ig}}$ ​=∑j​Ajg​Aig​​,zg​=i=1∑N​Pig​hi​=∑i=1N​Aig​∑i=1N​Aig​hi​​
+Eq. 6、App. A.1
+
+ 軟權重與池化的定義如下：Aig=softmaxg(eig/Tr) $A_{ig}=\mathrm{softmax}_g(e_{ig}/T_r)$ ​=softmaxg​(eig​/Tr​)，eig $e_{ig}$ ​ 是 token i $i$ 對 Gg $G_g$ ​ 成員的平均親和度；Pig=Aig/∑jAjg $P_{ig}=A_{ig}/\sum_jA_{jg}$ ​=Aig​/∑j​Ajg​；群組 token 是所有輸入 token 的加權平均，而不只是硬群組成員的平均（Eq. 6、Eq. 9、App. A.1）。硬群組只決定「有哪些群組」與每個群組的 eig $e_{ig}$ ​；每個 token 都依 A $A$ 對每個群組有貢獻。論文的 Tr=0.05 $T_r=0.05$ ​=0.05 很小，權重比 Aig/Aig′=exp⁡((eig−eig′)/Tr) $A_{ig}/A_{ig'}=\exp((e_{ig}-e_{ig'})/T_r)$ ​/Aig′​=exp((eig​−eig′​)/Tr​) 在親和度差 0.1 時約為 e2≈7.4 $e^2\approx7.4$ ≈7.4 倍本頁推導。
+
+ C1六個 token 的分組、軟權重與池化
+
+ 玩具設定：每個 token 的 qi=ki $q_i=k_i$ ​=ki​ 是二維單位向量，以角度表示，所以 Sij=cos⁡(θi−θj) $S_{ij}=\cos(\theta_i-\theta_j)$ ​=cos(θi​−θj​)、Sii=1 $S_{ii}=1$ ​=1（論文中 q≠k $q\ne k$ =k，Sii $S_{ii}$ ​ 一般小於 1）。拖曳圓盤上的端點或輸入角度，調整門檻 τ 與溫度 Tr $T_r$ ​。
+
+ token 方向（可拖曳，或聚焦後按方向鍵）
+
+ patch 網格中的位置與群組
+
+ 親和度不看位置。token 1 與 2 之間隔著 token 3，仍可同組。
+
+ 軟權重 A $A$ （列＝token，行＝群組；點行標題看池化權重 P $P$ ）
+token● 群組 1 {1,2}■ 群組 2 {3}▲ 群組 3 {4}◆ 群組 4 {5,6}
+● 10.6300.0000.3700.000
+● 20.5350.0000.4650.000
+■ 30.0000.5930.0010.406
+▲ 40.4040.0010.5960.000
+◆ 50.0000.4730.0000.526
+◆ 60.0000.3730.0000.627
+
+群組 1 的 token = Σᵢ P_i1 h_i，P 行 = 0.402·h1 + 0.341·h2 + 0.000·h3 + 0.257·h4 + 0.000·h5 + 0.000·h6
+
+ 親和度 S $S$ 與合併樹（樹的縱軸在 0.8 以上放大）
+
+ 門檻 τ0.950
+
+ 軟權重溫度 T_r0.200
+
+ 論文值 T_r = 0.05還原預設
+
+ 123456
+
+ K = 4 · 群組 {1,2}、{3}、{4}、{5,6}
+合併分數：0.9781、0.9744、0.9244、0.9221、−0.7468
+
+ 進階：軟群組數估計（第 06 章會用到）
+K̃ = 6 − Σ sig((s_m − τ)/T_b) = 4.002（T_b = 0.1，Eq. 11）；硬群組數 K = 4
+
+ 預設角度與 Tr=0.2 $T_r=0.2$ ​=0.2 為本頁自訂的教學值推定：二維玩具的親和度差距遠大於高維模型，用論文的 0.05 時 A $A$ 幾乎全是 0 與 1。讀數由本頁依 Eq. 2、Eq. 8、Eq. 9 即時計算。
+
+ τ = 0.950，4 個群組：{1,2}、{3}、{4}、{5,6}
+
+ 預設狀態下 τ=0.95 $\tau=0.95$ 得到 4 個群組 {1,2}、{3}、{4}、{5,6}。token 4 單獨成組，但它的軟權重是 0.404／0.001／0.596／0.000：有 40% 的權重流向 {1,2}，所以 {1,2} 的群組 token 也含有 token 4 的特徵。把 τ $\tau$ 降到 0.9，得到 {1,2,4}、{3,5,6} 兩群，與 Fig. 3 的分法相同；網格中 1、2、4 並不相連。
+
+ 延伸閱讀：GroupViT 到 HiT：親和度、平均連結與軟分組
+
+ 05 · 解組
+
+ 解組重用同一組軟權重並加上跳接
+
+ 精簡網路 M $M$ （更深一層的區塊）處理群組 token 後，輸出第 g $g$ 個群組的特徵 z~g $\tilde z_g$ g​。解組把這些特徵依分組前算好的同一組軟權重 A $A$ 混合回每個 token 位置，輸出記為 ri $\mathbf r_i$ ​（Eq. 7）：
+
+ ri=∑g=1KAig z~g $\mathbf r_i=\sum_{g=1}^{K}A_{ig}\,\tilde z_g$ ​=g=1∑K​Aig​z~g​
+Eq. 7
+
+ 再加上分組前的特徵經跳接投影 Wℓ $W_\ell$ ​（d×d $d\times d$ ，初始化為單位矩陣）後的結果。整個階段用矩陣寫成：
+
+ Z=P⊤H,H~=A M(Z)+H Wℓ⊤ $Z=P^\top H,\qquad \tilde H=A\,M(Z)+H\,W_\ell^\top$ H,H~=AM(Z)+HWℓ⊤​
+Eq. 3
+
+ 解組的做法是 ri=∑gAigz~g $\mathbf r_i=\sum_gA_{ig}\tilde z_g$ ​=∑g​Aig​z~g​，即 H~=AM(Z)+HWℓ⊤ $\tilde H=AM(Z)+HW_\ell^\top$ =AM(Z)+HWℓ⊤​：重用 A $A$ 軟混合，並加上初始化為單位矩陣的跳接；反向傳播時硬分割視為常數，梯度經由軟池化與解組權重 A $A$ 傳到產生 q,k $q,k$ 的投影（Eq. 3、Eq. 7、Sec. 3.2）。解組恢復了 token 的位置，但不能反轉有損的池化（App. A.1）。
+
+ 跳接投影不一定改善品質：App. B.2 的 12 區塊 adaLN 模型中，直接相加 R+H $R+H$ 的 FID 為 11.65，優於預設投影跳接的 12.27（Table 10）。作者保留投影，理由是它是簡單的融合規則，允許轉換編碼器特徵，同時保留重建特徵的直接路徑。
+
+ 作者比較了四種組合（Table 3，HiT-B/16，80 epoch，FID 越低越好）。只在硬群組內池化時，FID 為 10.32（均勻權重）與 10.16（學到的權重）；對所有 token 池化但用硬查表解組（ri=z~g(i) $\mathbf r_i=\tilde z_{g(i)}$ ​=z~g(i)​，g(i) $g(i)$ 為 token i $i$ 的硬群組）時為 7.97；預設的「所有 token 池化＋軟解組」為 6.61。作者的結論是：在聚合與讀回兩個方向都跨越硬群組邊界交換資訊較好。
+
+ Table 3：分組與解組的方式（HiT-B/16，80 epoch）
+ 群組讀取的 token權重解組FID
+
+ 硬群組內均勻軟混合10.32
+
+ 硬群組內學到軟混合10.16
+
+ 所有輸入 token學到硬查表7.97
+
+ 所有輸入 token（預設）學到軟混合6.61
+
+ 06 · 壓縮預算
+
+ 壓縮損失只約束批次平均的保留比例
+
+ HiT 不規定每張影像要有幾個群組，而是規定整個批次平均保留多少比例（Sec. 3.3）。在分組階段 ℓ $\ell$ ，令 r>1 $r\gt1$ 為目標壓縮比，ρ=1/r $\rho=1/r$ 為目標保留比例；預設每階段 r=2 $r=2$ ，ρ=1/2 $\rho=1/2$ 。批次中第 b $b$ 個樣本進入此階段時有 Nb $N_b$ ​ 個 token，產生 Kb $K_b$ ​ 個硬群組。實際保留比例 fh $f_h$ ​ 是所有樣本的群組數總和除以 token 數總和，分子分母都在整個批次與所有裝置上加總（App. A.3）。
+
+ fh $f_h$ ​ 是計數，沒有梯度。作者用 sigmoid sig⁡(x)=1/(1+e−x) $\operatorname{sig}(x)=1/(1+e^{-x})$ ) 把每次合併「分數是否 ≥τ $\ge\tau$ 」的 0/1 判斷換成 0 到 1 之間的平滑值，得到可微的群組數估計 K~b $\tilde K_b$ b​；sb,m $s_{b,m}$ ​ 是第 b $b$ 個樣本完整合併樹第 m $m$ 次合併的平均親和度，溫度 Tb $T_b$ ​ 越小越接近 0/1（App. A.2）：
+
+ K~b=Nb−∑m=1Nb−1sig⁡ ⁣(sb,m−τTb),fh=∑bKb∑bNb,fs=∑bK~b∑bNb $\tilde K_b=N_b-\sum_{m=1}^{N_b-1}\operatorname{sig}\!\Big(\frac{s_{b,m}-\tau}{T_b}\Big),\qquad f_h=\frac{\sum_bK_b}{\sum_bN_b},\qquad f_s=\frac{\sum_b\tilde K_b}{\sum_bN_b}$ b​=Nb​−m=1∑Nb​−1​sig(Tb​sb,m​−τ​),fh​=∑b​Nb​∑b​Kb​​,fs​=∑b​Nb​∑b​K~b​​
+Eq. 11
+
+ 壓縮損失沿用 H-Net 的比例損失（ratio loss），論文把它寫成：
+
+ Lcomp(ℓ)=1+(fh−ρ)(fs−ρ)ρ(1−ρ) $\mathcal L^{(\ell)}_{\text{comp}}=1+\frac{(f_h-\rho)(f_s-\rho)}{\rho(1-\rho)}$ (ℓ)​=1+ρ(1−ρ)(fh​−ρ)(fs​−ρ)​
+Eq. 4
+
+ H-Net 的原始寫法（Eq. 10）與兩式相等〔本頁推導〕
+
+ Lcomp(ℓ)=rr−1[(r−1)fhfs+(1−fh)(1−fs)] $\mathcal L^{(\ell)}_{\text{comp}}=\frac{r}{r-1}\big[(r-1)f_hf_s+(1-f_h)(1-f_s)\big]$ (ℓ)​=r−1r​[(r−1)fh​fs​+(1−fh​)(1−fs​)]
+Eq. 10
+
+ 代入 r=1/ρ $r=1/\rho$ ，Eq. 4 與 Eq. 10 都化成 [fhfs+ρ(1−fh−fs)]/(ρ(1−ρ)) $\big[f_hf_s+\rho(1-f_h-f_s)\big]/\big(\rho(1-\rho)\big)$ ​fs​+ρ(1−fh​−fs​)]/(ρ(1−ρ))。下方元件同時顯示兩式的值。
+
+ fh $f_h$ ​ 在反向傳播時視為常數，梯度只經由 fs $f_s$ ​ 傳到合併分數 sb,m $s_{b,m}$ ​；合併樹的形狀固定，但合併親和度可微（App. A.2）。對 fs $f_s$ ​ 微分得到 ∂Lcomp(ℓ)/∂fs=(fh−ρ)/(ρ(1−ρ)) $\partial\mathcal L^{(\ell)}_{\text{comp}}/\partial f_s=(f_h-\rho)/(\rho(1-\rho))$ (ℓ)​/∂fs​=(fh​−ρ)/(ρ(1−ρ))本頁推導。
+
+ 壓縮損失是 1+(fh−ρ)(fs−ρ)/(ρ(1−ρ)) $1+(f_h-\rho)(f_s-\rho)/(\rho(1-\rho))$ ​−ρ)(fs​−ρ)/(ρ(1−ρ))；當 fh>ρ $f_h\gt\rho$ ​>ρ（群組太多），對 fs $f_s$ ​ 的梯度 (fh−ρ)/(ρ(1−ρ))>0 $(f_h-\rho)/(\rho(1-\rho))\gt0$ ​−ρ)/(ρ(1−ρ))>0，梯度下降降低 fs $f_s$ ​，也就是使合併分數上升、產生更多合併；fh $f_h$ ​ 視為常數（Eq. 4、Sec. 3.3）。fh<ρ $f_h\lt\rho$ ​<ρ 時方向相反；fh=ρ $f_h=\rho$ ​=ρ 時損失恆為 1、梯度為 0。若 fh=fs=f $f_h=f_s=f$ ​=fs​=f，損失為 1+(f−ρ)2/(ρ(1−ρ))≥1 $1+(f-\rho)^2/(\rho(1-\rho))\ge1$ /(ρ(1−ρ))≥1本頁推導。
+
+ 批次層級預算的算法是 fh=∑bKb/∑bNb $f_h=\sum_bK_b/\sum_bN_b$ ​=∑b​Kb​/∑b​Nb​、fs=∑bK~b/∑bNb $f_s=\sum_b\tilde K_b/\sum_bN_b$ ​=∑b​K~b​/∑b​Nb​，其中 K~b=Nb−∑msig⁡((sb,m−τ)/Tb) $\tilde K_b=N_b-\sum_m\operatorname{sig}((s_{b,m}-\tau)/T_b)$ b​=Nb​−∑m​sig((sb,m​−τ)/Tb​)，分子分母跨批次與裝置加總；損失只約束平均比例，所以每張影像的群組數可以不同，論文的說法是群組數「隨影像內容與擴散時間改變」（Eq. 11、Sec. 3.3）。第二個分組階段的 Nb $N_b$ ​ 是第一階段實際產生的群組數（App. A.2）。
+
+ 各階段的損失相加後乘上權重 λ $\lambda$ ，與去噪損失一起訓練：
+
+ L=Ldiff+λ∑ℓLcomp(ℓ),λ=0.01 $\mathcal L=\mathcal L_{\text{diff}}+\lambda\sum_\ell\mathcal L^{(\ell)}_{\text{comp}},\qquad\lambda=0.01$ ​+λℓ∑​Lcomp(ℓ)​,λ=0.01
+Eq. 5
+
+ 門檻 τ $\tau$ 在訓練前校準：在 1,024 個固定的帶噪訓練樣本上，由外層到內層依序調整各階段的 τ $\tau$ ，使總壓縮比符合目標，之後在訓練與一般取樣時固定（App. A.3）。App. B.3 掃描 λ∈{0.005,0.01,0.02,0.03} $\lambda\in\{0.005,0.01,0.02,0.03\}$ ，FID 依序為 12.30、12.27、12.07、12.33（12 區塊 adaLN 模型，Table 11），作者結論是生成品質對 λ $\lambda$ 不敏感。
+
+ C2批次預算：f_h、f_s、損失與門檻校準
+
+ 合成資料：4 個樣本，各 256 個 token 與 255 個合併分數，不是論文數據；樣本間群組數的差距來自本頁自訂的分數分布。調整 τ，看平均保留比例如何變化。
+
+ 樣本 1K = 63，K̃ = 84.6
+樣本 2K = 112，K̃ = 119.7
+樣本 3K = 193，K̃ = 176.3
+樣本 4K = 241，K̃ = 222.8
+
+ K_b（硬群組數）K̃_b（軟估計，虛線框）
+
+ 門檻 τ0.800
+
+ 目標保留比例 ρ1/21/4
+
+ 溫度 T_b0.10
+
+ 校準 τ
+
+ f_h = 0.5947 · f_s = 0.5894
+𝓛 = 1.0339（Eq. 4）
+∂𝓛/∂f_s = +0.3789
+
+ ↓ 降低 f_s（使合併分數上升）
+
+ 以 Eq. 10 計算同一個損失
+Eq. 10：r/(r−1)·[(r−1)f_h f_s + (1−f_h)(1−f_s)] = 1.0339（r = 2）
+
+ 「校準 τ」是本頁自訂的規則推定：在 τ 的滑桿格點（步長 0.005）上由小到大掃描，取第一個使 fh≥ρ $f_h\ge\rho$ ​≥ρ 的值；論文的做法是在 1,024 個帶噪樣本上由外層到內層依序校準各階段（App. A.3）。分數由本頁驗算腳本產生後內嵌，四捨五入到四位小數並避開 τ 格點。讀數依 Eq. 4、Eq. 10、Eq. 11 即時計算；梯度式為本頁推導。
+
+ τ = 0.800，f_h = 0.595，群組太多
+
+ 預設 τ=0.80 $\tau=0.80$ 、ρ=1/2 $\rho=1/2$ 時四個樣本的 Kb $K_b$ ​ 為 63、112、193、241，fh=0.5947>ρ $f_h=0.5947\gt\rho$ ​=0.5947>ρ，梯度為 +0.3789。按「校準 τ」後 τ=0.745 $\tau=0.745$ ，Kb $K_b$ ​ 為 36、85、165、230，fh=0.5039 $f_h=0.5039$ ​=0.5039；前一格 τ=0.740 $\tau=0.740$ 的 fh=0.4961 $f_h=0.4961$ ​=0.4961 還低於 ρ $\rho$ 。批次平均達標時，個別樣本的保留比例仍然差很多。
+
+ 延伸閱讀：HiT 的壓縮預算：批次平均比例與可變群組數
+
+ 07 · 消融
+
+ 適度而漸進的壓縮表現最好
+
+ 論文的 GFLOPs 是「以每階段目標群組數計算的名目值」；實際成本隨每張影像與每個擴散時間的群組數而變（Sec. 4.1）。以下消融都用 ImageNet 256、HiT-B/16、18 區塊、80 epoch，FID 越低越好。
+
+ Table 4、5、7、12：壓縮階層與區塊分配（HiT-B/16，18 區塊）
+ 設定token 數GFLOPsFID
+
+ 單階段 4×（3/12/3）256→6419.19.59
+
+ 2×4256→128→3220.86.89
+
+ 4×2256→64→3217.89.54
+
+ 4×4256→64→1617.110.78
+
+ 2×2（預設，3/3/6/3/3）256→128→6422.26.61
+
+ 2×2，layout 2/2/10/2/2256→128→6418.38.48
+
+ 2×2，layout 2/3/8/3/2256→128→6419.37.60
+
+ 2×2，layout 3/2/8/2/3256→128→6421.36.81
+
+ 固定空間分組（Table 7）256→128→6422.17.11
+
+ 三階段 2×2×2（3/3/2/2/2/3/3）…→3221.96.66
+
+ 三階段 2×2×4（3/3/2/2/2/3/3）…→1621.66.95
+
+ 三階段 2×2×2（2/2/2/6/2/2/2）…→3217.18.82
+
+ 2×4 與 4×2 的核心目標都是 32 個 token，FID 分別為 6.89 與 9.54；預設 2×2 為 6.61。作者的結論是適度、漸進的壓縮較好，保留較多 token 做中間處理有益（Table 4）。把區塊從核心移到外層會改善 FID，但增加 FLOPs（Table 5：18.3 → 22.2 GFLOPs，FID 8.48 → 6.61）；同樣 8 個核心區塊時，多給全解析度（3/2/8/2/3，6.81）比多給中間層（2/3/8/3/2，7.60）好。第三個分組階段沒有明顯幫助（6.66 對 6.61，App. B.4）。
+
+ 固定空間分組的對照組在第 1 階段水平配對相鄰 patch、第 2 階段垂直配對，恰好得到 256→128→64；它保留學到的 q,k $q,k$ 投影與依輸入而變的軟池化／解組，只去掉合併樹與壓縮損失。學到的分組把 FID 從 7.11 改善到 6.61，參數相同（133.9M），GFLOPs 為 22.2 對 22.1（Table 7）。
+
+ C3layout 與壓縮比的推定成本
+
+ 推定模型：每個區塊在 m=n+9 $m=n+9$ 個 token 上（n $n$ 影像 token，9 個條件 token）的成本為 αm+βm2 $\alpha m+\beta m^2$ ，係數由論文 11 個設定擬合。選一個論文設定，或自訂階段數、壓縮比與區塊數。
+
+ Table 44×（3/12/3）2×44×24×42×2（3/3/6/3/3）Table 52/2/10/2/22/3/8/3/23/2/8/2/3Table 122×2×2（3/3/2/2/2/3/3）2×2×4（3/3/2/2/2/3/3）2×2×2（2/2/2/6/2/2/2）對照不分組 12 區塊（對照，非論文設定）
+
+ 3 區塊 × 256 token
+↓ 分組
+3 區塊 × 128 token
+↓ 分組
+6 區塊 × 64 token
+↓ 解組 ＋ 跳接
+3 區塊 × 128 token
+↓ 解組 ＋ 跳接
+3 區塊 × 256 token
+
+ 分組階段數 J123
+
+ 第 1 階段壓縮比2×4×
+
+第 2 階段壓縮比2×4×
+
+ 全解析度（編碼＋解碼各）−3+
+第 1 層（編碼＋解碼各）−3+
+精簡核心−6+
+
+ 推定 GFLOPs = 22.3（22.26）
+Σm = 2850，Σm² = 565938，總區塊數 18
+論文（Table 4）：GFLOPs 22.2，FID 6.61
+
+ ○ Table 4□ Table 5△ Table 12目前設定（虛線）
+
+ 係數 α = 7.2852×10⁻³、γ = 0.6229 由最小平方法擬合 Table 4、5、12 共 11 個設定推定，最大擬合殘差 0.25 GFLOPs；這是模型對自己擬合資料的殘差，不是獨立預測。β = 2d/10⁹ = 1.536×10⁻⁶ 對應注意力的 QKᵀ 與 AV 各 m²d 次乘加本頁推導。router、合併樹與池化的成本未建模。
+
+ 推定 22.3 GFLOPs，論文 FID 6.61
+
+ 「不分組 12 區塊」是本頁的對照，不是論文設定；它的推定值 25.08 與 JiT-B 的 25.2 GFLOPs（Table 8）接近，但 JiT 的條件化與輸入處理不同（App. A.4、Table 6），這個接近只是巧合。
+
+ 條件化方式也影響結果。HiT 去掉 adaLN，改用 in-context 條件 token。12 區塊 2/2/4/2/2 改用 token 條件後，參數由 135.0M 降到 91.3M，FID 由 12.27 改善到 11.55；用省下的參數加深到 18 區塊 3/3/6/3/3（133.9M），FID 為 6.61。同樣的重新分配在 JiT-B 反而使 FID 由 10.37 變成 12.85（Table 6）。作者假設分組讓條件 token 與精簡影像表示的互動更容易。
+
+ 精簡階段要不要加位置編碼：一個群組可能涵蓋多個不相連的區域。App. B.1 比較多種做法，hard centroid RoPE 使 12 區塊模型由 12.27 改善到 11.35，learned RoPE 加 per-group MLP 使 18 區塊主模型由 6.61 改善到 6.25；各變體差距不大，為了簡單，預設不在精簡階段加 RoPE（Table 9）。
+
+ 延伸閱讀：HiT 的 compact 階段位置編碼與文字影像聯合分組、合併 token 的位置（系列筆記）
+
+ 08 · 學到的群組
+
+ 學到的群組對應物件、部位與字詞
+
+ 訓練時沒有任何分割標註，但 HiT-B/16 在 t=0.75 $t=0.75$ 的群組會沿著物件區域或物件部位分開，也會把重複的背景結構（例如樹葉）收進同一群組；分開的車身標記可以屬於同一群組（Sec. 4.4、Fig. 4）。第二階段在第一階段的群組上再分組，每個第一階段群組在硬指派下有一個第二階段的上層群組（App. D.2、Fig. 8）。同一張影像、同一份噪聲，改變 t $t$ 時群組成員與群組數都會改變（App. D.3、Fig. 9）。本頁不重繪這些影像；請參考論文圖與專案頁。
+
+ 文字到影像的共同分組
+
+ 文字到影像沿用 MiniT2I：凍結的 FLAN-T5-Large 文字編碼器（序列長度 256）加上學到的投影與兩個純文字前置區塊；外層的影像與文字各有自己的投影與 MLP，以聯合注意力互動（App. A.5）。Table 2 的 HiT-B/16 解析度為 512×512、patch 16，影像有 32×32 = 1024 個 patch token。
+
+ 外層編碼器之後，影像特徵與有效字幕特徵串接起來一起分組。第 b $b$ 個樣本參與分組的數量是
+
+ Nb=Nimg+∑jmbj $N_b=N_{\text{img}}+\sum_j m_{bj}$ ​=Nimg​+j∑​mbj​
+Eq. 13
+
+ 其中 mbj $m_{bj}$ ​ 是字幕的有效遮罩（含有效的特殊 token）。padding 不進入合併樹、池化與預算；時間 token 繞過分組；字幕被丟棄的樣本只有影像進入分組。一個群組可以只含影像、只含文字或兩者都有，所以精簡階段用共享的區塊。論文的可視化（App. D.5）用 (P1P2)img,g $(P_1P_2)_{\text{img},g}$ ​P2​)img,g​ 畫出一個字幕 token 所屬群組在影像上的池化權重，用 ((A1A2)(P1P2)⊤)[i,:] $((A_1A_2)(P_1P_2)^\top)[i,:]$ ​A2​)(P1​P2​)⊤)[i,:] 的字幕部分畫出一個影像 patch 與各字詞的連結；Fig. 1 中「banana」的 patch 對字詞「banana」有高權重，「boy」所在群組的池化權重集中在男孩的臉與上半身。
+
+ 延伸閱讀：HiT 的 compact 階段位置編碼與文字影像聯合分組
+
+ 09 · 群組引導
+
+ 群組引導以分組容量的差作為引導訊號
+
+ 分類器自由引導（classifier-free guidance，CFG）在每一步算兩次網路：有條件與無條件（類別被丟棄）的預測，再把兩者的差放大。HiT 在推論時還可以調整門檻，改變群組數。群組數倍率 r=(r1,r2) $r=(r_1,r_2)$ ​,r2​) 表示各階段的目標平均群組數是預設值的幾倍（這裡的 r $r$ 與第 06 章的壓縮比無關）；群組數對每個輸入仍是自適應的（App. A.6）。
+
+ 直接增加群組數給出更細的表示，但骨幹是在壓縮表示上訓練的，改變操作區間可能讓預測變差。作者受 Sparse Guidance 啟發，把「容量差」也放進引導方向。令 vc(r)(xt,t) $v_c^{(r)}(x_t,t)$ (r)​(xt​,t) 為條件 c $c$ 、群組數倍率 r $r$ 時網路預測的速度，v∅(r) $v_\varnothing^{(r)}$ (r)​ 為無條件預測，引導強度 w $w$ （論文寫 s $s$ ）：
+
+ v^t=v∅(ru(t))(xt,t)+w(vc(rc(t))(xt,t)−v∅(ru(t))(xt,t)),rc(t)≥1≥ru(t) $\hat v_t=v_\varnothing^{(r_u(t))}(x_t,t)+w\Big(v_c^{(r_c(t))}(x_t,t)-v_\varnothing^{(r_u(t))}(x_t,t)\Big),\qquad r_c(t)\ge1\ge r_u(t)$ t​=v∅(ru​(t))​(xt​,t)+w(vc(rc​(t))​(xt​,t)−v∅(ru​(t))​(xt​,t)),rc​(t)≥1≥ru​(t)
+Eq. 14
+
+ 兩個倍率都設為 1 時就是標準 CFG。群組引導只改門檻，不改權重、軟池化與讀回，也不需要 CFG 以外的網路評估。ImageNet 的 FID 1.48 結果使用 w=2.6 $w=2.6$ （引導區間 [0.1,1] $[0.1,1]$ ，區間外只用條件預測）、rc=(1.2,1) $r_c=(1.2,1)$ ​=(1.2,1)，以及在接近乾淨影像的一端額外壓縮無條件分支（App. A.6）：
+
+ ru(t)={(1,1),t<0.85(0.5,1),t≥0.85 $r_u(t)=\begin{cases}(1,1),&t\lt0.85\\(0.5,1),&t\ge0.85\end{cases}$ ​(t)={(1,1),(0.5,1),​t<0.85t≥0.85​
+Eq. 15
+
+ JiT 用 [0,1] $[0,1]$ 上均勻的 50 步 Heun 加最後一步 Euler。這個 HiT 結果保留解算器與步數，只把時間網格往噪聲多的一端偏移：
+
+ σ=1−t,σ′=kσ1+(k−1)σ,t′=1−σ′,k=1.7 $\sigma=1-t,\qquad\sigma'=\frac{k\sigma}{1+(k-1)\sigma},\qquad t'=1-\sigma',\qquad k=1.7$ =1+(k−1)σkσ​,t′=1−σ′,k=1.7
+Eq. 16
+
+ 這裡的 σ $\sigma$ 是噪聲程度 1−t $1-t$ 。Eq. 14–15 中的 t $t$ 是偏移後網格上的時間 t′ $t'$ 。偏移只用在 600 epoch 的端點；Fig. 1 收斂曲線的其他點用均勻網格（App. A.6）。映射固定兩端（t=0↦0 $t=0\mapsto0$ 、t=1↦1 $t=1\mapsto1$ ），k>1 $k\gt1$ 時內部各點 t′<t $t'\lt t$ <t本頁推導。
+
+ 群組引導比 CFG 多改的是分組：條件分支用較細的分組 rc≥1 $r_c\ge1$ ​≥1，無條件分支用較粗的分組 ru≤1 $r_u\le1$ ​≤1，只改門檻、不增加網路評估。ImageNet 設定為 w=2.6 $w=2.6$ （區間 [0.1,1] $[0.1,1]$ ）、rc=(1.2,1) $r_c=(1.2,1)$ ​=(1.2,1)、t≥0.85 $t\ge0.85$ 時 ru=(0.5,1) $r_u=(0.5,1)$ ​=(0.5,1)、否則 (1,1) $(1,1)$ ，時間偏移 k=1.7 $k=1.7$ 僅用於 600 epoch 端點（Eq. 14–16）。
+
+ C4時間網格偏移與群組引導排程
+
+ 設定：ImageNet 600 epoch 端點的群組引導（App. A.6），50 步。調整 k，看 50 個步驟的起點落在哪裡、各自使用哪一組倍率。
+
+ HiT 600 epoch 端點（k = 1.7）均勻網格（k = 1）
+
+ 偏移參數 k1.70
+
+ r_c,1 = 1.2r_u,1第 2 階段兩分支 = 1
+
+ 起點 t′ < 0.5：32 步
+起點在 [0.1, 1]（引導）：42 步
+起點 t′ ≥ 0.85（r_u = (0.5, 1)）：4 步
+t′₁ = 0.0119 · t′₂₅ = 0.3704 · t′₄₉ = 0.9665
+每步兩次網路評估：v_c^(r_c) 與 v_∅^(r_u)，與 CFG 相同
+
+ 計數規則：每步起點 t′ 先四捨五入到 10⁻⁹ 再用閉區間比較（避免 k = 1 時 0.1 因浮點誤差落在區間外）。讀數依 Eq. 15、Eq. 16 即時計算。
+
+ k = 1.70：32 步在 t < 0.5，4 步使用 r_u = (0.5, 1)
+
+ k=1.7 $k=1.7$ 時第 25 步的起點是 t′=0.3704 $t'=0.3704$ =0.3704（均勻網格為 0.5），有 32 步從 t<0.5 $t\lt0.5$ 出發（均勻網格為 25），使用 ru=(0.5,1) $r_u=(0.5,1)$ ​=(0.5,1) 的步數由 7 減為 4。門檻依時間校準：ImageNet 收集 64 條取樣軌跡，在十個等寬時間區間分別校準；文字到影像用 128 組固定圖文對、六個噪聲等級，校準跨時間共用的門檻；校準只需 forward。文字到影像的設定為 rc=(1.2,1.2) $r_c=(1.2,1.2)$ ​=(1.2,1.2)、ru=(0.8,1) $r_u=(0.8,1)$ ​=(0.8,1)、w=6.5 $w=6.5$ ，整個 t∈[0,1] $t\in[0,1]$ 都使用，100 步 Euler（App. A.6）；App. C 的 Fig. 6 樣本則寫 CFG 7.0。
+
+ 延伸閱讀：Group guidance：以分組容量差作為引導、學到的路由與動態 DiT（系列筆記，含 Sparse Guidance）、擴散模型的分類器引導
+
+ 10 · 結果
+
+ HiT-XL/16 在 ImageNet 256 達到 FID 1.48
+
+ FID（Fréchet Inception Distance）比較生成影像與真實影像在 Inception 特徵空間的分布距離，越低越好；論文用 50,000 張生成影像計算。HiT 在 ImageNet 256 與文字到影像的關鍵數字如下：HiT-XL/16 在 600 epoch 達到 FID 1.48，在 280 epoch 為 1.87，而 JiT-H/16 在 600 epoch 為 1.86；在 FID ≈ 2.16 時，HiT 比 JiT 少用 2.4 倍訓練計算、2.3 倍更新次數；文字到影像的 HiT-B/16 五項基準平均 65.93，高於 MiniT2I 的 64.64，GFLOPs 少 31%（Table 1、Table 2、Fig. 1）。摘要另寫「約 40% 的累積訓練 FLOPs」。
+
+ HiT-XL/16 也低於使用 DINOv2 外部監督的像素空間模型 PixNerd-XL/16（2.15）、PixelGen-XL/16（1.83）與 PixelDiT-XL/16（1.61），並接近潛空間的 REPA SiT-XL/2（1.42）。在 80 epoch、CFG 2.9 的同參數量比較中，HiT 在三個規模都以較少的 forward FLOPs 得到較低的 FID（Table 8）。
+
+ Table 1 摘錄：ImageNet 256×256（FID-50k，含引導）
+ 模型外部監督參數GFLOPsEpochsFID
+
+ REPA，SiT-XL/2（潛空間）DINOv2675+49M1198001.42
+
+ PixNerd-XL/16DINOv2700M1341602.15
+
+ PixelGen-XL/16DINOv2676M–1601.83
+
+ PixelDiT-XL/16DINOv2797M155.63201.61
+
+ JiT-H/16–953M1826001.86
+
+ JiT-G/16–2B3833201.82
+
+ HiT-XL/16–959.5M176.92801.87
+
+ HiT-XL/16–959.5M176.96001.48
+
+ Table 8：同參數量比較（80 epoch，CFG 2.9）
+ 模型layout參數GFLOPsFID
+
+ JiT-B12131.1M25.210.37
+
+ HiT-B3/3/6/3/3133.9M22.26.61
+
+ JiT-L24458.9M87.94.85
+
+ HiT-L3/3/24/3/3463.6M55.64.16
+
+ JiT-H32952.5M181.94.39
+
+ HiT-XL10/10/8/10/10959.5M176.93.64
+
+ Table 2 摘錄：文字到影像 512×512（分數越高越好）
+ 模型參數（B）GFLOPsGenEvalDPGPRISMCoReSpatial平均
+
+ MiniT2I-B/160.26201.687.5084.1055.6044.0052.0064.64
+
+ UniLiP-3B1.60408.090.3083.4058.5045.0051.6065.76
+
+ HiT-B/160.25139.487.7885.3358.6245.2252.6865.93
+
+ 論文摘要寫 HiT 以「約 6 倍少的去噪器參數、3 倍少的 forward FLOPs」超過 UniLiP 的平均分數；依 Table 2 的數字，比值是 1.60/0.25 = 6.4 與 408.0/139.4 = 2.9。
+
+ 延伸閱讀：生成模型的評估指標
+
+ 11 · 實作
+
+ 實作設定與常見錯誤
+
+ 訓練與評估設定（Sec. 4.1、App. A.3–A.4）
+ 項目設定
+
+ 分組每階段 2×、兩階段；Tr=0.05 $T_r=0.05$ ​=0.05、Tb=0.1 $T_b=0.1$ ​=0.1、λ=0.01 $\lambda=0.01$ （各階段損失之和）
+
+ 門檻訓練前在 1,024 個固定帶噪樣本上由外到內依序校準，之後固定
+
+ 最佳化AdamW，β = (0.9, 0.95)，weight decay 0，global batch 1,024；ImageNet 遵循 JiT 配方
+
+ 文字到影像學習率5,000 步內由 10⁻⁶ 升到 4×10⁻⁴ 後固定；EMA 0.99995
+
+ 骨幹RMSNorm、QK 正規化、SwiGLU；單一線性 patch 投影；去掉 adaLN，8 個類別 token＋1 個時間 token
+
+ 位置編碼全解析度影像 RoPE；條件 token 用恆等旋轉；精簡階段不加 RoPE
+
+ ImageNet 消融評估HiT-B/16、80 epoch、EMA 0.9999、CFG 2.9（區間 (0.1, 1.0)）、50 步 Heun＋最後一步 Euler、FID-50k
+
+ GFLOPs以目標群組數計算的名目值
+
+ 常見錯誤
+
+ 只在硬群組內池化：FID 10.16–10.32，遠差於對所有 token 加權的 6.61（Table 3）。
+
+ 解組用硬查表：7.97 對 6.61；解組要重用分組前的 A $A$ 做軟混合。
+
+ 每張影像固定群組數：壓縮損失只約束批次的平均保留比例，個別影像的群組數可以不同（Sec. 3.3）。
+
+ 只在單一裝置上算比例：fh,fs $f_h,f_s$ ​,fs​ 的分子分母要先跨裝置加總再算損失；梯度累積時對各次 forward 的損失取平均（App. A.3）。
+
+ 讓梯度經過 fh $f_h$ ​ 或合併樹的形狀：fh $f_h$ ​ 與硬分割視為常數，只有 fs $f_s$ ​ 與軟權重可微。
+
+ 第二階段的分母用固定的 N/2 $N/2$ ：要用第一階段實際產生的群組數（App. A.2）。
+
+ 條件 token 或 padding 參與分組：類別／時間 token 與 padding 繞過分組與預算（App. A.4–A.5）。
+
+ 把 GFLOPs 當成實際成本：論文報告的是以目標群組數計算的名目值（Sec. 4.1）。
+
+ 在訓練中更新門檻：基準門檻訓練前校準後固定；群組引導另用個別校準的推論門檻（App. A.3、A.6）。
+
+ 忽略 Tr=0.05 $T_r=0.05$ ​=0.05 很小：A $A$ 接近硬指派，只有平均親和度接近的群組才分到可見的權重。
+
+ 12 · 與 RTI 比較
+
+ 與 RTI／HiT 的異同
+
+ 同一批教學中的 RTI（No. 217，〈Elastic Token Compression for Pixel-Space Diffusion Transformers〉）也在像素空間擴散 Transformer 中合併 token，但目的與做法不同。下表只列兩篇論文各自寫明的事實；RTI 的細節見其互動教學。
+
+ HiT 與 RTI 的比較（RTI 事實取自其摘要與 Sec. 3）
+ 面向HiT（本文）RTI（No. 217）
+
+ 訓練方式從頭端到端訓練，分組與去噪一起學改造預訓練的像素空間文字到影像模型，微調介面
+
+ 群組形狀由特徵親和度決定，可以不相連沿 Hilbert 曲線切成連續區段，區域必相連
+
+ 群組數批次層級壓縮損失決定平均，個別樣本自適應區域數 R 在微調時隨機抽取，一個 checkpoint 服務多種預算
+
+ 位置精簡階段預設不加 RoPE每個區域 token 帶位置（patch rotary embedding 的平均）
+
+ 解組重用軟權重 A 混合回所有位置把區域 token 的變化寫回其 patch
+
+ 主要目的生成品質與訓練效率推論加速（摘要：與 dense 品質相當時 2.0 倍速度）
+
+ 延伸閱讀：RTI 互動教學、系列教學：token 合併、壓縮與階層、內容自適應 tokenization（系列筆記）
+
+ 13 · 研究脈絡
+
+ 研究脈絡（由 notes/timeline.json 提供）
+
+ HiT 接在幾條脈絡之後：潛空間模型以編碼器提供階層；像素空間模型（simple diffusion、PixelFlow、JiT）去掉編碼器；ToMe 與 ToMeSD 以固定比例合併相似 token；GroupViT 以圖文監督學習分組；BLT 與 H-Net 在序列上形成長度可變的區塊；Sparse Guidance 用 token 稀疏度做引導。每張卡片連到對應的研究筆記。
+
+ 潛空間階層像素空間token 合併圖文分組序列切塊稀疏引導本文
+
+ 2021潛空間階層High-Resolution Image Synthesis with Latent Diffusion Models
+Rombach et al.
+潛空間擴散：以預訓練自編碼器提供精簡表示，HiT 引言以此說明潛空間有外部階層。
+arXiv ↗筆記
+2022圖文分組GroupViT: Semantic Segmentation Emerges from Text Supervision
+Xu et al.
+以圖文監督學習階層式語義分組的視覺 Transformer，HiT 列為分組先例。
+arXiv ↗筆記
+2022token 合併Token Merging: Your ViT But Faster
+Bolya et al.
+合併相似 token 加速 ViT；HiT 以其 proportional attention 的 log-size bias 作為位置變體。
+arXiv ↗筆記
+2022潛空間階層Scalable Diffusion Models with Transformers
+Peebles, Xie
+DiT：Transformer 擴散骨幹，HiT 比較表中的潛空間基線。
+arXiv ↗筆記
+2023像素空間simple diffusion: End-to-end diffusion for high resolution images
+Hoogeboom et al.
+pixel-space 單階段生成路線的代表之一。
+arXiv ↗筆記
+2023token 合併Token Merging for Fast Stable Diffusion
+Bolya, Hoffman
+把 token 合併用於預訓練擴散模型；使用預設縮減率。
+arXiv ↗筆記
+2024潛空間階層Representation Alignment for Generation: Training Diffusion Transformers Is Easier Than You Think
+Yu et al.
+以預訓練語義編碼器監督擴散去噪器的中間表示；HiT 視為外部視覺組織的來源。
+arXiv ↗筆記
+2024序列切塊Byte Latent Transformer: Patches Scale Better Than Tokens
+Pagnoni et al.
+以下一個 byte 的熵切分動態長度 patch。
+arXiv ↗筆記
+2024像素空間Simpler Diffusion: 1.5 FID on ImageNet512 with pixel-space diffusion
+Hoogeboom et al.
+pixel-space 單階段生成路線的代表之一（論文 [18]）。
+arXiv ↗筆記
+2025像素空間PixelFlow: Pixel-Space Generative Models with Flow
+Chen et al.
+pixel-space 單階段生成路線的代表之一，ImageNet 比較表中的基線。
+arXiv ↗筆記
+2025序列切塊Dynamic Chunking for End-to-End Hierarchical Sequence Modeling
+Hwang, Wang, Gu
+H-Net：學得的動態切塊與巢狀階層；HiT 沿用巢狀骨幹與 ratio loss。
+arXiv ↗筆記
+2025潛空間階層Diffusion Transformers with Representation Autoencoders
+Zheng et al.
+以預訓練表示編碼器作為生成空間；HiT 引為外部學得視覺組織。
+arXiv ↗筆記
+2025像素空間Back to Basics: Let Denoising Generative Models Denoise
+Li, He
+JiT：預測乾淨影像的 pixel-space Transformer，HiT 的 ImageNet 基線與訓練設定。
+arXiv ↗筆記
+2026稀疏引導Guiding Token-Sparse Diffusion Models
+Krause et al.
+Sparse Guidance：以 token 稀疏性作為引導訊號；HiT 的 group guidance 由此啟發。
+arXiv ↗筆記
+2026本文Hierarchical Diffusion Transformer for End-to-End Image Generation
+Wu et al.
+HiT：在 pixel-space Transformer 內學習可變數量的影像分組階層。
+arXiv ↗筆記
+
+ 14 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 論文沒有獨立的限制章節。本頁只列論文明確提到的事實：實際計算成本隨每張影像與每個擴散時間的群組數變化，論文報告的是名目值（Sec. 4.1）；推論時直接增加群組數不一定改善生成，因為骨幹是在壓縮表示上訓練的（App. A.6）；精簡階段的位置編碼各變體差距小，尚未定案（App. B.1）。
+
+ 程式碼：GitHub；模型：Hugging Face；專案頁（含群組可視化）。
+
+ 研究筆記（依閱讀順序）
+
+ HiT 研究脈絡總覽：從潛空間階層到可學習的影像分組總覽
+
+ HiT 的出發點：潛空間的階層與 pixel-space 的固定 token 格點第 01 章
+
+ H-Net 與 BLT：從動態切塊到影像分組第 03 章
+
+ ToMe 與 ToMeSD 在 HiT 中的位置：預先設定的縮減率第 03 章
+
+ GroupViT 到 HiT：親和度、平均連結與軟分組第 03–04 章
+
+ HiT 的壓縮預算：批次平均比例與可變群組數第 06 章
+
+ Group guidance：以分組容量差作為引導第 09 章
+
+ HiT 的 compact 階段位置編碼與文字影像聯合分組第 07–08 章
+
+ token 壓縮系列筆記總覽系列教學的筆記
+
+ Pixel-space diffusion站內既有筆記
+
+ Xiaoyu Wu, Yifei Wang, Weihang Guo, Chen Wei, Lydia E Kavraki, Niloofar Mireshghallah, Zhiwei Steven Wu. Hierarchical Diffusion Transformer for End-to-End Image Generation. 2026. arXiv:2611.22962.
+
+ 本頁的方程式與數字取自論文 v1；標示「本頁推導」的內容為本頁自行推導，標示「推定」的數值為本頁自訂的教學設定，皆非論文結論。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記

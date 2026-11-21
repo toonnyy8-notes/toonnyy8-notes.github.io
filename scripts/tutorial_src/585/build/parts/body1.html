@@ -1,0 +1,225 @@
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 585</span>
+  <span class="ttl">HiT：在像素空間擴散 Transformer 裡學出視覺階層</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 585</b> · 互動教學 · arXiv 2611.22962 · 2026</div>
+  <h1>HiT：在像素空間擴散 <span class="lat">Transformer</span> 裡學出視覺階層</h1>
+  <p class="dek">HiT 把相關的 patch token 合併成群組 token，讓中間的 Transformer 處理較短的序列，群組數由一個批次層級的預算決定。</p>
+  <p class="byline">Xiaoyu Wu、Yifei Wang、Weihang Guo、Chen Wei、Lydia E Kavraki、Niloofar Mireshghallah、Zhiwei Steven Wu（2026）〈Hierarchical Diffusion Transformer for End-to-End Image Generation〉</p>
+  <div class="tokbar" role="img" aria-label="token 數變化圖：ImageNet 256 的 HiT-B/16 依序處理 256、128、64、128、256 個影像 token">
+    <div><i class="full" style="height:80px"></i><span>256</span></div>
+    <div><i style="height:40px"></i><span>128</span></div>
+    <div><i style="height:20px"></i><span>64</span></div>
+    <div><i style="height:40px"></i><span>128</span></div>
+    <div><i class="full" style="height:80px"></i><span>256</span></div>
+  </div>
+  <p class="tokcap">token 數變化圖：ImageNet 256、HiT-B/16 各段的目標平均影像 token 數（Table 4）。</p>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 分組</span><p>HiT 把特徵相近的 patch token 合併成一個群組 token；相距很遠的 patch 也能同組。</p></div>
+    <div class="fact"><span class="n">02 · 預算</span><p>群組數不固定：訓練只要求每一個分組階段在整個批次上平均保留一半的 token（兩階段後為四分之一），每張圖、每個噪聲程度可以不同。</p></div>
+    <div class="fact"><span class="n">03 · 結果</span><p>在 ImageNet 256 的影像品質指標 FID（越低越好）上達到 1.48；達到同樣品質時，比沒有分組的像素空間基準模型 JiT 少用 2.4 倍訓練計算（Fig. 1，FID ≈ 2.16）。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2611.22962">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-585">在關聯圖中查看</a>
+    <a class="btn" href="hit-lineage-hub.html">研究筆記總覽</a>
+    <a class="btn" href="token-compression-lineage.html">系列教學：token 壓縮</a>
+  </div>
+</section>
+
+<!-- S1 ============================================================ -->
+<section class="ch" id="why" data-toc="01" data-tt="出發點">
+  <div class="ch-num">01 · 出發點</div>
+  <h2>像素空間模型每個 patch 都保留一個 token</h2>
+  <div class="prose">
+    <p>影像生成的擴散模型有兩條路線。潛空間（latent space）擴散先用另外訓練的編碼器把影像壓成精簡的特徵，再在那個特徵空間學習生成；編碼器提供了由像素到精簡表示的階層，但這個階層是在生成訓練之外決定的。像素空間（pixel space）擴散直接在像素上生成，一個階段端到端訓練，不需要另外的視覺編碼器，但品質與訓練效率仍落後於領先的潛空間模型（Sec. 1）。</p>
+    <p>常見的像素空間 Transformer 把影像切成固定大小的 patch（例如 16×16 像素），每個 patch 經線性投影成一個 token。ImageNet 256×256 的影像因此有 $16\times16=256$ 個 token，而且每一層都處理同樣的 256 個。</p>
+    <p>作者的假設是：像素空間 Transformer 落後潛空間模型的部分原因，在於骨幹從頭到尾每個 patch 保留一個 token，沒有鼓勵模型形成「把相關內容在逐漸變粗的層級彙整」的視覺階層（Abstract、Sec. 1）。規則的 patch 網格給每個等大區域相同數量的 token，不管區域內容多寡；作者因此主張讓模型自己學「哪些資訊可以共用一個表示、要用幾個表示」，而不是用固定的空間切割決定。</p>
+  </div>
+  <details class="fold"><summary>背景：x-prediction 與訓練損失</summary><div class="fb">
+    <p>HiT 沿用 JiT（Li 與 He，〈Back to Basics〉）的像素空間設定。帶噪影像寫成 $x_t=t\,x+(1-t)\,\epsilon$，其中 $x$ 是乾淨影像、$\epsilon$ 是標準高斯噪聲；$t=1$ 是乾淨影像，$t=0$ 是純噪聲。網路 $f_\theta$ 直接輸出乾淨影像（x-prediction），損失寫成（App. A.3）：</p>
+    <div class="eq"><div class="eq-m">$$\mathcal L_{\text{diff}}=\mathbb E\left[\frac{\mathrm{MSE}\big(f_\theta(x_t,t,c),x\big)}{\max(1-t,\,a_{\min})^2}\right],\quad a_{\min}=0.05$$</div><span class="eq-n">Eq. 12</span></div>
+    <p>分母把乾淨影像的誤差換算成速度的誤差（論文稱為 velocity loss），$a_{\min}=0.05$ 避免 $t\to1$ 時除以 0。$c$ 是條件（類別或文字）。</p>
+  </div></details>
+  <details class="fold"><summary>符號表</summary><div class="fb"><div class="tscroll"><table>
+    <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+    <tr><td>$N$、$d$</td><td>某分組階段輸入的 token 數；特徵寬度（B：768）</td></tr>
+    <tr><td>$K_\ell$、$K$</td><td>第 $\ell$ 層的群組數；單一階段內簡寫 $K$</td></tr>
+    <tr><td>$h_i$、$H$</td><td>第 $i$ 個 token 的特徵；所有 token 疊成的矩陣</td></tr>
+    <tr><td>$q_i,k_i$</td><td>兩個學到的投影，各自正規化為單位長度</td></tr>
+    <tr><td>$S_{ij}$、$s(U,V)$</td><td>對稱親和度；兩群組成員間的平均親和度</td></tr>
+    <tr><td>$\tau$</td><td>合併門檻</td></tr>
+    <tr><td>$G_g$、$A$、$P$</td><td>第 $g$ 個硬群組；軟權重；池化矩陣</td></tr>
+    <tr><td>$T_r$、$T_b$</td><td>軟權重溫度（0.05）；群組數估計的溫度（0.1）</td></tr>
+    <tr><td>$r$、$\rho$</td><td>每階段目標壓縮比與目標保留比例 $\rho=1/r$</td></tr>
+    <tr><td>$f_h$、$f_s$</td><td>實際保留比例；其可微估計</td></tr>
+    <tr><td>$\lambda$</td><td>壓縮損失權重（0.01）</td></tr>
+    <tr><td>$r_c,r_u$、$w$</td><td>群組引導的群組數倍率；引導強度（論文寫 $s$）</td></tr>
+    </tbody></table></div></div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">作者認為像素空間 Transformer 落後潛空間模型的部分原因是什麼？</p>
+    <p class="a">骨幹從頭到尾每個 patch 保留一個 token，沒有鼓勵把相關內容在逐漸變粗的層級彙整的視覺階層（Abstract、Sec. 1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="hit-latent-hierarchy-and-pixel-space.html">HiT 的出發點：潛空間的階層與 pixel-space 的固定 token 格點</a>、<a href="pixel-space-diffusion.html">Pixel-space diffusion</a>、<a href="x-prediction-manifold-view.html">x-prediction 與流形觀點</a></p>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="backbone" data-toc="02" data-tt="骨幹">
+  <div class="ch-num">02 · 骨幹</div>
+  <h2>骨幹由編碼器、精簡核心與解碼器遞迴組成</h2>
+  <div class="prose">
+    <p>HiT 把 Transformer 區塊排成巢狀的三段：編碼器、精簡網路與解碼器（Sec. 3.1、Fig. 2）。Transformer 區塊本身不改變 token 數與特徵寬度；token 數只在兩種新運算中改變。<b>分組</b>（grouping）把多個 token 合併成較少的群組 token；<b>解組</b>（ungrouping）把群組 token 的特徵送回原來的 token 位置。解組之後，再把分組前的特徵經線性投影加回來，稱為<b>跳接</b>（skip connection）。有 $J$ 層分組時，token 數依序為</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$N\to K_1\to\cdots\to K_J\to\cdots\to K_1\to N$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="stack" role="img" aria-label="HiT-B/16 骨幹：3 個區塊處理 256 token，分組到 128，3 個區塊，分組到 64，6 個區塊，解組到 128 並加跳接，3 個區塊，解組到 256 並加跳接，3 個區塊，預測 head">
+    <div class="sr-row sr-io" style="width:100%">帶噪影像 → 線性 patch 投影</div>
+    <div class="sr-row full" style="width:100%">Transformer × 3 · 256 token</div>
+    <div class="sr-op">↓ 分組</div>
+    <div class="sr-row" style="width:62%">Transformer × 3 · 128 token</div>
+    <div class="sr-op">↓ 分組</div>
+    <div class="sr-row" style="width:40%">Transformer × 6 · 64 token</div>
+    <div class="sr-op">↓ 解組 <b>＋ 跳接</b>（來自 128 token 段）</div>
+    <div class="sr-row" style="width:62%">Transformer × 3 · 128 token</div>
+    <div class="sr-op">↓ 解組 <b>＋ 跳接</b>（來自 256 token 段）</div>
+    <div class="sr-row full" style="width:100%">Transformer × 3 · 256 token</div>
+    <div class="sr-row sr-io" style="width:100%">預測 head → 乾淨影像</div>
+  </div>
+  <p class="tokcap" style="text-align:center">依 Fig. 2 重繪。寬度表示目標 token 數；特徵寬度 $d$ 各段相同。</p>
+  <div class="prose">
+    <p>ImageNet 256 的 HiT-B/16 骨幹以 18 個區塊、兩次 2× 分組為參考設定（Sec. 4.5）。論文用五個數字描述區塊分配，例如 3/3/6/3/3。ImageNet 256 的 HiT-B/16（18 區塊）目標平均 token 數依序是 256→128→64→128→256；layout 3/3/6/3/3 的五個數字依序是全解析度編碼器、中間編碼器、精簡核心、中間解碼器、全解析度解碼器的區塊數（Eq. 1、Sec. 4.5、Table 4）。這組數字只適用於 ImageNet 256；文字到影像的設定見第 08 章。</p>
+    <p>條件資訊以 token 的形式加入：8 個類別 token 與 1 個時間 token 從第一個區塊開始參與注意力，但不參與分組與解組，也不計入壓縮預算與跳接（App. A.4）。</p>
+    <p>以「區塊數 × token 數」粗估線性運算量<span class="tag">本頁推導</span>：3/3/6/3/3 為 $3\cdot256+3\cdot128+6\cdot64+3\cdot128+3\cdot256=2688$，18 個區塊都不分組則為 $18\cdot256=4608$。第 07 章的元件給出完整的推定成本。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">ImageNet 256 的 HiT-B/16（18 區塊）token 數如何變化？layout 3/3/6/3/3 的五個數字代表什麼？</p>
+    <p class="a">目標平均 256→128→64→128→256；依序是全解析度編碼器、中間編碼器、精簡核心、中間解碼器、全解析度解碼器的區塊數（Eq. 1、Sec. 4.5、Table 4）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="tokc-hourglass-and-latent-interfaces.html">Hourglass 與 latent 介面</a>（系列筆記）</p>
+</section>
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="affinity" data-toc="03" data-tt="親和度">
+  <div class="ch-num">03 · 親和度</div>
+  <h2>親和度與平均連結法決定硬群組</h2>
+  <div class="prose">
+    <p>分組要先決定「哪些 token 屬於同一群」。在分組階段 $\ell$，令 $H\in\mathbb R^{N\times d}$ 為前面 Transformer 區塊輸出的 token 特徵，第 $i$ 列為 $h_i$。作者學兩個線性投影，並把投影結果正規化為長度 1，得到 $q_i$ 與 $k_i$。兩個單位向量的內積 $q_i^\top k_j$ 等於夾角的餘弦（cosine similarity），範圍是 $[-1,1]$：方向相同為 1，相反為 −1。</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$S_{ij}=\tfrac12\big(q_i^\top k_j+q_j^\top k_i\big)$$</div><span class="eq-n">Eq. 2</span></div>
+  <div class="prose">
+    <p>因為 $q\ne k$，$q_i^\top k_j$ 一般不等於 $q_j^\top k_i$；Eq. 2 取兩者平均，讓親和度矩陣 $S$ 對稱。兩個群組 $U,V$ 之間的親和度定義為所有成員配對的平均（App. A.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$s(U,V)=\frac{1}{|U|\,|V|}\sum_{i\in U}\sum_{j\in V}S_{ij}$$</div><span class="eq-n">Eq. 8</span></div>
+  <div class="prose">
+    <p>平均連結法（average linkage）是一種由下而上的階層式分群：從每個 token 自成一群開始，每一步合併 $s(U,V)$ 最高的兩群，直到只剩一群，得到一棵合併樹（共 $N-1$ 次合併）。把合併樹畫成樹狀圖時，縱軸是每次合併的分數。</p>
+    <p>三個 token 的例子：若三個單位向量的角度是 10°、22°、150°，則 $S_{12}=0.9781$、$S_{13}=-0.7660$、$S_{23}=-0.6157$。第一次合併分數最高的 {1,2}（0.9781）；第二次合併 {1,2} 與 {3}，分數是 $(-0.7660-0.6157)/2=-0.6909$。門檻 $\tau=0.8$ 時只保留第一次合併，得到兩個群組 {1,2} 與 {3}。</p>
+    <p>$S_{ij}$ 的算法是 $S_{ij}=\tfrac12(q_i^\top k_j+q_j^\top k_i)$，其中 $q,k$ 為單位向量；平均連結法反覆合併平均親和度最高的兩群，並保留分數 $\ge\tau$ 的合併（Eq. 2、Eq. 8、Sec. 3.2，原文為「We retain merges with affinity at least τ」），保留下來的合併形成 $K$ 個硬群組 $G_1,\dots,G_K$。在精確的平均連結法下，合併分數沿合併順序不增，所以「保留分數 $\ge\tau$ 的合併」等於「最高分數低於 $\tau$ 時停止」<span class="tag">本頁推導</span>。</p>
+    <p>空間上不相連的 patch 能在同一群組，原因是親和度只由特徵投影 $q,k$ 計算，不含位置；HiT 在雙向的影像特徵上分組，不像 H-Net 沿因果序列切出相鄰的區塊（Sec. 2、Sec. 3.2）。Fig. 1 中兩根香蕉的 patch 屬於同一群組，Fig. 4c 中分開的車身標記也屬於同一群組。</p>
+    <p>門檻 $\tau$ 在訓練前校準後固定（第 06 章）。即使 $\tau$ 固定，每一個去噪步驟的特徵不同，群組成員與群組數也跟著改變（Sec. 3.2）。</p>
+  </div>
+  <details class="fold"><summary>為什麼合併分數不增〔本頁推導〕</summary><div class="fb">
+    <p>平均連結法滿足可約性（reducibility）：若 $U,V$ 是目前分數最高的一對，合併後的新群組 $U\cup V$ 對任何其他群組 $W$ 的分數 $s(U\cup V,W)=\frac{|U|s(U,W)+|V|s(V,W)}{|U|+|V|}$ 是兩個不大於 $s(U,V)$ 的數的加權平均，所以下一次合併的分數不會超過這一次。本頁的驗算腳本對 200 組隨機輸入確認合併分數不增。</p>
+  </div></details>
+  <details class="fold"><summary>與 ToMe、H-Net 的差異</summary><div class="fb">
+    <p>ToMe 與 ToMeSD 依相似度合併 token，但每層合併的數量或比例是預先設定的；HiT 的群組數由門檻與壓縮預算決定（Sec. 2）。H-Net 與 BLT 在序列上形成長度可變的區塊，但區塊沿序列連續；HiT 用親和度分組，不相鄰的位置也能同組（Sec. 2）。</p>
+  </div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$S_{ij}$ 怎麼算？平均連結法保留哪些合併？</p>
+    <p class="a">$S_{ij}=\tfrac12(q_i^\top k_j+q_j^\top k_i)$，$q,k$ 為單位向量；反覆合併平均親和度最高的兩群，保留分數 $\ge\tau$ 的合併（Eq. 2、8、Sec. 3.2）。〔本頁推導，假設精確的平均連結法〕合併分數不增，所以等於最高分低於 $\tau$ 時停止。</p>
+    <p class="q">為什麼空間上不相連的 patch 能在同一群組？</p>
+    <p class="a">親和度只由特徵投影 $q,k$ 計算，不含位置；HiT 在雙向影像特徵上分組，不像 H-Net 沿因果序列切塊（Sec. 2、3.2）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="hit-affinity-grouping.html">GroupViT 到 HiT：親和度、平均連結與軟分組</a>、<a href="hit-merging-baselines-fixed-rates.html">ToMe 與 ToMeSD 在 HiT 中的位置</a>、<a href="hit-hnet-blt-to-image-groups.html">H-Net 與 BLT：從動態切塊到影像分組</a>；系列筆記 <a href="tokc-vit-pruning-and-merging.html">ViT 的剪枝與合併</a>、<a href="tokc-dynamic-chunking-bytes-to-pixels.html">動態切塊</a></p>
+</section>
+
+<!-- S4 ============================================================ -->
+<section class="ch" id="soft" data-toc="04" data-tt="軟權重">
+  <div class="ch-num">04 · 軟權重</div>
+  <h2>每個群組 token 由所有輸入 token 加權平均而成</h2>
+  <div class="prose">
+    <p>硬分組是離散的：一個 token 屬於某一群就是 1，否則是 0。這種指派沒有梯度，訓練時無法調整產生 $q,k$ 的投影（Sec. 3.2）。作者因此另外算一組連續的軟權重，用來建立群組 token。</p>
+    <p>對 token $i$ 與硬群組 $G_g$，先算 $i$ 對該群成員的平均親和度 $e_{ig}$，再對所有群組做 softmax。softmax 的溫度 $T_r$ 越小，最大的 $e_{ig}$ 分到的權重越接近 1：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$e_{ig}=\frac{1}{|G_g|}\sum_{j\in G_g}S_{ij},\qquad A_{ig}=\frac{\exp(e_{ig}/T_r)}{\sum_{g'=1}^{K}\exp(e_{ig'}/T_r)}$$</div><span class="eq-n">Eq. 9</span></div>
+  <div class="prose">
+    <p>$A\in\mathbb R^{N\times K}$ 的每一列和為 1，描述一個 token 與各群組的關聯。把 $A$ 的每一行（column）除以該行總和，得到池化矩陣 $P$，第 $g$ 個群組 token 是所有輸入特徵的加權平均：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$P_{ig}=\frac{A_{ig}}{\sum_jA_{jg}},\qquad z_g=\sum_{i=1}^{N}P_{ig}\,h_i=\frac{\sum_{i=1}^{N}A_{ig}h_i}{\sum_{i=1}^{N}A_{ig}}$$</div><span class="eq-n">Eq. 6、App. A.1</span></div>
+  <div class="prose">
+    <p>軟權重與池化的定義如下：$A_{ig}=\mathrm{softmax}_g(e_{ig}/T_r)$，$e_{ig}$ 是 token $i$ 對 $G_g$ 成員的平均親和度；$P_{ig}=A_{ig}/\sum_jA_{jg}$；群組 token 是所有輸入 token 的加權平均，而不只是硬群組成員的平均（Eq. 6、Eq. 9、App. A.1）。硬群組只決定「有哪些群組」與每個群組的 $e_{ig}$；每個 token 都依 $A$ 對每個群組有貢獻。論文的 $T_r=0.05$ 很小，權重比 $A_{ig}/A_{ig'}=\exp((e_{ig}-e_{ig'})/T_r)$ 在親和度差 0.1 時約為 $e^2\approx7.4$ 倍<span class="tag">本頁推導</span>。</p>
+  </div>
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>六個 token 的分組、軟權重與池化</h3></div>
+    <p class="plate-lead">玩具設定：每個 token 的 $q_i=k_i$ 是二維單位向量，以角度表示，所以 $S_{ij}=\cos(\theta_i-\theta_j)$、$S_{ii}=1$（論文中 $q\ne k$，$S_{ii}$ 一般小於 1）。拖曳圓盤上的端點或輸入角度，調整門檻 τ 與溫度 $T_r$。</p>
+    <div class="c1g">
+      <div class="c1p"><h4>token 方向（可拖曳，或聚焦後按方向鍵）</h4><div id="c1-disc"><svg role="img" aria-label="六個 token 的方向"></svg></div></div>
+      <div class="c1p"><h4>patch 網格中的位置與群組</h4><div id="c1-grid"><svg role="img" aria-label="2×3 patch 網格"></svg></div>
+        <p class="cap">親和度不看位置。token 1 與 2 之間隔著 token 3，仍可同組。</p></div>
+      <div class="c1p"><h4>軟權重 $A$（列＝token，行＝群組；點行標題看池化權重 $P$）</h4><div class="tscroll" style="margin:0"><table class="atab" id="c1-a"></table></div><p class="readout" id="c1-p" style="margin-top:10px"></p></div>
+      <div class="c1p"><h4>親和度 $S$ 與合併樹（樹的縱軸在 0.8 以上放大）</h4><div id="c1-hm"><svg role="img" aria-label="親和度熱圖"></svg></div><div id="c1-tree" style="margin-top:12px"><svg role="img" aria-label="合併樹"></svg></div></div>
+    </div>
+    <div class="pg two" style="margin-top:20px">
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="c1-tau">門檻 τ<output id="c1-tauo">0.950</output></label><input id="c1-tau" type="range" min="-1" max="1" step="0.005" value="0.95"></div>
+        <div class="rng"><label class="lbl" for="c1-tr">軟權重溫度 T_r<output id="c1-tro">0.200</output></label><input id="c1-tr" type="range" min="0" max="1" step="0.001" value="0.5741"></div>
+        <div class="ctl-row"><button class="chip" type="button" id="c1-trp" aria-pressed="false">論文值 T_r = 0.05</button><button class="chip" type="button" id="c1-reset">還原預設</button></div>
+      </div>
+      <div class="ctl">
+        <div class="angs" id="c1-angs"></div>
+        <p class="readout" id="c1-ro"></p>
+      </div>
+    </div>
+    <details class="fold" id="c1-adv"><summary>進階：軟群組數估計（第 06 章會用到）</summary><div class="fb"><p class="readout" id="c1-ks"></p></div></details>
+    <p class="plate-f">預設角度與 $T_r=0.2$ 為本頁自訂的教學值<span class="tag est">推定</span>：二維玩具的親和度差距遠大於高維模型，用論文的 0.05 時 $A$ 幾乎全是 0 與 1。讀數由本頁依 Eq. 2、Eq. 8、Eq. 9 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c1-live"></p>
+  </div>
+  <div class="prose" style="margin-top:28px">
+    <p>預設狀態下 $\tau=0.95$ 得到 4 個群組 {1,2}、{3}、{4}、{5,6}。token 4 單獨成組，但它的軟權重是 0.404／0.001／0.596／0.000：有 40% 的權重流向 {1,2}，所以 {1,2} 的群組 token 也含有 token 4 的特徵。把 $\tau$ 降到 0.9，得到 {1,2,4}、{3,5,6} 兩群，與 Fig. 3 的分法相同；網格中 1、2、4 並不相連。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$A_{ig}$ 與 $P_{ig}$ 怎麼定義？群組 token 由哪些 token 組成？</p>
+    <p class="a">$A_{ig}=\mathrm{softmax}_g(e_{ig}/T_r)$，$e_{ig}$ 是 token $i$ 對 $G_g$ 成員的平均親和度；$P_{ig}=A_{ig}/\sum_jA_{jg}$；群組 token 是所有輸入 token 的加權平均（Eq. 6、9、App. A.1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="hit-affinity-grouping.html">GroupViT 到 HiT：親和度、平均連結與軟分組</a></p>
+</section>
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="ungroup" data-toc="05" data-tt="解組">
+  <div class="ch-num">05 · 解組</div>
+  <h2>解組重用同一組軟權重並加上跳接</h2>
+  <div class="prose">
+    <p>精簡網路 $M$（更深一層的區塊）處理群組 token 後，輸出第 $g$ 個群組的特徵 $\tilde z_g$。解組把這些特徵依分組前算好的同一組軟權重 $A$ 混合回每個 token 位置，輸出記為 $\mathbf r_i$（Eq. 7）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbf r_i=\sum_{g=1}^{K}A_{ig}\,\tilde z_g$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="prose"><p>再加上分組前的特徵經跳接投影 $W_\ell$（$d\times d$，初始化為單位矩陣）後的結果。整個階段用矩陣寫成：</p></div>
+  <div class="eq"><div class="eq-m">$$Z=P^\top H,\qquad \tilde H=A\,M(Z)+H\,W_\ell^\top$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="prose">
+    <p>解組的做法是 $\mathbf r_i=\sum_gA_{ig}\tilde z_g$，即 $\tilde H=AM(Z)+HW_\ell^\top$：重用 $A$ 軟混合，並加上初始化為單位矩陣的跳接；反向傳播時硬分割視為常數，梯度經由軟池化與解組權重 $A$ 傳到產生 $q,k$ 的投影（Eq. 3、Eq. 7、Sec. 3.2）。解組恢復了 token 的位置，但不能反轉有損的池化（App. A.1）。</p>
+    <p>跳接投影不一定改善品質：App. B.2 的 12 區塊 adaLN 模型中，直接相加 $R+H$ 的 FID 為 11.65，優於預設投影跳接的 12.27（Table 10）。作者保留投影，理由是它是簡單的融合規則，允許轉換編碼器特徵，同時保留重建特徵的直接路徑。</p>
+    <p>作者比較了四種組合（Table 3，HiT-B/16，80 epoch，FID 越低越好）。只在硬群組內池化時，FID 為 10.32（均勻權重）與 10.16（學到的權重）；對所有 token 池化但用硬查表解組（$\mathbf r_i=\tilde z_{g(i)}$，$g(i)$ 為 token $i$ 的硬群組）時為 7.97；預設的「所有 token 池化＋軟解組」為 6.61。作者的結論是：在聚合與讀回兩個方向都跨越硬群組邊界交換資訊較好。</p>
+  </div>
+  <div class="tscroll"><table><caption>Table 3：分組與解組的方式（HiT-B/16，80 epoch）</caption>
+    <thead><tr><th>群組讀取的 token</th><th>權重</th><th>解組</th><th class="num">FID</th></tr></thead><tbody>
+    <tr><td>硬群組內</td><td>均勻</td><td>軟混合</td><td class="num">10.32</td></tr>
+    <tr><td>硬群組內</td><td>學到</td><td>軟混合</td><td class="num">10.16</td></tr>
+    <tr><td>所有輸入 token</td><td>學到</td><td>硬查表</td><td class="num">7.97</td></tr>
+    <tr class="hl"><td>所有輸入 token（預設）</td><td>學到</td><td>軟混合</td><td class="num">6.61</td></tr>
+    </tbody></table></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">解組怎麼做？梯度如何到達親和度投影？</p>
+    <p class="a">$\mathbf r_i=\sum_gA_{ig}\tilde z_g$，即 $\tilde H=AM(Z)+HW_\ell^\top$：重用 $A$ 軟混合並加上初始化為單位矩陣的跳接；硬分割視為常數，梯度經由軟池化與解組權重 $A$ 傳到 $q,k$（Eq. 3、7、Sec. 3.2）。</p>
+    <p class="q">Table 3 中限制在硬群組內池化、或用硬查表解組，FID 各是多少？</p>
+    <p class="a">硬群組內池化 10.32（均勻）／10.16（學到權重）；硬查表解組 7.97；預設 6.61（Table 3）。</p>
+  </div></details>
+</section>

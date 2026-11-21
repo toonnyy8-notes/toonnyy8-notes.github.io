@@ -1,0 +1,1264 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RTI 區域 token</title>
+<meta name="description" content="圖解 Zamfir 等人 2026 的 RTI：沿 Hilbert 曲線排列 patch、在特徵變化最大處切成區域 token，讓凍結的像素擴散 Transformer 以一個 checkpoint 在 64–512 個 token 間調整速度與品質。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+
+/* ---- RTI additions ---- */
+.sym{max-width:700px;margin:0 0 24px;padding:12px 16px;border:1px dashed var(--line);border-radius:10px;font-size:14px;line-height:1.7;color:var(--ink-2)}
+.sym b{display:block;font:500 12px/1.4 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:4px}
+.eq-m:focus-visible{outline:2px solid var(--accent)}
+.hero-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:32px;align-items:center}
+@media (min-width:900px){.hero-grid{grid-template-columns:minmax(0,1fr) 240px}}
+.hc{margin:0;max-width:240px}
+.hc svg{display:block;width:100%;height:auto}
+.hc figcaption{font-size:13px;line-height:1.6;color:var(--ink-3);margin-top:8px}
+.hc .cell{fill:none;stroke:var(--line);stroke-width:1}
+.hc .curve{fill:none;stroke:var(--ink-2);stroke-width:2;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1;animation:draw 1.6s var(--ease) .2s forwards}
+.hc .cut{stroke:var(--accent);stroke-width:4;stroke-linecap:round}
+@keyframes draw{to{stroke-dashoffset:0}}
+@media (prefers-reduced-motion:reduce){.hc .curve{stroke-dashoffset:0}}
+.c1ctl,.c2ctl,.c3ctl{margin-bottom:18px}
+.c1sl{display:grid;grid-template-columns:minmax(0,1fr);gap:8px 24px}
+@media (min-width:640px){.c1sl{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}}
+.c1g{display:grid;grid-template-columns:minmax(0,1fr);gap:20px}
+@media (min-width:768px){.c1g{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.c1g svg{width:100%;max-width:300px}
+.c1t{font:500 13px/1.4 var(--f-body);color:var(--ink-2);margin:0 0 8px}
+.c1g .readout{margin-top:8px}
+svg .cellg{fill:none;stroke:var(--line);stroke-width:.6}
+svg .selc{fill:var(--accent-soft)}
+svg .path0{fill:none;stroke:var(--ink-3);stroke-width:1;opacity:.7}
+svg .path1{fill:none;stroke:var(--accent);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+svg .jump{fill:none;stroke:var(--accent);stroke-width:1.6;stroke-dasharray:4 3}
+svg .cnum{font:600 12px var(--f-mono);fill:var(--ink)}
+.cv-wrap{position:relative;display:block;width:100%;max-width:384px}
+.cv-wrap canvas{display:block;width:100%;height:auto;image-rendering:pixelated;border-radius:6px}
+.cv-ov{position:absolute;inset:0;border-radius:6px;cursor:crosshair}
+.cv-ov:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+#c2-bars{display:block;width:100%;height:96px}
+#c2-barbox{margin-top:20px}
+#c2-tab td,#c2-tab th{padding:8px 10px}
+#c2-tab tr.on td{font-weight:600;background:var(--accent-soft)}
+.c2t{max-width:420px}
+.c3ro{max-width:none;margin:16px 0 0}
+.lg.c3x::before{border-top:2px solid var(--c-par)}
+.lg.c3y::before{border-top:2px dashed var(--c-perp)}
+svg .wdot{fill:var(--accent);opacity:.85}
+svg .regc{fill:var(--accent-soft)}
+svg .xhair{stroke:var(--ink);stroke-width:2}
+svg .band{fill:var(--accent);opacity:.10}
+svg .ceil{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .meas{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .anly{stroke:var(--ink);stroke-width:2}
+svg .bar-d{fill:var(--ink-3)}
+svg .bar-r{fill:var(--accent)}
+svg .blk{fill:var(--surface-2);stroke:var(--ink-3);stroke-width:1}
+svg .blk-c{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1}
+svg .wedge{fill:var(--accent)}
+.tab1-more{margin:-12px 0 20px}
+@media (max-width:479px){#tab1:not(.all) .col-x{display:none}}
+@media (min-width:480px){.tab1-more{display:none}}
+
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 217</span>
+  <span class="ttl">RTI：把影像 patch 排成一條線，在內容變化最大處切開</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 217</b> · 互動教學 · arXiv 2608.29281 · 2026</div>
+  <div class="hero-grid">
+    <div>
+      <h1>RTI：把影像 <span class="lat">patch</span> 排成一條線，在內容變化最大處切開</h1>
+      <p class="dek">這篇論文把預訓練像素擴散模型中段的 patch token 換成數量可調的區域 token，一個模型可在 64–512 個 token 的範圍內任選。</p>
+      <p class="byline">Eduard Zamfir、Christian Reisswig、Zongwei Wu、Yongqin Xian、Radu Timofte（2026）〈Elastic Token Compression for Pixel-Space Diffusion Transformers〉</p>
+    </div>
+    <figure class="hc" aria-label="8×8 格上的 Hilbert 曲線，三個切點把它分成四段">
+      <svg id="hero-curve" viewBox="0 0 240 240" role="img" aria-label="8×8 格上的 Hilbert 曲線與三個切點"></svg>
+      <figcaption>8×8 格上的 Hilbert 曲線；三個切點把它分成四段，每段都是相連的一塊。</figcaption>
+    </figure>
+  </div>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 重複的計算</span><p>自然影像的細節集中在少數小方塊（patch）。在已訓練好的像素擴散模型裡，中間幾層對平坦區域的計算大多是重複的。</p></div>
+    <div class="fact"><span class="n">02 · 一條線上的切割</span><p>RTI 把所有小方塊排成一條不斷線的路徑，在相鄰內容變化最大的地方切開，每一段合成一個 token。</p></div>
+    <div class="fact"><span class="n">03 · 一個模型、多種預算</span><p>同一個模型可在 64–512 個 token 之間任選：B/16 用 512 個時，速度 1.84 倍、GenEval 87.8（原模型 1024 個、87.2）。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2608.29281">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-217">在關聯圖中查看</a>
+    <a class="btn" href="rti-lineage-hub.html">研究筆記總覽</a>
+    <a class="btn" href="token-compression-lineage.html">系列教學：token 縮減脈絡</a>
+  </div>
+</section>
+
+<!-- S1 ============================================================ -->
+<section class="ch" id="basics" data-toc="01" data-tt="背景">
+  <div class="ch-num">01 · 背景</div>
+  <h2>擴散 Transformer 對每個 patch 分配相同計算量</h2>
+  <div class="sym"><b>本節符號</b>$N$：patch token 數；$x_t$：取樣過程中的狀態；$\hat x$：網路預測的乾淨影像。</div>
+  <div class="prose">
+    <p>擴散 Transformer（diffusion transformer，DiT）把影像切成規則的小方格，每一格稱為一個 patch，攤平成一個向量後當作一個 token。網路由一串區塊（block）串接而成，每個區塊包含一層注意力（attention）與一層 MLP。生成一張影像時，模型從純噪聲出發，反覆執行整個網路；執行一次稱為一個取樣步，一個取樣步等於整個網路的一次前向計算，本文的設定要跑 100 步（Sec. 4.1）。</p>
+    <p>每個區塊的成本取決於 token 數 $n$：注意力要比較每一對 token，成本約與 $n^2$ 成正比；線性層對每個 token 各算一次，成本與 $n$ 成正比。DiT 對每個 patch、在每個區塊、每個取樣步都分配相同的計算量，不論該 patch 是一片藍天還是一叢樹葉（Sec. 1）。</p>
+    <p>本文的基礎模型是 MiniT2I-B/16：一個像素空間（JiT 系列）的文字到影像 DiT，主幹有 17 個區塊，影像 token 與凍結的 FLAN-T5 文字 token 並行。它以 rectified flow 訓練：狀態 $x_t$ 在噪聲與乾淨影像之間內插，網路直接預測乾淨影像 $\hat x$，而不是預測噪聲（Sec. 3.1）。RTI 只縮短影像 token 的序列，文字串流永遠保持全長。</p>
+    <p>論文指出浪費在像素空間模型最大：潛空間模型由 VAE 先把影像壓成較小的潛變數，移除了大部分低階空間冗餘；像素空間模型沒有 VAE 先移除低階空間冗餘，每個區塊都要處理這些冗餘（Sec. 1）。以 512² 解析度、patch 大小 16 計算，一張影像是 32×32 的格，共 $N=1024$ 個 patch token（Sec. 3.1），這就是 RTI 要縮短的序列。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼論文說浪費在像素空間模型最大？MiniT2I-B/16 在 512² 有幾個 patch token？</p>
+    <p class="a">沒有 VAE 先移除低階空間冗餘，每個區塊都要處理；patch 16 → 32×32 = 1024 個（Sec. 1、3.1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="pixel-space-diffusion.html">Pixel-space diffusion：latent 層是否必要的第三路線</a>、<a href="x-prediction-manifold-view.html">x-prediction 與流形觀點：JiT 與 pixel-space 的近期結果</a>、<a href="tokc-lineage-hub.html">Transformer 的 token 縮減與階層：研究脈絡總覽</a></p>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="redundancy" data-toc="02" data-tt="冗餘">
+  <div class="ch-num">02 · 冗餘</div>
+  <h2>冗餘集中在平坦區域與中段區塊</h2>
+  <div class="sym"><b>本節符號</b>$R$：分組後的組數（預算）；$h_j$：patch $j$ 在某個區塊的特徵；$\bar h_{c(j)}$：$j$ 所屬組的平均；$\bar h$：全部 token 的平均；EV：保留變異。</div>
+  <div class="prose">
+    <p>要知道 token 有多少重複，作者先做一個不需要訓練的探測：把 $N$ 個 token 分成 $R$ 組，把每個 token 換成它所屬組的平均，再看還剩多少資訊。最簡單的分組是把 32×32 格切成等大的 2×2 方格，共 $R=256$ 組。剩下的資訊用保留變異（explained variance，EV）量（App. C.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0">$$\mathrm{EV}=1-\frac{\sum_j\lVert h_j-\bar h_{c(j)}\rVert^2}{\sum_j\lVert h_j-\bar h\rVert^2}$$</div><span class="eq-n">Eq. 5</span></div>
+  <div class="prose">
+    <p>EV 的意義是：EV = 1 表示匯集後的 token 完整攜帶原本的表示；EV = 0 表示匯集後不比一個常數好（App. C.1）。EV 量的是某一個區塊激活的線性餘裕，不是輸出影像的品質。論文在 $R=256$ 時發現匯集仍有約 26% 回收不了，這 26% 是 RTI 保留全解析度的末段區塊（coda）與可學習的 WRITE 的理由（App. C.1；兩者在 S4、S9 說明）。</p>
+    <p>作者除了等大方格，也用「依內容分組」（S6 才講做法）與「跳過」比較；跳過不是分組，而是只保留 $R$ 個 token、其餘換成平均。探測在凍結的 MiniT2I-B/16 上進行（bf16、30 個 Euler 步、guidance 5.0、十個領域的合成提示，App. C）。</p>
+    <p>Fig. 2 從三個方向量冗餘。空間上，依完成影像的梯度能量排序 patch，最細節的 15% patch 占一半細節，前一半占 88%。時間上，把 $N=1024$ 個 token 匯集成 $R=256$ 組時，中段區塊的 EV 隨影像成形上升，依內容分組全程高於等大方格。深度上，EV 由第一塊的 61% 升到中段約 75%，再往最後一塊下降（Fig. 2、Sec. 3.2）；跳過回收的比例比匯集低得多。</p>
+  </div>
+  <div class="callout">
+    <p class="ct">三個方向的冗餘（Fig. 2）</p>
+    <div class="cv">
+      <div><span class="num">15% → 50%</span><span class="cl">空間：最細節的 15% patch 占一半細節</span></div>
+      <div><span class="num">61% → 75%</span><span class="cl">深度：EV 由第一塊升到中段</span></div>
+      <div><span class="num">26%</span><span class="cl">R = 256 時匯集回收不了的部分</span></div>
+    </div>
+    <p>冗餘有形狀：集中在影像的平坦區域、在取樣後段增加、在中段區塊最高。下一節由這個形狀推出壓縮方法必須保留的性質。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Fig. 2 在空間、時間、深度上各量到什麼？</p>
+    <p class="a">空間：最細節的 15% patch 占一半細節，前一半占 88%；時間：EV 隨影像成形上升；深度：EV 由第一塊 61% 升到中段約 75% 再往末塊下降（Fig. 2、Sec. 3.2）。</p>
+    <p class="q">EV（Eq. 5）的 1 與 0 代表什麼？R = 256 時未回收的 26% 導致什麼設計？</p>
+    <p class="a">1：匯集後完整攜帶表示；0：不比常數好；26% 是 RTI 保留全解析度 coda 與可學習 WRITE 的理由（App. C.1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="rti-redundancy-probe-four-requirements.html">冗餘探測：pixel-space 模型中冗餘的位置與四項需求</a></p>
+</section>
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="requirements" data-toc="03" data-tt="四個性質">
+  <div class="ch-num">03 · 四個性質</div>
+  <h2>冗餘的形狀決定壓縮必須保留的四個性質</h2>
+  <div class="sym"><b>本節符號</b>$p_j$：patch $j$ 在格上的座標；$w_{rj}$：patch $j$ 屬於第 $r$ 組的權重（和為 1）；$p_r$：組中心；spread：組內 patch 到中心的平均距離。</div>
+  <div class="prose">
+    <p>本節比較三個既有的縮減方法，論文把它們都放進同一個介面重新實作（App. A）：</p>
+    <ul>
+      <li><b>Feat Sim</b>（特徵相似度合併，ToMe 式）：取 $R$ 個錨點 token，每個 patch 依特徵的 cosine 相似度指派給最像的錨點。</li>
+      <li><b>Latent Array</b>（潛變數陣列，Perceiver-IO／RIN 式）：$R$ 個可學習向量以交叉注意力讀取整張圖，再寫回去；不形成分組。</li>
+      <li><b>Token Skip</b>（Mixture-of-Depths 式）：只讓一部分 token 進入某些區塊，其餘 token 略過該區塊。</li>
+    </ul>
+    <p>比較用三個量。retained 是 Eq. 5 的 EV 套在各方法自己的分組上，對核心區塊平均，不含任何可學習的寫回步驟，所以是對每種方法同等悲觀的下界（App. C.2）。size–detail 是各組的細緻度（$-\log_2$ 組大小）與它涵蓋的細節之間的相關係數。spread 量一組 patch 散得多開（App. C.2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0">$$p_r=\sum_j w_{rj}\,p_j,\qquad \mathrm{spread}_r=\sum_j w_{rj}\,\lVert p_j-p_r\rVert_2$$</div><span class="eq-n">Eq. 6</span></div>
+  <div class="prose">
+    <p>單一 patch 的 spread 為 0；涵蓋整張 32×32 影像的組為 12.2 格。</p>
+    <p>由上一節的冗餘形狀，論文推出四個要求（Sec. 1）。四個要求是連通、大小隨內容、位置、匯總：冗餘的 patch 在平坦區彼此相鄰，所以一組必須連通；細節集中在少數 patch，所以組的大小要隨內容；一組涵蓋影像中一個確定的地方，它的 token 要代表那裡，所以要有位置；Fig. 2c 顯示刪除會失去匯集能保留的東西，所以冗餘內容要匯總而不是刪除。Feat Sim 失去連通與位置；Latent Array 失去分組（因而失去連通）與位置；Token Skip 失去匯總；三者都失去大小隨內容（Sec. 1、4.2）。</p>
+  </div>
+  <div class="tscroll"><table class="stack">
+    <caption>四個要求與失去它的方法（Sec. 1、4.2）</caption>
+    <thead><tr><th>要求</th><th>來源</th><th>失去它的方法</th></tr></thead><tbody>
+    <tr><td>連通（contiguity）</td><td data-h="來源">冗餘 patch 在平坦區彼此相鄰</td><td data-h="失去它的方法">Feat Sim、Latent Array</td></tr>
+    <tr><td>大小隨內容（content-sized）</td><td data-h="來源">細節集中在少數 patch</td><td data-h="失去它的方法">三個方法都失去</td></tr>
+    <tr><td>位置（position）</td><td data-h="來源">每組涵蓋確定的地方</td><td data-h="失去它的方法">Feat Sim、Latent Array</td></tr>
+    <tr><td>匯總（summarization）</td><td data-h="來源">刪除會失去匯集保留的東西</td><td data-h="失去它的方法">Token Skip</td></tr>
+  </tbody></table></div>
+  <div class="tscroll"><table>
+    <caption>Tab. 4：R = 256、64 個提示、凍結特徵；spread 單位為格</caption>
+    <thead><tr><th>方法</th><th class="num">spread ↓</th><th class="num">size–detail ↑</th><th class="num">retained ↑</th></tr></thead><tbody>
+    <tr class="hl"><td>RTI</td><td class="num">0.49</td><td class="num">0.50</td><td class="num">0.73</td></tr>
+    <tr><td>等距切割（fixed boundaries）</td><td class="num">0.71</td><td class="num">0.00</td><td class="num">0.67</td></tr>
+    <tr><td>Feat Sim</td><td class="num">5.16</td><td class="num">0.03</td><td class="num">0.74</td></tr>
+    <tr><td>Latent Array</td><td class="num">11.35</td><td class="num">0.20</td><td class="num">−0.08</td></tr>
+    <tr><td>Token Skip</td><td class="num">無分組</td><td class="num">無分組</td><td class="num">0.26</td></tr>
+    <tr><td>整張影像</td><td class="num">12.24</td><td class="num">—</td><td class="num">—</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <p>逐列閱讀：RTI 的組最緊密（0.49 格），且組越細的地方細節越多（0.50）。Feat Sim 保留的資訊最多（0.74），但組散在畫面各處（5.16 格）；作者的解讀是它放棄的是位置，不是資訊。Latent Array 的 −0.08 表示它的匯集 token 重建區塊比全域平均還差。Token Skip 只保留 0.26。論文寫道，這四個要求在訓練任何縮減方法之前就已固定，事先說明了哪種方法會失敗、如何失敗（Sec. 5）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">四個要求是什麼？Feat Sim、Latent Array、Token Skip 各失去什麼？</p>
+    <p class="a">連通、大小隨內容、位置、匯總；Feat Sim 失去連通與位置，Latent Array 失去分組（因而連通）與位置，Token Skip 失去匯總；三者都失去大小隨內容（Sec. 1、4.2）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="rti-prior-reductions-compared.html">既有縮減方法各自放棄什麼</a>、<a href="depth-redundancy-adjacent-methods.html">深度冗餘的相鄰路線：Mixture-of-Depths 等</a>、<a href="tokc-vit-pruning-and-merging.html">ViT 的 token 剪枝與合併</a>、<a href="tokc-hourglass-and-latent-interfaces.html">沙漏結構與 latent 介面</a></p>
+</section>
+
+<!-- S4 ============================================================ -->
+<section class="ch" id="architecture" data-toc="04" data-tt="核心區段">
+  <div class="ch-num">04 · 核心區段</div>
+  <h2>RTI 只壓縮中段核心</h2>
+  <div class="sym"><b>本節符號</b>$s_0$、$s_1$：核心第一與最後一個區塊（含兩端點；B/16 為 3 與 13）。</div>
+  <div class="prose">
+    <p>RTI 沿用 recurrent-depth Transformer（Geiping et al. 2025）的前段（prelude）／核心（core）／末段（coda）結構：中段一串連續區塊 $[s_0,s_1]$ 是核心。READ 在 $s_0$ 之前把 $N$ 個 patch token 匯集成 $R\ll N$ 個區域 token，核心的每個區塊只處理這段短序列，WRITE 在 $s_1$ 之後把結果散回 $N$ 個 patch；核心以外的區塊維持全解析度（Sec. 3.2）。B/16 的核心是 17 塊中的 $[3,13]$，前後各留三塊。</p>
+    <p>兩端不適合壓縮的理由相反。前段還在把原始 patch 轉成特徵，此時匯集會在模型處理之前丟掉像素；末段要把特徵轉回逐像素的輸出，共享的區域更新會使輸出模糊。兩者之間的特徵最冗餘（Sec. 3.2）。主幹以 LoRA（rank 32，加在注意力與 MLP 的投影上）適配較短的序列，其餘權重凍結。</p>
+  </div>
+  <div class="plate" id="arch">
+    <div class="plate-h"><span class="id">圖</span><h3>17 個區塊中只有核心處理區域 token</h3></div>
+    <div class="fig" id="arch-fig"><svg role="img" aria-label="架構示意：前三塊與後三塊處理 N 個 patch token，中間 11 塊處理 R 個區域 token，READ 與 WRITE 在兩個交界，WRITE 上方有跳接"></svg></div>
+    <p class="plate-f">方塊高度表示 token 數；READ／WRITE 位於區塊 2→3 與 13→14 之間（區塊編號從 0 起算）。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="recursive-transformer-followups.html">遞迴 Transformer 後續工作與 recurrent-depth</a>、<a href="tokc-hourglass-and-latent-interfaces.html">沙漏結構與 latent 介面</a></p>
+</section>
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="hilbert" data-toc="05" data-tt="Hilbert 順序">
+  <div class="ch-num">05 · Hilbert 順序</div>
+  <h2>Hilbert 曲線把二維分組變成一維切割</h2>
+  <div class="sym"><b>本節符號</b>$q$：格邊長；$\pi$：曲線誘導的順序，$\pi(j)$ 是第 $j$ 個位置的 patch；連續段（run）：順序上一段連續的位置。</div>
+  <div class="prose">
+    <p>四個要求中的連通與位置，都可由同一個排列 patch 的方式取得。Hilbert 曲線（Hilbert 1891）恰好走過 $2^k\times2^k$ 格的每一格一次。Hilbert 序列的任一連續段都是連通區域，原因是曲線上相鄰位置在格中一定相鄰；所以任何一段連續位置都占據影像中一塊相連的區域，大小任意、不一定是正方形。更強的性質是：每個二元方格（dyadic cell，quadtree 會產生的那種正方形）恰好是 Hilbert 序列上的一段連續位置，所以任何 quadtree 分割都能用切割 Hilbert 序列表達，切割還能表達 quadtree 做不到的分割。其他順序沒有這個性質：raster 在行尾斷開，Morton（Z）順序在二元方格邊界以對角跳躍連接（Sec. 3.1、App. B.4）。</p>
+    <p>於是二維的分組問題變成一維的切割問題：只要決定在序列的哪些位置切開。和 quadtree 相比，quadtree 也能隨內容調整大小，但每個區域綁定一個二元正方形，而且每張影像、每個取樣步都要建一棵樹；切 Hilbert 序列保留了隨內容調整大小，去掉了這兩個缺點（Sec. 3.3）。點雲 Transformer（Point Transformer V3）也用這條曲線，但只用來排列注意力的序列；本文用它定義分組本身（Sec. 2）。</p>
+    <p>下面的元件比較三種順序。注意：長度為 $2^m$、從對齊位置開始的段，在三種順序下都連通（raster 的對齊段是一整行或一行的一段）〔本頁推導〕；斷裂只出現在不對齊的段。RTI 的切點可以落在任何位置，所以順序的連通性在自適應切割下才重要。</p>
+  </div>
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>三種順序下的連續段</h3></div>
+    <p class="plate-lead">假設：q×q 格上取一段連續位置 [p, p+L)，比較三種順序下它在格中的形狀。預設是 8×8 格上一段不對齊的 8 格（R = 128 時的平均區域大小）。</p>
+    <div class="ctl c1ctl">
+      <div class="ctl-row"><span class="lbl">格大小 q</span><div class="seg" id="c1-q" role="group" aria-label="格大小"><button type="button" data-v="8" aria-pressed="true">8</button><button type="button" data-v="16" aria-pressed="false">16</button><button type="button" data-v="32" aria-pressed="false">32</button></div>
+        <label class="chk"><input type="checkbox" id="c1-all" checked>顯示整條曲線</label></div>
+      <div class="c1sl">
+        <div class="rng"><label class="lbl" for="c1-L">段長 L<output id="c1-Lo">8</output></label><input id="c1-L" type="range" min="1" max="64" step="1" value="8"></div>
+        <div class="rng"><label class="lbl" for="c1-p">起點 p<output id="c1-po">4</output></label><input id="c1-p" type="range" min="0" max="56" step="1" value="4"></div>
+      </div>
+    </div>
+    <div class="c1g">
+      <div class="fig"><div class="c1t">Hilbert</div><svg id="c1-hilbert" role="img" aria-label="Hilbert 順序"></svg><p class="readout" id="c1-ro-hilbert"></p></div>
+      <div class="fig"><div class="c1t">Morton（Z）</div><svg id="c1-morton" role="img" aria-label="Morton 順序"></svg><p class="readout" id="c1-ro-morton"></p></div>
+      <div class="fig"><div class="c1t">raster</div><svg id="c1-raster" role="img" aria-label="raster 順序"></svg><p class="readout" id="c1-ro-raster"></p></div>
+    </div>
+    <p class="plate-f">選取段的格以淺底標示、段內路徑以粗線畫出；虛線表示兩個連續位置在格中不相鄰（跳躍）；格內數字標出連通分量（q ≤ 16 時）。spread 依 Eq. 6（均勻權重）即時計算；「連通比例」是所有起點中長度 L 的段連通者所占比例。</p>
+    <p class="sr" aria-live="polite" id="c1-live"></p>
+  </div>
+  <div class="prose">
+    <p>在預設的 8×8、L = 8、p = 4 下，Hilbert 段是一塊相連的 2×4 區域，Morton 與 raster 都分成兩塊。把 p 改成 0（對齊）時，三者都連通。在 32×32 格上，Hilbert 的連通比例恆為 1，raster 在 L = 16 時只有約 54% 的段連通，Morton 約 51%。</p>
+    <p>論文在凍結模型上比較三種順序（App. C.2，R = 256、依內容切割）：retained 依序為 Hilbert 0.735、Morton 0.720、raster 0.697，每個 patch 到組中心的距離為 1.49、1.73、3.85 格。Morton 對 Hilbert 只差 0.015，依內容切割相對等距切割的差距是 0.059，順序間的全差距 0.038 約為後者的三分之二。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼 Hilbert 序列的任一連續段都是連通區域？raster 與 Morton 何處斷開？</p>
+    <p class="a">曲線上相鄰位置在格中一定相鄰；每個二元方格恰為一段，可表達任何 quadtree 分割；raster 在行尾斷開，Morton 在二元方格邊界對角跳躍（Sec. 3.1、App. B.4）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="rti-hilbert-order-region-partition.html">Hilbert 順序與區域切割</a>、<a href="tokc-content-adaptive-tokenization.html">內容自適應的 tokenization：Quadformer 與空間序列化</a></p>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="partition" data-toc="06" data-tt="切割規則">
+  <div class="ch-num">06 · 切割規則</div>
+  <h2>在特徵變化最大的地方切割</h2>
+  <div class="sym"><b>本節符號</b>$h_j^{(s_0)}\in\mathbb R^d$：進入核心時 patch $j$ 的特徵；$d_j$：曲線上相鄰兩 patch 的特徵距離；$C$：切點集合。</div>
+  <div class="prose">
+    <p>論文要的是 $R$ 個連通、在平坦處粗、在細節處細，而且每個取樣步都能便宜重建的區域（Sec. 3.3）。做法是在 Hilbert 序列上，對每一對相鄰 patch 算特徵距離：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0">$$d_j=\big\lVert h^{(s_0)}_{\pi(j+1)}-h^{(s_0)}_{\pi(j)}\big\rVert_2,\qquad j=1,\dots,N-1$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="eq"><div class="eq-m" tabindex="0">$$C=\{\,j:\ d_j\ \text{屬於最大的}\ R-1\ \text{個}\,\}$$</div><span class="eq-n">Eq. 2</span></div>
+  <div class="prose">
+    <p>RTI 決定 $R$ 個區域的方式是：算曲線上相鄰 patch 的特徵距離 $d_j$（Eq. 1），在最大的 $R-1$ 個處切開（Eq. 2），相鄰切點之間的 $R$ 段就是區域。這條規則沒有參數，成本是 $O(N)$：掃一次算距離，再用線性時間的選擇演算法取出切點。它在每個去噪步都從當前狀態 $x_t$ 重算，所以分割會跟著影像的成形改變（Sec. 3.3、App. A）。切點落在特徵跳躍最大處，均勻的段保持合併，細節區一路切到單一 patch。</p>
+    <p>為什麼特徵距離能標出內容邊界：因為主幹預測乾淨影像而非噪聲，它的特徵追蹤影像結構，大的距離就標出內容的邊界（Sec. 3.3）。論文的 Fig. 9a 顯示細區域隨物體成形聚集在物體與邊界上。訓練時每一步從 {64, 128, 256, 512} 隨機抽一個 $R$（Sec. 4.1），S10 再說明這帶來的效果。距離相同時，本頁依「距離由大到小、同值取較小的 $j$」排序，使結果確定〔本頁推導：論文未寫平手規則〕。</p>
+  </div>
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>內容自適應分割（玩具場景）</h3></div>
+    <p class="plate-lead">假設：特徵是每個 patch 的 48 維原始像素（4×4×RGB），代替論文中進入核心的模型特徵；場景是固定的 128×128 合成影像。數值說明機制，不重現論文數字。</p>
+    <div class="ctl c2ctl">
+      <div class="ctl-row"><span class="lbl">分組方法</span><div class="seg" id="c2-m" role="group" aria-label="分組方法"><button type="button" data-v="adaptive" aria-pressed="true">自適應（RTI）</button><button type="button" data-v="fixed" aria-pressed="false">等距切割</button><button type="button" data-v="featsim" aria-pressed="false">特徵相似度（Feat Sim）</button></div></div>
+      <div class="ctl-row"><span class="lbl">預算 R</span><div class="seg" id="c2-R" role="group" aria-label="預算 R"></div></div>
+      <div class="rng c2t"><label class="lbl" for="c2-t">在輸入像素中混入噪聲：t<output id="c2-to">1.00</output></label><input id="c2-t" type="range" min="0" max="1" step="0.05" value="1"></div>
+    </div>
+    <div class="pg two">
+      <div class="fig">
+        <div class="cv-wrap" id="c2-wrap"><canvas id="c2-img"></canvas><div class="cv-ov" id="c2-ov" tabindex="0" role="application" aria-label="影像分割，方向鍵移動、Enter 選取"></div></div>
+        <p class="cap" id="c2-sel">點選或以方向鍵、Enter 選取一個 patch，突顯它所屬的組。</p>
+      </div>
+      <div class="ctl">
+        <div class="tscroll" style="margin:0"><table id="c2-tab"><caption>四種方法在目前 R、t 下的讀數</caption>
+          <thead><tr><th>方法</th><th class="num">EV</th><th class="num">spread</th><th class="num">size–detail</th><th class="num">最大區域</th></tr></thead><tbody></tbody></table></div>
+        <p class="cap">玩具場景遠比真實模型特徵容易壓縮：R = 256 時自適應保留 0.995，論文的凍結模型約 0.74（App. C.1：約 26% 回收不了）；論文 Tab. 4 中 Feat Sim 保留 0.74、略高於 RTI 的 0.73，這裡的排序不同。請不要從這張表的 EV 排序下結論；它只示範分組形狀（spread、區域大小）的差別。玩具場景最細節的 15% patch 占 94.6% 細節（論文 Fig. 2a 為 50%）。</p>
+      </div>
+    </div>
+    <div class="fig" id="c2-barbox"><div class="c1t">沿 Hilbert 順序的特徵差距 d<sub>j</sub>（j = 1…1023）</div><canvas id="c2-bars"></canvas><p class="cap" id="c2-barcap"></p></div>
+    <p class="cap">t 滑桿把噪聲混進輸入像素。論文的切割讀的是模型特徵，模型特徵追蹤的是乾淨影像估計的結構（Sec. 3.3），所以論文的分割在早期不會像這裡一樣變成隨機；此滑桿只示範「特徵不含結構時，切點不再對齊細節」。</p>
+    <p class="plate-f">讀數由本頁依 Eq. 1、2、5、6 即時計算。Feat Sim 細節（推定）：特徵先減去全域平均再正規化，錨點為 raster 位置 ⌊rN/R⌋，中心化與否會改變指派。Skip（推定）：保留與全域平均距離最大的 R 個 token，其餘換成全域平均。size–detail：各組 −log₂(大小) 與組內平均細節的相關；等距切割在 R 整除 1024 時恰為 0。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <div class="prose">
+    <p>在 t = 1、R = 128 時，自適應切割讓整片天空成為一個 192 patch 的區域，招牌的條紋處切成單一 patch，spread 為 0.619 格；等距切割每區 8 個 patch，spread 1.144。Feat Sim 的 spread 為 6.438，點選它的一組可看到 patch 散在畫面各處。Skip 的 EV 只有 0.242。把 t 拉到 0（純噪聲）時，自適應分割的 size–detail 相關從 +0.523 降到約 0，與論文「最吵的步驟每種方法都接近 0」的描述一致（App. C.2）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">RTI 如何決定 R 個區域？成本與參數量？何時重算？</p>
+    <p class="a">算曲線上相鄰 patch 的特徵距離 $d_j$（Eq. 1），在最大的 $R-1$ 個處切（Eq. 2）；$O(N)$、無參數；每個去噪步從當前 $x_t$ 重算（Sec. 3.3、App. A）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="rti-hilbert-order-region-partition.html">Hilbert 順序與區域切割</a></p>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="read" data-toc="07" data-tt="READ">
+  <div class="ch-num">07 · READ</div>
+  <h2>READ 把一個區域匯集成一個 token</h2>
+  <div class="sym"><b>本節符號</b>$c$：一個區域；$|c|$：其 patch 數；$c(j)$：patch $j$ 所屬區域；$\alpha_j$：區域內的匯集權重；$w\in\mathbb R^d$：可學習的評分向量；$z_c$：區域 token；$e_{\text{size}}[\cdot]$：尺寸嵌入。</div>
+  <div class="prose">
+    <p>每個區域經 READ 變成一個 token（Sec. 3.4）：</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0">$$\alpha_j=\operatorname{softmax}_{j\in c}\big(w^\top h_j^{(s_0)}\big)$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="eq"><div class="eq-m" tabindex="0">$$z_c=\sum_{j\in c}\alpha_j\,h_j^{(s_0)}+e_{\text{size}}\big[\lfloor\log_2|c|\rfloor\big]$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="prose">
+    <p>區域 token 由兩部分組成：區域內 softmax 權重 $\alpha_j=\mathrm{softmax}_{j\in c}(w^\top h_j)$ 的加權平均，加上尺寸嵌入 $e_{\text{size}}[\lfloor\log_2|c|\rfloor]$（Eq. 3）。softmax 只在區域 $c$ 內計算，所以 READ 等於一個限制在區域內的單查詢注意力，不是盲目的平均，可以強調區域中資訊較多的 patch。全模型只有一個評分向量 $w$。區域的大小是任意整數，所以尺寸嵌入用索引 $\lfloor\log_2|c|\rfloor$，讓核心知道這個 token 代表 1 個還是 16 個 patch。</p>
+    <p>READ 與 WRITE 都只在區域內作用，成本是 $O(N)$，與 $R$ 無關；它們包含介面全部的可學習參數。全域的查詢（例如 Latent Array 的交叉注意力）每個查詢都要讀整張圖，成本是 $O(NR)$（Sec. 2）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">區域 token 由哪些部分組成？</p>
+    <p class="a">區域內 softmax 權重 $\alpha_j=\mathrm{softmax}_{j\in c}(w^\top h_j)$ 的加權平均，加上尺寸嵌入 $e_{\text{size}}[\lfloor\log_2|c|\rfloor]$（Eq. 3）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="rti-read-write-interface.html">Read / Write 介面：核心區段、區域 token 與位置</a></p>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="position" data-toc="08" data-tt="位置">
+  <div class="ch-num">08 · 位置</div>
+  <h2>區域 token 的位置是相量的平均</h2>
+  <div class="sym"><b>本節符號</b>$\omega$：RoPE 的一個頻率；$e^{i\omega p}$：位置 $p$ 在該頻率的單位相量；$|m(\omega)|$：區域內相量平均的長度。</div>
+  <div class="prose">
+    <p>預訓練主幹用旋轉位置嵌入（rotary position embedding，RoPE）。對一個頻率 $\omega$，位置 $p$ 對應旋轉角 $\omega p$，也就是單位圓上的一個相量 $e^{i\omega p}$；注意力只看兩個 token 的旋轉角之差。模型用許多個頻率，高頻率的角度隨位置轉得快，低頻率轉得慢。</p>
+    <p>數值例：取 $\omega=1$，相鄰兩個位置 0 與 1 的旋轉角是 0 與 1 弧度，兩個相量的平均長度是 $|\cos(1/2)|=0.878$；取 $\omega=0.01$，兩個角度幾乎相同，平均長度是 0.99999。平均後，角度轉得快（波長短）的分量變小，角度轉得慢（波長長）的分量幾乎不變；這種「保留長波長、削弱短波長」的效果稱為低通。</p>
+    <p>區域 token 的位置取其 patch 旋轉位置嵌入（單位相量）的平均；波長長於區域範圍的分量仍接近長度 1，波長較短的分量縮向 0，所以位置依區域大小變粗（Sec. 3.4）。論文的說法是：單一 patch 的位置精確，大區域的位置粗略，這正適合代表一塊面積而不是一個點的 token。</p>
+    <p>〔本頁推導〕一列長 $L$、相鄰間隔 1 的直線區域，頻率 $\omega$ 的平均相量長度是 $\left|\dfrac{\sin(\omega L/2)}{L\sin(\omega/2)}\right|$（等比級數求和）；$L=1$ 時為 1，$\omega L\ll1$ 時接近 1。這個公式只適用於直線段（旁瓣與 $\omega>\pi$ 的混疊除外）；RTI 的區域是二維的 Hilbert 段，下面的元件直接數值求和。</p>
+  </div>
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>區域 token 的權重與位置</h3></div>
+    <p class="plate-lead">假設：區域是 Hilbert 序列上的一段 [p, p+L)；READ 的評分 wᵀh 以固定的替代分數 β·s 表示（s 為玩具場景的對數細節，標準化，推定）；RoPE 每軸 16 個頻率 ω = 10000^(−i/16)，i = 0…15（推定）。</p>
+    <div class="ctl c3ctl">
+      <div class="c1sl">
+        <div class="rng"><label class="lbl" for="c3-p">起點 p<output id="c3-po">100</output></label><input id="c3-p" type="range" min="0" max="1023" step="1" value="100"></div>
+        <div class="rng"><label class="lbl" for="c3-L">段長 L<output id="c3-Lo">37</output></label><input id="c3-L" type="range" min="1" max="256" step="1" value="37"></div>
+        <div class="rng"><label class="lbl" for="c3-b">評分銳利度 β<output id="c3-bo">1.0</output></label><input id="c3-b" type="range" min="0" max="4" step="0.1" value="1"></div>
+      </div>
+      <div class="ctl-row" id="c3-chips"><button class="chip" type="button" data-L="1">L = 1</button><button class="chip" type="button" data-L="4">L = 4</button><button class="chip" type="button" data-L="16">L = 16</button><button class="chip" type="button" data-L="64">L = 64</button></div>
+    </div>
+    <div class="pg two">
+      <div class="fig"><div class="c1t">READ 權重（圓點大小 ∝ √α）</div><svg id="c3-grid" role="img" aria-label="區域內的 READ 權重"></svg></div>
+      <div class="fig"><div class="c1t">區域 token 的位置：均勻相量平均</div><svg id="c3-chart" role="img" aria-label="相量平均長度對波長"></svg>
+        <div class="legend"><span class="lg c3x">x 軸 |m(ω)|</span><span class="lg c3y">y 軸 |m(ω)|</span></div></div>
+    </div>
+    <div class="pair c3ro">
+      <p class="readout" id="c3-ro1"></p>
+      <p class="readout" id="c3-ro2"></p>
+    </div>
+    <p class="plate-f">讀數由本頁依 Eq. 3、Eq. 6 與相量平均即時計算。「接近完整的頻率數」是 |m(ω)| ≥ 0.9 的頻率個數，0.9 是本頁選的門檻（推定）。READ 權重中心只表示權重集中在哪裡，不是 token 的位置；論文的位置用均勻平均，所以右圖與「位置」讀數不隨 β 改變。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+  <div class="prose">
+    <p>L = 1 時 16 個頻率都完整。L 增大時，短波長的分量先縮小：預設的 37 格區域只有 13 個頻率仍接近完整。增大 β 時 READ 權重集中到細節多的 patch，最大權重上升、spread 下降，而右圖的曲線不變。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">區域 token 的位置怎麼給？大區域的位置為何較粗？</p>
+    <p class="a">取其 patch 旋轉位置嵌入（單位相量）的平均；波長長於區域範圍的分量仍接近長度 1，波長較短的分量縮向 0，所以位置依區域大小變粗（Sec. 3.4）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="tokc-position-for-merged-tokens.html">合併後 token 的位置處理</a></p>
+</section>
+
+<!-- S9 ============================================================ -->
+<section class="ch" id="write" data-toc="09" data-tt="WRITE">
+  <div class="ch-num">09 · WRITE</div>
+  <h2>WRITE 把區域的變化散回每個 patch</h2>
+  <div class="sym"><b>本節符號</b>$z'_c$：區域 token 經過核心後的值；$g$：小型可學習映射；$[\cdot\Vert\cdot]$：向量串接。</div>
+  <div class="eq"><div class="eq-m" tabindex="0">$$h_j^{(s_1+1)}=h_j^{(s_0)}+g\Big(\big[\,h_j^{(s_0)}\,\Vert\,z'_{c(j)}-z_{c(j)}\,\big]\Big)$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="prose">
+    <p>Eq. 4 與「把 $z'_c-z_c$ 原樣加到每個 patch」的天真廣播不同：每個 patch 以 $g([h_j\Vert z'_c-z_c])$ 產生自己的更新，同一區域的 patch 可以各自特化，而不是一起移動。這個形式同時是一條繞過核心的跳接：每個 patch 保留進核心之前的特徵，把核心的工作當修正量接收，所以核心從未看過個別 patch，末段仍能產生逐像素的輸出。消融實驗把整個可學習的 READ/WRITE（READ 與 WRITE 全部）換成平均匯集與廣播寫回，GenEval 下降 7.2（Eq. 4、Sec. 3.4、Fig. 8b）。</p>
+    <p>READ 與 WRITE 都初始化為恆等，訓練從凍結模型的行為出發（Sec. 4.1）。論文沒有給出 $g$ 的層數與寬度，本頁因此不為 WRITE 設計互動元件。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 4 與「把 $z'_c-z_c$ 加到每個 patch」有何不同？為何 coda 仍能逐像素輸出？</p>
+    <p class="a">每個 patch 以 $g([h_j\Vert z'_c-z_c])$ 產生自己的更新，可特化；形式上是繞過核心的跳接，patch 保留核心前特徵；換成平均＋廣播 GenEval −7.2（Eq. 4、Fig. 8b）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="rti-read-write-interface.html">Read / Write 介面</a></p>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="training" data-toc="10" data-tt="訓練">
+  <div class="ch-num">10 · 訓練</div>
+  <h2>隨機預算讓一個 checkpoint 涵蓋訓練範圍內的預算</h2>
+  <div class="prose">
+    <p>一個 checkpoint 適用多種預算的做法是：主幹凍結，只訓練 rank-32 的 LoRA 與 READ/WRITE（恆等初始化）；每一步從 {64, 128, 256, 512} 隨機抽一個 $R$；評估時，未見過的 96、192、384 落在同一條品質曲線上（Sec. 4.1、4.3）。所以在 64–512 的範圍內，預算是訓練完成後才設定的可調參數。類別條件版本也有同樣的現象：訓練過的 $R=128$ 的 FID 為 6.34，未訓練過的 130 為 6.23（App. B.2）。</p>
+    <p>所有基準都是作者在同一介面中重新實作的：同一凍結主幹、LoRA 位置與 rank、訓練配方、資料與預算協定，只換縮減規則（App. A）。Feat Sim 取 $R$ 個等距錨點並依 cosine 相似度指派，再照樣使用 READ/WRITE；Latent Array 以 $R$ 個不帶旋轉位置的可學習潛變數讀寫；Token Skip 的中段區塊稠密與稀疏交替，稀疏塊只收前 12.5% 的影像 token（平均每塊 576 個），交替範圍為 $[2,13]$。</p>
+  </div>
+  <div class="tscroll"><table class="stack">
+    <caption>Tab. 2 摘要：訓練與取樣設定</caption>
+    <thead><tr><th>項目</th><th>MiniT2I-B/16</th><th>MiniT2I-L/16</th><th>JiT-B/16（類別條件）</th></tr></thead><tbody>
+    <tr><td>解析度、N</td><td data-h="B/16">512²、1024</td><td data-h="L/16">512²、1024</td><td data-h="JiT-B/16">256²、256</td></tr>
+    <tr><td>主幹區塊、核心</td><td data-h="B/16">17、3–13</td><td data-h="L/16">23、3–19</td><td data-h="JiT-B/16">12、4–9</td></tr>
+    <tr><td>訓練預算</td><td data-h="B/16">{64, 128, 256, 512}</td><td data-h="L/16">同左</td><td data-h="JiT-B/16">{32, 64, 128, 192}</td></tr>
+    <tr><td>步數</td><td data-h="B/16">40K</td><td data-h="L/16">40K</td><td data-h="JiT-B/16">100K</td></tr>
+    <tr><td>可訓練參數（占主幹）</td><td data-h="B/16">16.3M（5.9%）</td><td data-h="L/16">36.0M（3.8%）</td><td data-h="JiT-B/16">6.0M（4.4%）</td></tr>
+    <tr><td>取樣</td><td data-h="B/16">100 Euler 步、guidance 5.0</td><td data-h="L/16">同左</td><td data-h="JiT-B/16">50 Heun 步、guidance 3.0 於 [0.1, 1.0]</td></tr>
+  </tbody></table></div>
+  <div class="prose"><p class="note">共用設定：AdamW、學習率 1e-4、2K warmup、global batch 256、LoRA rank 32、EMA 0.9999。文字到影像模型用 MiniT2I 約 120K 張的對齊資料池，類別條件模型用 ImageNet-1K；JiT-L/16 的核心為 24 塊中的 8–19。</p></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">訓練時哪些參數更新？R 怎麼選？未訓練的預算表現如何？</p>
+    <p class="a">主幹凍結，只訓練 rank-32 LoRA 與 READ/WRITE（恆等初始化）；每步從 {64, 128, 256, 512} 隨機抽 $R$；未見過的 96、192、384 落在同一曲線（Sec. 4.1、4.3）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="rti-elastic-budget-lora-training.html">彈性預算與 LoRA 訓練</a>、<a href="tokc-dynamic-chunking-bytes-to-pixels.html">動態切塊：BLT、H-Net、DC-DiT 到影像的系譜</a></p>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="cost" data-toc="11" data-tt="速度上限">
+  <div class="ch-num">11 · 速度上限</div>
+  <h2>加速的上限來自不縮短的部分</h2>
+  <div class="sym"><b>本節符號</b>$B$：區塊數；$n_{\text{core}}=s_1-s_0+1$：核心區塊數（含兩端點；B/16 的 $[3,13]$ 為 11、$[1,15]$ 為 15）；$\nu=n/N$：區塊內 token 數相對於 $N$ 的比例；$\eta$：注意力在每塊成本中的比重；$\rho$：相對成本；$\tau$：不縮短的開銷比例。</div>
+  <div class="prose">
+    <p>論文的速度是實測的：在 RTX 4090 上用 fused attention，每批 4 張（classifier-free guidance 使其加倍為 8），量三次交錯執行並取 images/s 的中位數；計時包含分割、READ/WRITE、adapter 與文字串流。速度比是同一主幹兩個吞吐量的比值（Sec. 4.1）。Fig. 10 顯示實測時間比解析 FLOPs 下降得快，因為這些長度下注意力部分受記憶體頻寬限制；分割與 READ/WRITE 只占不到 2%。</p>
+    <p>B/16 速度在約 2.5× 飽和，原因是 prelude、coda、文字串流不縮短，所以 B/16 低於 $R\approx192$ 時更少的預算只降低品質、不再加速（L/16 主幹較長，仍會加速：L/16 在 $R=256/128/64$ 時為 2.59×／2.86×／3.01×）。少步數與少 token 的比較都在 L/16 上進行（App. B.3）：L/16 的區域 token 一步便宜 2.6×（L/16 dense 288 ms、L/16 RTI R = 256 112 ms），同樣 1.8 s/張的時間 L/16 dense 只能跑 6 步、L/16 RTI 跑 16 步，GenEval 65.9 對 82.7；高於約 5 s 時增加步數較划算，11.2 s 時 L/16 dense 87.6 對 L/16 RTI 86.3（Sec. 4.2、App. B.3）。作者另指出，六步 Euler 是弱取樣器，少步數蒸餾模型配上區域介面是自然的組合。</p>
+    <p>〔本頁推導〕一個只看影像 token 的成本模型：每個區塊的相對成本為 $(1-\eta)\nu+\eta\nu^2$，$\eta=0$ 只算線性層、$\eta=1$ 只算注意力。整個主幹的相對成本為</p>
+  </div>
+  <div class="eq"><div class="eq-m" tabindex="0">$$\rho=\frac{(B-n_{\text{core}})+n_{\text{core}}\big((1-\eta)\nu+\eta\nu^2\big)}{B},\qquad \nu=R/N$$</div><span class="eq-n">本頁推導</span></div>
+  <div class="prose">
+    <p>這個模型只用來對照比例，不預測吞吐量。核心長度的比較（App. B.5、Tab. 3）：把核心從 $[3,13]$ 拉長到 $[1,15]$，在 $R=256$ 時 $\eta=0$ 給出 $5888/8960=0.657$（論文 0.66×），$\eta=1$ 給出 0.439（論文「0.44× on attention」）。要讓 $[1,15]$ 回到 $[3,13]$ 在 $R=256$ 的成本，$\eta=0$ 解得 $R=460.8$、$\eta=1$ 解得 $R=572.4$，正是論文的同成本區間 $R\approx461$–572。論文附註：這個區間只計影像 token，全長的文字串流使真正的同吞吐量預算低於 461；$[1,15]$ 沒有計時，只知它的上限高於 2.5×。在同預算下較長的核心較差（GenEval 77.4 對 84.7），但便宜三分之一；在恢復同成本的 $R=512$ 時兩者無法區分（85.4，差 +0.7 落在 ±1.7 內）。作者的結論是：核心長度買的是計算量，不是品質。</p>
+    <p>$R\to0$ 時，只看影像 token 的上限是 B/16 $17/6=2.83\times$、L/16 $23/6=3.83\times$。B/16 實測約在 2.5× 飽和，差距來自文字串流與固定開銷；若把它全歸於不縮短的開銷 $\tau$（成本 $\tau+(1-\tau)\rho$），則 $\tau\approx0.073$〔本頁推導〕。</p>
+  </div>
+  <div class="plate" id="c4">
+    <div class="plate-h"><span class="id">C4</span><h3>成本模型與速度上限</h3></div>
+    <p class="plate-lead">假設：只計影像 token；每塊成本是線性與注意力兩部分的混合，畫出 η = 0 與 η = 1 兩個極端；τ 是不縮短的開銷比例。</p>
+    <div class="ctl">
+      <div class="ctl-row"><span class="lbl">主幹與核心</span><div class="seg" id="c4-cfg" role="group" aria-label="主幹與核心"><button type="button" data-v="b16" aria-pressed="true">B/16 [3,13]</button><button type="button" data-v="b16long" aria-pressed="false">B/16 [1,15]</button><button type="button" data-v="l16" aria-pressed="false">L/16 [3,19]</button><button type="button" data-v="jit" aria-pressed="false">JiT-B/16 c2i [4,9]</button></div></div>
+      <div class="c1sl">
+        <div class="rng"><label class="lbl" for="c4-R">預算 R<output id="c4-Ro">256</output></label><input id="c4-R" type="range" min="0" max="10" step="1" value="6"></div>
+        <div class="rng"><label class="lbl" for="c4-tau">不縮短的開銷 τ<output id="c4-tauo">0.000</output></label><input id="c4-tau" type="range" min="0" max="0.3" step="0.005" value="0"></div>
+      </div>
+    </div>
+    <div class="pg side">
+      <div class="fig" id="c4-fig"><svg role="img" aria-label="速度對預算"></svg>
+        <div class="legend"><span class="lg tot">只算線性層（η = 0）</span><span class="lg ref">只算注意力（η = 1）</span><span class="lg pt">論文點</span></div></div>
+      <p class="readout" id="c4-ro"></p>
+    </div>
+    <p class="cap" id="c4-cap">τ = 0 時，B/16 的兩個量測點與 L/16 在 R ≥ 128 的量測點落在帶內；L/16 在 R = 64 的 3.01× 低於帶。量測時間比 FLOPs 下降得快（Fig. 10），這個模型只對照比例，不預測吞吐量。</p>
+    <p class="plate-f">論文量測（Tab. 1、Fig. 16）以空心圓表示；JiT 的點是論文依 token 計算量推出的解析值（主幹未計時；App. B.2、Fig. 11），以十字表示。讀數由本頁依上式即時計算。</p>
+    <p class="sr" aria-live="polite" id="c4-live"></p>
+  </div>
+  <div class="plate" id="c5">
+    <div class="plate-h"><span class="id">C4b</span><h3>同樣秒數能跑幾步（固定為 L/16，R = 256）</h3></div>
+    <p class="plate-lead">假設：每步成本固定為論文量到的 dense 288 ms 與 RTI（R = 256）112 ms（App. B.3）。</p>
+    <div class="pg side">
+      <div>
+        <div class="rng"><label class="lbl" for="c5-s">每張影像秒數 S<output id="c5-so">1.8</output></label><input id="c5-s" type="range" min="1" max="12" step="0.1" value="1.8"></div>
+        <div class="fig" id="c5-fig"><svg role="img" aria-label="同時間內的步數"></svg></div>
+      </div>
+      <div class="tscroll" style="margin:0"><table>
+        <caption>論文配對與本頁計算</caption>
+        <thead><tr><th class="num">秒數</th><th class="num">論文 dense</th><th class="num">論文 RTI</th><th class="num">本頁 dense</th><th class="num">本頁 RTI</th></tr></thead><tbody>
+        <tr><td class="num">1.8</td><td class="num">6</td><td class="num">16</td><td class="num">6</td><td class="num">16</td></tr>
+        <tr><td class="num">2.8</td><td class="num">10</td><td class="num">25</td><td class="num">9</td><td class="num">25</td></tr>
+        <tr><td class="num">5.7</td><td class="num">20</td><td class="num">50</td><td class="num">19</td><td class="num">50</td></tr>
+        <tr><td class="num">11.2</td><td class="num">39</td><td class="num">100</td><td class="num">38</td><td class="num">100</td></tr>
+      </tbody></table></div>
+    </div>
+    <p class="plate-f">本頁步數為 ⌊S / 每步時間⌋。論文以成本差 4% 內配對，floor 可能少 1 步。GenEval：1.8 s 時 dense 65.9、RTI 82.7；11.2 s 時 dense 87.6、RTI 86.3（App. B.3）。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">B/16 速度為何在約 2.5× 飽和？1.8 s/張時 RTI 為何勝過少步數的 dense？</p>
+    <p class="a">prelude、coda、文字串流不縮短，B/16 低於 $R\approx192$ 不再加速（L/16 仍會加速）；L/16 上區域 token 的一步便宜 2.6×（288 vs 112 ms），同時間 L/16 dense 6 步、L/16 RTI 16 步，GenEval 65.9 vs 82.7；高於約 5 s 增加步數較划算（Sec. 4.2、App. B.3）。</p>
+  </div></details>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="results" data-toc="12" data-tt="實驗結果">
+  <div class="ch-num">12 · 實驗結果</div>
+  <h2>同預算下 RTI 領先每種縮減方法</h2>
+  <div class="prose">
+    <p>評估用 GenEval（553 個提示的整體準確率）與 PartiPrompts 全部 1632 個提示上的三個偏好分數：CLIPScore、PickScore、ImageReward（Sec. 4.1）。下表的 ± 是相對於同區塊 dense 列的配對差 95% 範圍。</p>
+  </div>
+  <div class="tscroll"><table id="tab1">
+    <caption>Tab. 1：512² 文字到影像生成</caption>
+    <thead><tr><th>模型</th><th class="num">R</th><th class="num">img/s</th><th class="num">速度</th><th class="num">GenEval</th><th class="num col-x">CLIP</th><th class="num col-x">Pick</th><th class="num col-x">IR</th></tr></thead><tbody>
+    <tr><td>MiniT2I-B/16</td><td class="num">1024</td><td class="num">0.40</td><td class="num">1.00×</td><td class="num">87.2</td><td class="num col-x">28.23</td><td class="num col-x">22.45</td><td class="num col-x">1.18</td></tr>
+    <tr><td>Token Skip</td><td class="num">576*</td><td class="num">0.48</td><td class="num">1.19×</td><td class="num">82.3±1.7</td><td class="num col-x">28.08±.10</td><td class="num col-x">21.93±.03</td><td class="num col-x">1.06±.02</td></tr>
+    <tr><td>Feat Sim</td><td class="num">512</td><td class="num">0.74</td><td class="num">1.84×</td><td class="num">84.7±1.6</td><td class="num col-x">28.04±.09</td><td class="num col-x">22.04±.02</td><td class="num col-x">1.07±.02</td></tr>
+    <tr class="hl"><td>RTI</td><td class="num">512</td><td class="num">0.74</td><td class="num">1.84×</td><td class="num">87.8±1.5</td><td class="num col-x">28.09±.08</td><td class="num col-x">22.30±.02</td><td class="num col-x">1.11±.01</td></tr>
+    <tr><td>Feat Sim</td><td class="num">256</td><td class="num">0.86</td><td class="num">2.15×</td><td class="num">80.5±1.9</td><td class="num col-x">27.73±.11</td><td class="num col-x">21.57±.03</td><td class="num col-x">0.93±.02</td></tr>
+    <tr><td>Latent Array</td><td class="num">256</td><td class="num">0.86</td><td class="num">2.15×</td><td class="num">45.7±3.1</td><td class="num col-x">23.30±.23</td><td class="num col-x">19.78±.07</td><td class="num col-x">−0.65±.06</td></tr>
+    <tr class="hl"><td>RTI</td><td class="num">256</td><td class="num">0.86</td><td class="num">2.15×</td><td class="num">84.7±1.7</td><td class="num col-x">28.04±.10</td><td class="num col-x">22.06±.03</td><td class="num col-x">1.06±.02</td></tr>
+    <tr><td>MiniT2I-L/16</td><td class="num">1024</td><td class="num">0.14</td><td class="num">1.00×</td><td class="num">88.1</td><td class="num col-x">28.50</td><td class="num col-x">22.75</td><td class="num col-x">1.23</td></tr>
+    <tr><td>Feat Sim</td><td class="num">512</td><td class="num">0.29</td><td class="num">2.11×</td><td class="num">83.1±1.9</td><td class="num col-x">28.80±.09</td><td class="num col-x">22.34±.02</td><td class="num col-x">1.16±.01</td></tr>
+    <tr class="hl"><td>RTI</td><td class="num">512</td><td class="num">0.29</td><td class="num">2.11×</td><td class="num">87.5±1.3</td><td class="num col-x">28.58±.12</td><td class="num col-x">22.63±.04</td><td class="num col-x">1.20±.03</td></tr>
+    <tr><td>Feat Sim</td><td class="num">256</td><td class="num">0.36</td><td class="num">2.59×</td><td class="num">76.5±2.3</td><td class="num col-x">28.31±.13</td><td class="num col-x">21.76±.03</td><td class="num col-x">1.01±.03</td></tr>
+    <tr class="hl"><td>RTI</td><td class="num">256</td><td class="num">0.36</td><td class="num">2.59×</td><td class="num">86.3±1.6</td><td class="num col-x">28.52±.13</td><td class="num col-x">22.37±.03</td><td class="num col-x">1.17±.03</td></tr>
+  </tbody></table></div>
+  <button class="small-btn tab1-more" type="button" id="tab1-more" aria-pressed="false">顯示全部欄位</button>
+  <div class="prose">
+    <p class="note">* 不是預算：Token Skip 稠密與稀疏核心塊的平均 token 數。</p>
+    <p>主結果：B/16 在 $R=256$ 時速度 2.15×、GenEval 84.7（dense 87.2）；在 $R=512$ 時速度 1.84×、GenEval 87.8，同時在品質與速度上超過自己的 dense。同預算下三個基準的代價是：刪除而非匯總 2.4 GenEval（Token Skip；它只有 1.19×，不是同預算的比較，差距因此被低估）、打散分組 4.2（Feat Sim）、移除分組與位置 39.0（Latent Array；論文 Sec. 4.3 指出這同時移除分組與位置，所以 39.0 是「錨定」貢獻的上界，位置單獨的貢獻論文未分離）（Tab. 1、Sec. 4.2–4.3）。</p>
+    <p>掃同一個 checkpoint 的預算，從 $R=384$（2.00×）起與 dense 的差距落在噪聲內，但 dense 在每個偏好分數上仍領先。$R=512$ 時 Feat Sim 只與 RTI 的 $R=256$ 列持平。L/16 在 $R=512$ 得 87.5（2.11×），在噪聲內；在 $R=256$、2.59× 時得 86.3（dense 88.1）。論文摘要的「在 2.0× 追平 dense、在 2.6× 仍接近」分別對應 B/16 的 $R=384$ 與 L/16 的 $R=256$〔本頁推導：對應關係〕。作者說 L/16 的結果展示的是轉移到更長的主幹，不是建議選 L/16。</p>
+    <h3>基準為何失敗</h3>
+    <p>Token Skip 保留的表示只有 RTI 分組的三分之一；它的稠密那一半核心每次都全量計算，使速度上限低於約 1.3×。Feat Sim 的 patch 離組中心 5.2 格（RTI 0.5），$R=64$ 時差距達 13.8 GenEval，在 $R=256$ 時兩個主幹的每個偏好分數都落後。Latent Array 訓練 40K 步後，一個潛變數的讀取注意力仍覆蓋 11.4 格（最大 12.2）；作者指出 Perceiver-IO 與 RIN 是為從頭訓練設計的（Sec. 4.2）。</p>
+    <h3>消融</h3>
+    <p>把切點改成沿同一順序等距放置（順序、預算與介面不變），$R=128$ 時 GenEval 下降 2.7，預算越大下降越少，因為 $R=256$ 時一區只有 4 個 patch，等距切點已接近自適應切點。換成平均與廣播下降 7.2。換成 latent array 則掉到 Latent Array 基準（Fig. 8b）。</p>
+    <h3>分割跟著影像成形</h3>
+    <p>以 $\hat x$ 的梯度能量作為細節、1 個 patch 為細區域、16 個以上為粗區域：兩者在最吵的步驟攜帶相同的細節，隨影像成形拉開到約 6 倍；$R=256$、取樣中段時細緻度與細節的相關為 +0.58（Sec. 4.4、App. C.3）。切割只讀進入核心的特徵，從不讀細節量，所以這個對齊是模型自己做到的。區域大小的熵在 $R=512$ 時低、$R=64$ 時高；預算決定大小的範圍，影像決定細區域放在哪裡。</p>
+    <h3>分布指標與其他任務</h3>
+    <p>FID（MJHQ-30K，L/16）：RTI 比 Feat Sim 好 8.6（$R=512$）與 13.3（$R=256$），RTI 的 $R=256$ 還低於 Feat Sim 的 $R=512$。FID 是 RTI 在一半 token 時唯一沒追上 dense 的指標：$R=512$ 時高 2.4；作者的結論是壓縮先損失分布保真度，後損失組合準確率（App. B.1）。類別條件 ImageNet-256（JiT）：$R=130$ 時 B/16 的 FID 為 6.23，Feat Sim 為 15.99；$R=64$ 用 62% 的 token 計算量得 16.69，Token Skip 用 71% 得 19.11；L/16 在 $R=193$（88% 計算量）得 2.42，公開的 dense 為 2.36（App. B.2）。</p>
+    <p>順序消融（App. B.4）：$R=256$ 時三種順序的差異在噪聲內；預算越小越依局部性排序。$R=64$ 時 raster 比 Hilbert 低 0.268 PickScore 與 0.154 ImageReward，Morton 介於其間（0.153、0.083）。GenEval 上 raster 在 $R=128$ 與 64 低 3.2 與 4.6（遠超 ±1.6 的波動），Morton 維持參考值；作者的解讀是行尾斷裂傷害構圖，對角跳躍只損失知覺品質。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">B/16 在 R = 256、R = 512 的速度與 GenEval？同預算下三個基準的代價？</p>
+    <p class="a">$R=256$：2.15×、84.7（dense 87.2）；$R=512$：1.84×、87.8；刪除而非匯總 2.4（Token Skip 只有 1.19×，不是同預算比較，差距被低估）、打散分組 4.2、移除分組與位置 39.0（上界）GenEval（Tab. 1、Sec. 4.2–4.3）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="rti-results-and-limits.html">RTI 的實驗結果、消融與限制</a>、<a href="tokc-training-free-diffusion-merging.html">免訓練的擴散 token 合併</a>、<a href="tokc-learned-routing-dynamic-dit.html">學得路由與動態 DiT</a></p>
+</section>
+
+<!-- S13 =========================================================== -->
+<section class="ch" id="compare" data-toc="13" data-tt="與 HiT 比較">
+  <div class="ch-num">13 · 與 HiT 比較</div>
+  <h2>與 HiT 及其他縮減方法的異同</h2>
+  <div class="tscroll"><table class="stack">
+    <caption>RTI、HiT 與相似度合併的差異</caption>
+    <thead><tr><th>面向</th><th>RTI（本文）</th><th>HiT（No. 585）</th><th>ToMe／Feat Sim</th></tr></thead><tbody>
+    <tr><td>起點</td><td data-h="RTI">凍結的預訓練 checkpoint＋LoRA</td><td data-h="HiT">從頭端到端訓練</td><td data-h="ToMe">免訓練或少量調整</td></tr>
+    <tr><td>分組規則</td><td data-h="RTI">無參數：切 Hilbert 序列</td><td data-h="HiT">學習的親和度＋平均連結階層分群</td><td data-h="ToMe">特徵相似度</td></tr>
+    <tr><td>分組形狀</td><td data-h="RTI">必定連通</td><td data-h="HiT">可跨越遠處位置</td><td data-h="ToMe">可跨越遠處位置</td></tr>
+    <tr><td>預算</td><td data-h="RTI">使用者指定的精確 R</td><td data-h="HiT">以壓縮損失調節批次平均比例</td><td data-h="ToMe">固定合併比例</td></tr>
+    <tr><td>目標</td><td data-h="RTI">推論加速</td><td data-h="HiT">生成品質與訓練效率</td><td data-h="ToMe">推論加速</td></tr>
+  </tbody></table></div>
+  <div class="prose">
+    <p>相同點：兩者都在像素空間 DiT 的中段處理較少的 token、以軟權重匯集，並以跳接把資訊送回原 patch 位置（HiT 的跳接投影也初始化為恆等）。HiT 的細節見姊妹教學。</p>
+    <p>論文自己的定位（Sec. 2）：沙漏形狀與階層 Transformer（Nawrot et al. 2022、Geiping et al. 2025）相同，但後者以固定步幅匯集；DC-DiT 也能從預訓練模型升級，但切塊由路由器學習、目標是平均比例而非精確預算，且在 VAE 潛空間中運作；ELIT 是最接近的交叉注意力瓶頸，RTI 的 READ/WRITE 屬於同一族，但把潛變數錨定在空間上。</p>
+  </div>
+  <p class="read">延伸閱讀：<a href="hit-hierarchical-diffusion-transformer.html">姊妹教學：HiT（Hierarchical Diffusion Transformer）</a>（<a href="../index.html#paper-585">關聯圖 No. 585</a>）、<a href="token-compression-lineage.html">系列教學：Transformer 的 token 縮減與階層</a></p>
+</section>
+
+<!-- S14 =========================================================== -->
+<section class="ch" id="impl" data-toc="14" data-tt="實作">
+  <div class="ch-num">14 · 實作</div>
+  <h2>實作設定與注意事項</h2>
+  <div class="prose">
+    <h3>有實驗支持的常見錯誤</h3>
+    <ol>
+      <li>用 raster 順序切割：$R\le128$ 時行尾斷裂明顯降低 GenEval（3.2、4.6；App. B.4）；Morton 只損失知覺分數。</li>
+      <li>以平均與廣播取代 READ/WRITE：GenEval 下降 7.2（Fig. 8b）。</li>
+      <li>換成不帶位置的 latent array：同時移除分組與位置，品質掉到 Latent Array 的 45.7；位置單獨的貢獻論文未分離（Sec. 4.3）。</li>
+      <li>以 FLOPs 估計速度：Fig. 10 的實測時間低於 FLOP 曲線；B/16 約在 2.5× 飽和，$R\lt192$ 不再加速（L/16 仍會加速）。</li>
+    </ol>
+    <h3>論文的做法（未做對照實驗的設計選擇）</h3>
+    <ol start="5">
+      <li>只壓縮中段：依 Fig. 2c 兩端對每個 patch 敏感的推理，B/16 的核心為 17 塊中的 $[3,13]$；App. B.5 只比較了 $[1,15]$（同成本下無差異）。</li>
+      <li>每個去噪步都從當前狀態重建分割（App. A）。</li>
+      <li>每步從 {64, 128, 256, 512} 抽 $R$；未訓練的 96、192、384 落在同一曲線（Sec. 4.3）；只用單一預算訓練的效果未測試。</li>
+      <li>READ/WRITE 初始化為恆等（Sec. 4.1）。論文未給出 $g$ 的層數與寬度，也未給出 $e_{\text{size}}$ 的維度。</li>
+    </ol>
+  </div>
+</section>
+
+<!-- S15 =========================================================== -->
+<section class="ch" id="history" data-toc="15" data-tt="研究脈絡">
+  <div class="ch-num">15 · 研究脈絡</div>
+  <h2>研究脈絡（由 notes/timeline.json 提供）</h2>
+  <div class="prose">
+    <p>token 縮減依序經歷：ViT 的相似度合併（ToMe）、移植到擴散模型的免訓練合併與下採樣（ToMeSD、ToDo）、輸入端的混合解析度 tokenization、讓 token 略過區塊的 Mixture-of-Depths、依層與時間步調整壓縮比的方法、像素空間的 JiT，以及彈性潛變數介面 ELIT 與動態切塊 DC-DiT，最後是本文的 RTI。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S16 =========================================================== -->
+<section class="ch" id="next" data-toc="16" data-tt="限制與延伸">
+  <div class="ch-num">16 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>論文列出的限制（Sec. 5）：速度有上限，因為前段、末段與文字串流不會縮短；核心無法區分同一區域內的 patch；不是所有分組都是 Hilbert 區間；預算由使用者選擇，不由影像內容決定。程式碼與模型公開於 <a href="https://eduardzamfir.github.io/rti">eduardzamfir.github.io/rti</a>。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="rti-lineage-hub.html">RTI 研究脈絡總覽：從 token 縮減到 Hilbert 區域 token</a><span>總覽</span></div></li>
+    <li><div><a href="rti-redundancy-probe-four-requirements.html">冗餘探測：pixel-space 模型中冗餘的位置與四項需求</a><span>S2、S3</span></div></li>
+    <li><div><a href="rti-prior-reductions-compared.html">既有縮減方法各自放棄什麼：相似度合併、latent 瓶頸、token 跳過</a><span>S3</span></div></li>
+    <li><div><a href="rti-hilbert-order-region-partition.html">Hilbert 順序與區域切割：把二維分組化為一維切割</a><span>S5、S6</span></div></li>
+    <li><div><a href="rti-read-write-interface.html">Read / Write 介面：核心區段、區域 token 與位置</a><span>S7–S9</span></div></li>
+    <li><div><a href="rti-elastic-budget-lora-training.html">彈性預算與 LoRA 訓練：一個 checkpoint 對應任意 token 數</a><span>S10</span></div></li>
+    <li><div><a href="rti-results-and-limits.html">RTI 的實驗結果、消融與限制</a><span>S11、S12</span></div></li>
+    <li><div><a href="tokc-lineage-hub.html">Transformer 的 token 縮減與階層：從序列縮短到 RTI 與 HiT 的研究脈絡總覽</a><span>系列總覽</span></div></li>
+    <li><div><a href="pixel-space-diffusion.html">Pixel-space diffusion：latent 層是否必要的第三路線</a><span>站內既有筆記</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Eduard Zamfir, Christian Reisswig, Zongwei Wu, Yongqin Xian, Radu Timofte. Elastic Token Compression for Pixel-Space Diffusion Transformers. 2026. <a href="https://arxiv.org/abs/2608.29281">arXiv:2608.29281</a>.</p>
+  <p>本頁的方程式與數字取自論文 v1；標示「本頁推導」的內容為本頁自行推導，「推定」為本頁選定、論文未寫明的值。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2022, "title": "Token Merging: Your ViT But Faster", "authors_short": "Bolya et al.", "arxiv": "2210.09461", "role": "相似度合併的起點，RTI 的 Feat Sim 基線", "source": "arXiv 摘要；RTI §2"}, {"year": 2022, "title": "Scalable Diffusion Models with Transformers", "authors_short": "Peebles & Xie", "arxiv": "2212.09748", "role": "DiT：RTI 所縮減的規則 patch 網格 Transformer", "source": "RTI §1"}, {"year": 2022, "title": "Scalable Adaptive Computation for Iterative Generation", "authors_short": "Jabri et al.", "arxiv": "2212.11972", "role": "RIN：latent 瓶頸，RTI 的 Latent Array 基線之一", "source": "arXiv 摘要；RTI §2, §4.2"}, {"year": 2023, "title": "Token Merging for Fast Stable Diffusion", "authors_short": "Bolya & Hoffman", "arxiv": "2303.17604", "role": "把 token 合併帶入擴散模型", "source": "arXiv 摘要；RTI §2"}, {"year": 2023, "title": "Vision Transformers with Mixed-Resolution Tokenization", "authors_short": "Ronen et al.", "arxiv": "2304.00287", "role": "以 quadtree 做內容自適應輸入 tokenization", "source": "arXiv 摘要；RTI §2"}, {"year": 2024, "title": "ToDo: Token Downsampling for Efficient Generation of High-Resolution Images", "authors_short": "Smith et al.", "arxiv": "2402.13573", "role": "免訓練的擴散 token 下採樣", "source": "arXiv 摘要；RTI §2"}, {"year": 2024, "title": "Mixture-of-Depths: Dynamically allocating compute in transformer-based language models", "authors_short": "Raposo et al.", "arxiv": "2404.02258", "role": "token 跳過，RTI 的 Token Skip 基線", "source": "arXiv 摘要；RTI §4.2"}, {"year": 2024, "title": "Layer- and Timestep-Adaptive Differentiable Token Compression Ratios for Efficient Diffusion Transformers", "authors_short": "You et al.", "arxiv": "2412.16822", "role": "依層與時間步調整壓縮比", "source": "arXiv 摘要；RTI §2"}, {"year": 2025, "title": "Back to Basics: Let Denoising Generative Models Denoise", "authors_short": "Li & He", "arxiv": "2511.13720", "role": "JiT：pixel-space、x-prediction，RTI 骨幹的家族", "source": "arXiv 摘要；RTI §1, §3.1"}, {"year": 2026, "title": "One Model, Many Budgets: Elastic Latent Interfaces for Diffusion Transformers", "authors_short": "Haji-Ali et al.", "arxiv": "2603.12245", "role": "彈性 latent 介面，RTI 稱最接近的工作", "source": "arXiv 摘要；RTI §2"}, {"year": 2026, "title": "DC-DiT: Adaptive Compute and Elastic Inference for Visual Generation via Dynamic Chunking", "authors_short": "Haridas et al.", "arxiv": "2603.06351", "role": "router 學得的動態切塊，可由預訓練 DiT upcycle", "source": "arXiv 摘要；RTI §2"}, {"year": 2026, "title": "Elastic Token Compression for Pixel-Space Diffusion Transformers", "authors_short": "Zamfir et al.", "arxiv": "2608.29281", "role": "本文：Hilbert 順序區域 token 與彈性預算", "source": "論文全文"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+const lgs=(d0,d1,r0,r1)=>{const a=Math.log(d0),b=Math.log(d1);return v=>r0+(Math.log(v)-a)/(b-a)*(r1-r0)};
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+const f3=v=>(Math.abs(v)<0.0005?0:v).toFixed(3);
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function frame(svg,o){
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m=o.m,x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=m.t;
+  const X=(o.xlog?lgs:lin)(o.x[0],o.x[1],x0,x1),Y=lin(o.y[0],o.y[1],y0,y1);
+  const g=el('g',null,svg);
+  (o.yt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.yf?o.yf(v):String(v)),yy=Y(val);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},g);tx(g,x0-8,yy+4,lab,{class:'tk','text-anchor':'end'})});
+  (o.xt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.xf?o.xf(v):String(v)),xx=X(val);el('line',{x1:xx,x2:xx,y1:y0,y2:y0+4,class:'axl'},g);tx(g,xx,y0+18,lab,{class:'tk','text-anchor':'middle'})});
+  el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  if(o.xl)tx(g,(x0+x1)/2,o.H-4,o.xl,{class:'al','text-anchor':'middle'});
+  if(o.yl)tx(g,4,12,o.yl,{class:'al'});
+  return {X,Y,g,x0,x1,y0,y1};
+}
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+function tok(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
+function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function gauss(r){const u1=r(),u2=r();return Math.sqrt(-2*Math.log(1-u1))*Math.cos(2*Math.PI*u2)}
+
+/* ---------- orders ---------- */
+const G=32,N=1024,PX=4,S=128,FD=PX*PX*3;
+function hilbertXY(n,d){let x=0,y=0,t=d;for(let s=1;s<n;s*=2){const rx=1&(t>>1),ry=1&(t^rx);if(ry===0){if(rx===1){x=s-1-x;y=s-1-y}const q=x;x=y;y=q}x+=s*rx;y+=s*ry;t>>=2}return[x,y]}
+function mortonXY(n,d){let x=0,y=0;for(let b=0;(1<<(2*b))<n*n;b++){x|=((d>>(2*b))&1)<<b;y|=((d>>(2*b+1))&1)<<b}return[x,y]}
+function rasterXY(n,d){return[d%n,Math.floor(d/n)]}
+const ORD={hilbert:hilbertXY,morton:mortonXY,raster:rasterXY},orderCache=new Map();
+function order(name,q){const k=name+'|'+q;if(!orderCache.has(k)){const a=[];for(let d=0;d<q*q;d++)a.push(ORD[name](q,d));orderCache.set(k,a)}return orderCache.get(k)}
+function components(cells){const set=new Set(cells.map(c=>c[0]*4096+c[1])),seen=new Set();let k=0;const lab=new Map();
+  for(const c of cells){const key=c[0]*4096+c[1];if(seen.has(key))continue;k++;const st=[c];seen.add(key);lab.set(key,k);
+    while(st.length){const [x,y]=st.pop();for(const [a,b] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]]){const kk=a*4096+b;if(set.has(kk)&&!seen.has(kk)){seen.add(kk);lab.set(kk,k);st.push([a,b])}}}}
+  return{count:k,lab}}
+function spreadOf(cells,w){const m=cells.length;if(!w)w=new Array(m).fill(1/m);let cx=0,cy=0;for(let i=0;i<m;i++){cx+=w[i]*cells[i][0];cy+=w[i]*cells[i][1]}let s=0;for(let i=0;i<m;i++)s+=w[i]*Math.hypot(cells[i][0]-cx,cells[i][1]-cy);return{s,cx,cy}}
+const HIL=order('hilbert',G),HIL_PID=HIL.map(([x,y])=>y*G+x);
+
+/* ---------- toy scene ---------- */
+const SC=(()=>{const img=new Float64Array(S*S*3),r=mulberry32(1);const lerp=(a,b,s)=>[a[0]+(b[0]-a[0])*s,a[1]+(b[1]-a[1])*s,a[2]+(b[2]-a[2])*s];
+  for(let y=0;y<S;y++)for(let x=0;x<S;x++){const n1=r(),n2=r(),u=(x+.5)/S,v=(y+.5)/S;let c;
+    if(v<0.62)c=lerp([0.55,0.75,0.95],[0.85,0.92,0.98],v/0.62);else{c=lerp([0.45,0.58,0.32],[0.36,0.48,0.26],(v-0.62)/0.38);c=c.map(ci=>ci+0.06*(n1-0.5))}
+    if(Math.hypot(u-0.78,v-0.18)<0.09)c=[0.98,0.86,0.45];
+    if(Math.abs(u-0.28)<0.025&&v>0.45&&v<0.70)c=[0.40,0.28,0.18];
+    if(Math.hypot(u-0.28,v-0.38)<0.15)c=[0.20+0.18*(n1-0.5),0.45+0.18*(n1-0.5),0.20];
+    if(u>0.52&&u<0.70&&v>0.66&&v<0.82){c=[0.95,0.95,0.92];if(v>0.69&&v<0.79&&Math.floor(x/2)%3===0)c=[0.10,0.10,0.12]}
+    for(let ch=0;ch<3;ch++)img[(y*S+x)*3+ch]=Math.min(1,Math.max(0,c[ch]+0.01*(n2-0.5)))}
+  const eps=new Float64Array(S*S*3),r2=mulberry32(2);for(let i=0;i<S*S*3;i++)eps[i]=gauss(r2);
+  const det=new Float64Array(N);
+  for(let y=0;y<S;y++)for(let x=0;x<S;x++){let g=0;for(let ch=0;ch<3;ch++){const v=img[(y*S+x)*3+ch];if(x+1<S)g+=(img[(y*S+x+1)*3+ch]-v)**2;if(y+1<S)g+=(img[((y+1)*S+x)*3+ch]-v)**2}det[((y/PX|0))*G+(x/PX|0)]+=g}
+  for(let p=0;p<N;p++)det[p]/=PX*PX;
+  const logd=Array.from(det,e=>Math.log(e+1e-4));const mu=logd.reduce((a,b)=>a+b,0)/N;const sd=Math.sqrt(logd.reduce((a,b)=>a+(b-mu)**2,0)/N);
+  const score=Float64Array.from(logd,v=>(v-mu)/sd);
+  return{img,eps,det,score}})();
+function detailShare(frac){const s=Array.from(SC.det).sort((a,b)=>b-a),k=Math.round(frac*N);let a=0,t=0;for(let i=0;i<N;i++){t+=s[i];if(i<k)a+=s[i]}return a/t}
+const featCache=new Map();
+function featuresAt(t){const key=t.toFixed(2);if(featCache.has(key))return featCache.get(key);const h=new Float64Array(N*FD),{img,eps}=SC;
+  for(let pr=0;pr<G;pr++)for(let pc=0;pc<G;pc++){let k=0;const base=(pr*G+pc)*FD;for(let yy=0;yy<PX;yy++)for(let xx=0;xx<PX;xx++)for(let ch=0;ch<3;ch++){const i=((pr*PX+yy)*S+pc*PX+xx)*3+ch;h[base+k++]=t===1?img[i]:t*img[i]+(1-t)*eps[i]}}
+  featCache.set(key,h);return h}
+function dist(h,a,b){let s=0;const A=a*FD,B=b*FD;for(let k=0;k<FD;k++){const d=h[A+k]-h[B+k];s+=d*d}return Math.sqrt(s)}
+function gapsOf(h){const g=new Float64Array(N-1);for(let j=0;j<N-1;j++)g[j]=dist(h,HIL_PID[j+1],HIL_PID[j]);return g}
+function runsToLabels(cuts){const cs=new Set(cuts),lab=new Int32Array(N);let g=0;for(let j=0;j<N;j++){lab[HIL_PID[j]]=g;if(cs.has(j))g++}return lab}
+function cutsAdaptive(gaps,R){const idx=Array.from({length:N-1},(_,j)=>j);idx.sort((a,b)=>gaps[b]-gaps[a]||a-b);return idx.slice(0,R-1).sort((a,b)=>a-b)}
+function cutsFixed(R){const c=[];for(let r=1;r<R;r++)c.push(Math.round(r*N/R)-1);return c}
+function labelsFeatSim(h,R){const mean=new Float64Array(FD);for(let p=0;p<N;p++)for(let k=0;k<FD;k++)mean[k]+=h[p*FD+k]/N;
+  const hn=new Float64Array(N*FD);for(let p=0;p<N;p++){let s=0;for(let k=0;k<FD;k++){const v=h[p*FD+k]-mean[k];hn[p*FD+k]=v;s+=v*v}s=Math.sqrt(s);for(let k=0;k<FD;k++)hn[p*FD+k]=s>1e-12?hn[p*FD+k]/s:0}
+  const anc=[];for(let r=0;r<R;r++)anc.push(Math.floor(r*N/R));const lab=new Int32Array(N);
+  for(let p=0;p<N;p++){let best=-Infinity,bi=0;for(let r=0;r<R;r++){const a=anc[r]*FD;let s=0;for(let k=0;k<FD;k++)s+=hn[p*FD+k]*hn[a+k];if(s>best){best=s;bi=r}}lab[p]=bi}return lab}
+function evOf(h,lab){const mean=new Float64Array(FD);for(let p=0;p<N;p++)for(let k=0;k<FD;k++)mean[k]+=h[p*FD+k]/N;let den=0;for(let p=0;p<N;p++)for(let k=0;k<FD;k++)den+=(h[p*FD+k]-mean[k])**2;if(den<1e-18)return null;
+  const groups=new Map();for(let p=0;p<N;p++){if(!groups.has(lab[p]))groups.set(lab[p],[]);groups.get(lab[p]).push(p)}let num=0;
+  for(const ps of groups.values()){const m=new Float64Array(FD);for(const p of ps)for(let k=0;k<FD;k++)m[k]+=h[p*FD+k]/ps.length;for(const p of ps)for(let k=0;k<FD;k++)num+=(h[p*FD+k]-m[k])**2}
+  return 1-num/den}
+function evSkip(h,R){const mean=new Float64Array(FD);for(let p=0;p<N;p++)for(let k=0;k<FD;k++)mean[k]+=h[p*FD+k]/N;const dev=new Float64Array(N);let den=0;
+  for(let p=0;p<N;p++){let s=0;for(let k=0;k<FD;k++)s+=(h[p*FD+k]-mean[k])**2;dev[p]=s;den+=s}if(den<1e-18)return null;
+  const idx=Array.from({length:N},(_,p)=>p).sort((a,b)=>dev[b]-dev[a]||a-b);let kept=0;for(let i=0;i<R;i++)kept+=dev[idx[i]];return 1-(den-kept)/den}
+function groupStats(lab){const groups=new Map();for(let p=0;p<N;p++){if(!groups.has(lab[p]))groups.set(lab[p],[]);groups.get(lab[p]).push(p)}
+  const sp=[],fin=[],dd=[];let mx=0;for(const ps of groups.values()){sp.push(spreadOf(ps.map(p=>[p%G,(p/G)|0])).s);fin.push(-Math.log2(ps.length));let s=0;for(const p of ps)s+=SC.det[p];dd.push(s/ps.length);mx=Math.max(mx,ps.length)}
+  const n=fin.length,mf=fin.reduce((a,b)=>a+b,0)/n,md=dd.reduce((a,b)=>a+b,0)/n;let sf=0,sd=0,c=0;for(let i=0;i<n;i++){sf+=(fin[i]-mf)**2;sd+=(dd[i]-md)**2;c+=(fin[i]-mf)*(dd[i]-md)}
+  sf=Math.sqrt(sf/n);sd=Math.sqrt(sd/n);const corr=(sf<1e-12||sd<1e-12)?0:(c/n)/(sf*sd);
+  return{groups:n,spread:sp.reduce((a,b)=>a+b,0)/n,corr,maxsize:mx,map:groups}}
+
+/* ---------- READ / RoPE ---------- */
+const OMEGA=Array.from({length:16},(_,i)=>10000**(-i/16));
+function phasorMag(coords,w,om){let re=0,im=0;for(let i=0;i<coords.length;i++){re+=w[i]*Math.cos(om*coords[i]);im+=w[i]*Math.sin(om*coords[i])}return Math.hypot(re,im)}
+function dirichlet(om,L){const s=Math.sin(om/2);return Math.abs(s)<1e-12?1:Math.abs(Math.sin(om*L/2)/(L*s))}
+function readRegion(p,L,beta){const pids=HIL_PID.slice(p,p+L),cells=pids.map(q=>[q%G,(q/G)|0]);const s=pids.map(q=>beta*SC.score[q]),m=Math.max(...s);
+  const ex=s.map(v=>Math.exp(v-m)),Z=ex.reduce((a,b)=>a+b,0),al=ex.map(e=>e/Z);const sp=spreadOf(cells,al);const uni=new Array(L).fill(1/L);
+  const mx=OMEGA.map(w=>phasorMag(cells.map(c=>c[0]),uni,w)),my=OMEGA.map(w=>phasorMag(cells.map(c=>c[1]),uni,w));
+  return{cells,al,sizeIdx:Math.floor(Math.log2(L)),cx:sp.cx,cy:sp.cy,spread:sp.s,amax:Math.max(...al),mx,my,kx:mx.filter(v=>v>=0.9).length,ky:my.filter(v=>v>=0.9).length}}
+
+/* ---------- cost model ---------- */
+const CORES={b16:{B:17,core:[3,13],N:1024,def:256,list:[16,32,64,96,128,192,256,384,512,768,1024],meas:[[512,1.84],[256,2.15]]},
+  b16long:{B:17,core:[1,15],N:1024,def:256,list:[16,32,64,96,128,192,256,384,512,768,1024],meas:[]},
+  l16:{B:23,core:[3,19],N:1024,def:256,list:[16,32,64,96,128,192,256,384,512,768,1024],meas:[[512,2.11],[256,2.59],[128,2.86],[64,3.01]]},
+  jit:{B:12,core:[4,9],N:256,def:130,list:[16,32,64,96,130,193,256],meas:[],anly:[[64,1.61],[130,1.33],[193,1.14]]}};
+const ncore=c=>c.core[1]-c.core[0]+1;
+function relCost(R,c,eta,tau){const nu=R/c.N,nc=ncore(c),img=((c.B-nc)+nc*((1-eta)*nu+eta*nu*nu))/c.B;return tau+(1-tau)*img}
+function isoR(eta){const ref=CORES.b16,c=CORES.b16long,rho=relCost(256,ref,eta,0),nc=ncore(c),v=(rho*c.B-(c.B-nc))/nc;if(v<0)return null;return eta===0?v*c.N:c.N*Math.sqrt(v)}
+function ceilOf(c,tau){return 1/(tau+(1-tau)*(c.B-ncore(c))/c.B)}
+
+/* ---------- hero curve & architecture ---------- */
+function drawHero(){const s=$('#hero-curve');s.textContent='';const q=8,c=26,o=16;
+  for(let i=0;i<q;i++)for(let j=0;j<q;j++)el('rect',{x:o+i*c,y:o+j*c,width:c,height:c,class:'cell'},s);
+  const pts=order('hilbert',q).map(([x,y])=>[o+x*c+c/2,o+y*c+c/2]);el('path',{d:lp(pts),class:'curve',pathLength:1},s);
+  [15,31,47].forEach(j=>{const a=pts[j],b=pts[j+1],mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2,dx=b[0]-a[0],dy=b[1]-a[1],L=Math.hypot(dx,dy),nx=-dy/L*9,ny=dx/L*9;el('line',{x1:mx-nx,y1:my-ny,x2:mx+nx,y2:my+ny,class:'cut'},s)})}
+function drawArch(){const box=$('#arch-fig'),svg=$('svg',box),W=widthOf(box,300,860),H=210;svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const B=17,gap=W<500?3:6,bw=(W-20-gap*(B-1))/B,base=170,full=100,small=26;const x=i=>10+i*(bw+gap);
+  for(let i=0;i<B;i++){const core=i>=3&&i<=13,h=core?small:full;el('rect',{x:x(i),y:base-h,width:bw,height:h,rx:3,class:core?'blk-c':'blk'},svg);if(W>=560||i%2===0)tx(svg,x(i)+bw/2,base+16,String(i),{class:'tk','text-anchor':'middle'})}
+  const wx1=x(3)-gap/2,wx2=x(14)-gap/2;
+  [wx1,wx2].forEach((wx,k)=>{el('path',{d:k?`M${wx-3} ${base-small}L${wx+3} ${base-full}L${wx+3} ${base}Z`:`M${wx-3} ${base-full}L${wx+3} ${base-small}L${wx-3} ${base}Z`,class:'wedge',opacity:.5},svg);tx(svg,wx,base+34,k?'WRITE':'READ',{class:'labm','text-anchor':'middle'})});
+  tx(svg,(x(0)+x(3)-gap)/2,base-full-8,W<500?'N 個':'N 個 patch token',{class:'al','text-anchor':'middle'});
+  tx(svg,(x(14)+x(17)-gap)/2,base-full-8,W<500?'N 個':'N 個 patch token',{class:'al','text-anchor':'middle'});
+  tx(svg,(x(3)+x(14)-gap)/2,base-small-10,'R 個區域 token（核心 3–13）',{class:'lab','text-anchor':'middle'});
+  const ay=base-full-30;el('path',{d:`M${wx1} ${base-full-2}C${wx1} ${ay-14} ${wx2} ${ay-14} ${wx2} ${base-full-2}`,class:'ref'},svg);
+  tx(svg,(wx1+wx2)/2,ay-16,'核心前特徵跳接（WRITE 的 h^(s0)）',{class:'al','text-anchor':'middle'})}
+
+/* ---------- C1 ---------- */
+const c1={q:8,L:8,p:4,all:true};
+function c1frac(name,q,L){const o=order(name,q);let c=0;for(let s=0;s<=q*q-L;s++)if(components(o.slice(s,s+L)).count===1)c++;return c/(q*q-L+1)}
+const c1fc=new Map();function c1fracC(name,q,L){const k=name+q+'|'+L;if(!c1fc.has(k))c1fc.set(k,c1frac(name,q,L));return c1fc.get(k)}
+function c1compute(name,q,L,p){const o=order(name,q),cells=o.slice(p,p+L),cc=components(cells);return{o,cells,cc,spread:spreadOf(cells).s,frac:c1fracC(name,q,L)}}
+function renderC1(){const {q,L,p}=c1;$('#c1-Lo').textContent=L;$('#c1-po').textContent=p;$('#c1-L').setAttribute('aria-valuetext',`段長 ${L}`);$('#c1-p').setAttribute('aria-valuetext',`起點 ${p}，段長 ${L}`);
+  $$('#c1-q button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.v===q)));
+  const msg=[];
+  for(const name of ['hilbert','morton','raster']){const r=c1compute(name,q,L,p),svg=$('#c1-'+name),Wv=260,cs=(Wv-8)/q,o=4;svg.textContent='';svg.setAttribute('viewBox',`0 0 ${Wv} ${Wv}`);
+    const C=([x,y])=>[o+x*cs+cs/2,o+y*cs+cs/2];
+    for(const c of r.cells)el('rect',{x:o+c[0]*cs,y:o+c[1]*cs,width:cs,height:cs,class:'selc'},svg);
+    if(q<=16)for(let i=0;i<=q;i++){el('line',{x1:o+i*cs,x2:o+i*cs,y1:o,y2:o+q*cs,class:'cellg'},svg);el('line',{y1:o+i*cs,y2:o+i*cs,x1:o,x2:o+q*cs,class:'cellg'},svg)}
+    else el('rect',{x:o,y:o,width:q*cs,height:q*cs,class:'cellg'},svg);
+    if(c1.all)el('path',{d:lp(r.o.map(C)),class:'path0'},svg);
+    for(let i=0;i+1<r.cells.length;i++){const a=r.cells[i],b=r.cells[i+1],adj=Math.abs(a[0]-b[0])+Math.abs(a[1]-b[1])===1,A=C(a),Bp=C(b);el('line',{x1:A[0],y1:A[1],x2:Bp[0],y2:Bp[1],class:adj?'path1':'jump'},svg)}
+    if(q<=16&&r.cc.count>1)for(const c of r.cells){const P=C(c);tx(svg,P[0],P[1]+4,String(r.cc.lab.get(c[0]*4096+c[1])),{class:'cnum','text-anchor':'middle'})}
+    if(r.cells.length===1){const P=C(r.cells[0]);el('circle',{cx:P[0],cy:P[1],r:3,class:'acc-f'},svg)}
+    svg.setAttribute('aria-label',`${name}：${r.cc.count} 個連通分量，spread ${r.spread.toFixed(3)}`);
+    $('#c1-ro-'+name).innerHTML=`連通分量 <b>${r.cc.count}</b><br>spread <b>${r.spread.toFixed(3)}</b><br>連通比例 <b>${r.frac.toFixed(3)}</b>`;msg.push(`${name} ${r.cc.count} 塊`)}
+  announce('c1',`q ${q}，起點 ${p}，段長 ${L}：${msg.join('，')}`)}
+function c1clamp(){const Lmax=Math.min(64,c1.q*c1.q);c1.L=Math.min(c1.L,Lmax);const r=$('#c1-L');r.max=Lmax;r.value=c1.L;c1.p=Math.min(c1.p,c1.q*c1.q-c1.L);const rp=$('#c1-p');rp.max=c1.q*c1.q-c1.L;rp.value=c1.p}
+function initC1(){$$('#c1-q button').forEach(b=>b.addEventListener('click',()=>{c1.q=+b.dataset.v;c1clamp();renderC1()}));
+  $('#c1-L').addEventListener('input',e=>{c1.L=+e.target.value;c1clamp();renderC1()});$('#c1-p').addEventListener('input',e=>{c1.p=+e.target.value;renderC1()});
+  $('#c1-all').addEventListener('change',e=>{c1.all=e.target.checked;renderC1()});c1clamp();renderC1()}
+
+/* ---------- C2 ---------- */
+const C2R=[64,96,128,192,256,384,512];
+const c2={m:'adaptive',R:128,t:1,sel:null,focus:528,res:null};
+const c2cache=new Map();
+function c2results(t,R){const key=t.toFixed(2)+'|'+R;if(c2cache.has(key))return c2cache.get(key);const h=featuresAt(t),gaps=gapsOf(h),ca=cutsAdaptive(gaps,R),cf=cutsFixed(R);
+  const labs={adaptive:runsToLabels(ca),fixed:runsToLabels(cf),featsim:labelsFeatSim(h,R)};const out={gaps,cuts:{adaptive:ca,fixed:cf},labs,stats:{},ev:{}};
+  for(const m in labs){out.stats[m]=groupStats(labs[m]);out.ev[m]=evOf(h,labs[m])}out.ev.skip=evSkip(h,R);c2cache.set(key,out);return out}
+let c2off=null;
+function renderC2(){const r=c2results(c2.t,c2.R);c2.res=r;$('#c2-to').textContent=c2.t.toFixed(2);$('#c2-t').setAttribute('aria-valuetext','t = '+c2.t.toFixed(2));
+  $$('#c2-m button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===c2.m)));$$('#c2-R button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.v===c2.R)));
+  // image
+  if(!c2off){c2off=document.createElement('canvas');c2off.width=S;c2off.height=S}
+  const octx=c2off.getContext('2d'),id=octx.createImageData(S,S),h=featuresAt(c2.t);
+  for(let y=0;y<S;y++)for(let x=0;x<S;x++){const p=((y/PX)|0)*G+((x/PX)|0),k=((y%PX)*PX+(x%PX))*3;for(let ch=0;ch<3;ch++)id.data[(y*S+x)*4+ch]=Math.round(255*Math.min(1,Math.max(0,h[p*FD+k+ch])));id.data[(y*S+x)*4+3]=255}
+  octx.putImageData(id,0,0);
+  const wrap=$('#c2-wrap'),cv=$('#c2-img');cv.style.width='100%';cv.style.height='auto';const css=Math.max(200,Math.min(384,Math.floor(wrap.getBoundingClientRect().width)||384)),dpr=window.devicePixelRatio||1;cv.width=Math.round(css*dpr);cv.height=Math.round(css*dpr);
+  const ctx=cv.getContext('2d');ctx.imageSmoothingEnabled=false;ctx.drawImage(c2off,0,0,cv.width,cv.height);
+  const cell=cv.width/G,lab=r.labs[c2.m],dark=document.documentElement.dataset.theme==='dark'||(!document.documentElement.dataset.theme&&matchMedia('(prefers-color-scheme: dark)').matches);
+  const segs=[];for(let y=0;y<G;y++)for(let x=0;x<G;x++){const p=y*G+x;if(x+1<G&&lab[p]!==lab[p+1])segs.push([(x+1)*cell,y*cell,(x+1)*cell,(y+1)*cell]);if(y+1<G&&lab[p]!==lab[p+G])segs.push([x*cell,(y+1)*cell,(x+1)*cell,(y+1)*cell])}
+  const stroke=(col,w)=>{ctx.strokeStyle=col;ctx.lineWidth=w;ctx.beginPath();for(const s of segs){ctx.moveTo(s[0],s[1]);ctx.lineTo(s[2],s[3])}ctx.stroke()};
+  stroke('rgba(255,255,255,.7)',3*dpr);stroke(dark?'#161513':'#1D1C19',1*dpr);
+  let selTxt='點選或以方向鍵、Enter 選取一個 patch，突顯它所屬的組。';
+  if(c2.sel!==null){const g=lab[c2.sel],ps=r.stats[c2.m].map.get(g);ctx.save();ctx.strokeStyle=tok('--accent');ctx.lineWidth=1.5*dpr;
+    for(const p of ps){const x=(p%G)*cell,y=((p/G)|0)*cell;ctx.beginPath();ctx.moveTo(x,y+cell);ctx.lineTo(x+cell,y);ctx.moveTo(x,y+cell/2);ctx.lineTo(x+cell/2,y);ctx.moveTo(x+cell/2,y+cell);ctx.lineTo(x+cell,y+cell/2);ctx.stroke()}ctx.restore();
+    const sp=spreadOf(ps.map(p=>[p%G,(p/G)|0])).s;selTxt=`選取的組：${ps.length} 個 patch，spread ${sp.toFixed(3)} 格（斜線標示）。`}
+  $('#c2-sel').textContent=selTxt;
+  if(document.activeElement===$('#c2-ov')){const fx=(c2.focus%G)*cell,fy=((c2.focus/G)|0)*cell;ctx.strokeStyle=tok('--accent');ctx.lineWidth=2*dpr;ctx.strokeRect(fx+dpr,fy+dpr,cell-2*dpr,cell-2*dpr)}
+  // table
+  const name={adaptive:'自適應（RTI）',fixed:'等距切割',featsim:'Feat Sim',skip:'Skip（不分組）'};const fmt=v=>v===null?'—':v.toFixed(3),fc=v=>(v>=0?'+':'−')+Math.abs(v).toFixed(3);
+  $('#c2-tab tbody').innerHTML=['adaptive','fixed','featsim','skip'].map(m=>{const st=r.stats[m];return`<tr${m===c2.m?' class="on"':''}><td>${name[m]}</td><td class="num">${fmt(r.ev[m])}</td><td class="num">${st?st.spread.toFixed(3):'—'}</td><td class="num">${st?fc(st.corr):'—'}</td><td class="num">${st?st.maxsize:'—'}</td></tr>`}).join('');
+  drawBars();
+  $('#c2-ov').setAttribute('aria-label',`影像分割：${name[c2.m]}，R ${c2.R}，t ${c2.t.toFixed(2)}，EV ${fmt(r.ev[c2.m])}。方向鍵移動、Enter 選取`);
+  announce('c2',`${name[c2.m]}，R = ${c2.R}，EV ${fmt(r.ev[c2.m])}，spread ${r.stats[c2.m].spread.toFixed(3)}`)}
+function drawBars(){const r=c2.res,cv=$('#c2-bars'),box=$('#c2-barbox'),css=Math.max(240,box.clientWidth||600),H=96,dpr=window.devicePixelRatio||1;cv.width=Math.round(css*dpr);cv.height=Math.round(H*dpr);cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);const Wp=cv.width,bins=new Float64Array(Wp),cutBin=new Uint8Array(Wp);let mx=0;
+  for(let j=0;j<N-1;j++){const b=Math.min(Wp-1,Math.floor(j/(N-1)*Wp));bins[b]=Math.max(bins[b],r.gaps[j]);mx=Math.max(mx,r.gaps[j])}
+  const showCuts=c2.m==='adaptive'||c2.m==='fixed';if(showCuts)for(const j of r.cuts[c2.m])cutBin[Math.min(Wp-1,Math.floor(j/(N-1)*Wp))]=1;
+  const top=10*dpr,hh=cv.height-top-2*dpr,ink=tok('--ink-3'),acc=tok('--accent');
+  for(let b=0;b<Wp;b++){const v=mx>0?bins[b]/mx:0;if(v<=0&&!cutBin[b])continue;ctx.fillStyle=cutBin[b]&&c2.m==='adaptive'?acc:ink;const hb=Math.max(1,v*hh);ctx.fillRect(b,cv.height-hb,1,hb)}
+  if(c2.m==='fixed'){ctx.fillStyle=acc;for(let b=0;b<Wp;b++)if(cutBin[b])ctx.fillRect(b,0,1,top)}
+  if(c2.m==='adaptive'){ctx.fillStyle=acc;for(let b=0;b<Wp;b++)if(cutBin[b]){ctx.beginPath();ctx.moveTo(b-3*dpr,0);ctx.lineTo(b+3*dpr,0);ctx.lineTo(b,6*dpr);ctx.fill()}}
+  $('#c2-barcap').textContent=c2.m==='adaptive'?`R − 1 = ${c2.R-1} 個切點落在最大的差距上（頂端三角標記、長條以強調色畫出）。`:c2.m==='fixed'?`等距切割：R − 1 = ${c2.R-1} 個切點等距放置（頂端刻線），與差距大小無關。`:'Feat Sim 不沿序列切割，這裡只顯示差距本身。'}
+function initC2(){$('#c2-R').innerHTML=C2R.map(R=>`<button type="button" data-v="${R}" aria-pressed="false">${R}</button>`).join('');
+  $$('#c2-m button').forEach(b=>b.addEventListener('click',()=>{c2.m=b.dataset.v;renderC2()}));$$('#c2-R button').forEach(b=>b.addEventListener('click',()=>{c2.R=+b.dataset.v;renderC2()}));
+  let tt=0;$('#c2-t').addEventListener('input',e=>{$('#c2-to').textContent=(+e.target.value).toFixed(2);clearTimeout(tt);tt=setTimeout(()=>{c2.t=+e.target.value;renderC2()},100)});
+  const ov=$('#c2-ov');ov.addEventListener('click',e=>{const b=ov.getBoundingClientRect(),x=Math.floor((e.clientX-b.left)/b.width*G),y=Math.floor((e.clientY-b.top)/b.height*G);if(x<0||y<0||x>=G||y>=G)return;c2.sel=c2.focus=y*G+x;renderC2()});
+  ov.addEventListener('keydown',e=>{const d={ArrowLeft:-1,ArrowRight:1,ArrowUp:-G,ArrowDown:G}[e.key];if(d!==undefined){const x=c2.focus%G,y=(c2.focus/G)|0;if((d===-1&&x===0)||(d===1&&x===G-1)||(d===-G&&y===0)||(d===G&&y===G-1)){e.preventDefault();return}c2.focus+=d;e.preventDefault();renderC2()}else if(e.key==='Enter'||e.key===' '){c2.sel=c2.focus;e.preventDefault();renderC2()}});
+  ov.addEventListener('focus',renderC2);ov.addEventListener('blur',renderC2);renderC2()}
+
+/* ---------- C3 ---------- */
+const c3={p:100,L:37,beta:1};
+function renderC3(){const {L,beta}=c3;c3.p=Math.min(c3.p,N-L);const p=c3.p;$('#c3-p').value=p;$('#c3-po').textContent=p;$('#c3-Lo').textContent=L;$('#c3-bo').textContent=beta.toFixed(1);
+  $('#c3-p').setAttribute('aria-valuetext',`起點 ${p}`);$('#c3-L').setAttribute('aria-valuetext',`段長 ${L}`);$('#c3-b').setAttribute('aria-valuetext',`β = ${beta.toFixed(1)}`);
+  $$('#c3-chips .chip').forEach(c=>c.setAttribute('aria-pressed',String(+c.dataset.L===L)));
+  const r=readRegion(p,L,beta);
+  const g=$('#c3-grid'),Wv=280,cs=(Wv-8)/G,o=4;g.textContent='';g.setAttribute('viewBox',`0 0 ${Wv} ${Wv}`);
+  const im=el('image',{x:o,y:o,width:G*cs,height:G*cs,opacity:.35,preserveAspectRatio:'none'},g);if(c2off)im.setAttribute('href',c2off.toDataURL());
+  el('rect',{x:o,y:o,width:G*cs,height:G*cs,class:'cellg'},g);
+  r.cells.forEach(c=>el('rect',{x:o+c[0]*cs,y:o+c[1]*cs,width:cs,height:cs,class:'regc',opacity:.75},g));
+  const amax=r.amax;r.cells.forEach((c,i)=>el('circle',{cx:o+c[0]*cs+cs/2,cy:o+c[1]*cs+cs/2,r:Math.max(.6,cs*.48*Math.sqrt(r.al[i]/amax)),class:'wdot'},g));
+  const X=o+r.cx*cs+cs/2,Y=o+r.cy*cs+cs/2;el('line',{x1:X-7,x2:X+7,y1:Y,y2:Y,class:'xhair'},g);el('line',{x1:X,x2:X,y1:Y-7,y2:Y+7,class:'xhair'},g);
+  const box=$('#c3-chart').parentNode,W=widthOf(box,260,520);
+  const lam=OMEGA.map(w=>2*Math.PI/w);
+  const F=frame($('#c3-chart'),{W,H:240,m:{l:44,r:14,t:24,b:40},x:[6,40000],xlog:true,y:[0,1.05],xt:[[6.28,'6.28'],[100,'100'],[1000,'1k'],[10000,'10k']],yt:[0,.5,1],yf:v=>String(v),xl:'波長 2π/ω（格，對數）',yl:'|m(ω)|'});
+  const ext=a=>{const v=r.cells.map(c=>c[a]);return Math.max(...v)-Math.min(...v)+1},ex=ext(0),ey=ext(1);
+  [[ex,'x 範圍','par'],[ey,'y 範圍','perp dash']].forEach(([e,l,cls],k)=>{const xx=F.X(Math.max(6,e));el('line',{x1:xx,x2:xx,y1:F.y1,y2:F.y0,class:cls,style:'stroke-width:1.2'},F.g);tx(F.g,xx+4,F.y0-10-k*16,l+' '+e,{class:'al'})});
+  el('path',{d:lp(lam.map((l,i)=>[F.X(l),F.Y(r.mx[i])])),class:'par'},F.g);el('path',{d:lp(lam.map((l,i)=>[F.X(l),F.Y(r.my[i])])),class:'perp dash'},F.g);
+  lam.forEach((l,i)=>{el('circle',{cx:F.X(l),cy:F.Y(r.mx[i]),r:3,class:'par-f'},F.g);el('rect',{x:F.X(l)-3,y:F.Y(r.my[i])-3,width:6,height:6,class:'perp-f'},F.g)});
+  $('#c3-ro1').innerHTML=`READ 權重（隨 β 改變）<br>最大權重 <b>${r.amax.toFixed(3)}</b><br>權重中心 (x, y) <b>(${r.cx.toFixed(3)}, ${r.cy.toFixed(3)})</b><br>spread（權重 α） <b>${r.spread.toFixed(3)}</b>`;
+  $('#c3-ro2').innerHTML=`位置（不隨 β 改變）<br>尺寸索引 ⌊log₂ L⌋ <b>${r.sizeIdx}</b><br>接近完整的頻率數 x / y <b>${r.kx} / ${r.ky}</b><br>λ = 6.28 時 |m_x|, |m_y| <b>${r.mx[0].toFixed(3)}, ${r.my[0].toFixed(3)}</b>`;
+  $('#c3-chart').setAttribute('aria-label',`段長 ${L}：x 軸 ${r.kx}、y 軸 ${r.ky} 個頻率接近完整`);
+  announce('c3',`起點 ${p}，段長 ${L}，β ${beta.toFixed(1)}：最大權重 ${r.amax.toFixed(3)}，接近完整頻率 ${r.kx} / ${r.ky}`)}
+function initC3(){$('#c3-p').addEventListener('input',e=>{c3.p=+e.target.value;renderC3()});$('#c3-L').addEventListener('input',e=>{c3.L=+e.target.value;renderC3()});
+  $('#c3-b').addEventListener('input',e=>{c3.beta=+e.target.value;renderC3()});$$('#c3-chips .chip').forEach(c=>c.addEventListener('click',()=>{c3.L=+c.dataset.L;$('#c3-L').value=c3.L;renderC3()}));renderC3()}
+
+/* ---------- C4 ---------- */
+const c4={cfg:'b16',R:256,tau:0};
+function renderC4(){const c=CORES[c4.cfg],{R,tau}=c4;$$('#c4-cfg button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===c4.cfg)));
+  const sl=$('#c4-R');sl.max=c.list.length-1;sl.value=c.list.indexOf(R);sl.setAttribute('aria-valuetext','R = '+R);$('#c4-Ro').textContent=R;$('#c4-tauo').textContent=tau.toFixed(3);$('#c4-tau').setAttribute('aria-valuetext','τ = '+tau.toFixed(3));
+  const long=c4.cfg==='b16long',ce=ceilOf(c,tau),pts=[...c.meas,...(c.anly||[])];
+  const top=long?1/relCost(16,c,1,tau):ce,ymax=Math.ceil(1.1*Math.max(top,...pts.map(q=>q[1]),1.5)/0.5)*0.5;
+  const box=$('#c4-fig'),W=widthOf(box,280,640),yt=[];for(let v=1;v<=ymax+1e-9;v+=0.5)yt.push([v,v.toFixed(1)+'×']);
+  const xt=c.N===1024?[16,64,256,1024]:[16,64,256];
+  const F=frame($('svg',box),{W,H:300,m:{l:52,r:16,t:28,b:40},x:[16,c.N],xlog:true,y:[1,ymax],xt,yt,xl:'預算 R（對數）',yl:'速度（相對 dense）'});
+  const a0=[],a1=[];for(let i=0;i<=200;i++){const r=16*(c.N/16)**(i/200);a0.push([F.X(r),F.Y(1/relCost(r,c,0,tau))]);a1.push([F.X(r),F.Y(1/relCost(r,c,1,tau))])}
+  el('path',{d:lp(a0)+'L'+lp(a1.slice().reverse()).slice(1)+'Z',class:'band'},F.g);el('path',{d:lp(a0),class:'tot'},F.g);el('path',{d:lp(a1),class:'ref',style:'stroke-width:2'},F.g);
+  if(!long){el('line',{x1:F.x0,x2:F.x1,y1:F.Y(ce),y2:F.Y(ce),class:'ceil'},F.g);tx(F.g,F.x1,F.Y(ce)-6,'上限 '+ce.toFixed(2)+'×',{class:'al','text-anchor':'end'})}
+  else tx(F.g,F.x0+6,F.y1+14,'論文未計時；上限高於 2.5×（App. B.5）',{class:'al'});
+  c.meas.forEach(([r,s])=>{el('circle',{cx:F.X(r),cy:F.Y(s),r:5,class:'meas'},F.g);tx(F.g,F.X(r)+8,F.Y(s)+4,s.toFixed(2),{class:'labm'})});
+  (c.anly||[]).forEach(([r,s])=>{const x=F.X(r),y=F.Y(s);el('line',{x1:x-5,x2:x+5,y1:y-5,y2:y+5,class:'anly'},F.g);el('line',{x1:x-5,x2:x+5,y1:y+5,y2:y-5,class:'anly'},F.g);tx(F.g,x+8,y-6,s.toFixed(2),{class:'labm'})});
+  if(c.meas.length)tx(F.g,F.x0+6,F.y1+14,'空心圓：論文量測（Tab. 1、Fig. 16）',{class:'al'});
+  if(c.anly)tx(F.g,F.x0+6,F.y1+14,'十字：論文解析值（token 計算量，未計時）',{class:'al'});
+  el('line',{x1:F.X(R),x2:F.X(R),y1:F.y1,y2:F.y0,class:'cur'},F.g);
+  const c0=relCost(R,c,0,tau),c1v=relCost(R,c,1,tau);let ro=`n_core = <b>${ncore(c)}</b>，B = <b>${c.B}</b><br>R = <b>${R}</b>：成本 <b>${c0.toFixed(3)}</b>（η=0）／<b>${c1v.toFixed(3)}</b>（η=1）<br>速度 <b class="acc">${(1/c0).toFixed(3)}×</b>／<b class="acc">${(1/c1v).toFixed(3)}×</b><br>上限 <b>${long?'高於 2.5×（未計時）':ce.toFixed(3)+'×'}</b>`;
+  if(long){const i0=isoR(0),i1=isoR(1);ro+=`<br>與 B/16 [3,13] 在 R = 256 同成本：R ≈ <b>${i0===null?'—':i0.toFixed(1)}</b>（η=0）至 <b>${i1===null?'—':i1.toFixed(1)}</b>（η=1）<br>只計影像 token；真正同吞吐量低於 461`}
+  $('#c4-ro').innerHTML=ro;announce('c4',`R = ${R}，速度 ${(1/c0).toFixed(2)} 至 ${(1/c1v).toFixed(2)} 倍`)}
+function renderC5(){const s=+$('#c5-s').value;$('#c5-so').textContent=s.toFixed(1);$('#c5-s').setAttribute('aria-valuetext',`${s.toFixed(1)} 秒`);
+  const nd=Math.floor(s/0.288+1e-9),nr=Math.floor(s/0.112+1e-9),box=$('#c5-fig'),W=widthOf(box,240,420),svg=$('svg',box),H=120;svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const X=lin(0,110,90,W-50);[['dense',nd,'bar-d',20],['RTI R=256',nr,'bar-r',66]].forEach(([l,n,cls,y])=>{tx(svg,0,y+20,l,{class:'al'});el('rect',{x:90,y,width:Math.max(1,X(n)-90),height:30,rx:4,class:cls},svg);tx(svg,X(n)+6,y+20,n+' 步',{class:'labm'})})}
+function initC4(){$$('#c4-cfg button').forEach(b=>b.addEventListener('click',()=>{c4.cfg=b.dataset.v;c4.R=CORES[c4.cfg].def;renderC4()}));
+  $('#c4-R').addEventListener('input',e=>{c4.R=CORES[c4.cfg].list[+e.target.value];renderC4()});$('#c4-tau').addEventListener('input',e=>{c4.tau=+e.target.value;renderC4()});
+  $('#c5-s').addEventListener('input',renderC5);renderC4();renderC5()}
+
+/* ---------- timeline ---------- */
+const TL_GROUP={'2212.09748':['base','rti-lineage-hub'],'2210.09461':['sim','tokc-vit-pruning-and-merging'],'2303.17604':['dm','tokc-training-free-diffusion-merging'],'2402.13573':['dm','tokc-training-free-diffusion-merging'],
+ '2304.00287':['ada','tokc-content-adaptive-tokenization'],'2212.11972':['lat','tokc-hourglass-and-latent-interfaces'],'2603.12245':['lat','tokc-hourglass-and-latent-interfaces'],'2404.02258':['skip','rti-prior-reductions-compared'],
+ '2412.16822':['dyn','tokc-learned-routing-dynamic-dit'],'2603.06351':['chunk','tokc-dynamic-chunking-bytes-to-pixels'],'2511.13720':['pix','pixel-space-diffusion'],'2608.29281':['me','rti-lineage-hub']};
+const TL_NAME={base:'基礎（DiT）',sim:'相似度合併',dm:'擴散中的合併',ada:'自適應 tokenization',lat:'latent 瓶頸／介面',skip:'token 跳過',dyn:'動態壓縮比',chunk:'動態切塊',pix:'像素空間 DiT',me:'本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  data=data.map((e,i)=>({e,i})).sort((a,b)=>(+a.e.year||0)-(+b.e.year||0)||a.i-b.i).map(o=>o.e);
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${g[1]?`<a href="${g[1]}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+
+/* ---------- toc, theme ---------- */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}});
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change',redrawAll)}
+function redrawAll(){drawArch();renderC1();renderC2();renderC3();renderC4();renderC5()}
+
+/* ---------- self test ---------- */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};const near=(a,b,t)=>a!==null&&Math.abs(a-b)<=t+1e-9;
+  let adj=true;for(let j=0;j<N-1;j++){const a=hilbertXY(32,j),b=hilbertXY(32,j+1);if(Math.abs(a[0]-b[0])+Math.abs(a[1]-b[1])!==1)adj=false}ok(adj,'hilbert adjacency');
+  ok(String(mortonXY(8,3))==='1,1'&&String(mortonXY(8,4))==='2,0','morton 3,4');
+  [[8,8,4,[[1,1.144,1],[2,1.498,.561],[2,2.093,.140]]],[8,8,0,[[1,1.144,1],[1,1.144,.561],[1,2.000,.140]]],[16,16,40,[[1,1.824,1],[2,2.350,.531],[2,4.057,.066]]],[32,16,300,[[1,1.718,1],[1,1.718,.507],[1,4.000,.539]]]].forEach(([q,L,p,ex])=>
+    ['hilbert','morton','raster'].forEach((nm,i)=>{const r=c1compute(nm,q,L,p);ok(r.cc.count===ex[i][0]&&near(r.spread,ex[i][1],.001)&&near(r.frac,ex[i][2],.001),`C1 ${nm} q${q} L${L} p${p}: ${r.cc.count} ${r.spread.toFixed(3)} ${r.frac.toFixed(3)}`)}));
+  const r0=mulberry32(1);ok(r0()===0.6270739405881613&&r0()===0.002735721180215478&&r0()===0.5274470399599522,'mulberry32');
+  ok(near(detailShare(.15),.946,.001)&&near(detailShare(.5),.998,.001),'detail share '+detailShare(.15).toFixed(3));
+  const T2=[[1,64,[.902,.956,.620,192],[.777,1.498,0],[.922,7.797,.375],.140],[1,96,[.960,.740,.575,192],[.780,1.338,-.034],[.938,7.033,.442],.198],[1,128,[.984,.619,.523,192],[.809,1.144,0],[.959,6.438,.343],.242],
+    [1,256,[.995,.399,.302,84],[.869,.707,0],[.974,5.357,.201],.391],[1,512,[.997,.121,.040,84],[.912,.500,0],[.990,3.192,.040],.653],[.5,128,[.176,.922,.193,52],[.162,1.144,0],[.305,10.180,.091],.171],[0,128,[.139,.914,-.017,42],[.124,1.144,0],[.291,10.888,.082],.171]];
+  T2.forEach(([t,R,a,f,s,sk])=>{const r=c2results(t,R),A=r.stats.adaptive,Fx=r.stats.fixed,Fs=r.stats.featsim;
+    ok(near(r.ev.adaptive,a[0],.002)&&near(A.spread,a[1],.002)&&near(A.corr,a[2],.002)&&A.maxsize===a[3],`C2 adaptive t${t} R${R}: ${r.ev.adaptive?.toFixed(3)} ${A.spread.toFixed(3)} ${A.corr.toFixed(3)} ${A.maxsize}`);
+    ok(near(r.ev.fixed,f[0],.002)&&near(Fx.spread,f[1],.002)&&near(Fx.corr,f[2],.002),`C2 fixed t${t} R${R}: ${r.ev.fixed?.toFixed(3)} ${Fx.corr.toFixed(3)}`);
+    ok(near(r.ev.featsim,s[0],.002)&&near(Fs.spread,s[1],.002)&&near(Fs.corr,s[2],.002),`C2 featsim t${t} R${R}: ${r.ev.featsim?.toFixed(3)} ${Fs.spread.toFixed(3)} ${Fs.corr.toFixed(3)}`);
+    ok(near(r.ev.skip,sk,.002),`C2 skip t${t} R${R}: ${r.ev.skip?.toFixed(3)}`)});
+  [[0,1,1,0,0,0,0,1,16,16,1,1],[0,2,1,1,0,.485,.5,.515,16,15,1,.878],[0,4,1,2,.495,.503,.707,.260,15,15,.878,.878],[0,16,1,4,1.470,1.477,1.489,.069,14,14,.474,.474],[0,64,1,6,4.562,4.739,3.228,.194,13,13,.197,.197],
+   [100,37,0,5,10.703,6.595,2.880,.027,13,13,.429,.287],[100,37,1,5,9.463,7.716,2.008,.136,13,13,.429,.287],[100,37,4,5,9.172,7.079,.869,.363,13,13,.429,.287]].forEach(([p,L,b,si,cx,cy,sp,am,kx,ky,mx,my])=>{const r=readRegion(p,L,b);
+    ok(r.sizeIdx===si&&near(r.cx,cx,.001)&&near(r.cy,cy,.001)&&near(r.spread,sp,.001)&&near(r.amax,am,.001)&&r.kx===kx&&r.ky===ky&&near(r.mx[0],mx,.001)&&near(r.my[0],my,.001),`C3 p${p} L${L} b${b}: ${r.cx.toFixed(3)} ${r.cy.toFixed(3)} ${r.spread.toFixed(3)} ${r.amax.toFixed(3)} ${r.kx}/${r.ky}`)});
+  ok(Math.max(...OMEGA.map(w=>Math.abs(phasorMag([0,1],[.5,.5],w)-dirichlet(w,2))))<1e-12,'dirichlet L=2');
+  ok(near(relCost(256,CORES.b16long,0,0)/relCost(256,CORES.b16,0,0),.657,.001),'Tab3 linear');ok(near(relCost(256,CORES.b16long,1,0)/relCost(256,CORES.b16,1,0),.439,.001),'Tab3 attn');
+  ok(near(isoR(0),460.8,.1)&&near(isoR(1),572.4,.1),'iso R');ok(near(1/relCost(64,CORES.jit,0,0),1.600,.001)&&near(1/relCost(130,CORES.jit,0,0),1.326,.001)&&near(1/relCost(193,CORES.jit,0,0),1.140,.001),'JiT analytic');
+  ok(near(1/relCost(64,CORES.l16,0,0),3.257,.001),'L16 R64 band');ok(near(ceilOf(CORES.b16,0),2.833,.001)&&near(ceilOf(CORES.l16,0),3.833,.001)&&near(ceilOf(CORES.b16,.0727),2.5,.001),'ceilings');
+  ok(CORES.b16.list.includes(256)&&CORES.b16.list.includes(512)&&CORES.jit.list.includes(130)&&CORES.jit.list.includes(193),'C4 list');
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'')}
+
+/* ---------- boot ---------- */
+initTheme();initToc();drawHero();drawArch();initC1();initC2();initC3();initC4();renderTimeline();
+$('#tab1-more').addEventListener('click',e=>{const t=$('#tab1'),on=!t.classList.contains('all');t.classList.toggle('all',on);e.target.setAttribute('aria-pressed',String(on));e.target.textContent=on?'隱藏部分欄位':'顯示全部欄位'});
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;clearTimeout(rz);rz=setTimeout(redrawAll,150)});
+new MutationObserver(redrawAll).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+function renderMath(){if(typeof renderMathInElement!=='function')return;renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false})}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',renderMath);else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath()});
+if(/[?&]test\b/.test(location.search))selfTest();
+})();
+</script>
+</body>
+</html>
