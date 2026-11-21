@@ -51,6 +51,7 @@
    - [High-accuracy sampling for diffusion models and log-concave distributions](https://arxiv.org/abs/2602.01338)
    - [dRAE: Representation Autoencoder with Hyper-Spherical Codes](https://arxiv.org/abs/2607.22148)
 
+   - [Hierarchical Diffusion Transformer for End-to-End Image Generation（HiT）](https://arxiv.org/abs/2611.22962)（pixel-space DiT 內以學習式漸進分組壓縮 token、再還原回 patch 位置；[project](https://nicholas0228.github.io/HiT-webpage/)）
 4. Diffusion Language Models（dLLM）
    - [DiffCoT: Diffusion-styled Chain-of-Thought Reasoning in LLMs](https://arxiv.org/abs/2601.03559)
    - [LLaDA2.0: Scaling Up Diffusion Language Models to 100B](https://arxiv.org/abs/2512.15745)
