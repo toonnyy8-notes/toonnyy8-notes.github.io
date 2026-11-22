@@ -1,0 +1,35 @@
+# Round 1 reviews (fidelity + pedagogy, merged)
+
+Fidelity: check_w1/w2/w3/check_paper and sim.js rerun byte-identical to the .out files and §5 tables. Equations, Tables 1–6, Sec. 5.1 settings spot-checked. Confirmed correct: Eq. 4 typo, δ/2 absorption, 0.92 vs 0.9265, Table 2 direction conflict, dual-clip caveat, δ/ε²=1.25, π≥0.8 cap, v=(√π+√δ)², LO6/7/9 answers. No P0.
+
+## P1 — fidelity
+
+1. **Hero card 2 「若用 KL 散度衡量…80 倍（0.016 對 0.0002）」.** Sec. 3.2 computes only the per-token term ½·π_old·(r−1)², not KL. W1's own binary second-order gives ≈400× and exact KL ≈1000×. Write 「以論文 Eq. 9 的單 token 項計」. In S4 body (where 0.016/0.0002 first appear) add one clause that Eq. 7 sums over all actions incl. the complement mass, while Eq. 9 and the example keep one term (currently only in a callout).
+2. **「RIC 讓每個 token 消耗相同的距離」 (S5 title, hero card 3, step 6 Prop. 4.1).** Eq. 9 is ≤ δ; only tokens at the clip boundary reach δ/2, interior tokens less, and min() makes only one side active (upper for Â>0, lower for Â<0). Say 「每個 token 的距離上限相同」, equality only at the boundary.
+3. **Prop. 3.1 / 4.1 have no proof or appendix.** 3.1's causal chain rests on one numeric example plus empirics; 4.1's "mitigates collapse and balances bias–variance" is not proved. State they are asserted, and mark what is argued vs only observed.
+4. **Hero subtitle 「對高機率 token 太鬆」 / Prop. 4.1 「高機率動作較少」 stated unqualified.** At the paper's default δ=0.05, RIC's ε ≥ 0.224 > 0.2 everywhere. Qualify in hero and 1.1 (「在 δ=0.02 的例子中」 or 「相對於等距上限」); S5 already handles it.
+
+## P1 — pedagogy / implementation
+
+5. **S1 too dense; terms untaught.** S1 introduces s, a, π, r, Â, GAE, group std, ε_low/high, TRPO, Fisher F in 350–450 字. S1 teaches only s, a, π, r, Â (sign of Â says raise/lower probability), clip and the PPO objective. Move Eq. 2/GRPO and TRPO Eq. 1 to S7 or a collapsible; move F to S3; define "trust region" before first use (S4 uses it).
+6. **Hero card 3 and S2 use RIPO, δ, 1±√(δ/π_old) before definition.** Card 3: 「範圍改成隨舊機率變化，使每個 token 的距離上限相同（見第 5 節）」. S2 must say why a small increment matters: once r > 1+ε with Â>0, that token's gradient is 0. Also (fidelity) 「最多升到 0.96／0.012」 holds only for Â>0 and clip zeroes the gradient rather than hard-capping π_θ (shared parameters/Adam can overshoot); keep the paper's "maximum possible updated probability" as a quote.
+7. **S3 / LO3 is the hardest jump.** Give 1-D intuition first (KL ≈ ½ × 曲率 × 偏移²), then Fisher; define 「度量」 in one line; keep Eq. 5–6 collapsed; put 「Eq. 7 為 ½χ²」 in a collapsible; mark LO3 awareness-level. State the assumption Δπ ≈ ∇π·Δθ (Eq. 6) in body prose — LO4's answer must be derivable from the body. F's expectation: a ∼ π_old(·|s) (and s ∼ ρ_old), state the distribution in step 5 and the symbol table.
+8. **S5 overloaded (LO6–8, W1 with 3 sliders, 2 chip groups, 2 plots, 3×7 table).** Split S5a (derive RIC, LO6–7, W1 in δ=0.02 simple view) / S5b (δ=0.05 consequences, LO8, π≤1 cap). DAPO, ε_high and the binary columns behind 「進階」 until S5b; binary columns are taught nowhere before W1 — move their explanation into S4 or drop them from the default view. Put an explicit prompt in S5b body (「把 δ 切到 0.05，比較 π_old=0.8 的上限」) and state LO8's answer in prose.
+9. **S6 prerequisites.** Before W2 add 2–3 sentences: why E[rA] is unbiased, what truncation does to the expectation (the lost mass is the bias), what v measures, why the squared-mean term is dropped; say 「同質」 = same size across tokens in plain words before the term. The bias definition π_θ − π_old·w (A≡1) must be in body prose, not only the widget note. Also (fidelity) Eq. 14's O(δ) is per sample: total second moment still grows with the number of tail tokens (~count×δ); add one sentence; the claim only holds for low-probability tokens (already in your notes).
+10. **W2 r slider.** Effective r max depends on π_old (π_old=0.5 ⇒ r≤2): set slider max dynamically to 1/π_old (or clamp with a visible label); define behaviour on π_old change (preserve r and clamp, or preserve slider position); specify when the hint appears.
+11. **Numerical edge cases.** (a) W1 binary KL when π_max = 1 exactly (DAPO at π_old=0.8): specify the (1−π_old)·ln((1−π_old)/(1−π_max)) branch (→∞ with a label); use log1p for small Δπ at π_old=1e-4. (b) W1 log-distance axis 1e-6–1e-1: PPO at π_old=1e-4, ε=0.05 gives 1.25e-7 — specify clamping plus a visible out-of-range marker. (c) W2 IS curve: define π_θ for the curve (current r slider). (d) W3: show a 「略過的迭代」 count (std<1e-12 groups) so the flat GRPO curve is explained.
+12. **W3 run control.** Auto-run on visibility competes with first paint: start after idle or on button; add a run token so a stale onDone can't overwrite new results; specify trace storage at T=200, S=200; button state machine (未執行／執行中／參數已變更) with live-region announcements only at 25/50/75/100%.
+13. **W3 placement / objective / confound.** Define bandit, softmax logits, Bernoulli reward, seed in plain sentences before W3. Add LO13 for W3 (why the clip shape changes the probability the rare action is found, and the toy's scope) or mark W3 optional. Fidelity: there is no unclipped control, GRPO ε=1.0 also removes the lower bound, and RIC δ=0.005 gives ε=0.079 on A, so "shape" is confounded with "tighter on A" — add an unclipped arm or say so.
+
+## P2
+
+14. Step 4 「二元精確 KL 0.00543，二階近似 0.0101」: 0.0101 is the binary second-order value; Eq. 7 single-token is exactly 0.01. Name each measure.
+15. LO11 「上下不對稱降到 27.5–28.8」: column 0.05/0.04 is also asymmetric yet scores 41.7. The three drops all have δ_high ≤ 0.04 and δ_low/δ_high ≥ 2; say 「δ_low/δ_high ≥ 2 的三組」; one AIME24 Avg@8 run per setting (noise).
+16. 1.3 item 3 「6 個基準演算法」: Sec. 5.1 says "six" / "all these seven" but lists five (GRPO, DAPO, GSPO, GMPO, DCPO). Write 「5 個（論文稱 six，只列出五個）」.
+17. Table 1 percentages: paper +37.2% vs recomputed +37.5% — footnote in W4.
+18. S10 / LO12 「原則上可以疊加」: tag 〔本頁推導〕; attribute Score Centering and DPPO/GPPO characterisations (ε ∝ 1/π_old etc.) to their source papers.
+19. Step 10 Fig. 1(d): 「多數個數量級」 → 「多出數個數量級」 ("several orders of magnitude more tokens").
+20. Style: drop the budget metaphor (「消耗」「預算」「未用的 trust region 預算」, S5 title, hero card 2) → 「距離（KL 近似值）」「更新幅度的上限」; 「變異爆炸」「發散」 → 「變異可任意大」; hero 「太緊／太鬆」 → 「上限較小／較大」.
+21. 390px: W1 readout table (8 cols) → sticky first column + transposed layout (methods as columns) below 560px; `.eq` overflow-x:auto (test Eq. 15's 3-level fraction); Table 2 and W4 same rule; plot annotations (「受 π ≤ 1 限制」 etc.) → legend below plot on narrow screens.
+22. KaTeX: SVG labels Unicode/tspan only; KaTeX in static DOM, renderMath once on init and after details/tab swaps (W4 tabs need a re-render call); `?test` asserts no `.katex-error`.
+23. Accessibility: W2 markers and W3 curves need non-colour encoding (shape/line style); W4 RIPO bar needs a text mark; log sliders: aria-valuetext (3 sig figs + unit), arrow step 10, PageUp/PageDown 100; hero probability axis needs a text alternative; reduced motion: no easing on redraw/details; give checked dark/light contrast values for --c-dapo now; dotted --ink-3 IS curve gets a direct label.

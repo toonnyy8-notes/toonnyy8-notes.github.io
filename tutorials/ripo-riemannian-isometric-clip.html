@@ -1,0 +1,1219 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RIPO 等距 clipping</title>
+<meta name="description" content="圖解 Cai 等人的 ICML 2026 論文 RIPO：PPO-Clip 以固定比值範圍衡量策略差異，與 KL 散度的二次近似不一致；RIC 把範圍改成 1 ± √(δ/π_old)，使每個 token 的距離上限相同。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-dapo:#3F6E8C;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-dapo:#8DB4D3;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-dapo:#8DB4D3;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-dapo)}.card.perp .k::before{border-top:2px dashed var(--ink-3)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-dapo)}
+.lg.perp::before{border-top:2px dashed var(--ink-3)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-dapo);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--ink-3)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-dapo);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-dapo)}
+svg .perp{stroke:var(--ink-3);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--ink-3)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--ink-3);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+/* ---- page-specific (No. 587) ---- */
+details.more{max-width:700px;margin:20px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.more>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.more[open]>summary::before{transform:rotate(45deg)}
+details.more .qa{padding:0 20px 18px;font-size:15px}
+.plate details.more{max-width:none}
+.lg.ppo::before{border-top:2px solid var(--ink-2)}
+.lg.dapo::before{border-top:2px dashed var(--c-dapo)}
+.lg.nocl::before,.lg.isl::before{border-top:2px dotted var(--ink-3)}
+svg .ppo{stroke:var(--ink-2);stroke-width:2;fill:none}
+svg .ppo-f{fill:var(--ink-2)}
+svg .dapo{stroke:var(--c-dapo);stroke-width:2;stroke-dasharray:8 5;fill:none}
+svg .dapo-f{fill:var(--c-dapo)}
+svg .nocl{stroke:var(--ink-3);stroke-width:2;stroke-dasharray:1.5 4;stroke-linecap:round;fill:none}
+svg .nocl-f{fill:var(--ink-3)}
+svg .capl{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:1.5 3;fill:none}
+#w1:not(.adv) .adv-only{display:none!important}
+.grid3{display:grid;grid-template-columns:1fr;gap:8px 20px;margin-top:12px}
+@media (min-width:640px){.grid3{grid-template-columns:repeat(3,1fr)}}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;padding:0 0 4px;border-bottom:1px solid var(--line)}
+.tabs button{padding-bottom:4px!important}
+.tabs button{min-height:44px;padding:0 14px 4px;border:0;background:transparent;color:var(--ink-2);font:500 14px/1.2 var(--f-body);cursor:pointer;box-shadow:inset 0 -2px 0 transparent}
+.tabs button[aria-selected=true]{color:var(--ink);box-shadow:inset 0 -2px 0 var(--accent)}
+.sel{min-height:40px;padding:0 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);font:500 14px/1 var(--f-body)}
+pre.code{max-width:760px;margin:8px 0 24px;padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow-x:auto;font:400 13px/1.7 var(--f-mono);color:var(--ink)}
+pre.code code{font-size:inherit}
+.stale{opacity:.45}
+.rtab td,.rtab th{white-space:nowrap}
+.rtab th:first-child,.rtab td:first-child{position:sticky;left:0;background:var(--surface);z-index:1}
+/* hero probability axis */
+.paxis{position:relative;margin:8px 0 0;padding:0 8px}
+.px-track{position:relative;height:40px}
+.px-line{position:absolute;left:0;right:0;bottom:24px;height:2px;background:var(--ink)}
+.px-tick{position:absolute;bottom:0;transform:translateX(-50%);font:500 12px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.px-tick::before{content:"";position:absolute;left:50%;bottom:18px;width:1px;height:10px;background:var(--ink);transform:translateX(-50%)}
+.px-tick.l{transform:none}.px-tick.l::before{left:0;transform:none}
+.px-tick.r{transform:translateX(-100%)}.px-tick.r::before{left:auto;right:0;transform:none}
+.px-bar{position:absolute;height:0}
+.px-bar.ppo{border-top:3px solid var(--ink-2)}
+.px-bar.ric{border-top:4px solid var(--accent)}
+.px-bar::after{content:"";position:absolute;right:-4px;top:-6.5px;width:7px;height:7px}
+.px-bar.ppo::after{border-radius:50%;background:var(--ink-2);top:-5px}
+.px-bar.ric::after{background:var(--accent);top:-5.5px}
+.px-dot{position:absolute;bottom:20px;width:10px;height:10px;margin-left:-5px;border-radius:50%;background:var(--surface);border:2px solid var(--ink)}
+.px-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:1px 6px;border-radius:6px}
+.px-lab .v{font-family:var(--f-mono)}
+.px-lab.ric .v{color:var(--accent)}
+.px-stem{position:absolute;width:1px;background:var(--ink-3)}
+.rtab tr.hl td:first-child{background:var(--accent-soft)}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 587</span>
+  <span class="ttl">RIPO：讓 PPO 的比值範圍隨舊機率改變</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 587</b> · 互動教學 · arXiv 2607.10169 · ICML 2026</div>
+  <h1><span class="lat">RIPO</span>：讓 <span class="lat">PPO</span> 的比值範圍隨舊機率改變</h1>
+  <p class="dek">PPO-Clip 對每個 token 用相同的比值範圍。以 KL 散度的近似衡量，這使低機率 token 能變動的距離上限較小、高機率 token 較大。RIPO 讓範圍隨舊機率改變。</p>
+  <p class="byline">Zhicheng Cai、Xinyuan Guo、Hanlin Wu、Wei-Ying Ma、Ya-Qin Zhang、Hao Zhou（2026）〈Beyond Euclidean Clipping: Overcoming Exploration Collapse in LLM RL via Riemannian Isometric Policy Optimization〉</p>
+  <div class="paxis" id="pax-hero" role="img" aria-label="機率軸：舊機率 0.01 時 PPO 允許到 0.012、RIC（δ = 0.02）到 0.024；舊機率 0.8 時 PPO 到 0.96、RIC 到 0.93"></div>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 同一個範圍</span><p>PPO-Clip 對每個 token 用同一個比值範圍：機率被推高到原來的 1.2 倍後就不再被推高。原本機率 0.8 的 token 可到 0.96，原本 0.01 的 token 只到 0.012。</p></div>
+    <div class="fact"><span class="n">02 · 不同的距離</span><p>若用第 3、4 節介紹的距離式衡量新舊策略的差距，同樣 1.2 倍的變化，原本機率 0.8 的 token 的距離是原本機率 0.01 的 80 倍（0.016 對 0.0002）。<a href="#mismatch">見第 4 節</a></p></div>
+    <div class="fact"><span class="n">03 · 相同的上限</span><p>RIPO 讓範圍隨舊機率變化，使每個 token 的距離上限相同（<a href="#ric">見第 5 節</a>）。Qwen3-8B-Base 在七個數學基準的平均分數為 38.5，GRPO 為 28.5。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2607.10169">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-587">在關聯圖中查看</a>
+    <a class="btn" href="ripo-lineage-hub.html">研究筆記總覽</a>
+    <a class="btn" href="score-centering.html">同批教學：Score Centering</a>
+  </div>
+</section>
+
+<!-- S1 ============================================================ -->
+<section class="ch" id="basics" data-toc="01" data-tt="PPO-Clip">
+  <div class="ch-num">01 · PPO-Clip</div>
+  <h2>PPO-Clip 限制重要性比值</h2>
+  <div class="prose">
+    <p>用強化學習（reinforcement learning，RL）訓練大型語言模型時，模型逐字產生回答。每一步的「狀態」$s$ 是題目加上已產生的前綴，「動作」$a$ 是下一個 token。策略 $\pi_\theta(a|s)$ 是模型給下一個 token 的機率，$\theta$ 是模型參數。</p>
+    <p>一次訓練迭代先用目前的模型產生一批回答，產生回答的這份模型稱為行為策略（behavior policy）$\pi_{\theta_{old}}$，簡寫 $\pi_{old}$。之後用同一批回答把參數更新好幾次，更新中的模型記為 $\pi_\theta$。兩者對同一個 token 的機率之比稱為重要性比值（importance ratio）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$r_{s,a}(\theta)=\frac{\pi_\theta(a|s)}{\pi_{\theta_{old}}(a|s)}$$</div><span class="eq-n">Sec. 2.2</span></div>
+  <div class="prose">
+    <p>每個 token 另有一個優勢（advantage）估計 $\hat A$：$\hat A>0$ 表示這個回答比平均好，訓練會推高該 token 的機率；$\hat A\lt 0$ 則壓低它。PPO（Proximal Policy Optimization）的目標是</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$J_{PPO}(\theta)=\mathbb E\big[\min\big(r(\theta)\hat A,\ \mathrm{clip}(r(\theta),1-\epsilon,1+\epsilon)\hat A\big)\big]$$</div><span class="eq-n">Sec. 2.2</span></div>
+  <div class="prose">
+    <p>clip 把 $r$ 限制在 $(1-\epsilon,1+\epsilon)$，等價於 $|r-1|\lt\epsilon$；常用 $\epsilon=0.2$。它的實際作用是：$\hat A>0$ 且 $r>1+\epsilon$ 時，min 取到常數 $(1+\epsilon)\hat A$，這個 token 的梯度為 0，不再被推高；$\hat A\lt0$ 且 $r\lt1-\epsilon$ 時同樣梯度為 0，不再被壓低。clip 不是把 $\pi_\theta$ 硬性截斷：參數由所有 token 共享，多次更新仍可能讓比值超出範圍，但超出後該 token 不再提供推動它的梯度。</p>
+    <p>這個限制的目的，是讓每次更新後的新策略不要離舊策略太遠。「每次更新允許新舊策略相差的最大距離」稱為 trust region。本論文要問的是：用「比值偏離 1 多少」來代表這個距離，是否恰當。</p>
+  </div>
+  <details class="more">
+    <summary>符號表</summary>
+    <div class="qa"><div class="tscroll" style="margin-top:12px"><table>
+      <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td>$s$、$a$</td><td>狀態與動作；LLM 中 $s=(q,o_{\lt t})$ 是題目加已產生的前綴，$a=o_t$ 是下一個 token</td></tr>
+      <tr><td>$\pi_\theta$、$\pi_{\theta_{old}}$</td><td>更新中的策略、產生 rollout 的行為策略；簡寫 $\pi$、$\pi_{old}$</td></tr>
+      <tr><td>$r_{s,a}(\theta)$</td><td>重要性比值 $\pi_\theta/\pi_{\theta_{old}}$；GRPO 中逐 token 記為 $r_{i,t}$</td></tr>
+      <tr><td>$\hat A$、$\hat A_{i,t}$</td><td>優勢估計；PPO 用 GAE，GRPO 用群組標準化</td></tr>
+      <tr><td>$\epsilon$；$\epsilon_{low},\epsilon_{high}$</td><td>PPO 的固定 clip 範圍；DAPO 的上下分離範圍</td></tr>
+      <tr><td>$\delta$</td><td>TRPO 的 trust region 半徑；RIC 中每個 token 允許的距離（見第 5 節的係數 2）</td></tr>
+      <tr><td>$F(\theta)$</td><td>Fisher 資訊矩陣 $\mathbb E_{a\sim\pi_{\theta_{old}}(\cdot|s)}[\nabla\log\pi\,\nabla\log\pi^\top]$</td></tr>
+      <tr><td>$d_{clip}$、$d_{geom}$</td><td>PPO-Clip 隱含的歐氏距離（Eq. 3）、KL 誘導的幾何距離（Eq. 8–9）</td></tr>
+      <tr><td>$\epsilon_{s,a}(\pi_{old})$</td><td>RIC 的動態 clip 範圍 $\sqrt{\delta/\pi_{old}}$（Eq. 11）</td></tr>
+      <tr><td>$x$、$A(x)$、$v(x)$</td><td>第 6 節的樣本、其優勢、變異貢獻 $\pi_{old}(x)r(x)^2$</td></tr>
+      <tr><td>$q$、$o_i$、$G$、$R_i$</td><td>題目、第 $i$ 條回答、群組大小、獎勵（答對 1、答錯 0）</td></tr>
+      </tbody></table></div></div>
+  </details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$r$ 怎麼定義？PPO-Clip 把它限制在哪裡？超出範圍時發生什麼？</p>
+    <p class="a">$r=\pi_\theta(a|s)/\pi_{\theta_{old}}(a|s)$；限制在 $(1-\epsilon,1+\epsilon)$，等價於 $|r-1|\lt\epsilon$；$\hat A>0$ 且 $r>1+\epsilon$（或 $\hat A\lt0$ 且 $r\lt1-\epsilon$）時該 token 的梯度為 0（Sec. 2.2、3.2）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="policy-gradient-baselines-score-function.html">Policy gradient、baseline 與 score function</a>、<a href="ppo-grpo-dapo-llm-rl-objectives.html">PPO、GRPO、DAPO 與 LLM 的 RL 目標</a></p>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="collapse" data-toc="02" data-tt="探索崩潰">
+  <div class="ch-num">02 · 探索崩潰</div>
+  <h2>同一個比值範圍對低機率 token 的增量很小</h2>
+  <div class="prose">
+    <p>論文以 $\epsilon=0.2$ 舉例（Sec. 3.1）。對 $\hat A>0$ 的 token，原本機率 $\pi_{old}=0.8$ 的動作，論文所說的「maximum possible updated probability」為 0.96，增加 0.16；原本機率 0.01 的動作只到 0.012，增加 0.002。精確地說，這是「繼續推高這個 token 的梯度停止之處」：比值超過 1.2 後，這個 token 不再被推高。所以一個稀有但有價值的 token 即使被取樣到一次，在這次迭代中也只能升一點。</p>
+    <p>DAPO（Yu et al., 2025）把上下界分開，範圍改成 $(1-\epsilon_{low},1+\epsilon_{high})$，並把 $\epsilon_{high}$ 由 0.2 提高到 0.28（稱為 Clip-Higher）。結果 0.01 的上限變成 0.0128，只多 0.0008；0.8 的上限則由 0.96 變成 1（$0.8\times1.28=1.024$，被機率上限 1 截斷）。作者認為這反而加劇行為多樣性的下降。</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table>
+    <caption>論文 Sec. 3.1 的例子（Â > 0）</caption>
+    <thead><tr><th>舊機率</th><th class="num">PPO 上限</th><th class="num">PPO 增量</th><th class="num">DAPO 上限</th><th class="num">DAPO 增量</th></tr></thead><tbody>
+    <tr><td class="num">0.8</td><td class="num">0.96</td><td class="num">0.16</td><td class="num">1</td><td class="num">0.2</td></tr>
+    <tr><td class="num">0.01</td><td class="num">0.012</td><td class="num">0.002</td><td class="num">0.0128</td><td class="num">0.0028</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>探索崩潰（exploration collapse）指策略在訓練中迅速集中到少數高機率的動作，稀有但重要的動作不再被取樣、也不再被探索，回答變得幾乎一樣。作者的結論是：PPO 式的 clip 不分一個動作是否已被大量利用，一律以相同比值截斷。下一節說明作者如何把這歸因於距離的量法。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">ε = 0.2 時，$\hat A>0$ 的 $\pi_{old}=0.8$ 與 0.01 的 token，論文所說的「最大可能更新後機率」是多少？DAPO（$\epsilon_{high}=0.28$）呢？</p>
+    <p class="a">0.96（+0.16）與 0.012（+0.002）；DAPO 為 1（0.8 × 1.28 = 1.024 被截到 1）與 0.0128（+0.0008）（Sec. 3.1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="ripo-euclidean-clip-mismatch.html">PPO-Clip 的歐氏假設與探索崩潰</a>、<a href="llm-rl-clipping-variants-heuristics.html">LLM RL 中的 clipping 變體</a></p>
+</section>
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="kl" data-toc="03" data-tt="KL 近似">
+  <div class="ch-num">03 · KL 近似</div>
+  <h2>KL 散度的二次近似以舊機率加權</h2>
+  <div class="prose">
+    <p>TRPO（Trust Region Policy Optimization）用 KL 散度定義 trust region：要求 $\mathbb E_s[D_{KL}(\pi_{\theta_{old}}(\cdot|s)\,\|\,\pi_\theta(\cdot|s))]\le\delta$（Eq. 1）。作者採用這個前提：新舊策略的差距應以 KL 散度衡量。</p>
+    <p><b>一維直覺。</b>KL 散度在新舊策略相同時為 0，而且是最小值，所以在附近的值約為「½ × 曲率 × 偏移²」。參數有很多維時，曲率換成一個矩陣，這個矩陣就是 Fisher 資訊矩陣 $F$，即對數機率梯度的外積的期望，期望對 $a\sim\pi_{\theta_{old}}(\cdot|s)$ 取。本頁說的「度量」只指這個把參數偏移換算成距離的矩陣。</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$D_{KL}(\pi_{\theta_{old}}\|\pi_\theta)\approx\tfrac12\,\Delta\theta^\top F(\theta)\big|_{\theta_{old}}\Delta\theta,\qquad F=\mathbb E_{a\sim\pi_{\theta_{old}}}\!\big[\nabla_\theta\log\pi_\theta\,\nabla_\theta\log\pi_\theta^\top\big]$$</div><span class="eq-n">Eq. 4–5</span></div>
+  <div class="prose">
+    <p>其中 $\Delta\theta=\theta-\theta_{old}$。論文說 Fisher 矩陣定義了一個 Riemannian 流形上的度量。接著作者把參數空間的式子換到機率本身。關鍵假設是 Eq. 6：新機率約等於舊機率加上一階變化，$\Delta\pi\approx\nabla_\theta\pi^\top\Delta\theta$，只在更新很小時成立。代入後 Fisher 二次式中的每一項變成 $(\Delta\pi)^2/\pi_{old}$，而 $(\Delta\pi)^2/\pi_{old}=\pi_{old}(r-1)^2$，所以權重是 $\pi_{old}$：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$D_{KL}(\pi_{\theta_{old}}\|\pi_\theta)\approx\frac12\sum_a\frac{(\pi_\theta(a|s)-\pi_{\theta_{old}}(a|s))^2}{\pi_{\theta_{old}}(a|s)}=\frac12\sum_a\pi_{\theta_{old}}(a|s)\,(r_{s,a}(\theta)-1)^2$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="eq"><div class="eq-m">$$d_{geom}(\pi_{\theta_{old}},\pi_\theta)\propto\pi_{\theta_{old}}\cdot(r(\theta)-1)^2$$</div><span class="eq-n">Eq. 8</span></div>
+  <div class="prose">
+    <p>Eq. 7 的意思是：$(r-1)^2$ 的權重是 $\pi_{\theta_{old}}(a|s)$。同一個比值偏差，在高機率區對應的距離大，在低機率區對應的距離小，這個幾何不均勻。</p>
+  </div>
+  <details class="more"><summary>推導細節：Eq. 5–6 與 Eq. 4 的筆誤</summary><div class="qa">
+    <p>把 $F$ 寫開，並用 $\nabla\log\pi=\nabla\pi/\pi$：$\Delta\theta^\top F\Delta\theta=\sum_a\pi\,\frac{(\nabla\pi^\top\Delta\theta)^2}{\pi^2}=\sum_a\frac{1}{\pi_{\theta_{old}}(a|s)}\big(\nabla_\theta\pi_\theta(a|s)^\top\big|_{\theta_{old}}\Delta\theta\big)^2$（Eq. 5）。再用一階展開 $\pi_\theta\approx\pi_{\theta_{old}}+\nabla\pi^\top\Delta\theta$（Eq. 6）把括號換成 $\pi_\theta-\pi_{\theta_{old}}$，就得到 Eq. 7。</p>
+    <p>原文 Eq. 4 第二行寫成 $\Phi(\theta)\approx\Phi(\theta)+\dots$，應為 $\Phi(\theta_{old})+\dots$（筆誤）；在 $\theta_{old}$ 處 KL 的值與梯度都是 0，只剩二次項。</p>
+    <p><span class="tag">本頁推導</span>Eq. 7 中間那一式正是 $\tfrac12\chi^2(\pi_\theta\|\pi_{\theta_{old}})$（Pearson χ² 散度）。後續的 GPPO 論文（Generalized PPO，arXiv 2610.13015）把 RIPO 歸為 χ² 散度的一種約束方式，見<a href="gppo-design-space-unification.html">GPPO 的設計空間</a>與<a href="f-divergence-geometry-proximal-regions.html">f-散度幾何</a>。</p>
+  </div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">KL 在 $\theta_{old}$ 附近的二階近似是什麼？</p>
+    <p class="a">$D_{KL}(\pi_{\theta_{old}}\|\pi_\theta)\approx\tfrac12\Delta\theta^\top F\Delta\theta$，$F=\mathbb E_{a\sim\pi_{old}}[\nabla\log\pi\nabla\log\pi^\top]$ 為 Fisher 資訊矩陣，即一維「½ × 曲率 × 偏移²」中曲率的多維版本（Eq. 4–5）。</p>
+    <p class="q">在 $\Delta\pi\approx\nabla\pi^\top\Delta\theta$ 的假設下，Eq. 7 中 $(r-1)^2$ 的權重是什麼？代表什麼？</p>
+    <p class="a">權重是 $\pi_{\theta_{old}}(a|s)$：$D_{KL}\approx\tfrac12\sum_a\pi_{old}(r-1)^2$；同一比值偏差在高機率區距離大、低機率區距離小（Eq. 6–8）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="trpo-monotonic-improvement-tv-bound.html">TRPO：trust region 與單調改進下界</a>、<a href="ripo-kl-fisher-ratio-geometry.html">KL 散度、Fisher 矩陣與重要性比值的二次式</a>、<a href="f-divergence-geometry-proximal-regions.html">f-散度幾何與 proximal region</a></p>
+</section>
+
+<!-- S4 ============================================================ -->
+<section class="ch" id="mismatch" data-toc="04" data-tt="歐氏假設">
+  <div class="ch-num">04 · 歐氏假設</div>
+  <h2>PPO-Clip 隱含歐氏距離</h2>
+  <div class="prose">
+    <p>PPO-Clip 約束 $|r-1|\lt\epsilon$，等於用下式衡量新舊策略的差異：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$d_{clip}(\pi_{\theta_{old}},\pi_\theta)=\Big(\frac{\pi_\theta}{\pi_{\theta_{old}}}-1\Big)^2=(r(\theta)-1)^2$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="prose">
+    <p>作者稱之為歐氏距離：它與 $\pi_{old}$ 無關。只要兩個 token 的比值偏差相同，PPO-Clip 就把它們視為相同的策略變化，隱含假設策略變化在整個流形上是均勻的。Eq. 8 顯示實際上距離正比於 $\pi_{old}(r-1)^2$，兩者不一致。</p>
+    <p>論文用 Eq. 9 的單 token 項 $\tfrac12\pi_{old}(r-1)^2$ 計算例子（Sec. 3.2），這不是完整的 KL：Eq. 7 對所有動作求和，包含其餘 token 因總和為 1 而跟著改變的部分；Eq. 9 與這個例子只保留被取樣 token 的一項。$|r-1|=0.2$ 時，$\pi_{old}=0.8$ 的值是 $0.5\times0.8\times0.2^2=0.016$，$\pi_{old}=0.01$ 是 $0.5\times0.01\times0.2^2=0.0002$，相差 80 倍。作者的說法是後者遠小於 trust region 允許的距離。</p>
+    <p>作者據此提出 Prop. 3.1：PPO-Clip 錯誤地使用歐氏度量衡量策略差異，與策略流形的幾何不一致，導致低機率區過度保守、高機率區過度激進，最終探索崩潰。論文沒有給證明。其中「歐氏度量與幾何距離不一致」由 Eq. 3 與 Eq. 8 的比較推得；「因此造成探索崩潰」則只由 Sec. 3.1 的數字例子與第 8 節的熵曲線支持，屬於觀察。</p>
+  </div>
+  <div class="callout">
+    <p class="ct">單 token 量測與二元量測 <span class="tag">本頁推導</span></p>
+    <p>提高一個 token 的機率必然壓低其他 token。若把所有動作分成「這個 token」與「其餘」兩類，Eq. 7 的和只剩兩項，得到二元二階量測 $\tfrac12(\Delta\pi)^2/(\pi_{old}(1-\pi_{old}))$，比單 token 項多一個因子 $1/(1-\pi_{old})$。$\pi_{old}=0.01$ 時兩者幾乎相同；$\pi_{old}=0.8$ 時是 5 倍。另一個量測是不做二次近似的二元精確 KL：$\pi_{old}\ln\frac{\pi_{old}}{\pi}+(1-\pi_{old})\ln\frac{1-\pi_{old}}{1-\pi}$。以這兩種量測重算上面的 PPO 例子，兩個 token 分別是 0.080 對 0.000202（約 400 倍）與 0.176 對 0.000179（約 1000 倍）。所以單 token 量測在高機率區低估了分布層級的變化。依 GPPO 論文，DPPO（arXiv 2602.04879）的 Binary 估計即加入其餘 token 的質量，見<a href="divergence-estimator-topologies.html">散度估計器拓撲</a>。下一節的圖版在「進階」檢視列出這兩種量測。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">PPO-Clip 隱含什麼距離？$|r-1|=0.2$ 時，以論文的單 token 項計，兩個 token 的距離各是多少？這個量少算了什麼？</p>
+    <p class="a">$d_{clip}=(r-1)^2$，與 $\pi_{old}$ 無關；$\tfrac12\pi_{old}(r-1)^2$：$\pi_{old}=0.8$ 為 0.016、0.01 為 0.0002（Eq. 3、Sec. 3.2）；它只保留被取樣 token 一項，少算其餘 token 跟著改變的部分。</p>
+  </div></details>
+</section>
+
+<!-- S5a =========================================================== -->
+<section class="ch" id="ric" data-toc="05" data-tt="RIC">
+  <div class="ch-num">05 · RIC</div>
+  <h2>RIC 讓每個 token 的距離上限相同</h2>
+  <div class="prose">
+    <p>Riemannian Isometric Clip（RIC）要求每個 token 的單 token 距離有相同的上限 δ（Sec. 4.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$d_{geom}(\pi_{\theta_{old}}(a|s),\pi_\theta(a|s))\triangleq\tfrac12\,\pi_{\theta_{old}}(a|s)\,(r_{s,a}(\theta)-1)^2\le\delta$$</div><span class="eq-n">Eq. 9</span></div>
+  <div class="prose">
+    <p>這是不等式：只有到達 clip 邊界的 token 等於上限，範圍內的 token 距離較小；而且 min 只讓一側起作用，$\hat A>0$ 看上界、$\hat A\lt0$ 看下界。解出比值：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$|r_{s,a}(\theta)-1|\le\sqrt{\frac{2\delta}{\pi_{\theta_{old}}(a|s)}}$$</div><span class="eq-n">Eq. 10</span></div>
+  <div class="eq"><div class="eq-m">$$|r_{s,a}(\theta)-1|\le\epsilon_{s,a}(\pi_{\theta_{old}}),\qquad\epsilon_{s,a}(\pi_{\theta_{old}})=\sqrt{\frac{\delta}{\pi_{\theta_{old}}(a|s)}}$$</div><span class="eq-n">Eq. 11</span></div>
+  <div class="prose">
+    <p>由 $\tfrac12\pi_{old}(r-1)^2\le\delta$ 得到 $|r-1|\le\sqrt{2\delta/\pi_{old}}$（Eq. 10）。實作式 Eq. 11 沒有 2，因為係數 2 被吸收進超參數 δ。所以以 Eq. 11 的 δ 而言，每個 token 在 Eq. 9 單位下的距離上限是 δ/2，只有到達 clip 邊界時才等於上限。</p>
+    <p>論文的例子取 δ = 0.02（Sec. 4.1）：$\pi_{old}=0.8$ 的上限是 0.92（精確值 $0.8(1+\sqrt{0.025})=0.9265$），PPO-Clip 為 0.96；$\pi_{old}=0.01$ 的上限是 0.024（精確值 0.0241），PPO-Clip 為 0.012。兩個 token 在上邊界的單 token 距離都是 0.01，PPO-Clip 則是 0.016 與 0.0002。</p>
+    <p>作者的 Prop. 4.1 說 RIC 保證每個狀態—動作更新的幾何距離相同、低機率動作可更新較多而高機率動作較少，並同時緩解探索崩潰、平衡偏差與變異。論文同樣沒有證明。「距離上限相同」由 Eq. 9–11 直接成立；「高機率動作較少」只在一定條件下相對 PPO 成立（下一節）；「緩解探索崩潰」由實驗支持；「平衡偏差與變異」是第 6 節的定性論證。</p>
+  </div>
+  <div class="plate" id="w1">
+    <div class="plate-h"><span class="id">W1</span><h3>clip 範圍與單 token 距離</h3></div>
+    <p class="plate-lead">拖動舊機率：上圖是允許的最大比值，下圖是到達上邊界時的單 token 距離 ½π_old(r−1)²。PPO 的距離隨舊機率增加，RIC 固定在 δ/2。</p>
+    <div class="ctl-row" style="margin-bottom:14px"><button class="chip" type="button" id="w1-adv" aria-pressed="false">進階（第 5b 節）</button></div>
+    <div class="pg side">
+      <div class="fig" id="w1-fig"><svg role="img" aria-label="比值上限對舊機率"></svg><svg role="img" aria-label="單 token 距離對舊機率" style="margin-top:8px"></svg>
+        <div class="legend" id="w1-leg"><span class="lg ppo">PPO</span><span class="lg dapo adv-only">DAPO</span><span class="lg acc">RIC</span><span class="lg isl">受 π ≤ 1 限制</span><span class="lg ref adv-only">分界 δ/ε²</span></div></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="w1-p">舊機率 π_old<output id="w1-po">0.0100</output></label><input id="w1-p" type="range" min="0" max="1000" step="1" data-log="1e-4,0.99" data-name="舊機率"></div>
+        <div class="ctl-row"><button class="chip" type="button" data-p="0.01">0.01</button><button class="chip" type="button" data-p="0.8">0.8</button></div>
+        <div class="adv-only">
+          <div class="rng"><label class="lbl" for="w1-e">PPO ε<output id="w1-eo">0.20</output></label><input id="w1-e" type="range" min="0.05" max="0.5" step="0.01" value="0.2"></div>
+          <div class="rng"><label class="lbl" for="w1-eh">DAPO ε_high<output id="w1-eho">0.28</output></label><input id="w1-eh" type="range" min="0.05" max="0.6" step="0.01" value="0.28"></div>
+          <div class="rng"><label class="lbl" for="w1-d">RIC δ<output id="w1-do">0.020</output></label><input id="w1-d" type="range" min="0.005" max="0.1" step="0.005" value="0.02"></div>
+          <div class="ctl-row"><button class="chip" type="button" data-d="0.02">δ = 0.02（Sec. 4.1 例子）</button><button class="chip" type="button" data-d="0.05">δ = 0.05（實驗預設）</button></div>
+        </div>
+        <p class="readout" id="w1-ro"></p>
+      </div>
+    </div>
+    <div class="tscroll"><table id="w1-tab" class="rtab"><caption>上邊界的量測（基本檢視 δ = 0.02、ε = 0.2）</caption><thead></thead><tbody></tbody></table></div>
+    <p class="plate-f">讀數由本頁依 Eq. 3、9、11 即時計算；有效比值上限為 min(1 + ε, 1/π_old)。二元二階與二元 KL 兩欄 <span class="tag">本頁推導</span>（定義見第 4 節的說明框）。</p>
+    <p class="sr" aria-live="polite" id="w1-live"></p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">由 $\tfrac12\pi_{old}(r-1)^2\le\delta$ 得到什麼？實作式為何沒有 2？</p>
+    <p class="a">$|r-1|\le\sqrt{2\delta/\pi_{old}}$（Eq. 10）；係數 2 吸收進 δ，$\epsilon_{s,a}=\sqrt{\delta/\pi_{old}}$（Eq. 11），故每個 token 的距離上限為 δ/2，只有到達 clip 邊界時才等於上限。</p>
+    <p class="q">δ = 0.02 時 $\pi_{old}=0.8$、0.01 的上限與邊界上的距離？</p>
+    <p class="a">0.92（精確 0.9265）與 0.024（0.0241）；兩者邊界上的距離都是 0.01（PPO-Clip：0.016 與 0.0002）（Sec. 4.1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="ripo-isometric-clip-ric.html">Riemannian Isometric Clip 與 RIPO 目標</a></p>
+</section>
+
+<!-- S5b =========================================================== -->
+<section class="ch" id="delta" data-toc="05b" data-tt="δ = 0.05">
+  <div class="ch-num">05b · δ = 0.05</div>
+  <h2>實驗預設 δ = 0.05 時 RIC 的上界處處比 PPO 大</h2>
+  <div class="prose">
+    <p><span class="tag">本頁推導</span>RIC 的範圍何時比 PPO 小？$\sqrt{\delta/\pi_{old}}\lt\epsilon$ 等價於 $\pi_{old}>\delta/\epsilon^2$。δ = 0.02、ε = 0.2 時分界在 0.5，所以例子中 0.8 的 token 比 PPO 受限。論文實驗的預設是 δ = 0.05（Sec. 5.1），此時分界為 1.25，因此對所有 $\pi_{old}$，$\epsilon_{s,a}\ge\sqrt{0.05}=0.224>0.2$：RIC 的上界處處比 PPO 大，只是大的程度隨機率改變。</p>
+    <p><span class="tag">本頁推導</span>機率不能超過 1，所以有效比值上限是 $\min(1+\epsilon_{s,a},1/\pi_{old})$。δ = 0.05 時 $\pi_{old}\ge0.8$ 的 token 上限直接是 1：$\pi_{old}=0.8$ 時上限受 π ≤ 1 限制而到 1.0，與 DAPO 相同。所以第 5 節例子中「高機率 token 較不激進」的效果依賴 δ 的取值。</p>
+    <p><span class="tag">本頁推導</span>下側 $1-\sqrt{\delta/\pi_{old}}$ 在 $\pi_{old}\le\delta$ 時小於等於 0；比值本來就不小於 0，等於沒有下限。</p>
+    <p>請在上方圖版開啟「進階」並按「δ = 0.05」，再按「0.8」，比較 RIC、PPO 與 DAPO 的上限；進階檢視也加入 DAPO 曲線與第 4 節的兩種二元量測。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">RIC 的 ε 在什麼條件下小於 PPO 的 ε？論文預設 δ = 0.05 時呢？</p>
+    <p class="a">$\pi_{old}>\delta/\epsilon^2$；δ = 0.05、ε = 0.2 時分界 1.25，所以對所有 $\pi_{old}$ 都有 $\epsilon_{s,a}\ge0.224>0.2$；$\pi_{old}=0.8$ 時上限受 π ≤ 1 限制而到 1.0（本頁推導）。</p>
+  </div></details>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="variance" data-toc="06" data-tt="偏差與變異">
+  <div class="ch-num">06 · 偏差與變異</div>
+  <h2>RIC 使 clip 邊界上單一樣本的變異貢獻接近 δ</h2>
+  <div class="prose">
+    <p>作者也從重要性取樣（importance sampling，IS）的角度分析 RIC（Sec. 4.2）。目標策略下的期望可以用行為策略的樣本估計：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbb E_{x\sim\pi_\theta}[A(x)]=\mathbb E_{x\sim\pi_{\theta_{old}}}[r(x)A(x)],\qquad r(x)=\frac{\pi_\theta(x)}{\pi_{\theta_{old}}(x)}$$</div><span class="eq-n">Eq. 12</span></div>
+  <div class="prose">
+    <p>這是不偏的，因為 $\sum_x\pi_{old}(x)\frac{\pi_\theta(x)}{\pi_{old}(x)}A(x)=\sum_x\pi_\theta(x)A(x)$，比值剛好抵消取樣分布的差異。截斷則把權重 $r$ 換成較小的 $w$，期望值少了 $\sum_x(\pi_\theta(x)-\pi_{old}(x)w(x))A(x)$，這就是偏差。取 $A\equiv1$ 時，單一 token 的偏差是 $\pi_\theta-\pi_{old}w$。</p>
+    <p>變異等於二階動差減去平均值的平方。作者依 Tokdar 與 Kass (2010)、Murphy (2012) 認為後者通常可以忽略，只看二階動差：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbb V_{x\sim\pi_{\theta_{old}}}[r(x)A(x)]\approx\mathbb E_{x\sim\pi_{\theta_{old}}}[r(x)^2A(x)^2]=\sum_x\pi_{\theta_{old}}(x)\,r(x)^2A(x)^2$$</div><span class="eq-n">Eq. 13</span></div>
+  <div class="prose">
+    <p>作者定義樣本的變異貢獻 $v(x)=\pi_{old}(x)r(x)^2$，它衡量這個樣本對二階動差的貢獻。三種權重在 clip 邊界上的變異貢獻 $v=\pi_{old}w^2$ 如下：</p>
+    <ul>
+      <li><b>未截斷 IS</b>：$v=\pi_\theta^2/\pi_{old}$，$\pi_{old}$ 很小時可任意大，偏差為 0。作者認為變異過大來自 $\pi_{old}$ 的長尾。</li>
+      <li><b>PPO 截斷</b>（$w\le1+\epsilon$）：$v=\pi_{old}(1+\epsilon)^2$，$\pi_{old}\to0$ 時趨近 0，變異小，但忽略被截斷樣本的貢獻，偏差大。</li>
+      <li><b>RIC 截斷</b>（$w\le1+\sqrt{\delta/\pi_{old}}$）：$v=\pi_{old}(1+\sqrt{\delta/\pi_{old}})^2$，在 $\pi_{old}\to0$ 時趨近 δ。</li>
+    </ul>
+  </div>
+  <div class="eq"><div class="eq-m">$$v(x')=\pi_{\theta_{old}}(x')\Big(1+\sqrt{\tfrac{\delta}{\pi_{\theta_{old}}(x')}}\Big)^2\approx O(\delta)$$</div><span class="eq-n">Eq. 14</span></div>
+  <div class="prose">
+    <p>作者稱之為與密度無關、常數階的變異，結論是 RIC 的變異嚴格小於標準 IS、偏差遠小於 PPO-Clip。「同質」在這裡的意思是：每個 token 的 $v$ 大小相同、不隨 $\pi_{old}$ 改變；統計上稱為同質變異（homoscedasticity）。作者的解讀是：等距更新使每個樣本對 trust region 的二階貢獻相同，因而在重要性取樣中得到同質變異；PPO-Clip 則是異質變異。</p>
+    <p><span class="tag">本頁推導</span>Eq. 14 可以精確寫成 $v=(\sqrt{\pi_{old}}+\sqrt\delta)^2=\pi_{old}+2\sqrt{\delta\pi_{old}}+\delta$。它在 $\pi_{old}\ll\delta$ 時趨近 δ，$\pi_{old}\gg\delta$ 時約為 $\pi_{old}$，所以「與密度無關」是低機率端的漸近性質。$O(\delta)$ 也只是單一樣本的上界：總二階動差是所有被截斷 token 的和，約為「被截斷的低機率 token 數 × δ」，仍隨長尾 token 數增加。</p>
+    <p><span class="tag">本頁推導</span>「變異嚴格小於 IS」只在比值確實超過 $1+\sqrt{\delta/\pi_{old}}$ 時才有差別；比值在範圍內時，RIC 與未截斷 IS 完全相同。另外 Sec. 4.2 把 clip 寫成「把比值截斷到上限」，而 PPO 實際的 min-clip 是讓被截斷項的梯度為 0；下面的圖版依論文的截斷寫法計算，只看上側。</p>
+  </div>
+  <div class="plate" id="w2">
+    <div class="plate-h"><span class="id">W2</span><h3>單一 token 的偏差與變異</h3></div>
+    <p class="plate-lead">選一個舊機率與目標比值 r（π_θ = π_old·r）。表中比較三種權重的變異貢獻 v 與偏差 π_θ − π_old·w（A ≡ 1）。</p>
+    <div class="pg side">
+      <div class="fig" id="w2-fig"><svg role="img" aria-label="clip 邊界上的變異貢獻對舊機率"></svg>
+        <div class="legend"><span class="lg ppo">PPO</span><span class="lg acc">RIC</span><span class="lg isl">IS（固定 π_θ）</span><span class="lg ref">δ</span></div></div>
+      <div class="ctl">
+        <div class="rng"><label class="lbl" for="w2-p">舊機率 π_old<output id="w2-po">0.00100</output></label><input id="w2-p" type="range" min="0" max="1000" step="1" data-log="1e-5,0.9" data-name="舊機率"></div>
+        <div class="rng"><label class="lbl" for="w2-r">目標比值 r<output id="w2-ro2">10.0</output></label><input id="w2-r" type="range" min="0" max="1000" step="1" data-name="目標比值"><span class="note" id="w2-hint" aria-hidden="true"></span></div>
+        <div class="rng"><label class="lbl" for="w2-e">PPO ε<output id="w2-eo">0.20</output></label><input id="w2-e" type="range" min="0.05" max="0.5" step="0.01" value="0.2"></div>
+        <div class="rng"><label class="lbl" for="w2-d">RIC δ<output id="w2-do">0.050</output></label><input id="w2-d" type="range" min="0.005" max="0.1" step="0.005" value="0.05"></div>
+        <label class="chk"><input type="checkbox" id="w2-dual">套用雙重 clipping 上界 10（若其語意為比值上限）</label>
+      </div>
+    </div>
+    <div class="tscroll"><table id="w2-tab" class="rtab"><caption>三種權重（A ≡ 1，只看上側）</caption><thead></thead><tbody></tbody></table></div>
+    <p class="readout" id="w2-ro"></p>
+    <p class="plate-f">讀數由本頁依 Eq. 13–14 即時計算。RIC 包絡的精確式 (√π_old + √δ)² 與偏差式 <span class="tag">本頁推導</span>。「上界 10」的語意論文沒有說明。</p>
+    <p class="sr" aria-live="polite" id="w2-live"></p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">clip 邊界上 $v=\pi_{old}w^2$ 對未截斷 IS、PPO、RIC 各是多少？$\pi_{old}\to0$ 時如何？偏差怎麼定義？</p>
+    <p class="a">IS：$\pi_\theta^2/\pi_{old}$，可任意大，偏差 0；PPO：$\pi_{old}(1+\epsilon)^2\to0$ 但偏差大；RIC：$\pi_{old}(1+\sqrt{\delta/\pi_{old}})^2=(\sqrt{\pi_{old}}+\sqrt\delta)^2\to\delta$；$A\equiv1$ 時單一 token 偏差為 $\pi_\theta-\pi_{old}w$（Eq. 13–14；精確式與偏差式為本頁推導）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="ripo-bias-variance-homoscedasticity.html">幾何等距與同質變異：RIC 的偏差—變異論證</a>、<a href="importance-sampling-corrections-llm-rl.html">LLM RL 中的 importance sampling 修正</a></p>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="ripo" data-toc="07" data-tt="RIPO 目標">
+  <div class="ch-num">07 · RIPO 目標</div>
+  <h2>RIPO 是換上 RIC 的 GRPO</h2>
+  <div class="prose">
+    <p>LLM 的 RL 常用 GRPO（Group Relative Policy Optimization）。它對每個題目 $q$ 從行為策略取樣 $G$ 個回答 $\{o_i\}$，獎勵 $R_i$ 答對為 1、答錯為 0，優勢取群組標準化 $\hat A_{i,t}=(R_i-\mathrm{mean}(\{R_i\}))/\mathrm{std}(\{R_i\})$，不需要價值模型（PPO 原本用 GAE 估計優勢，本文只在第 8 節的 PPO 實驗用到）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$J_{GRPO}(\theta)=\mathbb E\Big[\frac1G\sum_{i=1}^G\frac1{|o_i|}\sum_{t=1}^{|o_i|}\min\big(r_{i,t}\hat A_{i,t},\ \mathrm{clip}(r_{i,t},1-\epsilon,1+\epsilon)\hat A_{i,t}\big)\Big]$$</div><span class="eq-n">Eq. 2</span></div>
+  <div class="prose"><p>RIPO 的目標（Sec. 4.3）：</p></div>
+  <div class="eq"><div class="eq-m">$$J_{RIPO}(\theta)=\mathbb E\Big[\frac{1}{\sum_{i=1}^G|o_i|}\sum_{i=1}^G\sum_{t=1}^{|o_i|}\min\big(r_{i,t}\hat A_{i,t},\ \mathrm{clip}(r_{i,t},1-\epsilon_{i,t},1+\epsilon_{i,t})\hat A_{i,t}\big)\Big]$$</div><span class="eq-n">Eq. 15</span></div>
+  <div class="prose">
+    <p>與 GRPO 相比只改了兩處：clip 範圍改為逐 token 的 $\epsilon_{i,t}=\sqrt{\delta/\pi_{old}}$（Eq. 11，用該 token 的舊機率）；正規化由「先對每條回答平均、再對 $G$ 條平均」改為 $1/\sum_i|o_i|$，即 DAPO 的 token 層級 loss，用來平衡長短回答的梯度影響。實驗中 δ = 0.05，雙重 clipping 的上下界為 0.5 與 10，並移除 KL 懲罰（Sec. 5.1）。論文註腳說 RIPO 唸作「ripple」。</p>
+    <h3>一個玩具模型 <span class="tag">教學示意</span></h3>
+    <p>下面用一個可以完整模擬的小問題，看第 2 節的機制在一次一次迭代中如何作用。bandit 是只有一步的決策問題：策略在 6 個「回答」中選一個，每個回答有固定的答對機率。策略是 softmax(logits)，logits 是 6 個可訓練的數字。每次答對與否是擲一次「答對機率」的硬幣（伯努利分布）。seed 是亂數的起點，固定 seed 讓結果可以重現。</p>
+    <p>回答 A 的初始機率高（0.8 左右），答對機率 0.5；回答 B 的初始機率很低（預設 0.01），答對機率 1.0；其餘 4 個答對機率 0。每次迭代從 $\pi_{old}$ 取樣 8 個回答、算 GRPO 優勢，對同一批樣本做 4 次梯度上升。對 200 個 seed 各跑 200 次迭代，統計有多少比例的 seed 最後讓 B 的機率超過 0.5。</p>
+  </div>
+  <div class="plate" id="w3">
+    <div class="plate-h"><span class="id">W3</span><h3>玩具 bandit：稀有的好動作能否被找到</h3></div>
+    <p class="plate-lead">四條線同時計算：GRPO（固定 ε）、DAPO（ε, ε_high）、RIC（δ）與不 clip 的對照。按「執行」重算。</p>
+    <div class="ctl-row" style="margin-bottom:12px">
+      <span class="lbl" id="w3-pbl">B 的初始機率</span>
+      <div class="seg" id="w3-pb" role="group" aria-labelledby="w3-pbl"><button type="button" data-v="0.005" aria-pressed="false">0.005</button><button type="button" data-v="0.01" aria-pressed="true">0.01</button><button type="button" data-v="0.02" aria-pressed="false">0.02</button></div>
+    </div>
+    <div class="pg two">
+      <div class="fig" id="w3-fa"><svg role="img" aria-label="找到 B 的比例對迭代次數"></svg></div>
+      <div class="fig" id="w3-fb"><svg role="img" aria-label="平均熵對迭代次數"></svg></div>
+    </div>
+    <div class="legend"><span class="lg ppo">GRPO</span><span class="lg dapo">DAPO</span><span class="lg acc">RIC</span><span class="lg nocl">不 clip</span></div>
+    <div class="grid3">
+      <div class="rng"><label class="lbl" for="w3-e">GRPO／DAPO ε<output id="w3-eo">0.20</output></label><input id="w3-e" type="range" min="0.1" max="1" step="0.05" value="0.2"></div>
+      <div class="rng"><label class="lbl" for="w3-eh">DAPO ε_high<output id="w3-eho">0.28</output></label><input id="w3-eh" type="range" min="0.1" max="1" step="0.01" value="0.28"></div>
+      <div class="rng"><label class="lbl" for="w3-d">RIC δ<output id="w3-do">0.050</output></label><input id="w3-d" type="range" min="0.005" max="0.2" step="0.005" value="0.05"></div>
+    </div>
+    <div class="ctl-row" style="margin-top:8px"><button class="small-btn pri" type="button" id="w3-run">執行</button><span class="note" id="w3-st">尚未執行</span></div>
+    <div class="tscroll" id="w3-tw"><table id="w3-tab" class="rtab"><caption>第 200 次迭代（200 個 seed 的平均）</caption><thead></thead><tbody></tbody></table></div>
+    <p class="cap">所有方法的熵最後都接近 0，因為這個問題只有一個最佳動作；論文 Fig. 1(b) 的「熵穩定在中等範圍」無法在此重現。略過的迭代是 8 個回答的獎勵全相同、優勢全為 0 的情形；找到 B 之後幾乎每次都全對，所以找到越多的方法略過越多。</p>
+    <p class="plate-f">此模型為本頁設計的示意，不是論文的實驗或結果。6 個動作、G = 8、每次迭代 4 次全批梯度上升、學習率 1.0、200 次迭代、seed 1–200（mulberry32）。梯度為解析式。</p>
+    <p class="sr" aria-live="polite" id="w3-live"></p>
+  </div>
+  <div class="prose" style="margin-top:28px">
+    <p>預設參數下，第 200 次迭代找到 B 的比例是 GRPO 0.015、DAPO 0.100、RIC 0.370、不 clip 0.395。</p>
+    <p><b>為什麼固定 ε 很少找到 B，RIC 又改變了什麼。</b>固定 ε = 0.2 時，B 被取樣到後比值一超過 1.2 梯度就變成 0，每次迭代 B 的機率只能小幅上升，策略因此先集中到 A。RIC 對低機率 token 放寬上界：B 的初始機率 $p_B=0.01$、δ = 0.05 時，B 的比值上限是 $1+\sqrt{0.05/0.01}=1+\sqrt5\approx3.24$，遠大於 PPO 的 1.2，所以 B 每次被取樣到時能上升得多。不過這個增益不能歸因於「範圍隨機率改變的形狀」：不 clip 的對照（0.395）與 RIC（0.370）相近，把 DAPO 的 $\epsilon_{high}$ 調到 1.0（下界保持 0.2）更達到 0.505。在這個玩具中大更新沒有代價，所以它只能示範「上界太小會阻礙發現稀有的好動作」，不能說明為什麼需要 trust region。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">RIPO 的目標改了哪兩處？預設 δ、雙重 clipping、KL 怎麼設？</p>
+    <p class="a">clip 範圍改為逐 token 的 $\epsilon_{i,t}=\sqrt{\delta/\pi_{old}}$；正規化改為 $1/\sum_i|o_i|$（token 層級）；δ = 0.05，雙重 clipping 0.5 與 10，移除 KL 懲罰（Eq. 15、Sec. 5.1）。</p>
+    <p class="q">在 W3 中，固定 ε = 0.2 為何很少找到稀有的好動作？RIC 的增益能歸因於「形狀」嗎？</p>
+    <p class="a">B 被取樣到時比值超過 1.2 後梯度為 0，每次迭代只能小幅上升，策略先集中到 A；RIC 讓低機率 token 的上界變大（$p_B=0.01$、δ = 0.05 時上界約 3.24）。不能：不 clip 的對照（0.395）與 RIC（0.370）相近，上界 1.0 的 DAPO 式更高（0.505）；玩具中大更新沒有代價，只能示範「上界太小會阻礙發現」（教學示意）。</p>
+  </div></details>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="results" data-toc="08" data-tt="實驗結果">
+  <div class="ch-num">08 · 實驗結果</div>
+  <h2>RIPO 在四個模型的平均分數都最高</h2>
+  <div class="prose">
+    <p>主要實驗（Sec. 5.1–5.2）在 Qwen3-1.7B-Base、Llama3.2-3B-Instruct、Qwen3-4B-Base、Qwen3-8B-Base 上，以 DAPO-Math-17k 訓練，比較 GRPO、DAPO、GSPO、GMPO、DCPO 五個基準演算法（論文稱 six，只列出五個），在七個數學競賽基準上報告 Avg@8。RIPO 的平均在四個模型都最高。相對 GRPO：Qwen3-1.7B-Base 15.4 vs 11.2（+37.2%）、Llama3.2-3B-Instruct 8.6 vs 6.4（+34.4%）、Qwen3-4B-Base 30.1 vs 25.7（+17.1%）、Qwen3-8B-Base 38.5 vs 28.5（+35.1%）。Qwen3-8B-Base 的 AIME24：RIPO 43.8、GRPO 31.7、DCPO 36.3、GMPO 41.7。RIPO 不是每格都最好，例如 Qwen3-8B 的 AIME25 是 GMPO 30.0 高於 RIPO 29.2。</p>
+    <p><b>訓練動態（Fig. 1，Qwen3-8B-Base，論文文字描述）。</b>(a) RIPO 在 40 步內超過 GRPO 訓練 200 步的 AIME24 表現，作者稱五倍 token 效率；(b) GRPO 的熵迅速降到接近 0，DAPO 的熵不受控地上升，RIPO 先下降後穩定在中等範圍；(c) 其他方法的梯度範數有頻繁尖峰，RIPO 幾乎沒有波動；(d) DCPO、GMPO 很少觸發 clip，GSPO、DAPO 被 clip 的 token 多出數個數量級，RIPO 介於中間。</p>
+    <p><b>δ 消融（Table 2，Qwen3-8B-Base，AIME24 Avg@8）。</b>對稱的 δ 從 0.02 到 0.08 為 40.8–43.8，表現穩定。$\delta_{low}/\delta_{high}\ge2$ 的三組（0.05/0.02、0.08/0.02、0.08/0.04）降到 27.5–28.8；0.05/0.04 同樣不對稱但得 41.7 <span class="tag">本頁說明</span>。每個設定只有一次訓練，沒有誤差範圍。作者的正文寫「δ_high 明顯大於 δ_low 時表現大幅下降」，並解釋為機率變得更容易增加；Fig. 2 顯示高度不對稱時獎勵突然下降、熵急遽上升（原文「entropy explosion」）。表中後三欄為 δ_low 大於 δ_high，與正文敘述方向不同，原文如此。</p>
+    <p><b>Pass@k（Table 5）。</b>AIME-25 的 Pass@128：RIPO 60.0、GRPO 53.3、DCPO 58.9、DAPO 40.0、Base 16.7；HMMT-25：RIPO 45.3、GRPO 30.0、Base 6.7。Base 在 k = 16 左右就不再上升，作者據此稱 RIPO 突破了基底模型的能力邊界。</p>
+  </div>
+  <div class="plate" id="w4">
+    <div class="plate-h"><span class="id">W4</span><h3>實驗結果瀏覽</h3></div>
+    <div class="tabs" role="tablist" aria-label="選擇表格" id="w4-tabs">
+      <button role="tab" type="button" id="w4-t1" aria-selected="true" aria-controls="w4-p" data-t="t1">Table 1 各基準</button>
+      <button role="tab" type="button" id="w4-t2" aria-selected="false" aria-controls="w4-p" data-t="t2" tabindex="-1">Table 2 δ 消融</button>
+      <button role="tab" type="button" id="w4-t5" aria-selected="false" aria-controls="w4-p" data-t="t5" tabindex="-1">Table 5 Pass@k</button>
+    </div>
+    <div id="w4-p" role="tabpanel">
+      <div class="ctl-row" id="w4-c1" style="margin:12px 0"><div class="seg" id="w4-m" role="group" aria-label="模型"></div>
+        <label class="lbl" for="w4-b" style="gap:8px">基準 <select id="w4-b" class="sel"></select></label></div>
+      <div class="ctl-row hide" id="w4-c5" style="margin:12px 0"><div class="seg" id="w4-ds" role="group" aria-label="資料集"><button type="button" data-v="AIME-25" aria-pressed="true">AIME-25</button><button type="button" data-v="HMMT-25" aria-pressed="false">HMMT-25</button></div></div>
+      <div class="fig" id="w4-fig"><svg role="img" aria-label="實驗結果圖"></svg></div>
+      <p class="cap" id="w4-cap"></p>
+      <details class="more" id="w4-det"><summary>以表格檢視</summary><div class="qa"><div class="tscroll" id="w4-tbl"></div></div></details>
+    </div>
+    <p class="plate-f">數字照錄論文 Table 1、2、5（Avg@8 或 Pass@k）。Table 1 平均欄的百分比照錄論文；以表中四捨五入後的平均重算，Qwen3-1.7B-Base 為 +37.5%（論文 +37.2%）。</p>
+  </div>
+  <div class="prose" style="margin-top:28px">
+    <p><b>其他實驗。</b>與不同動機的 clip 比較（Table 3，Qwen3-8B-Base）：GPPO（Su et al., 2025，arXiv 2508.07629，保留被 clip token 的梯度）與 Clip-Cov 都比 GRPO 好，RIPO 在全部六個基準都最高。換成有價值模型與 GAE 的 PPO 目標（Table 4，GSM8K Avg@1，Qwen2.5-Instruct）：RIPO-Clip 在 0.5B/1.5B/7B/14B 為 61.1/81.6/93.5/94.4，PPO-Clip 為 58.0/79.2/91.7/93.2；Fig. 3 中 PPO-Clip 的熵迅速衰減到接近 0，RIPO-Clip 維持一定的熵。程式與搜尋任務（Table 6，Qwen3-8B-Base）：程式平均 RIPO 44.9、GRPO 39.7（+13.2%）；搜尋平均 43.4、37.7（+15.1%）。</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table>
+    <caption>Table 3：不同動機的 clip（Qwen3-8B-Base，Avg@8）</caption>
+    <thead><tr><th>基準</th><th class="num">GRPO</th><th class="num">GPPO</th><th class="num">Clip-Cov</th><th class="num">RIPO</th></tr></thead><tbody>
+    <tr><td>AIME24</td><td class="num">31.7</td><td class="num">31.7</td><td class="num">36.3</td><td class="num">43.8</td></tr>
+    <tr><td>AIME25</td><td class="num">20.8</td><td class="num">23.8</td><td class="num">22.9</td><td class="num">29.2</td></tr>
+    <tr><td>AMC23</td><td class="num">66.6</td><td class="num">73.4</td><td class="num">66.6</td><td class="num">79.7</td></tr>
+    <tr><td>HMMT25</td><td class="num">12.9</td><td class="num">14.2</td><td class="num">11.7</td><td class="num">16.7</td></tr>
+    <tr><td>BRUMO25</td><td class="num">33.3</td><td class="num">38.3</td><td class="num">36.3</td><td class="num">47.5</td></tr>
+    <tr><td>SMT25</td><td class="num">21.9</td><td class="num">25.0</td><td class="num">30.2</td><td class="num">34.2</td></tr>
+    </tbody></table></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Qwen3-8B-Base 上 RIPO 與 GRPO 的平均？δ 消融與 Pass@128 的結論？</p>
+    <p class="a">38.5 vs 28.5（+35.1%）；對稱 δ 從 0.02 到 0.08 為 40.8–43.8，$\delta_{low}/\delta_{high}\ge2$ 的三組降到 27.5–28.8（各一次訓練）；AIME-25 Pass@128 為 60.0（GRPO 53.3、Base 16.7）（Table 1、2、5）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="ripo-experiments-results.html">RIPO 的實驗設定與結果</a>、<a href="sequence-level-ratio-gspo-gmpo.html">序列層級的比值：GSPO 與 GMPO</a></p>
+</section>
+
+<!-- S9 ============================================================ -->
+<section class="ch" id="impl" data-toc="09" data-tt="實作">
+  <div class="ch-num">09 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="tscroll" style="max-width:760px"><table class="stack">
+    <caption>主要實驗設定（Sec. 5.1）</caption>
+    <thead><tr><th>項目</th><th>值</th></tr></thead><tbody>
+    <tr><td data-h="項目">模型</td><td data-h="值">Llama3.2-3B-Instruct、Qwen3-1.7B-Base、Qwen3-4B-Base、Qwen3-8B-Base</td></tr>
+    <tr><td data-h="項目">RIPO 的 δ</td><td data-h="值">0.05</td></tr>
+    <tr><td data-h="項目">雙重 clipping</td><td data-h="值">GRPO、DAPO、DCPO、RIPO 都使用；「lower and upper bounds set to 0.5 and 10」</td></tr>
+    <tr><td data-h="項目">KL 懲罰</td><td data-h="值">全部移除</td></tr>
+    <tr><td data-h="項目">優勢</td><td data-h="值">所有方法都用群組相對優勢</td></tr>
+    <tr><td data-h="項目">訓練資料</td><td data-h="值">DAPO-Math-17k（17,917 題）</td></tr>
+    <tr><td data-h="項目">rollout</td><td data-h="值">每題 8 條，最大長度 16,384 token；每次迭代 1024 條（128 題 × 8），以 mini-batch 16 更新 8 次</td></tr>
+    <tr><td data-h="項目">獎勵</td><td data-h="值">答對 1、答錯 0</td></tr>
+    <tr><td data-h="項目">最佳化</td><td data-h="值">token-mean loss；300 步；AdamW，固定學習率 1×10⁻⁶</td></tr>
+    <tr><td data-h="項目">平台</td><td data-h="值">VeRL，8×A100</td></tr>
+    <tr><td data-h="項目">評估</td><td data-h="值">AIME24、AIME25、AMC23、HMMT25、BRUMO25、CMIMC25、SMT25；重複 8 次取 Avg@8</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>第 8 節的 PPO 實驗（Sec. 5.6）寫「每次迭代 256 條 rollout、train batch 512」，原文的 batch 數字互相矛盾。論文沒有演算法框或程式碼；下面是依 Eq. 11、15 寫成的虛擬碼，不是作者的程式 <span class="tag">本頁示意</span>：</p>
+  </div>
+  <pre class="code"><code>logp_old = logp_old.detach()                  # 行為策略在 rollout 時的 log-prob
+ratio    = exp(logp - logp_old)
+eps      = sqrt(delta / exp(logp_old))        # Eq. 11，逐 token
+surr     = min(ratio * A, clip(ratio, 1 - eps, 1 + eps) * A)
+loss     = -(surr * mask).sum() / mask.sum()  # Eq. 15：除以全部 token 數</code></pre>
+  <div class="prose">
+    <h3>常見錯誤</h3>
+    <ol>
+      <li><b>ε 用舊機率算。</b>$\epsilon_{i,t}$ 依 rollout 時的 $\pi_{\theta_{old}}$（不帶梯度），不是目前的 $\pi_\theta$；每個 token 不同。</li>
+      <li><b>δ 的係數。</b>Eq. 11 已吸收 Eq. 10 的 2；照 Eq. 9 的寫法，每個 token 的距離上限是 δ/2。</li>
+      <li><b>極小機率。</b>$\pi_{old}\to0$ 時 $\epsilon\to\infty$，論文沒有寫額外的保護，實驗用雙重 clipping（0.5 與 10）。<span class="tag">本頁推導</span>若「上界 10」指比值上限，則 $\pi_{old}\lt\delta/81$（δ = 0.05 時約 6.2×10⁻⁴）的 token 上限由 10 決定。雙重 clipping 的確切語意論文沒有說明。</li>
+      <li><b>正規化方式。</b>Eq. 15 是 token 層級（除以 $\sum_i|o_i|$），與 Eq. 2 先對每條回答平均不同。</li>
+      <li><b>上下對稱。</b>Table 2 中 $\delta_{low}/\delta_{high}\ge2$ 的三組大幅下降；預設對稱 δ = 0.05。</li>
+      <li><b>機率上限。</b>有效比值上限是 $\min(1+\epsilon,1/\pi_{old})$；高機率 token 的 RIC 上限常常不起作用。</li>
+      <li><b>無 KL 懲罰。</b>實驗移除 KL 項；RIC 本身被當作 trust region 的替代。</li>
+    </ol>
+  </div>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="compare" data-toc="10" data-tt="Score Centering">
+  <div class="ch-num">10 · Score Centering</div>
+  <h2>RIPO 與 Score Centering 處理不同的問題</h2>
+  <div class="prose">
+    <p>同批的 <a href="score-centering.html">Score Centering</a>（Marek 與 Ryabinin，arXiv 2609.20807）也處理 off-policy LLM RL 中的比值，但問題不同。RIPO 假設 $\pi_{old}$ 就是實際取樣的策略，修改的是 clip 上下界的形狀；Score Centering 處理推論引擎（sampler $q$）與訓練引擎（trainer $p$）機率不一致的情形，從每個 score 減去 sampler 下的期望 score，是一個加法修正。下表中 Score Centering 的描述出自該論文 §4。兩篇論文都沒有組合實驗。</p>
+  </div>
+  <div class="tscroll" style="max-width:700px"><table>
+    <caption>RIPO 與 Score Centering</caption>
+    <thead><tr><th>項目</th><th>RIPO（2607.10169）</th><th>Score Centering（2609.20807）</th></tr></thead><tbody>
+    <tr><td>關注的問題</td><td>clip 的形狀導致探索崩潰</td><td>訓練引擎與推論引擎機率不一致造成的 drift</td></tr>
+    <tr><td>對 $\pi_{old}$ 的假設</td><td>$\pi_{old}$ 是實際取樣的策略</td><td>sampler $q$ 與 trainer $p$ 不同</td></tr>
+    <tr><td>做法</td><td>固定 ε 換成 $\sqrt{\delta/\pi_{old}}$</td><td>score 減去 sampler 下的期望 score</td></tr>
+    <tr><td>修改的位置</td><td>clip 上下界</td><td>policy gradient 的 score 項</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p><span class="tag">本頁推導</span>兩者作用的位置不同，原則上可以疊加；但 RIPO 論文沒有討論訓練與推論不一致，兩篇也都沒有組合實驗。</p>
+    <p>另一個比較角度來自 GPPO 論文（Generalized PPO，arXiv 2610.13015，見教學 <a href="generalized-ppo-llm-rl.html">Generalized PPO</a>）。直接寫各方法的比值範圍：PPO 是固定的 1 ± ε；DPPO（arXiv 2602.04879）約束機率差 |π − π_old| ≤ δ，等價於 1 ± δ/π_old；RIPO 是 1 ± √(δ/π_old)。三者的範圍隨舊機率變小而放寬的速度不同：不變、與 1/π_old 成正比、與 1/√π_old 成正比。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">兩者對 $\pi_{old}$ 的假設與修改位置有何不同？</p>
+    <p class="a">RIPO 假設 $\pi_{old}$ 就是實際取樣的策略，修改 clip 上下界的形狀；Score Centering 處理 sampler $q$ 與 trainer $p$ 不一致，從 score 減去 sampler 下的期望 score（加法修正）；兩篇論文都沒有組合實驗。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="ripo-vs-score-centering.html">RIPO 與 Score Centering：兩種處理 off-policy 比值的方式</a>、<a href="training-inference-mismatch-sources.html">訓練與推論不一致（TIM）的來源</a>、<a href="gppo-design-space-unification.html">GPPO 的設計空間</a></p>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="history" data-toc="11" data-tt="研究脈絡">
+  <div class="ch-num">11 · 研究脈絡</div>
+  <h2>研究脈絡：從 KL 約束到依機率調整的 clip</h2>
+  <div class="prose">
+    <p>TRPO 以 KL 約束定義 trust region；PPO 以固定 ε 的 clip 近似它；GRPO 用群組優勢去掉價值模型；DAPO、DCPO、GSPO、GMPO、Clip-Cov 與 GPPO（Su et al., 2508.07629）各自修改 clip，作者稱這些為經驗性修正；RIPO 依 KL 近似決定每個 token 的範圍。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="next" data-toc="12" data-tt="限制與延伸">
+  <div class="ch-num">12 · 限制與延伸</div>
+  <h2>限制與延伸閱讀</h2>
+  <div class="prose">
+    <p>作者在結論中只總結貢獻，沒有列出限制。以下是本頁的觀察 <span class="tag">本頁推導</span>：</p>
+    <ol>
+      <li>Eq. 7 是二階近似，RIC 允許的低機率比值（例如 δ = 0.02、π_old = 0.001 時 5.47）已遠離 $r\approx1$。</li>
+      <li>單 token 約束不控制分布層級的總變化（第 4 節說明框）。</li>
+      <li>預設 δ = 0.05 時 RIC 的上界處處比 ε = 0.2 大（第 5b 節），實驗中的增益不能只歸因於「限制高機率 token」。</li>
+      <li>同質變異是低機率端的漸近性質，且只針對單一樣本（第 6 節）。</li>
+      <li>論文沒有「固定 ε 調大」或「不 clip」的對照，無法從論文數據區分範圍形狀與整體放寬各自的貢獻；玩具模型中兩者無法區分（第 7 節）。</li>
+    </ol>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="ripo-lineage-hub.html">RIPO 的研究脈絡總覽：從 TRPO 到等距 clipping</a><span>總覽</span></div></li>
+    <li><div><a href="policy-gradient-baselines-score-function.html">Policy gradient、baseline 與 score function</a><span>背景</span></div></li>
+    <li><div><a href="trpo-monotonic-improvement-tv-bound.html">TRPO：trust region 與單調改進下界（GPPO 的理論起點）</a><span>背景</span></div></li>
+    <li><div><a href="ppo-grpo-dapo-llm-rl-objectives.html">PPO、GRPO、DAPO 與 LLM 的 RL 目標</a><span>背景</span></div></li>
+    <li><div><a href="ppo-clip-tv-single-sample-proxy.html">PPO-Clip 作為 TV 散度的單樣本 Monte Carlo 代理</a><span>另一種解讀</span></div></li>
+    <li><div><a href="llm-rl-clipping-variants-heuristics.html">LLM RL 中的 clipping 變體：DAPO、DCPO、Clip-Cov、SAPO、CISPO</a><span>既有修正</span></div></li>
+    <li><div><a href="sequence-level-ratio-gspo-gmpo.html">序列層級的比值：GSPO 與 GMPO</a><span>既有修正</span></div></li>
+    <li><div><a href="ripo-kl-fisher-ratio-geometry.html">KL 散度、Fisher 矩陣與重要性比值的二次式</a><span>本文理論</span></div></li>
+    <li><div><a href="ripo-euclidean-clip-mismatch.html">PPO-Clip 的歐氏假設與探索崩潰</a><span>本文理論</span></div></li>
+    <li><div><a href="ripo-isometric-clip-ric.html">Riemannian Isometric Clip 與 RIPO 目標</a><span>本文方法</span></div></li>
+    <li><div><a href="ripo-bias-variance-homoscedasticity.html">幾何等距與同質變異：RIC 的偏差—變異論證</a><span>本文理論</span></div></li>
+    <li><div><a href="ripo-experiments-results.html">RIPO 的實驗設定與結果</a><span>實驗</span></div></li>
+    <li><div><a href="ripo-vs-score-centering.html">RIPO 與 Score Centering：兩種處理 off-policy 比值的方式</a><span>同批比較</span></div></li>
+    <li><div><a href="importance-sampling-corrections-llm-rl.html">LLM RL 中的 importance sampling 修正：TIS、MIS、TOPR、GSPO、DPPO</a><span>相關修正</span></div></li>
+    <li><div><a href="f-divergence-geometry-proximal-regions.html">f-散度幾何與 proximal region：Vajda 不等式與 Theorem 3</a><span>GPPO 觀點</span></div></li>
+    <li><div><a href="divergence-estimator-topologies.html">散度估計器拓撲：Single-Sample MC、Atomic 與 Binary</a><span>GPPO 觀點</span></div></li>
+    <li><div><a href="gppo-design-space-unification.html">GPPO 的設計空間：把 PPO、DAPO、DPPO、RIPO 對應到 (f, T)</a><span>GPPO 觀點</span></div></li>
+    <li><div><a href="score-centering.html">Score Centering 互動教學</a><span>同批教學</span></div></li>
+    <li><div><a href="generalized-ppo-llm-rl.html">Generalized PPO 互動教學</a><span>相關教學</span></div></li>
+  </ol>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Zhicheng Cai, Xinyuan Guo, Hanlin Wu, Wei-Ying Ma, Ya-Qin Zhang, Hao Zhou. Beyond Euclidean Clipping: Overcoming Exploration Collapse in LLM RL via Riemannian Isometric Policy Optimization. ICML 2026. <a href="https://arxiv.org/abs/2607.10169">arXiv:2607.10169</a>.</p>
+  <p>本頁的方程式與數字取自論文 v2；標示「本頁推導」「本頁說明」「本頁示意」「教學示意」的內容為本頁自行推導或設計，並非論文結論。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2015, "title": "Trust Region Policy Optimization", "authors_short": "Schulman et al.", "arxiv": "1502.05477", "role": "KL 約束的 trust region；本文推導幾何距離的起點", "source": "abstract; paper §2.1"}, {"year": 2015, "title": "High-Dimensional Continuous Control Using Generalized Advantage Estimation", "authors_short": "Schulman et al.", "arxiv": "1506.02438", "role": "GAE；本文 PPO 設定的優勢估計", "source": "abstract; paper §2.2"}, {"year": 2017, "title": "Proximal Policy Optimization Algorithms", "authors_short": "Schulman et al.", "arxiv": "1707.06347", "role": "PPO-Clip；本文批評的歐氏 clipping", "source": "abstract; paper §2.2, §3"}, {"year": 2024, "title": "HybridFlow: A Flexible and Efficient RLHF Framework", "authors_short": "Sheng et al.", "arxiv": "2409.19256", "role": "VeRL 框架；本文實驗平台", "source": "abstract; paper §5.1"}, {"year": 2024, "title": "DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models", "authors_short": "Shao et al.", "arxiv": "2402.03300", "role": "GRPO；本文的基底目標", "source": "abstract; paper §2.3"}, {"year": 2025, "title": "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", "authors_short": "DeepSeek-AI et al.", "arxiv": "2501.12948", "role": "以 GRPO 訓練推理；本文的應用背景", "source": "abstract; paper §1"}, {"year": 2025, "title": "DAPO: An Open-Source LLM Reinforcement Learning System at Scale", "authors_short": "Yu et al.", "arxiv": "2503.14476", "role": "Clip-Higher 與探索崩潰觀察；本文分析的對象", "source": "abstract; paper §3.1"}, {"year": 2025, "title": "The Entropy Mechanism of Reinforcement Learning for Reasoning Language Models", "authors_short": "Cui et al.", "arxiv": "2505.22617", "role": "Clip-Cov；Table 3 對照", "source": "abstract; paper §5.5"}, {"year": 2025, "title": "Group Sequence Policy Optimization", "authors_short": "Zheng et al.", "arxiv": "2507.18071", "role": "序列層級 clip；實驗對照", "source": "abstract; paper §2.3, §5"}, {"year": 2025, "title": "Geometric-Mean Policy Optimization", "authors_short": "Zhao et al.", "arxiv": "2507.20673", "role": "幾何平均比值 clip；實驗對照", "source": "abstract; paper §2.3, §5"}, {"year": 2025, "title": "Klear-Reasoner: Advancing Reasoning Capability via Gradient-Preserving Clipping Policy Optimization", "authors_short": "Su et al.", "arxiv": "2508.07629", "role": "GPPO，保留被 clip token 的梯度；Table 3 對照", "source": "abstract; paper §2.3, §5.5"}, {"year": 2025, "title": "DCPO: Dynamic Clipping Policy Optimization", "authors_short": "Yang et al.", "arxiv": "2509.02333", "role": "依機率動態調整 clip；最接近的實驗對照", "source": "abstract; paper §2.3, §5"}, {"year": 2026, "title": "Beyond Euclidean Clipping: Overcoming Exploration Collapse in LLM RL via Riemannian Isometric Policy Optimization", "authors_short": "Cai et al.", "arxiv": "2607.10169", "role": "本文：等距 clip ε=√(δ/π_old)", "source": "paper"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+const lgs=(d0,d1,r0,r1)=>{const a=Math.log(d0),b=Math.log(d1);return v=>r0+(Math.log(v)-a)/(b-a)*(r1-r0)};
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function frame(svg,o){
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m=o.m,x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=m.t;
+  const X=(o.xlog?lgs:lin)(o.x[0],o.x[1],x0,x1),Y=(o.ylog?lgs:lin)(o.y[0],o.y[1],y0,y1);
+  const g=el('g',null,svg);
+  (o.yt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:String(v),yy=Y(val);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},g);tx(g,x0-8,yy+4,lab,{class:'tk','text-anchor':'end'})});
+  (o.xt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:String(v),xx=X(val);el('line',{x1:xx,x2:xx,y1:y0,y2:y0+4,class:'axl'},g);tx(g,xx,y0+18,lab,{class:'tk','text-anchor':'middle'})});
+  el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  if(o.xl)tx(g,(x0+x1)/2,o.H-4,o.xl,{class:'al','text-anchor':'middle'});
+  if(o.yl)tx(g,4,12,o.yl,{class:'al'});
+  return {X,Y,g,x0,x1,y0,y1};
+}
+// marker shapes: circle (PPO), triangle (DAPO), square (RIC), diamond (no clip), cross (IS)
+function mark(g,shape,x,y,cls){const s=5;
+  if(shape==='c')return el('circle',{cx:x,cy:y,r:s,class:cls+'-f'},g);
+  if(shape==='s')return el('rect',{x:x-s,y:y-s,width:2*s,height:2*s,class:cls+'-f'},g);
+  if(shape==='t')return el('path',{d:`M${x} ${y-s-1}L${x+s+1} ${y+s}L${x-s-1} ${y+s}Z`,class:cls+'-f'},g);
+  if(shape==='d')return el('path',{d:`M${x} ${y-s-1}L${x+s+1} ${y}L${x} ${y+s+1}L${x-s-1} ${y}Z`,class:cls+'-f'},g);
+  if(shape==='x'){el('path',{d:`M${x-s} ${y-s}L${x+s} ${y+s}M${x-s} ${y+s}L${x+s} ${y-s}`,style:'stroke:var(--ink-3);stroke-width:2.5'},g)}}
+function clampTri(g,x,y,up){el('path',{d:up?`M${x} ${y-4}L${x+5} ${y+4}L${x-5} ${y+4}Z`:`M${x} ${y+4}L${x+5} ${y-4}L${x-5} ${y-4}Z`,class:'ink-f'},g)}
+function placeLabels(g,x,items,ymin,ymax){items=items.slice().sort((a,b)=>a.y-b.y);let last=-1e9;items.forEach(o=>{o.yy=Math.max(o.y+4,last+14);last=o.yy});const over=last-ymax;if(over>0)items.forEach(o=>{o.yy-=over});items.forEach(o=>{tx(g,x,Math.max(ymin,o.yy),o.t,{class:'lab'})})}
+const live={};function announce(id,s,now){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);if(now){n.textContent=s;return}live[id]=setTimeout(()=>{n.textContent=s},500)}
+const p4=v=>v===Infinity?'∞（其餘 token 機率歸零）':v===0?'0':Math.abs(v)<1e-4?v.toExponential(3):(+v.toPrecision(4)).toString();
+const narrow=()=>innerWidth<560;
+function table(tb,cols,rows){ // rows: [{name, vals:[...]}]; transposed on narrow screens
+  const th=tb.tHead||tb.createTHead(),bd=tb.tBodies[0]||tb.createTBody();
+  if(!narrow()){th.innerHTML='<tr><th>方法</th>'+cols.map(c=>`<th class="num">${c}</th>`).join('')+'</tr>';bd.innerHTML=rows.map(r=>`<tr${r.hl?' class="hl"':''}><td>${r.name}</td>`+r.vals.map(v=>`<td class="num">${v}</td>`).join('')+'</tr>').join('')}
+  else{th.innerHTML='<tr><th>量測</th>'+rows.map(r=>`<th class="num">${r.name}</th>`).join('')+'</tr>';bd.innerHTML=cols.map((c,i)=>`<tr><td>${c}</td>`+rows.map(r=>`<td class="num">${r.vals[i]}</td>`).join('')+'</tr>').join('')}}
+// log slider: integer 0..1000 mapped to [a,b]; arrows 10, PageUp/Down 100
+function logSlider(inp,a,b){const la=Math.log10(a);let lb=Math.log10(b);
+  const o={get:()=>10**(la+(+inp.value)*(lb-la)/1000),set:v=>{inp.value=String(Math.round((Math.log10(v)-la)/(lb-la)*1000))},setMax:v=>{lb=Math.log10(v)}};
+  inp.addEventListener('keydown',e=>{const st={ArrowRight:10,ArrowUp:10,ArrowLeft:-10,ArrowDown:-10,PageUp:100,PageDown:-100}[e.key];if(st===undefined)return;e.preventDefault();inp.value=String(Math.max(0,Math.min(1000,+inp.value+st)));inp.dispatchEvent(new Event('input',{bubbles:true}));inp.dispatchEvent(new Event('change',{bubbles:true}))});
+  return o}
+
+/* ---------- W1 math (same as verify/check_w1.py) ---------- */
+const ricEps=(delta,po)=>Math.sqrt(delta/po);
+function bounds(method,po,P){let lo,hi;if(method==='PPO'){lo=hi=P.eps}else if(method==='DAPO'){lo=P.eps;hi=P.epsH}else{lo=hi=ricEps(P.delta,po)}
+  return{rlo:Math.max(0,1-lo),rhi:Math.min(1+hi,1/po),lo}}
+function measures(po,r){const p=po*r,dp=p-po,atom=.5*po*(r-1)**2,eucl=(r-1)**2,binchi=.5*dp*dp/(po*(1-po));
+  const binkl=p>=1-1e-12?Infinity:-po*Math.log1p(dp/po)-(1-po)*Math.log1p(-dp/(1-po));return{pmax:p,dp,atom,eucl,binchi,binkl}}
+const W1D={eps:.2,epsH:.28,delta:.02};
+const w1={po:.01,adv:false,P:Object.assign({},W1D)};
+let w1s;
+function renderW1(){const P=w1.adv?w1.P:W1D,po=w1.po,box=$('#w1-fig'),svgs=$$('svg',box),W=widthOf(box,280,620),nar=narrow();
+  $('#w1-po').textContent=po.toPrecision(3);$('#w1-p').setAttribute('aria-valuetext','舊機率 '+po.toPrecision(3));
+  $('#w1-eo').textContent=w1.P.eps.toFixed(2);$('#w1-eho').textContent=w1.P.epsH.toFixed(2);$('#w1-do').textContent=w1.P.delta.toFixed(3);
+  const meths=w1.adv?['PPO','DAPO','RIC']:['PPO','RIC'],cls={PPO:'ppo',DAPO:'dapo',RIC:'acc'},shp={PPO:'c',DAPO:'t',RIC:'s'};
+  const xt=[[1e-4,'10⁻⁴'],[1e-3,'10⁻³'],[1e-2,'0.01'],[.1,'0.1'],[1,'1']],N=240,xs=Array.from({length:N+1},(_,i)=>10**(-4+4*i/N)).map(v=>Math.min(v,.99));
+  // top: r_hi
+  let F=frame(svgs[0],{W,H:230,m:{l:48,r:nar?12:64,t:26,b:40},x:[1e-4,1],xlog:true,y:[1,40],ylog:true,xt,yt:[[1.2,'1.2'],[2,'2'],[5,'5'],[10,'10'],[40,'40']],xl:'舊機率 π_old（對數）',yl:'比值上限 r'});
+  const cap=xs.filter(v=>1/v<=40).map(v=>[F.X(v),F.Y(1/v)]);el('path',{d:lp(cap),class:'capl'},F.g);
+  if(!nar)tx(F.g,F.X(.04),F.Y(1/.04)-6,'受 π ≤ 1 限制',{class:'tk'});
+  meths.forEach(m=>{const pts=xs.map(v=>[F.X(v),F.Y(Math.min(40,bounds(m,v,P).rhi))]);el('path',{d:lp(pts),class:cls[m]},F.g);
+    const b=bounds(m,po,P);mark(F.g,shp[m],F.X(po),F.Y(Math.min(40,b.rhi)),cls[m]);
+  });
+  if(!nar)placeLabels(F.g,F.x1+6,meths.map(m=>({t:m,y:F.Y(Math.min(40,bounds(m,.99,P).rhi))})),F.y1,F.y0);
+  el('line',{x1:F.X(po),x2:F.X(po),y1:F.y0,y2:F.y1,class:'cur'},F.g);
+  const cross=P.delta/(P.eps*P.eps);
+  if(w1.adv){if(cross<=1){el('line',{x1:F.X(Math.max(1e-4,cross)),x2:F.X(Math.max(1e-4,cross)),y1:F.y0,y2:F.y1,class:'ref'},F.g);if(!nar)tx(F.g,F.X(Math.max(1e-4,cross))+4,F.y1+10,'右側 RIC 上限較小',{class:'tk'})}}
+  // bottom: atom distance at upper bound
+  const lo=1e-6,hi=.2;
+  F=frame(svgs[1],{W,H:230,m:{l:48,r:nar?12:64,t:26,b:40},x:[1e-4,1],xlog:true,y:[lo,hi],ylog:true,xt,yt:[[1e-6,'10⁻⁶'],[1e-4,'10⁻⁴'],[1e-2,'0.01'],[.2,'0.2']],xl:'舊機率 π_old（對數）',yl:'上邊界的單 token 距離 ½π_old(r−1)²'});
+  meths.forEach(m=>{let tri=null;const pts=xs.map(v=>{const a=measures(v,bounds(m,v,P).rhi).atom;if(a<lo&&tri===null)tri=v;return[F.X(v),F.Y(Math.max(lo,Math.min(hi,a)))]});
+    el('path',{d:lp(pts),class:cls[m]},F.g);
+    let lastUnder=null;xs.forEach(v=>{if(measures(v,bounds(m,v,P).rhi).atom<lo)lastUnder=v});if(lastUnder!==null)clampTri(F.g,F.X(lastUnder),F.y0-6,false);
+    const a=measures(po,bounds(m,po,P).rhi).atom;if(a<lo)clampTri(F.g,F.X(po),F.y0-6,false);else mark(F.g,shp[m],F.X(po),F.Y(Math.min(hi,a)),cls[m]);
+  });
+  if(!nar)placeLabels(F.g,F.x1+6,meths.map(m=>({t:m,y:F.Y(Math.max(lo,Math.min(hi,measures(.99,bounds(m,.99,P).rhi).atom)))})),F.y1,F.y0);
+  el('line',{x1:F.X(po),x2:F.X(po),y1:F.y0,y2:F.y1,class:'cur'},F.g);
+  // table
+  const cols=w1.adv?['π_min','π_max','Δπ','單 token（Eq. 9）','歐氏（Eq. 3）','二元二階','二元 KL']:['π_min','π_max','Δπ','單 token（Eq. 9）'];
+  const rows=meths.map(m=>{const b=bounds(m,po,P),q=measures(po,b.rhi);const pmin=po*b.rlo;
+    const v=[m==='RIC'&&1-b.lo<0?'無下限（r ≥ 0）':p4(pmin),p4(q.pmax),p4(q.dp),p4(q.atom)];if(w1.adv)v.push(p4(q.eucl),p4(q.binchi),p4(q.binkl));return{name:m,vals:v,hl:m==='RIC'}});
+  table($('#w1-tab'),cols,rows);
+  $('#w1-tab caption').textContent=w1.adv?`上邊界的量測（ε = ${P.eps.toFixed(2)}、ε_high = ${P.epsH.toFixed(2)}、δ = ${P.delta.toFixed(3)}）`:'上邊界的量測（基本檢視 δ = 0.02、ε = 0.2）';
+  const ric=bounds('RIC',po,P);
+  $('#w1-ro').innerHTML=`RIC ε = √(δ/π_old) = <b class="acc">${p4(ricEps(P.delta,po))}</b><br>分界 δ/ε² = <b>${p4(cross)}</b>${cross>1?'（RIC 上限處處較大）':''}`;
+  announce('w1',`舊機率 ${po.toPrecision(3)}：PPO 上限 ${p4(measures(po,bounds('PPO',po,P).rhi).pmax)}，RIC 上限 ${p4(measures(po,ric.rhi).pmax)}`);
+}
+function initW1(){w1s=logSlider($('#w1-p'),1e-4,.99);w1s.set(w1.po);
+  $('#w1-p').addEventListener('input',()=>{w1.po=w1s.get();renderW1()});
+  $$('#w1 [data-p]').forEach(b=>b.addEventListener('click',()=>{w1.po=+b.dataset.p;w1s.set(w1.po);renderW1()}));
+  $$('#w1 [data-d]').forEach(b=>b.addEventListener('click',()=>{w1.P.delta=+b.dataset.d;$('#w1-d').value=b.dataset.d;renderW1()}));
+  $('#w1-e').addEventListener('input',e=>{w1.P.eps=+e.target.value;if(w1.P.epsH<w1.P.eps){w1.P.epsH=w1.P.eps;$('#w1-eh').value=w1.P.eps}renderW1()});
+  $('#w1-eh').addEventListener('input',e=>{w1.P.epsH=Math.max(w1.P.eps,+e.target.value);e.target.value=w1.P.epsH;renderW1()});
+  $('#w1-d').addEventListener('input',e=>{w1.P.delta=+e.target.value;renderW1()});
+  $('#w1-adv').addEventListener('click',e=>{w1.adv=!w1.adv;e.target.setAttribute('aria-pressed',String(w1.adv));$('#w1').classList.toggle('adv',w1.adv);
+    if(!w1.adv){w1.P=Object.assign({},W1D);$('#w1-e').value=.2;$('#w1-eh').value=.28;$('#w1-d').value=.02}renderW1()});
+  renderW1()}
+
+/* ---------- W2 (same as verify/check_w2.py) ---------- */
+function capsW2(po,eps,delta,dual){const c={IS:Infinity,PPO:1+eps,RIC:1+Math.sqrt(delta/po)};if(dual)for(const k in c)c[k]=Math.min(c[k],10);return c}
+function rowW2(po,r,P){const pt=po*r,c=capsW2(po,P.eps,P.delta,P.dual),o={};for(const k in c){const w=Math.min(r,c[k]);o[k]={w,v:po*w*w,bias:pt-po*w}}return o}
+const w2={po:.001,r:10,eps:.2,delta:.05,dual:false};let w2p,w2r,w2t=0;
+function renderW2(){const {po,r}=w2,P=w2,pt=po*r,box=$('#w2-fig'),W=widthOf(box,280,620),nar=narrow();
+  $('#w2-po').textContent=po.toPrecision(3);$('#w2-ro2').textContent=r.toPrecision(3);$('#w2-eo').textContent=w2.eps.toFixed(2);$('#w2-do').textContent=w2.delta.toFixed(3);
+  $('#w2-p').setAttribute('aria-valuetext','舊機率 '+po.toPrecision(3));$('#w2-r').setAttribute('aria-valuetext','目標比值 '+r.toPrecision(3));
+  const lo=1e-6,hi=10,F=frame($('svg',box),{W,H:300,m:{l:48,r:nar?12:56,t:26,b:40},x:[1e-5,1],xlog:true,y:[lo,hi],ylog:true,
+    xt:[[1e-5,'10⁻⁵'],[1e-3,'10⁻³'],[.1,'0.1'],[1,'1']],yt:[[1e-6,'10⁻⁶'],[1e-4,'10⁻⁴'],[1e-2,'0.01'],[1,'1']],xl:'舊機率 π_old（對數）',yl:'clip 邊界上的變異貢獻 v'});
+  const N=200,xs=Array.from({length:N+1},(_,i)=>10**(-5+5*i/N)).map(v=>Math.min(v,.9999)),cl=v=>F.Y(Math.max(lo,Math.min(hi,v)));
+  el('line',{x1:F.x0,x2:F.x1,y1:F.Y(P.delta),y2:F.Y(P.delta),class:'ref'},F.g);
+  const cP=v=>v*Math.min(1+P.eps,P.dual?10:Infinity)**2,cR=v=>v*Math.min(1+Math.sqrt(P.delta/v),P.dual?10:Infinity)**2,cI=v=>v*Math.min(pt/v,P.dual?10:Infinity)**2;
+  el('path',{d:lp(xs.map(v=>[F.X(v),cl(cP(v))])),class:'ppo'},F.g);el('path',{d:lp(xs.map(v=>[F.X(v),cl(cR(v))])),class:'acc'},F.g);
+  const xi=xs.filter(v=>v<=pt);if(xi.length>1)el('path',{d:lp(xi.map(v=>[F.X(v),cl(cI(v))])),class:'nocl'},F.g);
+  if(xi.length&&cI(1e-5)>hi)clampTri(F.g,F.X(1e-5)+6,F.y1+6,true);
+  if(!nar){placeLabels(F.g,F.x1+4,[{t:'PPO',y:cl(cP(.9999))},{t:'RIC',y:cl(cR(.9999))},{t:'δ',y:F.Y(P.delta)}],F.y1,F.y0);if(xi.length>1){const xl=Math.max(xi[0],xi[Math.floor(xi.length*.15)]);tx(F.g,F.X(xl)+10,cl(cI(xl))-6,`IS（π_θ = ${pt.toPrecision(3)}）`,{class:'tk'})}}
+  const rw=rowW2(po,r,P);[['IS','x','nocl'],['PPO','c','ppo'],['RIC','s','acc']].forEach(([k,s,c])=>{const v=rw[k].v;if(v>hi)clampTri(F.g,F.X(po),F.y1+6,true);else mark(F.g,s,F.X(po),cl(v),c)});
+  el('line',{x1:F.X(po),x2:F.X(po),y1:F.y0,y2:F.y1,class:'cur'},F.g);
+  const f=v=>v===0?'0':Math.abs(v)>=1e4||Math.abs(v)<1e-4?v.toExponential(3):(+v.toPrecision(5)).toString();
+  table($('#w2-tab'),['權重 w','變異貢獻 v','偏差 π_θ − π_old·w'],['IS','PPO','RIC'].map(k=>({name:k==='IS'?'未截斷 IS':k,vals:[f(rw[k].w),f(rw[k].v),f(rw[k].bias)],hl:k==='RIC'})));
+  const cut=r>capsW2(po,P.eps,P.delta,false).RIC;
+  $('#w2-ro').innerHTML=`π_θ = π_old·r = <b>${pt.toPrecision(3)}</b>　RIC 上限 1 + √(δ/π_old) = <b class="acc">${(1+Math.sqrt(P.delta/po)).toPrecision(4)}</b>　此 token 是否被 RIC 截斷：<b>${cut?'是':'否（與未截斷 IS 相同）'}</b>`;
+  announce('w2',`舊機率 ${po.toPrecision(3)}，比值 ${r.toPrecision(3)}：IS v = ${f(rw.IS.v)}，PPO v = ${f(rw.PPO.v)}，RIC v = ${f(rw.RIC.v)}`);
+}
+function syncR(){const rmax=Math.min(1000,1/w2.po);w2r.setMax(rmax);if(w2.r>rmax+1e-12){w2.r=rmax;const h=$('#w2-hint');h.textContent='r 已調為 1/π_old（π_θ 不能超過 1）';announce('w2','r 已調為 1/π_old',true);clearTimeout(w2t);w2t=setTimeout(()=>{h.textContent=''},3000)}w2r.set(Math.max(1,w2.r))}
+function initW2(){w2p=logSlider($('#w2-p'),1e-5,.9);w2r=logSlider($('#w2-r'),1,1000);w2p.set(w2.po);syncR();
+  $('#w2-p').addEventListener('input',()=>{w2.po=w2p.get();syncR();renderW2()});
+  $('#w2-r').addEventListener('input',()=>{w2.r=Math.min(w2r.get(),1/w2.po);renderW2()});
+  $('#w2-e').addEventListener('input',e=>{w2.eps=+e.target.value;renderW2()});$('#w2-d').addEventListener('input',e=>{w2.delta=+e.target.value;renderW2()});
+  $('#w2-dual').addEventListener('change',e=>{w2.dual=e.target.checked;renderW2()});renderW2()}
+
+/* ---------- W3 toy bandit (verbatim from verify/sim.js) ---------- */
+function mulberry32(a){return function(){a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),a|1);t^=t+Math.imul(t^(t>>>7),t|61);return((t^(t>>>14))>>>0)/4294967296}}
+function softmax(z){let m=-Infinity;for(const v of z)if(v>m)m=v;const e=z.map(v=>Math.exp(v-m));let s=0;for(const v of e)s+=v;return e.map(v=>v/s)}
+function entropy(p){let h=0;for(const q of p)if(q>0)h-=q*Math.log(q);return h}
+const SUCC=[0.5,1.0,0,0,0,0];
+function initP(pB){return [0.81-pB,pB,0.0475,0.0475,0.0475,0.0475]}
+function runSeed(cfg,seed,pB,T=200,G=8,m=4,lr=1.0,trace){
+  const rnd=mulberry32(seed),K=6;let z=initP(pB).map(Math.log);
+  for(let it=0;it<T;it++){
+    const po=softmax(z);
+    if(trace){trace.pB[it]+=po[1];trace.H[it]+=entropy(po);trace.found[it]+=po[1]>0.5?1:0}
+    const acts=new Array(G),R=new Array(G);
+    for(let g=0;g<G;g++){const u=rnd();let c=0,a=K-1;for(let k=0;k<K;k++){c+=po[k];if(u<c){a=k;break}}acts[g]=a;R[g]=rnd()<SUCC[a]?1:0}
+    let mu=0;for(const x of R)mu+=x;mu/=G;let v=0;for(const x of R)v+=(x-mu)**2;const sd=Math.sqrt(v/G);
+    if(sd<1e-12){if(trace)trace.skipped[0]++;continue}
+    const A=R.map(x=>(x-mu)/sd);
+    const lo=new Array(G),hi=new Array(G);
+    for(let i=0;i<G;i++){if(cfg.method==='none'){lo[i]=hi[i]=Infinity}else if(cfg.method==='ric'){lo[i]=hi[i]=Math.sqrt(cfg.delta/po[acts[i]])}else{lo[i]=cfg.eps;hi[i]=cfg.method==='dapo'?cfg.epsH:cfg.eps}}
+    for(let s=0;s<m;s++){
+      const p=softmax(z),g=new Array(K).fill(0);
+      for(let i=0;i<G;i++){const a=acts[i],r=p[a]/po[a];
+        const act=A[i]>0?(r<=1+hi[i]):(r>=1-lo[i]);
+        if(act){const c=A[i]*r/G;for(let k=0;k<K;k++)g[k]-=c*p[k];g[a]+=c}}
+      for(let k=0;k<K;k++)z[k]+=lr*g[k];
+    }
+  }
+  return softmax(z);
+}
+function newTrace(T){return{pB:new Float64Array(T+1),H:new Float64Array(T+1),found:new Float64Array(T+1),skipped:new Float64Array(1),rew:0}}
+function addFinal(tr,p,T){tr.pB[T]+=p[1];tr.H[T]+=entropy(p);tr.found[T]+=p[1]>0.5?1:0;tr.rew+=0.5*p[0]+p[1]}
+function normTrace(tr,S,T){for(const k of ['pB','H','found'])for(let i=0;i<=T;i++)tr[k][i]/=S;tr.rew/=S}
+function batch(cfg,pB,S=200,T=200){const tr=newTrace(T);for(let s=0;s<S;s++){const p=runSeed(cfg,s+1,pB,T,8,4,1.0,tr);addFinal(tr,p,T)}normTrace(tr,S,T);return{tr,rew:tr.rew}}
+const W3S=200,W3T=200,W3M=[['GRPO','ppo','c'],['DAPO','dapo','t'],['RIC','acc','s'],['不 clip','nocl','d']];
+const w3={status:'idle',runToken:0,res:null,pB:.01,eps:.2,epsH:.28,delta:.05,staleAfter:false};
+function w3cfgs(){return[{method:'ppo',eps:w3.eps},{method:'dapo',eps:w3.eps,epsH:w3.epsH},{method:'ric',delta:w3.delta},{method:'none'}]}
+function w3params(i){return[`ε = ${w3.eps.toFixed(2)}`,`ε = ${w3.eps.toFixed(2)}, ε_high = ${w3.epsH.toFixed(2)}`,`δ = ${w3.delta.toFixed(3)}`,'—'][i]}
+function batchChunked(cfgs,pB,token,onProgress,onDone){const trs=cfgs.map(()=>newTrace(W3T)),total=cfgs.length*W3S;let ci=0,s=0,done=0;
+  const step=()=>{if(token!==w3.runToken)return;for(let n=0;n<20&&ci<cfgs.length;n++){const p=runSeed(cfgs[ci],s+1,pB,W3T,8,4,1.0,trs[ci]);addFinal(trs[ci],p,W3T);done++;if(++s>=W3S){s=0;ci++}}
+    onProgress(done,total);if(ci<cfgs.length)setTimeout(step,0);else{trs.forEach(t=>normTrace(t,W3S,W3T));if(token===w3.runToken)onDone(trs)}};setTimeout(step,0)}
+function w3btn(){const b=$('#w3-run'),st=$('#w3-st');b.disabled=w3.status==='running';
+  b.textContent={idle:'執行',running:'執行中',done:'重新執行',stale:'參數已變更，按執行更新'}[w3.status];
+  if(w3.status==='idle')st.textContent='尚未執行';if(w3.status==='stale')st.textContent='目前顯示的是舊參數的結果';
+  $('#w3-tw').classList.toggle('stale',w3.status==='stale');$$('#w3 .fig').forEach(f=>f.classList.toggle('stale',w3.status==='stale'))}
+function runW3(){const token=++w3.runToken;w3.status='running';w3.staleAfter=false;w3btn();let q=0;const pB=w3.pB,snap=[0,1,2,3].map(w3params);
+  batchChunked(w3cfgs(),pB,token,(d,t)=>{$('#w3-st').textContent=`執行中 ${d}/${t}`;const nq=Math.floor(4*d/t);if(nq>q&&nq<4){q=nq;announce('w3',`玩具模擬完成 ${nq*25}%`,true)}},
+    trs=>{w3.res={trs,pB,snap};w3.status=w3.staleAfter?'stale':'done';w3btn();if(w3.status==='done')$('#w3-st').textContent=`B 初始機率 ${pB}，200 個 seed × 200 次迭代`;renderW3();
+      announce('w3','玩具模擬完成 100%：'+W3M.map((m,i)=>`${m[0]} ${trs[i].found[W3T].toFixed(3)}`).join('，'),true)})}
+function renderW3(){const nar=narrow();
+  const draw=(box,key,ymax,yl,yt)=>{const W=widthOf(box,260,520),F=frame($('svg',box),{W,H:240,m:{l:44,r:nar?12:58,t:26,b:40},x:[0,W3T],y:[0,ymax],xt:[0,50,100,150,200],yt,xl:'迭代次數',yl});
+    if(!w3.res){tx(F.g,(F.x0+F.x1)/2,(F.y0+F.y1)/2,'尚未執行',{class:'al','text-anchor':'middle'});return}
+    w3.res.trs.forEach((tr,i)=>{const pts=[];for(let t=0;t<=W3T;t+=2)pts.push([F.X(t),F.Y(tr[key][t])]);el('path',{d:lp(pts),class:W3M[i][1]},F.g);
+      [50,100,150,200].forEach(t=>mark(F.g,W3M[i][2],F.X(t),F.Y(tr[key][t]),W3M[i][1]))});
+    if(!nar)placeLabels(F.g,F.x1+8,w3.res.trs.map((tr,i)=>({t:W3M[i][0],y:F.Y(tr[key][W3T])})),F.y1,F.y0)};
+  draw($('#w3-fa'),'found',1,'找到 B 的比例',[[0,'0'],[.25,'0.25'],[.5,'0.5'],[.75,'0.75'],[1,'1']]);
+  draw($('#w3-fb'),'H',Math.log(6),'平均熵',[[0,'0'],[.5,'0.5'],[1,'1'],[1.5,'1.5'],[Math.log(6),'ln 6']]);
+  if(!w3.res){table($('#w3-tab'),['參數','找到 B 的比例','平均熵','期望獎勵','平均略過的迭代'],W3M.map(m=>({name:m[0],vals:['—','—','—','—','—']})));return}
+  table($('#w3-tab'),['參數','找到 B 的比例','平均熵','期望獎勵','平均略過的迭代'],w3.res.trs.map((tr,i)=>({name:W3M[i][0],vals:[w3.res.snap[i],tr.found[W3T].toFixed(3),tr.H[W3T].toFixed(3),tr.rew.toFixed(3),(tr.skipped[0]/W3S).toFixed(2)],hl:i===2})))}
+function initW3(){const mark_stale=()=>{if(w3.status==='running')w3.staleAfter=true;else if(w3.status!=='idle'){w3.status='stale'}w3btn()};
+  $$('#w3-pb button').forEach(b=>b.addEventListener('click',()=>{w3.pB=+b.dataset.v;$$('#w3-pb button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));mark_stale()}));
+  $('#w3-e').addEventListener('input',e=>{w3.eps=+e.target.value;$('#w3-eo').textContent=w3.eps.toFixed(2);if(w3.epsH<w3.eps){w3.epsH=w3.eps;$('#w3-eh').value=w3.eps;$('#w3-eho').textContent=w3.eps.toFixed(2)}mark_stale()});
+  $('#w3-eh').addEventListener('input',e=>{w3.epsH=Math.max(w3.eps,+e.target.value);e.target.value=w3.epsH;$('#w3-eho').textContent=w3.epsH.toFixed(2);mark_stale()});
+  $('#w3-d').addEventListener('input',e=>{w3.delta=+e.target.value;$('#w3-do').textContent=w3.delta.toFixed(3);mark_stale()});
+  $('#w3-run').addEventListener('click',runW3);w3btn();renderW3();
+  const start=()=>{if(w3.status==='idle')runW3()};
+  if('IntersectionObserver' in window){const io=new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting)){io.disconnect();('requestIdleCallback' in window)?requestIdleCallback(start,{timeout:2000}):setTimeout(start,500)}},{threshold:.1});io.observe($('#w3'))}}
+
+/* ---------- W4 results ---------- */
+const BENCH=['AIME24','AIME25','AMC23','HMMT25','BRUMO25','CMIMC25','SMT25','平均'];
+const METH=['Base','GRPO','DAPO','GSPO','GMPO','DCPO','RIPO'];
+const T1={'Qwen3-1.7B-Base':{Base:[2.1,0.0,28.4,0.0,11.3,0.0,6.6,6.9,'−38.4%'],GRPO:[11.3,10.8,33.8,0.0,15.0,0.3,7.3,11.2,'+0.0%'],DAPO:[15.0,12.1,39.7,0.8,9.2,1.9,7.8,12.4,'+10.7%'],GSPO:[16.3,11.2,40.0,1.6,12.9,2.8,8.5,13.3,'+19.0%'],GMPO:[17.5,12.5,40.9,0.8,15.0,3.8,6.6,13.9,'+24.1%'],DCPO:[17.1,11.3,46.9,0.8,15.4,1.3,10.8,14.8,'+32.1%'],RIPO:[18.3,12.9,46.1,1.3,15.4,3.2,10.4,15.4,'+37.2%']},
+ 'Llama3.2-3B-Instruct':{Base:[5.4,0.0,17.8,0.0,1.3,0.0,0.0,3.5,'−45.3%'],GRPO:[16.3,1.3,24.5,0.4,1.7,0.0,0.7,6.4,'+0.0%'],DAPO:[20.1,1.7,25.3,0.8,2.5,0.3,0.9,7.4,'+15.6%'],GSPO:[17.5,1.7,25.7,0.4,3.8,0.6,0.9,7.2,'+12.5%'],GMPO:[16.7,1.3,27.7,0.4,2.8,0.9,1.7,7.4,'+15.6%'],DCPO:[16.7,2.1,24.7,0.4,2.5,0.6,1.4,6.9,'+7.8%'],RIPO:[22.1,2.1,28.1,0.8,4.3,0.9,1.7,8.6,'+34.4%']},
+ 'Qwen3-4B-Base':{Base:[10.0,8.3,50.0,0.0,18.3,1.3,8.9,13.8,'−46.3%'],GRPO:[30.4,20.8,63.4,7.5,25.8,12.4,19.8,25.7,'+0.0%'],DAPO:[31.7,21.3,69.4,9.2,26.3,10.0,21.7,27.1,'+5.4%'],GSPO:[32.1,21.3,70.3,9.2,26.7,10.0,18.2,26.8,'+4.3%'],GMPO:[32.5,26.7,68.8,11.3,26.3,10.6,22.5,28.4,'+10.5%'],DCPO:[31.7,24.2,71.3,8.8,25.0,15.0,19.8,27.8,'+8.2%'],RIPO:[32.9,27.5,73.1,10.0,31.3,14.7,21.5,30.1,'+17.1%']},
+ 'Qwen3-8B-Base':{Base:[3.8,3.3,43.4,1.3,15.0,3.1,10.8,11.5,'−59.6%'],GRPO:[31.7,20.8,66.6,12.9,33.3,12.5,21.9,28.5,'+0.0%'],DAPO:[33.7,22.1,70.9,7.9,33.3,18.1,28.3,30.6,'+7.4%'],GSPO:[37.5,19.6,70.1,15.0,36.3,13.8,32.5,32.1,'+12.6%'],GMPO:[41.7,30.0,76.9,11.7,35.8,17.8,33.0,35.3,'+23.9%'],DCPO:[36.3,27.5,72.2,15.4,42.8,16.3,31.6,34.5,'+21.1%'],RIPO:[43.8,29.2,79.7,16.7,47.5,18.1,34.2,38.5,'+35.1%']}};
+const T2=[[0.02,0.02,40.8],[0.05,0.04,41.7],[0.05,0.05,43.8],[0.08,0.08,42.1],[0.05,0.02,28.8],[0.08,0.02,27.5],[0.08,0.04,27.9]];
+const KS=[1,8,16,32,64,128],T5={'AIME-25':{Base:[3.3,5.0,12.3,16.7,16.7,16.7,16.7],GRPO:[20.8,20.4,36.5,40.8,45.5,50.1,53.3],DAPO:[22.1,20.6,33.4,35.7,37.4,39.1,40.0],DCPO:[27.5,26.4,39.5,44.7,48.5,54.7,58.9],RIPO:[29.2,30.4,43.2,47.0,50.8,55.6,60.0]},
+ 'HMMT-25':{Base:[1.3,0.6,3.5,5.2,6.3,6.7,6.7],GRPO:[12.9,11.7,19.3,21.6,24.1,26.6,30.0],DAPO:[7.9,7.7,16.7,20.3,23.4,25.7,26.7],DCPO:[15.4,15.5,26.8,30.6,34.3,37.5,40.0],RIPO:[16.7,16.7,28.3,32.6,37.3,41.4,45.3]}};
+const w4={tab:'t1',model:'Qwen3-8B-Base',bench:7,ds:'AIME-25'};
+function renderW4(){const box=$('#w4-fig'),svg=$('svg',box),W=widthOf(box,280,900),nar=narrow();
+  $('#w4-c1').classList.toggle('hide',w4.tab!=='t1');$('#w4-c5').classList.toggle('hide',w4.tab!=='t5');
+  let cap='',tbl='';
+  if(w4.tab==='t1'){const D=T1[w4.model],b=w4.bench,vals=METH.map(m=>D[m][b]),mx=Math.max(...vals.slice(1));
+    const lw=nar?92:110,H=7*34+48,F=frame(svg,{W,H,m:{l:lw,r:nar?70:120,t:16,b:32},x:[0,b===2?100:Math.max(10,Math.ceil(Math.max(...vals)/10)*10)],y:[0,7],xt:[],yt:[],xl:'Avg@8'});
+    METH.forEach((m,i)=>{const y=F.Y(7-i)+6,h=22,v=D[m][b];el('rect',{x:F.x0,y,width:Math.max(1,F.X(v)-F.x0),height:h,rx:3,style:`fill:${m==='RIPO'?'var(--accent)':'var(--ink-3)'};opacity:${m==='RIPO'?1:.55}`},F.g);
+      tx(F.g,F.x0-8,y+15,m==='RIPO'?'RIPO（本文）':m,{class:'lab','text-anchor':'end'});
+      tx(F.g,F.X(v)+6,y+15,v.toFixed(1)+(b===7&&!nar?`（${D[m][8]}）`:'')+(m!=='Base'&&v===mx?' 最高':''),{class:'labm'})});
+    cap=`${w4.model}，${BENCH[b]}。`+(b===7?'平均欄括號內為論文報告的相對 GRPO 百分比。':'');
+    tbl=`<table><caption>Table 1：${w4.model}（Avg@8）</caption><thead><tr><th>方法</th>${BENCH.map(x=>`<th class="num">${x}</th>`).join('')}</tr></thead><tbody>${METH.map(m=>`<tr${m==='RIPO'?' class="hl"':''}><td>${m}</td>${D[m].slice(0,8).map(v=>`<td class="num">${v.toFixed(1)}</td>`).join('')}</tr>`).join('')}</tbody></table>`}
+  else if(w4.tab==='t2'){const F=frame(svg,{W,H:7*34+60,m:{l:nar?96:120,r:24,t:16,b:40},x:[25,45],y:[0,7],xt:[25,30,35,40,45],yt:[],xl:'AIME24 Avg@8'});
+    T2.forEach(([a,b,v],i)=>{const y=F.Y(7-i)+17,sym=a===b;el('line',{x1:F.x0,x2:F.x1,y1:y,y2:y,class:'grid'},F.g);el('circle',{cx:F.X(v),cy:y,r:6,style:sym?'fill:var(--accent)':'fill:var(--surface);stroke:var(--ink);stroke-width:2'},F.g);
+      tx(F.g,F.x0-8,y+4,`${a} / ${b}`,{class:'labm','text-anchor':'end'});tx(F.g,F.X(v)+(v>40?-12:12),y-10,v.toFixed(1),{class:'labm','text-anchor':v>40?'end':'start'})});
+    tx(F.g,F.x0-8,F.y1+6,'δ_low / δ_high',{class:'tk','text-anchor':'end'});
+    cap='實心：對稱設定；空心：不對稱設定。表中後三欄為 δ_low 大於 δ_high，與正文敘述方向不同，原文如此。每個設定只有一次訓練。';
+    tbl=`<table><caption>Table 2：δ 消融（Qwen3-8B-Base，AIME24 Avg@8）</caption><thead><tr><th class="num">δ_low</th><th class="num">δ_high</th><th class="num">Avg@8</th></tr></thead><tbody>${T2.map(r=>`<tr><td class="num">${r[0]}</td><td class="num">${r[1]}</td><td class="num">${r[2]}</td></tr>`).join('')}</tbody></table>`}
+  else{const D=T5[w4.ds],ms=['Base','GRPO','DAPO','DCPO','RIPO'],sh={Base:'x',GRPO:'c',DAPO:'t',DCPO:'d',RIPO:'s'},cl={Base:'nocl',GRPO:'ppo',DAPO:'dapo',DCPO:'ink',RIPO:'acc'};
+    const F=frame(svg,{W,H:300,m:{l:44,r:nar?16:70,t:20,b:40},x:[1,128],xlog:true,y:[0,70],xt:KS,yt:[0,20,40,60],xl:'k（對數）',yl:'Pass@k'});
+    const ends=[];ms.forEach(m=>{const pts=KS.map((k,i)=>[F.X(k),F.Y(D[m][i+1])]);el('path',{d:lp(pts),class:cl[m]},F.g);pts.forEach(p=>m==='DCPO'?el('path',{d:`M${p[0]} ${p[1]-6}L${p[0]+6} ${p[1]}L${p[0]} ${p[1]+6}L${p[0]-6} ${p[1]}Z`,class:'ink-f'},F.g):mark(F.g,sh[m],p[0],p[1],cl[m]));ends.push({m,y:pts[5][1]})});
+    if(!nar)placeLabels(F.g,F.x1+8,ends.map(o=>({t:o.m,y:o.y})),F.y1,F.y0)
+    cap=`${w4.ds}：Pass@128 為 RIPO ${D.RIPO[6]}、GRPO ${D.GRPO[6]}、Base ${D.Base[6]}。`;
+    tbl=`<table><caption>Table 5：${w4.ds}（Qwen3-8B-Base）</caption><thead><tr><th>方法</th><th class="num">Avg@8</th>${KS.map(k=>`<th class="num">Pass@${k}</th>`).join('')}</tr></thead><tbody>${ms.map(m=>`<tr${m==='RIPO'?' class="hl"':''}><td>${m}</td>${D[m].map(v=>`<td class="num">${v.toFixed(1)}</td>`).join('')}</tr>`).join('')}</tbody></table>`}
+  $('#w4-cap').textContent=cap;$('#w4-tbl').innerHTML=tbl;svg.setAttribute('aria-label',cap)}
+function initW4(){$('#w4-m').innerHTML=Object.keys(T1).map(m=>`<button type="button" data-v="${m}" aria-pressed="${m===w4.model}">${m}</button>`).join('');
+  $$('#w4-m button').forEach(b=>b.addEventListener('click',()=>{w4.model=b.dataset.v;$$('#w4-m button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderW4()}));
+  $('#w4-b').innerHTML=BENCH.map((x,i)=>`<option value="${i}"${i===7?' selected':''}>${x}</option>`).join('');$('#w4-b').addEventListener('change',e=>{w4.bench=+e.target.value;renderW4()});
+  $$('#w4-ds button').forEach(b=>b.addEventListener('click',()=>{w4.ds=b.dataset.v;$$('#w4-ds button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderW4()}));
+  const tabs=$$('#w4-tabs [role=tab]'),sel=t=>{tabs.forEach(x=>{const on=x===t;x.setAttribute('aria-selected',String(on));x.tabIndex=on?0:-1});w4.tab=t.dataset.t;renderW4()};
+  tabs.forEach((t,i)=>{t.addEventListener('click',()=>sel(t));t.addEventListener('keydown',e=>{const d=e.key==='ArrowRight'?1:e.key==='ArrowLeft'?-1:0;if(!d)return;e.preventDefault();const n=tabs[(i+d+tabs.length)%tabs.length];n.focus();sel(n)})});
+  renderW4()}
+
+/* ---------- hero probability axis ---------- */
+function heroAxis(){const node=$('#pax-hero');node.innerHTML='<div class="px-track"><div class="px-line"></div></div>';const tr=node.firstChild,X=v=>(Math.log10(v)+4)/4*100;
+  [[1e-4,'10⁻⁴','l'],[1e-3,'10⁻³',''],[1e-2,'0.01',''],[.1,'0.1',''],[1,'1','r']].forEach(([v,s,c])=>{const t=document.createElement('span');t.className='px-tick '+c;t.style.left=X(v)+'%';t.textContent=s;tr.appendChild(t)});
+  const items=[];
+  [[.01,.012,.0241],[.8,.96,.9265]].forEach(([po,pp,pr])=>{const d=document.createElement('span');d.className='px-dot';d.style.left=X(po)+'%';tr.appendChild(d);
+    [['ppo',pp,'PPO',30],['ric',pr,'RIC',42]].forEach(([c,pm,name,b])=>{const bar=document.createElement('span');bar.className='px-bar '+c;bar.style.left=X(po)+'%';bar.style.width=`calc(${X(pm)-X(po)}% )`;bar.style.bottom=b+'px';tr.appendChild(bar);
+      const lab=document.createElement('span');lab.className='px-lab '+c;lab.innerHTML=`${name} <span class="v">${pm<.05?pm.toFixed(3):pm.toFixed(2)}</span>`;lab.style.left=X(pm)+'%';tr.appendChild(lab);const st=document.createElement('span');st.className='px-stem';st.style.left=X(pm)+'%';tr.appendChild(st);items.push({lab,st,b})})});
+  const lb=document.createElement('span');lb.className='px-lab';lb.style.cssText='left:0;bottom:-30px;font-size:12px;color:var(--ink-3);background:none';lb.textContent='舊機率（對數）· 圓點為舊機率，線段為允許的新機率（PPO ε = 0.2，RIC δ = 0.02）';tr.appendChild(lb);
+  layoutHero(node,items)}
+function layoutHero(node,items){if(!items)items=node._items;node._items=items;const tr=node.firstChild;const base=56,rowH=22;
+  items.forEach(it=>{it.lab.style.bottom=base+'px';it.lab.style.transform='translateX(-50%)'});
+  const tw=tr.getBoundingClientRect();items.forEach(it=>{const r=it.lab.getBoundingClientRect();if(r.right>tw.right)it.lab.style.transform='translateX(-100%)';if(r.left<tw.left)it.lab.style.transform='translateX(0)'});
+  const s=items.map(it=>({it,r:it.lab.getBoundingClientRect()})).sort((a,b)=>a.r.left-b.r.left);const rows=[];let mx=0;
+  s.forEach(o=>{let r=0;while(rows[r]!==undefined&&o.r.left<rows[r]+8)r++;rows[r]=o.r.right;mx=Math.max(mx,r);const bt=base+r*rowH;o.it.lab.style.bottom=bt+'px';o.it.st.style.bottom=(o.it.b+2)+'px';o.it.st.style.height=(bt-o.it.b-2)+'px'});
+  tr.style.marginTop=(mx*rowH+base+8)+'px';tr.style.marginBottom='36px'}
+
+/* ---------- timeline ---------- */
+const TL_GROUP={'1502.05477':['tr','trpo-monotonic-improvement-tv-bound'],'1506.02438':['tr','trpo-monotonic-improvement-tv-bound'],
+ '1707.06347':['fix','ppo-grpo-dapo-llm-rl-objectives'],'2402.03300':['fix','ppo-grpo-dapo-llm-rl-objectives'],'2501.12948':['fix','ppo-grpo-dapo-llm-rl-objectives'],
+ '2503.14476':['mod','llm-rl-clipping-variants-heuristics'],'2505.22617':['mod','llm-rl-clipping-variants-heuristics'],'2509.02333':['mod','llm-rl-clipping-variants-heuristics'],'2508.07629':['mod','ripo-experiments-results'],
+ '2507.18071':['seq','sequence-level-ratio-gspo-gmpo'],'2507.20673':['seq','sequence-level-ratio-gspo-gmpo'],'2409.19256':['plat','ripo-experiments-results'],'2607.10169':['me','ripo-isometric-clip-ric']};
+const TL_NAME={tr:'trust region',fix:'固定 clip',mod:'clip 修正',seq:'序列層級',plat:'平台',me:'依機率的 clip · 本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  if(!data.some(e=>e.arxiv==='2607.10169'))data.push({year:2026,title:'Beyond Euclidean Clipping',authors_short:'本論文',arxiv:'2607.10169',role:'等距 clip ε = √(δ/π_old)'});
+  data=data.map((e,i)=>({e,i})).sort((a,b)=>(+a.e.year||0)-(+b.e.year||0)||a.i-b.i).map(o=>o.e);
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${g[1]?`<a href="${g[1]}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k].split(' · ')[0];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+
+/* ---------- toc, theme, appbar ---------- */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));
+  addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+/* ---------- self test ---------- */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const near=(a,b,t)=>Math.abs(a-b)<=t+1e-12,P2={eps:.2,epsH:.28,delta:.02},P5={eps:.2,epsH:.28,delta:.05};
+  const pm=(m,po,P)=>measures(po,bounds(m,po,P).rhi);
+  ok(near(pm('PPO',.8,P2).pmax,.96,1e-9),'PPO 0.8');ok(near(pm('PPO',.01,P2).pmax,.012,1e-9),'PPO 0.01');ok(near(pm('DAPO',.01,P2).pmax,.0128,1e-9),'DAPO 0.01');ok(near(pm('DAPO',.8,P2).pmax,1,1e-9),'DAPO 0.8');
+  ok(near(pm('RIC',.8,P2).pmax,.92649,5e-5),'RIC 0.8');ok(near(pm('RIC',.01,P2).pmax,.024142,5e-6),'RIC 0.01');
+  ok(near(pm('PPO',.8,P2).atom,.016,1e-9)&&near(pm('PPO',.01,P2).atom,.0002,1e-12),'atom PPO');
+  [.001,.01,.1,.5].forEach(po=>ok(near(pm('RIC',po,P2).atom,.01,1e-9),'atom RIC '+po));
+  ok(near(pm('RIC',.01,P2).binkl,.005430,1e-6),'binKL RIC 0.01');ok(pm('DAPO',.8,P2).binkl===Infinity,'binKL DAPO 0.8 inf');ok(near(pm('RIC',1e-4,P2).binkl,.001143,1e-6),'binKL 1e-4');
+  ok(near(pm('RIC',.8,P5).pmax,1,1e-9)&&near(pm('RIC',.5,P5).pmax,.6581,5e-5)&&near(pm('RIC',.01,P5).binchi,.025253,1e-6),'delta 0.05 rows');
+  const w=rowW2(.001,10,{eps:.2,delta:.05,dual:false});ok(near(w.RIC.w,8.0711,5e-5)&&near(w.RIC.v,.065142,1e-6)&&near(w.RIC.bias,.001929,1e-6)&&near(w.PPO.v,.00144,1e-9)&&near(w.IS.v,.1,1e-9),'W2 default');
+  const w2d=rowW2(1e-4,100,{eps:.2,delta:.05,dual:true});ok(near(w2d.RIC.v,.01,1e-9)&&near(w2d.IS.bias,.009,1e-9),'W2 dual');
+  ok(near(1e-5*(1+Math.sqrt(.05/1e-5))**2,.051424,1e-6),'W2 envelope');
+  const b1=batch({method:'ppo',eps:.2},.01),b2=batch({method:'ric',delta:.05},.01),b3=batch({method:'none'},.01);
+  ok(near(b1.tr.found[200],.015,.02)&&near(b1.tr.skipped[0],677,20),'W3 GRPO '+b1.tr.found[200]+' skipped '+b1.tr.skipped[0]);ok(near(b2.tr.found[200],.37,.02),'W3 RIC '+b2.tr.found[200]);ok(near(b3.tr.found[200],.395,.02),'W3 none '+b3.tr.found[200]);
+  ok(T1['Qwen3-8B-Base'].RIPO[7]===38.5&&T1['Qwen3-8B-Base'].GRPO[7]===28.5&&T1['Qwen3-8B-Base'].RIPO[0]===43.8&&T2[2][2]===43.8&&T5['AIME-25'].RIPO[6]===60&&T5['HMMT-25'].RIPO[6]===45.3,'W4 data');
+  ok(document.querySelectorAll('.katex-error').length===0,'no katex-error');
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ---------- boot ---------- */
+initTheme();initToc();initW1();initW2();initW3();initW4();renderTimeline();heroAxis();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{renderW1();renderW2();renderW3();renderW4();layoutHero($('#pax-hero'))})});
+document.fonts&&document.fonts.ready.then(()=>layoutHero($('#pax-hero')));
+const MOPT={delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false};
+function renderMath(node){if(typeof renderMathInElement!=='function')return;renderMathInElement(node||document.body,MOPT)}
+$$('details').forEach(d=>d.addEventListener('toggle',()=>{if(d.open&&!d.querySelector('.katex'))renderMath(d)}));
+let tested=false;const runTest=()=>{if(tested||!/[?&]test\b/.test(location.search))return;tested=true;selfTest()};
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',()=>renderMath());else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath();runTest()});
+})();
+</script>
+</body>
+</html>

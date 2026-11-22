@@ -1,0 +1,601 @@
+RIPO 等距 clipping
+
+跳到內容
+
+ No. 587
+ RIPO：讓 PPO 的比值範圍隨舊機率改變
+
+00 摘要01 PPO-Clip02 探索崩潰03 KL 近似04 歐氏假設05 RIC05b δ = 0.0506 偏差與變異07 RIPO 目標08 實驗結果09 實作10 Score Centering11 研究脈絡12 限制與延伸
+
+00摘要
+01PPO-Clip
+02探索崩潰
+03KL 近似
+04歐氏假設
+05RIC
+05bδ = 0.05
+06偏差與變異
+07RIPO 目標
+08實驗結果
+09實作
+10Score Centering
+11研究脈絡
+12限制與延伸
+
+ No. 587 · 互動教學 · arXiv 2607.10169 · ICML 2026
+
+ RIPO：讓 PPO 的比值範圍隨舊機率改變
+
+ PPO-Clip 對每個 token 用相同的比值範圍。以 KL 散度的近似衡量，這使低機率 token 能變動的距離上限較小、高機率 token 較大。RIPO 讓範圍隨舊機率改變。
+
+ Zhicheng Cai、Xinyuan Guo、Hanlin Wu、Wei-Ying Ma、Ya-Qin Zhang、Hao Zhou（2026）〈Beyond Euclidean Clipping: Overcoming Exploration Collapse in LLM RL via Riemannian Isometric Policy Optimization〉
+
+10⁻⁴10⁻³0.010.11PPO 0.012RIC 0.024PPO 0.96RIC 0.93舊機率（對數）· 圓點為舊機率，線段為允許的新機率（PPO ε = 0.2，RIC δ = 0.02）
+
+ 01 · 同一個範圍PPO-Clip 對每個 token 用同一個比值範圍：機率被推高到原來的 1.2 倍後就不再被推高。原本機率 0.8 的 token 可到 0.96，原本 0.01 的 token 只到 0.012。
+
+ 02 · 不同的距離若用第 3、4 節介紹的距離式衡量新舊策略的差距，同樣 1.2 倍的變化，原本機率 0.8 的 token 的距離是原本機率 0.01 的 80 倍（0.016 對 0.0002）。見第 4 節
+
+ 03 · 相同的上限RIPO 讓範圍隨舊機率變化，使每個 token 的距離上限相同（見第 5 節）。Qwen3-8B-Base 在七個數學基準的平均分數為 38.5，GRPO 為 28.5。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+ 同批教學：Score Centering
+
+ 01 · PPO-Clip
+
+ PPO-Clip 限制重要性比值
+
+ 用強化學習（reinforcement learning，RL）訓練大型語言模型時，模型逐字產生回答。每一步的「狀態」s $s$ 是題目加上已產生的前綴，「動作」a $a$ 是下一個 token。策略 πθ(a∣s) $\pi_\theta(a|s)$ ​(a∣s) 是模型給下一個 token 的機率，θ $\theta$ 是模型參數。
+
+ 一次訓練迭代先用目前的模型產生一批回答，產生回答的這份模型稱為行為策略（behavior policy）πθold $\pi_{\theta_{old}}$ ​​，簡寫 πold $\pi_{old}$ ​。之後用同一批回答把參數更新好幾次，更新中的模型記為 πθ $\pi_\theta$ ​。兩者對同一個 token 的機率之比稱為重要性比值（importance ratio）：
+
+ rs,a(θ)=πθ(a∣s)πθold(a∣s) $r_{s,a}(\theta)=\frac{\pi_\theta(a|s)}{\pi_{\theta_{old}}(a|s)}$ ​(θ)=πθold​​(a∣s)πθ​(a∣s)​
+Sec. 2.2
+
+ 每個 token 另有一個優勢（advantage）估計 A^ $\hat A$ ：A^>0 $\hat A>0$ >0 表示這個回答比平均好，訓練會推高該 token 的機率；A^<0 $\hat A\lt 0$ <0 則壓低它。PPO（Proximal Policy Optimization）的目標是
+
+ JPPO(θ)=E[min⁡(r(θ)A^, clip(r(θ),1−ϵ,1+ϵ)A^)] $J_{PPO}(\theta)=\mathbb E\big[\min\big(r(\theta)\hat A,\ \mathrm{clip}(r(\theta),1-\epsilon,1+\epsilon)\hat A\big)\big]$ ​(θ)=E[min(r(θ)A^, clip(r(θ),1−ϵ,1+ϵ)A^)]
+Sec. 2.2
+
+ clip 把 r $r$ 限制在 (1−ϵ,1+ϵ) $(1-\epsilon,1+\epsilon)$ ，等價於 ∣r−1∣<ϵ $|r-1|\lt\epsilon$ ；常用 ϵ=0.2 $\epsilon=0.2$ 。它的實際作用是：A^>0 $\hat A>0$ >0 且 r>1+ϵ $r>1+\epsilon$ 時，min 取到常數 (1+ϵ)A^ $(1+\epsilon)\hat A$ ，這個 token 的梯度為 0，不再被推高；A^<0 $\hat A\lt0$ <0 且 r<1−ϵ $r\lt1-\epsilon$ 時同樣梯度為 0，不再被壓低。clip 不是把 πθ $\pi_\theta$ ​ 硬性截斷：參數由所有 token 共享，多次更新仍可能讓比值超出範圍，但超出後該 token 不再提供推動它的梯度。
+
+ 這個限制的目的，是讓每次更新後的新策略不要離舊策略太遠。「每次更新允許新舊策略相差的最大距離」稱為 trust region。本論文要問的是：用「比值偏離 1 多少」來代表這個距離，是否恰當。
+
+ 符號表
+
+ 符號意義
+
+ s $s$ 、a $a$ 狀態與動作；LLM 中 s=(q,o<t) $s=(q,o_{\lt t})$ ​) 是題目加已產生的前綴，a=ot $a=o_t$ ​ 是下一個 token
+
+ πθ $\pi_\theta$ ​、πθold $\pi_{\theta_{old}}$ ​​更新中的策略、產生 rollout 的行為策略；簡寫 π $\pi$ 、πold $\pi_{old}$ ​
+
+ rs,a(θ) $r_{s,a}(\theta)$ ​(θ)重要性比值 πθ/πθold $\pi_\theta/\pi_{\theta_{old}}$ ​/πθold​​；GRPO 中逐 token 記為 ri,t $r_{i,t}$ ​
+
+ A^ $\hat A$ 、A^i,t $\hat A_{i,t}$ i,t​優勢估計；PPO 用 GAE，GRPO 用群組標準化
+
+ ϵ $\epsilon$ ；ϵlow,ϵhigh $\epsilon_{low},\epsilon_{high}$ ​,ϵhigh​PPO 的固定 clip 範圍；DAPO 的上下分離範圍
+
+ δ $\delta$ TRPO 的 trust region 半徑；RIC 中每個 token 允許的距離（見第 5 節的係數 2）
+
+ F(θ) $F(\theta)$ Fisher 資訊矩陣 Ea∼πθold(⋅∣s)[∇log⁡π ∇log⁡π⊤] $\mathbb E_{a\sim\pi_{\theta_{old}}(\cdot|s)}[\nabla\log\pi\,\nabla\log\pi^\top]$ ​​(⋅∣s)​[∇logπ∇logπ⊤]
+
+ dclip $d_{clip}$ ​、dgeom $d_{geom}$ ​PPO-Clip 隱含的歐氏距離（Eq. 3）、KL 誘導的幾何距離（Eq. 8–9）
+
+ ϵs,a(πold) $\epsilon_{s,a}(\pi_{old})$ ​(πold​)RIC 的動態 clip 範圍 δ/πold $\sqrt{\delta/\pi_{old}}$ ​​（Eq. 11）
+
+ x $x$ 、A(x) $A(x)$ 、v(x) $v(x)$ 第 6 節的樣本、其優勢、變異貢獻 πold(x)r(x)2 $\pi_{old}(x)r(x)^2$ ​(x)r(x)2
+
+ q $q$ 、oi $o_i$ ​、G $G$ 、Ri $R_i$ ​題目、第 i $i$ 條回答、群組大小、獎勵（答對 1、答錯 0）
+
+ 延伸閱讀：Policy gradient、baseline 與 score function、PPO、GRPO、DAPO 與 LLM 的 RL 目標
+
+ 02 · 探索崩潰
+
+ 同一個比值範圍對低機率 token 的增量很小
+
+ 論文以 ϵ=0.2 $\epsilon=0.2$ 舉例（Sec. 3.1）。對 A^>0 $\hat A>0$ >0 的 token，原本機率 πold=0.8 $\pi_{old}=0.8$ ​=0.8 的動作，論文所說的「maximum possible updated probability」為 0.96，增加 0.16；原本機率 0.01 的動作只到 0.012，增加 0.002。精確地說，這是「繼續推高這個 token 的梯度停止之處」：比值超過 1.2 後，這個 token 不再被推高。所以一個稀有但有價值的 token 即使被取樣到一次，在這次迭代中也只能升一點。
+
+ DAPO（Yu et al., 2025）把上下界分開，範圍改成 (1−ϵlow,1+ϵhigh) $(1-\epsilon_{low},1+\epsilon_{high})$ ​,1+ϵhigh​)，並把 ϵhigh $\epsilon_{high}$ ​ 由 0.2 提高到 0.28（稱為 Clip-Higher）。結果 0.01 的上限變成 0.0128，只多 0.0008；0.8 的上限則由 0.96 變成 1（0.8×1.28=1.024 $0.8\times1.28=1.024$ ，被機率上限 1 截斷）。作者認為這反而加劇行為多樣性的下降。
+
+ 論文 Sec. 3.1 的例子（Â > 0）
+ 舊機率PPO 上限PPO 增量DAPO 上限DAPO 增量
+
+ 0.80.960.1610.2
+
+ 0.010.0120.0020.01280.0028
+
+ 探索崩潰（exploration collapse）指策略在訓練中迅速集中到少數高機率的動作，稀有但重要的動作不再被取樣、也不再被探索，回答變得幾乎一樣。作者的結論是：PPO 式的 clip 不分一個動作是否已被大量利用，一律以相同比值截斷。下一節說明作者如何把這歸因於距離的量法。
+
+ 延伸閱讀：PPO-Clip 的歐氏假設與探索崩潰、LLM RL 中的 clipping 變體
+
+ 03 · KL 近似
+
+ KL 散度的二次近似以舊機率加權
+
+ TRPO（Trust Region Policy Optimization）用 KL 散度定義 trust region：要求 Es[DKL(πθold(⋅∣s) ∥ πθ(⋅∣s))]≤δ $\mathbb E_s[D_{KL}(\pi_{\theta_{old}}(\cdot|s)\,\|\,\pi_\theta(\cdot|s))]\le\delta$ ​[DKL​(πθold​​(⋅∣s)∥πθ​(⋅∣s))]≤δ（Eq. 1）。作者採用這個前提：新舊策略的差距應以 KL 散度衡量。
+
+ 一維直覺。KL 散度在新舊策略相同時為 0，而且是最小值，所以在附近的值約為「½ × 曲率 × 偏移²」。參數有很多維時，曲率換成一個矩陣，這個矩陣就是 Fisher 資訊矩陣 F $F$ ，即對數機率梯度的外積的期望，期望對 a∼πθold(⋅∣s) $a\sim\pi_{\theta_{old}}(\cdot|s)$ ​​(⋅∣s) 取。本頁說的「度量」只指這個把參數偏移換算成距離的矩陣。
+
+ DKL(πθold∥πθ)≈12 Δθ⊤F(θ)∣θoldΔθ,F=Ea∼πθold ⁣[∇θlog⁡πθ ∇θlog⁡πθ⊤] $D_{KL}(\pi_{\theta_{old}}\|\pi_\theta)\approx\tfrac12\,\Delta\theta^\top F(\theta)\big|_{\theta_{old}}\Delta\theta,\qquad F=\mathbb E_{a\sim\pi_{\theta_{old}}}\!\big[\nabla_\theta\log\pi_\theta\,\nabla_\theta\log\pi_\theta^\top\big]$ ​(πθold​​∥πθ​)≈21​Δθ⊤F(θ)​θold​​Δθ,F=Ea∼πθold​​​[∇θ​logπθ​∇θ​logπθ⊤​]
+Eq. 4–5
+
+ 其中 Δθ=θ−θold $\Delta\theta=\theta-\theta_{old}$ ​。論文說 Fisher 矩陣定義了一個 Riemannian 流形上的度量。接著作者把參數空間的式子換到機率本身。關鍵假設是 Eq. 6：新機率約等於舊機率加上一階變化，Δπ≈∇θπ⊤Δθ $\Delta\pi\approx\nabla_\theta\pi^\top\Delta\theta$ ​π⊤Δθ，只在更新很小時成立。代入後 Fisher 二次式中的每一項變成 (Δπ)2/πold $(\Delta\pi)^2/\pi_{old}$ /πold​，而 (Δπ)2/πold=πold(r−1)2 $(\Delta\pi)^2/\pi_{old}=\pi_{old}(r-1)^2$ /πold​=πold​(r−1)2，所以權重是 πold $\pi_{old}$ ​：
+
+ DKL(πθold∥πθ)≈12∑a(πθ(a∣s)−πθold(a∣s))2πθold(a∣s)=12∑aπθold(a∣s) (rs,a(θ)−1)2 $D_{KL}(\pi_{\theta_{old}}\|\pi_\theta)\approx\frac12\sum_a\frac{(\pi_\theta(a|s)-\pi_{\theta_{old}}(a|s))^2}{\pi_{\theta_{old}}(a|s)}=\frac12\sum_a\pi_{\theta_{old}}(a|s)\,(r_{s,a}(\theta)-1)^2$ ​(πθold​​∥πθ​)≈21​a∑​πθold​​(a∣s)(πθ​(a∣s)−πθold​​(a∣s))2​=21​a∑​πθold​​(a∣s)(rs,a​(θ)−1)2
+Eq. 7
+
+ dgeom(πθold,πθ)∝πθold⋅(r(θ)−1)2 $d_{geom}(\pi_{\theta_{old}},\pi_\theta)\propto\pi_{\theta_{old}}\cdot(r(\theta)-1)^2$ ​(πθold​​,πθ​)∝πθold​​⋅(r(θ)−1)2
+Eq. 8
+
+ Eq. 7 的意思是：(r−1)2 $(r-1)^2$ 的權重是 πθold(a∣s) $\pi_{\theta_{old}}(a|s)$ ​​(a∣s)。同一個比值偏差，在高機率區對應的距離大，在低機率區對應的距離小，這個幾何不均勻。
+
+ 推導細節：Eq. 5–6 與 Eq. 4 的筆誤
+
+ 把 F $F$ 寫開，並用 ∇log⁡π=∇π/π $\nabla\log\pi=\nabla\pi/\pi$ ：Δθ⊤FΔθ=∑aπ (∇π⊤Δθ)2π2=∑a1πθold(a∣s)(∇θπθ(a∣s)⊤∣θoldΔθ)2 $\Delta\theta^\top F\Delta\theta=\sum_a\pi\,\frac{(\nabla\pi^\top\Delta\theta)^2}{\pi^2}=\sum_a\frac{1}{\pi_{\theta_{old}}(a|s)}\big(\nabla_\theta\pi_\theta(a|s)^\top\big|_{\theta_{old}}\Delta\theta\big)^2$ FΔθ=∑a​ππ2(∇π⊤Δθ)2​=∑a​πθold​​(a∣s)1​(∇θ​πθ​(a∣s)⊤​θold​​Δθ)2（Eq. 5）。再用一階展開 πθ≈πθold+∇π⊤Δθ $\pi_\theta\approx\pi_{\theta_{old}}+\nabla\pi^\top\Delta\theta$ ​≈πθold​​+∇π⊤Δθ（Eq. 6）把括號換成 πθ−πθold $\pi_\theta-\pi_{\theta_{old}}$ ​−πθold​​，就得到 Eq. 7。
+
+ 原文 Eq. 4 第二行寫成 Φ(θ)≈Φ(θ)+… $\Phi(\theta)\approx\Phi(\theta)+\dots$ ，應為 Φ(θold)+… $\Phi(\theta_{old})+\dots$ ​)+…（筆誤）；在 θold $\theta_{old}$ ​ 處 KL 的值與梯度都是 0，只剩二次項。
+
+ 本頁推導Eq. 7 中間那一式正是 12χ2(πθ∥πθold) $\tfrac12\chi^2(\pi_\theta\|\pi_{\theta_{old}})$ 1​χ2(πθ​∥πθold​​)（Pearson χ² 散度）。後續的 GPPO 論文（Generalized PPO，arXiv 2610.13015）把 RIPO 歸為 χ² 散度的一種約束方式，見GPPO 的設計空間與f-散度幾何。
+
+ 延伸閱讀：TRPO：trust region 與單調改進下界、KL 散度、Fisher 矩陣與重要性比值的二次式、f-散度幾何與 proximal region
+
+ 04 · 歐氏假設
+
+ PPO-Clip 隱含歐氏距離
+
+ PPO-Clip 約束 ∣r−1∣<ϵ $|r-1|\lt\epsilon$ ，等於用下式衡量新舊策略的差異：
+
+ dclip(πθold,πθ)=(πθπθold−1)2=(r(θ)−1)2 $d_{clip}(\pi_{\theta_{old}},\pi_\theta)=\Big(\frac{\pi_\theta}{\pi_{\theta_{old}}}-1\Big)^2=(r(\theta)-1)^2$ ​(πθold​​,πθ​)=(πθold​​πθ​​−1)2=(r(θ)−1)2
+Eq. 3
+
+ 作者稱之為歐氏距離：它與 πold $\pi_{old}$ ​ 無關。只要兩個 token 的比值偏差相同，PPO-Clip 就把它們視為相同的策略變化，隱含假設策略變化在整個流形上是均勻的。Eq. 8 顯示實際上距離正比於 πold(r−1)2 $\pi_{old}(r-1)^2$ ​(r−1)2，兩者不一致。
+
+ 論文用 Eq. 9 的單 token 項 12πold(r−1)2 $\tfrac12\pi_{old}(r-1)^2$ 1​πold​(r−1)2 計算例子（Sec. 3.2），這不是完整的 KL：Eq. 7 對所有動作求和，包含其餘 token 因總和為 1 而跟著改變的部分；Eq. 9 與這個例子只保留被取樣 token 的一項。∣r−1∣=0.2 $|r-1|=0.2$ 時，πold=0.8 $\pi_{old}=0.8$ ​=0.8 的值是 0.5×0.8×0.22=0.016 $0.5\times0.8\times0.2^2=0.016$ =0.016，πold=0.01 $\pi_{old}=0.01$ ​=0.01 是 0.5×0.01×0.22=0.0002 $0.5\times0.01\times0.2^2=0.0002$ =0.0002，相差 80 倍。作者的說法是後者遠小於 trust region 允許的距離。
+
+ 作者據此提出 Prop. 3.1：PPO-Clip 錯誤地使用歐氏度量衡量策略差異，與策略流形的幾何不一致，導致低機率區過度保守、高機率區過度激進，最終探索崩潰。論文沒有給證明。其中「歐氏度量與幾何距離不一致」由 Eq. 3 與 Eq. 8 的比較推得；「因此造成探索崩潰」則只由 Sec. 3.1 的數字例子與第 8 節的熵曲線支持，屬於觀察。
+
+ 單 token 量測與二元量測 本頁推導
+
+ 提高一個 token 的機率必然壓低其他 token。若把所有動作分成「這個 token」與「其餘」兩類，Eq. 7 的和只剩兩項，得到二元二階量測 12(Δπ)2/(πold(1−πold)) $\tfrac12(\Delta\pi)^2/(\pi_{old}(1-\pi_{old}))$ 1​(Δπ)2/(πold​(1−πold​))，比單 token 項多一個因子 1/(1−πold) $1/(1-\pi_{old})$ ​)。πold=0.01 $\pi_{old}=0.01$ ​=0.01 時兩者幾乎相同；πold=0.8 $\pi_{old}=0.8$ ​=0.8 時是 5 倍。另一個量測是不做二次近似的二元精確 KL：πoldln⁡πoldπ+(1−πold)ln⁡1−πold1−π $\pi_{old}\ln\frac{\pi_{old}}{\pi}+(1-\pi_{old})\ln\frac{1-\pi_{old}}{1-\pi}$ ​lnππold​​+(1−πold​)ln1−π1−πold​​。以這兩種量測重算上面的 PPO 例子，兩個 token 分別是 0.080 對 0.000202（約 400 倍）與 0.176 對 0.000179（約 1000 倍）。所以單 token 量測在高機率區低估了分布層級的變化。依 GPPO 論文，DPPO（arXiv 2602.04879）的 Binary 估計即加入其餘 token 的質量，見散度估計器拓撲。下一節的圖版在「進階」檢視列出這兩種量測。
+
+ 05 · RIC
+
+ RIC 讓每個 token 的距離上限相同
+
+ Riemannian Isometric Clip（RIC）要求每個 token 的單 token 距離有相同的上限 δ（Sec. 4.1）：
+
+ dgeom(πθold(a∣s),πθ(a∣s))≜12 πθold(a∣s) (rs,a(θ)−1)2≤δ $d_{geom}(\pi_{\theta_{old}}(a|s),\pi_\theta(a|s))\triangleq\tfrac12\,\pi_{\theta_{old}}(a|s)\,(r_{s,a}(\theta)-1)^2\le\delta$ ​(πθold​​(a∣s),πθ​(a∣s))≜21​πθold​​(a∣s)(rs,a​(θ)−1)2≤δ
+Eq. 9
+
+ 這是不等式：只有到達 clip 邊界的 token 等於上限，範圍內的 token 距離較小；而且 min 只讓一側起作用，A^>0 $\hat A>0$ >0 看上界、A^<0 $\hat A\lt0$ <0 看下界。解出比值：
+
+ ∣rs,a(θ)−1∣≤2δπθold(a∣s) $|r_{s,a}(\theta)-1|\le\sqrt{\frac{2\delta}{\pi_{\theta_{old}}(a|s)}}$ ​(θ)−1∣≤πθold​​(a∣s)2δ​​
+Eq. 10
+
+ ∣rs,a(θ)−1∣≤ϵs,a(πθold),ϵs,a(πθold)=δπθold(a∣s) $|r_{s,a}(\theta)-1|\le\epsilon_{s,a}(\pi_{\theta_{old}}),\qquad\epsilon_{s,a}(\pi_{\theta_{old}})=\sqrt{\frac{\delta}{\pi_{\theta_{old}}(a|s)}}$ ​(θ)−1∣≤ϵs,a​(πθold​​),ϵs,a​(πθold​​)=πθold​​(a∣s)δ​​
+Eq. 11
+
+ 由 12πold(r−1)2≤δ $\tfrac12\pi_{old}(r-1)^2\le\delta$ 1​πold​(r−1)2≤δ 得到 ∣r−1∣≤2δ/πold $|r-1|\le\sqrt{2\delta/\pi_{old}}$ ​​（Eq. 10）。實作式 Eq. 11 沒有 2，因為係數 2 被吸收進超參數 δ。所以以 Eq. 11 的 δ 而言，每個 token 在 Eq. 9 單位下的距離上限是 δ/2，只有到達 clip 邊界時才等於上限。
+
+ 論文的例子取 δ = 0.02（Sec. 4.1）：πold=0.8 $\pi_{old}=0.8$ ​=0.8 的上限是 0.92（精確值 0.8(1+0.025)=0.9265 $0.8(1+\sqrt{0.025})=0.9265$ ​)=0.9265），PPO-Clip 為 0.96；πold=0.01 $\pi_{old}=0.01$ ​=0.01 的上限是 0.024（精確值 0.0241），PPO-Clip 為 0.012。兩個 token 在上邊界的單 token 距離都是 0.01，PPO-Clip 則是 0.016 與 0.0002。
+
+ 作者的 Prop. 4.1 說 RIC 保證每個狀態—動作更新的幾何距離相同、低機率動作可更新較多而高機率動作較少，並同時緩解探索崩潰、平衡偏差與變異。論文同樣沒有證明。「距離上限相同」由 Eq. 9–11 直接成立；「高機率動作較少」只在一定條件下相對 PPO 成立（下一節）；「緩解探索崩潰」由實驗支持；「平衡偏差與變異」是第 6 節的定性論證。
+
+ W1clip 範圍與單 token 距離
+
+ 拖動舊機率：上圖是允許的最大比值，下圖是到達上邊界時的單 token 距離 ½π_old(r−1)²。PPO 的距離隨舊機率增加，RIC 固定在 δ/2。
+
+ 進階（第 5b 節）
+
+ PPODAPORIC受 π ≤ 1 限制分界 δ/ε²
+
+ 舊機率 π_old0.0100
+
+ 0.010.8
+
+ PPO ε0.20
+
+ DAPO ε_high0.28
+
+ RIC δ0.020
+
+ δ = 0.02（Sec. 4.1 例子）δ = 0.05（實驗預設）
+
+ RIC ε = √(δ/π_old) = 1.414
+分界 δ/ε² = 0.5
+
+ 上邊界的量測（基本檢視 δ = 0.02、ε = 0.2）方法π_minπ_maxΔπ單 token（Eq. 9）
+PPO0.0080.0120.0020.0002
+RIC無下限（r ≥ 0）0.024140.014140.01
+
+ 讀數由本頁依 Eq. 3、9、11 即時計算；有效比值上限為 min(1 + ε, 1/π_old)。二元二階與二元 KL 兩欄 本頁推導（定義見第 4 節的說明框）。
+
+ 舊機率 0.0100：PPO 上限 0.012，RIC 上限 0.02414
+
+ 延伸閱讀：Riemannian Isometric Clip 與 RIPO 目標
+
+ 05b · δ = 0.05
+
+ 實驗預設 δ = 0.05 時 RIC 的上界處處比 PPO 大
+
+ 本頁推導RIC 的範圍何時比 PPO 小？δ/πold<ϵ $\sqrt{\delta/\pi_{old}}\lt\epsilon$ ​​<ϵ 等價於 πold>δ/ϵ2 $\pi_{old}>\delta/\epsilon^2$ ​>δ/ϵ2。δ = 0.02、ε = 0.2 時分界在 0.5，所以例子中 0.8 的 token 比 PPO 受限。論文實驗的預設是 δ = 0.05（Sec. 5.1），此時分界為 1.25，因此對所有 πold $\pi_{old}$ ​，ϵs,a≥0.05=0.224>0.2 $\epsilon_{s,a}\ge\sqrt{0.05}=0.224>0.2$ ​≥0.05​=0.224>0.2：RIC 的上界處處比 PPO 大，只是大的程度隨機率改變。
+
+ 本頁推導機率不能超過 1，所以有效比值上限是 min⁡(1+ϵs,a,1/πold) $\min(1+\epsilon_{s,a},1/\pi_{old})$ ​,1/πold​)。δ = 0.05 時 πold≥0.8 $\pi_{old}\ge0.8$ ​≥0.8 的 token 上限直接是 1：πold=0.8 $\pi_{old}=0.8$ ​=0.8 時上限受 π ≤ 1 限制而到 1.0，與 DAPO 相同。所以第 5 節例子中「高機率 token 較不激進」的效果依賴 δ 的取值。
+
+ 本頁推導下側 1−δ/πold $1-\sqrt{\delta/\pi_{old}}$ ​​ 在 πold≤δ $\pi_{old}\le\delta$ ​≤δ 時小於等於 0；比值本來就不小於 0，等於沒有下限。
+
+ 請在上方圖版開啟「進階」並按「δ = 0.05」，再按「0.8」，比較 RIC、PPO 與 DAPO 的上限；進階檢視也加入 DAPO 曲線與第 4 節的兩種二元量測。
+
+ 06 · 偏差與變異
+
+ RIC 使 clip 邊界上單一樣本的變異貢獻接近 δ
+
+ 作者也從重要性取樣（importance sampling，IS）的角度分析 RIC（Sec. 4.2）。目標策略下的期望可以用行為策略的樣本估計：
+
+ Ex∼πθ[A(x)]=Ex∼πθold[r(x)A(x)],r(x)=πθ(x)πθold(x) $\mathbb E_{x\sim\pi_\theta}[A(x)]=\mathbb E_{x\sim\pi_{\theta_{old}}}[r(x)A(x)],\qquad r(x)=\frac{\pi_\theta(x)}{\pi_{\theta_{old}}(x)}$ ​​[A(x)]=Ex∼πθold​​​[r(x)A(x)],r(x)=πθold​​(x)πθ​(x)​
+Eq. 12
+
+ 這是不偏的，因為 ∑xπold(x)πθ(x)πold(x)A(x)=∑xπθ(x)A(x) $\sum_x\pi_{old}(x)\frac{\pi_\theta(x)}{\pi_{old}(x)}A(x)=\sum_x\pi_\theta(x)A(x)$ ​πold​(x)πold​(x)πθ​(x)​A(x)=∑x​πθ​(x)A(x)，比值剛好抵消取樣分布的差異。截斷則把權重 r $r$ 換成較小的 w $w$ ，期望值少了 ∑x(πθ(x)−πold(x)w(x))A(x) $\sum_x(\pi_\theta(x)-\pi_{old}(x)w(x))A(x)$ ​(πθ​(x)−πold​(x)w(x))A(x)，這就是偏差。取 A≡1 $A\equiv1$ 時，單一 token 的偏差是 πθ−πoldw $\pi_\theta-\pi_{old}w$ ​−πold​w。
+
+ 變異等於二階動差減去平均值的平方。作者依 Tokdar 與 Kass (2010)、Murphy (2012) 認為後者通常可以忽略，只看二階動差：
+
+ Vx∼πθold[r(x)A(x)]≈Ex∼πθold[r(x)2A(x)2]=∑xπθold(x) r(x)2A(x)2 $\mathbb V_{x\sim\pi_{\theta_{old}}}[r(x)A(x)]\approx\mathbb E_{x\sim\pi_{\theta_{old}}}[r(x)^2A(x)^2]=\sum_x\pi_{\theta_{old}}(x)\,r(x)^2A(x)^2$ ​​​[r(x)A(x)]≈Ex∼πθold​​​[r(x)2A(x)2]=x∑​πθold​​(x)r(x)2A(x)2
+Eq. 13
+
+ 作者定義樣本的變異貢獻 v(x)=πold(x)r(x)2 $v(x)=\pi_{old}(x)r(x)^2$ ​(x)r(x)2，它衡量這個樣本對二階動差的貢獻。三種權重在 clip 邊界上的變異貢獻 v=πoldw2 $v=\pi_{old}w^2$ ​w2 如下：
+
+ 未截斷 IS：v=πθ2/πold $v=\pi_\theta^2/\pi_{old}$ 2​/πold​，πold $\pi_{old}$ ​ 很小時可任意大，偏差為 0。作者認為變異過大來自 πold $\pi_{old}$ ​ 的長尾。
+
+ PPO 截斷（w≤1+ϵ $w\le1+\epsilon$ ）：v=πold(1+ϵ)2 $v=\pi_{old}(1+\epsilon)^2$ ​(1+ϵ)2，πold→0 $\pi_{old}\to0$ ​→0 時趨近 0，變異小，但忽略被截斷樣本的貢獻，偏差大。
+
+ RIC 截斷（w≤1+δ/πold $w\le1+\sqrt{\delta/\pi_{old}}$ ​​）：v=πold(1+δ/πold)2 $v=\pi_{old}(1+\sqrt{\delta/\pi_{old}})^2$ ​(1+δ/πold​​)2，在 πold→0 $\pi_{old}\to0$ ​→0 時趨近 δ。
+
+ v(x′)=πθold(x′)(1+δπθold(x′))2≈O(δ) $v(x')=\pi_{\theta_{old}}(x')\Big(1+\sqrt{\tfrac{\delta}{\pi_{\theta_{old}}(x')}}\Big)^2\approx O(\delta)$ )=πθold​​(x′)(1+πθold​​(x′)δ​​)2≈O(δ)
+Eq. 14
+
+ 作者稱之為與密度無關、常數階的變異，結論是 RIC 的變異嚴格小於標準 IS、偏差遠小於 PPO-Clip。「同質」在這裡的意思是：每個 token 的 v $v$ 大小相同、不隨 πold $\pi_{old}$ ​ 改變；統計上稱為同質變異（homoscedasticity）。作者的解讀是：等距更新使每個樣本對 trust region 的二階貢獻相同，因而在重要性取樣中得到同質變異；PPO-Clip 則是異質變異。
+
+ 本頁推導Eq. 14 可以精確寫成 v=(πold+δ)2=πold+2δπold+δ $v=(\sqrt{\pi_{old}}+\sqrt\delta)^2=\pi_{old}+2\sqrt{\delta\pi_{old}}+\delta$ ​​+δ​)2=πold​+2δπold​​+δ。它在 πold≪δ $\pi_{old}\ll\delta$ ​≪δ 時趨近 δ，πold≫δ $\pi_{old}\gg\delta$ ​≫δ 時約為 πold $\pi_{old}$ ​，所以「與密度無關」是低機率端的漸近性質。O(δ) $O(\delta)$ 也只是單一樣本的上界：總二階動差是所有被截斷 token 的和，約為「被截斷的低機率 token 數 × δ」，仍隨長尾 token 數增加。
+
+ 本頁推導「變異嚴格小於 IS」只在比值確實超過 1+δ/πold $1+\sqrt{\delta/\pi_{old}}$ ​​ 時才有差別；比值在範圍內時，RIC 與未截斷 IS 完全相同。另外 Sec. 4.2 把 clip 寫成「把比值截斷到上限」，而 PPO 實際的 min-clip 是讓被截斷項的梯度為 0；下面的圖版依論文的截斷寫法計算，只看上側。
+
+ W2單一 token 的偏差與變異
+
+ 選一個舊機率與目標比值 r（π_θ = π_old·r）。表中比較三種權重的變異貢獻 v 與偏差 π_θ − π_old·w（A ≡ 1）。
+
+ PPORICIS（固定 π_θ）δ
+
+ 舊機率 π_old0.00100
+
+ 目標比值 r10.0
+
+ PPO ε0.20
+
+ RIC δ0.050
+
+ 套用雙重 clipping 上界 10（若其語意為比值上限）
+
+ 三種權重（A ≡ 1，只看上側）方法權重 w變異貢獻 v偏差 π_θ − π_old·w
+未截斷 IS100.10
+PPO1.20.001440.0088
+RIC8.07110.0651420.0019289
+
+ π_θ = π_old·r = 0.0100　RIC 上限 1 + √(δ/π_old) = 8.071　此 token 是否被 RIC 截斷：是
+
+ 讀數由本頁依 Eq. 13–14 即時計算。RIC 包絡的精確式 (√π_old + √δ)² 與偏差式 本頁推導。「上界 10」的語意論文沒有說明。
+
+ 舊機率 0.00100，比值 10.0：IS v = 0.1，PPO v = 0.00144，RIC v = 0.065142
+
+ 延伸閱讀：幾何等距與同質變異：RIC 的偏差—變異論證、LLM RL 中的 importance sampling 修正
+
+ 07 · RIPO 目標
+
+ RIPO 是換上 RIC 的 GRPO
+
+ LLM 的 RL 常用 GRPO（Group Relative Policy Optimization）。它對每個題目 q $q$ 從行為策略取樣 G $G$ 個回答 {oi} $\{o_i\}$ ​}，獎勵 Ri $R_i$ ​ 答對為 1、答錯為 0，優勢取群組標準化 A^i,t=(Ri−mean({Ri}))/std({Ri}) $\hat A_{i,t}=(R_i-\mathrm{mean}(\{R_i\}))/\mathrm{std}(\{R_i\})$ i,t​=(Ri​−mean({Ri​}))/std({Ri​})，不需要價值模型（PPO 原本用 GAE 估計優勢，本文只在第 8 節的 PPO 實驗用到）：
+
+ JGRPO(θ)=E[1G∑i=1G1∣oi∣∑t=1∣oi∣min⁡(ri,tA^i,t, clip(ri,t,1−ϵ,1+ϵ)A^i,t)] $J_{GRPO}(\theta)=\mathbb E\Big[\frac1G\sum_{i=1}^G\frac1{|o_i|}\sum_{t=1}^{|o_i|}\min\big(r_{i,t}\hat A_{i,t},\ \mathrm{clip}(r_{i,t},1-\epsilon,1+\epsilon)\hat A_{i,t}\big)\Big]$ ​(θ)=E[G1​i=1∑G​∣oi​∣1​t=1∑∣oi​∣​min(ri,t​A^i,t​, clip(ri,t​,1−ϵ,1+ϵ)A^i,t​)]
+Eq. 2
+
+ RIPO 的目標（Sec. 4.3）：
+
+ JRIPO(θ)=E[1∑i=1G∣oi∣∑i=1G∑t=1∣oi∣min⁡(ri,tA^i,t, clip(ri,t,1−ϵi,t,1+ϵi,t)A^i,t)] $J_{RIPO}(\theta)=\mathbb E\Big[\frac{1}{\sum_{i=1}^G|o_i|}\sum_{i=1}^G\sum_{t=1}^{|o_i|}\min\big(r_{i,t}\hat A_{i,t},\ \mathrm{clip}(r_{i,t},1-\epsilon_{i,t},1+\epsilon_{i,t})\hat A_{i,t}\big)\Big]$ ​(θ)=E[∑i=1G​∣oi​∣1​i=1∑G​t=1∑∣oi​∣​min(ri,t​A^i,t​, clip(ri,t​,1−ϵi,t​,1+ϵi,t​)A^i,t​)]
+Eq. 15
+
+ 與 GRPO 相比只改了兩處：clip 範圍改為逐 token 的 ϵi,t=δ/πold $\epsilon_{i,t}=\sqrt{\delta/\pi_{old}}$ ​=δ/πold​​（Eq. 11，用該 token 的舊機率）；正規化由「先對每條回答平均、再對 G $G$ 條平均」改為 1/∑i∣oi∣ $1/\sum_i|o_i|$ ​∣oi​∣，即 DAPO 的 token 層級 loss，用來平衡長短回答的梯度影響。實驗中 δ = 0.05，雙重 clipping 的上下界為 0.5 與 10，並移除 KL 懲罰（Sec. 5.1）。論文註腳說 RIPO 唸作「ripple」。
+
+ 一個玩具模型 教學示意
+
+ 下面用一個可以完整模擬的小問題，看第 2 節的機制在一次一次迭代中如何作用。bandit 是只有一步的決策問題：策略在 6 個「回答」中選一個，每個回答有固定的答對機率。策略是 softmax(logits)，logits 是 6 個可訓練的數字。每次答對與否是擲一次「答對機率」的硬幣（伯努利分布）。seed 是亂數的起點，固定 seed 讓結果可以重現。
+
+ 回答 A 的初始機率高（0.8 左右），答對機率 0.5；回答 B 的初始機率很低（預設 0.01），答對機率 1.0；其餘 4 個答對機率 0。每次迭代從 πold $\pi_{old}$ ​ 取樣 8 個回答、算 GRPO 優勢，對同一批樣本做 4 次梯度上升。對 200 個 seed 各跑 200 次迭代，統計有多少比例的 seed 最後讓 B 的機率超過 0.5。
+
+ W3玩具 bandit：稀有的好動作能否被找到
+
+ 四條線同時計算：GRPO（固定 ε）、DAPO（ε, ε_high）、RIC（δ）與不 clip 的對照。按「執行」重算。
+
+ B 的初始機率
+ 0.0050.010.02
+
+ GRPODAPORIC不 clip
+
+ GRPO／DAPO ε0.20
+
+ DAPO ε_high0.28
+
+ RIC δ0.050
+
+ 執行尚未執行
+
+ 第 200 次迭代（200 個 seed 的平均）方法參數找到 B 的比例平均熵期望獎勵平均略過的迭代
+GRPO—————
+DAPO—————
+RIC—————
+不 clip—————
+
+ 所有方法的熵最後都接近 0，因為這個問題只有一個最佳動作；論文 Fig. 1(b) 的「熵穩定在中等範圍」無法在此重現。略過的迭代是 8 個回答的獎勵全相同、優勢全為 0 的情形；找到 B 之後幾乎每次都全對，所以找到越多的方法略過越多。
+
+ 此模型為本頁設計的示意，不是論文的實驗或結果。6 個動作、G = 8、每次迭代 4 次全批梯度上升、學習率 1.0、200 次迭代、seed 1–200（mulberry32）。梯度為解析式。
+
+ 預設參數下，第 200 次迭代找到 B 的比例是 GRPO 0.015、DAPO 0.100、RIC 0.370、不 clip 0.395。
+
+ 為什麼固定 ε 很少找到 B，RIC 又改變了什麼。固定 ε = 0.2 時，B 被取樣到後比值一超過 1.2 梯度就變成 0，每次迭代 B 的機率只能小幅上升，策略因此先集中到 A。RIC 對低機率 token 放寬上界：B 的初始機率 pB=0.01 $p_B=0.01$ ​=0.01、δ = 0.05 時，B 的比值上限是 1+0.05/0.01=1+5≈3.24 $1+\sqrt{0.05/0.01}=1+\sqrt5\approx3.24$ ​=1+5​≈3.24，遠大於 PPO 的 1.2，所以 B 每次被取樣到時能上升得多。不過這個增益不能歸因於「範圍隨機率改變的形狀」：不 clip 的對照（0.395）與 RIC（0.370）相近，把 DAPO 的 ϵhigh $\epsilon_{high}$ ​ 調到 1.0（下界保持 0.2）更達到 0.505。在這個玩具中大更新沒有代價，所以它只能示範「上界太小會阻礙發現稀有的好動作」，不能說明為什麼需要 trust region。
+
+ 08 · 實驗結果
+
+ RIPO 在四個模型的平均分數都最高
+
+ 主要實驗（Sec. 5.1–5.2）在 Qwen3-1.7B-Base、Llama3.2-3B-Instruct、Qwen3-4B-Base、Qwen3-8B-Base 上，以 DAPO-Math-17k 訓練，比較 GRPO、DAPO、GSPO、GMPO、DCPO 五個基準演算法（論文稱 six，只列出五個），在七個數學競賽基準上報告 Avg@8。RIPO 的平均在四個模型都最高。相對 GRPO：Qwen3-1.7B-Base 15.4 vs 11.2（+37.2%）、Llama3.2-3B-Instruct 8.6 vs 6.4（+34.4%）、Qwen3-4B-Base 30.1 vs 25.7（+17.1%）、Qwen3-8B-Base 38.5 vs 28.5（+35.1%）。Qwen3-8B-Base 的 AIME24：RIPO 43.8、GRPO 31.7、DCPO 36.3、GMPO 41.7。RIPO 不是每格都最好，例如 Qwen3-8B 的 AIME25 是 GMPO 30.0 高於 RIPO 29.2。
+
+ 訓練動態（Fig. 1，Qwen3-8B-Base，論文文字描述）。(a) RIPO 在 40 步內超過 GRPO 訓練 200 步的 AIME24 表現，作者稱五倍 token 效率；(b) GRPO 的熵迅速降到接近 0，DAPO 的熵不受控地上升，RIPO 先下降後穩定在中等範圍；(c) 其他方法的梯度範數有頻繁尖峰，RIPO 幾乎沒有波動；(d) DCPO、GMPO 很少觸發 clip，GSPO、DAPO 被 clip 的 token 多出數個數量級，RIPO 介於中間。
+
+ δ 消融（Table 2，Qwen3-8B-Base，AIME24 Avg@8）。對稱的 δ 從 0.02 到 0.08 為 40.8–43.8，表現穩定。δlow/δhigh≥2 $\delta_{low}/\delta_{high}\ge2$ ​/δhigh​≥2 的三組（0.05/0.02、0.08/0.02、0.08/0.04）降到 27.5–28.8；0.05/0.04 同樣不對稱但得 41.7 本頁說明。每個設定只有一次訓練，沒有誤差範圍。作者的正文寫「δ_high 明顯大於 δ_low 時表現大幅下降」，並解釋為機率變得更容易增加；Fig. 2 顯示高度不對稱時獎勵突然下降、熵急遽上升（原文「entropy explosion」）。表中後三欄為 δ_low 大於 δ_high，與正文敘述方向不同，原文如此。
+
+ Pass@k（Table 5）。AIME-25 的 Pass@128：RIPO 60.0、GRPO 53.3、DCPO 58.9、DAPO 40.0、Base 16.7；HMMT-25：RIPO 45.3、GRPO 30.0、Base 6.7。Base 在 k = 16 左右就不再上升，作者據此稱 RIPO 突破了基底模型的能力邊界。
+
+ W4實驗結果瀏覽
+
+ Table 1 各基準
+ Table 2 δ 消融
+ Table 5 Pass@k
+
+ Qwen3-1.7B-BaseLlama3.2-3B-InstructQwen3-4B-BaseQwen3-8B-Base
+
+ 基準 AIME24AIME25AMC23HMMT25BRUMO25CMIMC25SMT25平均
+
+ AIME-25HMMT-25
+
+ Qwen3-8B-Base，平均。平均欄括號內為論文報告的相對 GRPO 百分比。
+
+ 以表格檢視
+Table 1：Qwen3-8B-Base（Avg@8）方法AIME24AIME25AMC23HMMT25BRUMO25CMIMC25SMT25平均
+Base3.83.343.41.315.03.110.811.5
+GRPO31.720.866.612.933.312.521.928.5
+DAPO33.722.170.97.933.318.128.330.6
+GSPO37.519.670.115.036.313.832.532.1
+GMPO41.730.076.911.735.817.833.035.3
+DCPO36.327.572.215.442.816.331.634.5
+RIPO43.829.279.716.747.518.134.238.5
+
+ 數字照錄論文 Table 1、2、5（Avg@8 或 Pass@k）。Table 1 平均欄的百分比照錄論文；以表中四捨五入後的平均重算，Qwen3-1.7B-Base 為 +37.5%（論文 +37.2%）。
+
+ 其他實驗。與不同動機的 clip 比較（Table 3，Qwen3-8B-Base）：GPPO（Su et al., 2025，arXiv 2508.07629，保留被 clip token 的梯度）與 Clip-Cov 都比 GRPO 好，RIPO 在全部六個基準都最高。換成有價值模型與 GAE 的 PPO 目標（Table 4，GSM8K Avg@1，Qwen2.5-Instruct）：RIPO-Clip 在 0.5B/1.5B/7B/14B 為 61.1/81.6/93.5/94.4，PPO-Clip 為 58.0/79.2/91.7/93.2；Fig. 3 中 PPO-Clip 的熵迅速衰減到接近 0，RIPO-Clip 維持一定的熵。程式與搜尋任務（Table 6，Qwen3-8B-Base）：程式平均 RIPO 44.9、GRPO 39.7（+13.2%）；搜尋平均 43.4、37.7（+15.1%）。
+
+ Table 3：不同動機的 clip（Qwen3-8B-Base，Avg@8）
+ 基準GRPOGPPOClip-CovRIPO
+
+ AIME2431.731.736.343.8
+
+ AIME2520.823.822.929.2
+
+ AMC2366.673.466.679.7
+
+ HMMT2512.914.211.716.7
+
+ BRUMO2533.338.336.347.5
+
+ SMT2521.925.030.234.2
+
+ 延伸閱讀：RIPO 的實驗設定與結果、序列層級的比值：GSPO 與 GMPO
+
+ 09 · 實作
+
+ 實作設定與常見錯誤
+
+ 主要實驗設定（Sec. 5.1）
+ 項目值
+
+ 模型Llama3.2-3B-Instruct、Qwen3-1.7B-Base、Qwen3-4B-Base、Qwen3-8B-Base
+
+ RIPO 的 δ0.05
+
+ 雙重 clippingGRPO、DAPO、DCPO、RIPO 都使用；「lower and upper bounds set to 0.5 and 10」
+
+ KL 懲罰全部移除
+
+ 優勢所有方法都用群組相對優勢
+
+ 訓練資料DAPO-Math-17k（17,917 題）
+
+ rollout每題 8 條，最大長度 16,384 token；每次迭代 1024 條（128 題 × 8），以 mini-batch 16 更新 8 次
+
+ 獎勵答對 1、答錯 0
+
+ 最佳化token-mean loss；300 步；AdamW，固定學習率 1×10⁻⁶
+
+ 平台VeRL，8×A100
+
+ 評估AIME24、AIME25、AMC23、HMMT25、BRUMO25、CMIMC25、SMT25；重複 8 次取 Avg@8
+
+ 第 8 節的 PPO 實驗（Sec. 5.6）寫「每次迭代 256 條 rollout、train batch 512」，原文的 batch 數字互相矛盾。論文沒有演算法框或程式碼；下面是依 Eq. 11、15 寫成的虛擬碼，不是作者的程式 本頁示意：
+
+ logp_old = logp_old.detach() # 行為策略在 rollout 時的 log-prob
+ratio = exp(logp - logp_old)
+eps = sqrt(delta / exp(logp_old)) # Eq. 11，逐 token
+surr = min(ratio * A, clip(ratio, 1 - eps, 1 + eps) * A)
+loss = -(surr * mask).sum() / mask.sum() # Eq. 15：除以全部 token 數
+
+ 常見錯誤
+
+ ε 用舊機率算。ϵi,t $\epsilon_{i,t}$ ​ 依 rollout 時的 πθold $\pi_{\theta_{old}}$ ​​（不帶梯度），不是目前的 πθ $\pi_\theta$ ​；每個 token 不同。
+
+ δ 的係數。Eq. 11 已吸收 Eq. 10 的 2；照 Eq. 9 的寫法，每個 token 的距離上限是 δ/2。
+
+ 極小機率。πold→0 $\pi_{old}\to0$ ​→0 時 ϵ→∞ $\epsilon\to\infty$ ，論文沒有寫額外的保護，實驗用雙重 clipping（0.5 與 10）。本頁推導若「上界 10」指比值上限，則 πold<δ/81 $\pi_{old}\lt\delta/81$ ​<δ/81（δ = 0.05 時約 6.2×10⁻⁴）的 token 上限由 10 決定。雙重 clipping 的確切語意論文沒有說明。
+
+ 正規化方式。Eq. 15 是 token 層級（除以 ∑i∣oi∣ $\sum_i|o_i|$ ​∣oi​∣），與 Eq. 2 先對每條回答平均不同。
+
+ 上下對稱。Table 2 中 δlow/δhigh≥2 $\delta_{low}/\delta_{high}\ge2$ ​/δhigh​≥2 的三組大幅下降；預設對稱 δ = 0.05。
+
+ 機率上限。有效比值上限是 min⁡(1+ϵ,1/πold) $\min(1+\epsilon,1/\pi_{old})$ ​)；高機率 token 的 RIC 上限常常不起作用。
+
+ 無 KL 懲罰。實驗移除 KL 項；RIC 本身被當作 trust region 的替代。
+
+ 10 · Score Centering
+
+ RIPO 與 Score Centering 處理不同的問題
+
+ 同批的 Score Centering（Marek 與 Ryabinin，arXiv 2609.20807）也處理 off-policy LLM RL 中的比值，但問題不同。RIPO 假設 πold $\pi_{old}$ ​ 就是實際取樣的策略，修改的是 clip 上下界的形狀；Score Centering 處理推論引擎（sampler q $q$ ）與訓練引擎（trainer p $p$ ）機率不一致的情形，從每個 score 減去 sampler 下的期望 score，是一個加法修正。下表中 Score Centering 的描述出自該論文 §4。兩篇論文都沒有組合實驗。
+
+ RIPO 與 Score Centering
+ 項目RIPO（2607.10169）Score Centering（2609.20807）
+
+ 關注的問題clip 的形狀導致探索崩潰訓練引擎與推論引擎機率不一致造成的 drift
+
+ 對 πold $\pi_{old}$ ​ 的假設πold $\pi_{old}$ ​ 是實際取樣的策略sampler q $q$ 與 trainer p $p$ 不同
+
+ 做法固定 ε 換成 δ/πold $\sqrt{\delta/\pi_{old}}$ ​​score 減去 sampler 下的期望 score
+
+ 修改的位置clip 上下界policy gradient 的 score 項
+
+ 本頁推導兩者作用的位置不同，原則上可以疊加；但 RIPO 論文沒有討論訓練與推論不一致，兩篇也都沒有組合實驗。
+
+ 另一個比較角度來自 GPPO 論文（Generalized PPO，arXiv 2610.13015，見教學 Generalized PPO）。直接寫各方法的比值範圍：PPO 是固定的 1 ± ε；DPPO（arXiv 2602.04879）約束機率差 |π − π_old| ≤ δ，等價於 1 ± δ/π_old；RIPO 是 1 ± √(δ/π_old)。三者的範圍隨舊機率變小而放寬的速度不同：不變、與 1/π_old 成正比、與 1/√π_old 成正比。
+
+ 延伸閱讀：RIPO 與 Score Centering：兩種處理 off-policy 比值的方式、訓練與推論不一致（TIM）的來源、GPPO 的設計空間
+
+ 11 · 研究脈絡
+
+ 研究脈絡：從 KL 約束到依機率調整的 clip
+
+ TRPO 以 KL 約束定義 trust region；PPO 以固定 ε 的 clip 近似它；GRPO 用群組優勢去掉價值模型；DAPO、DCPO、GSPO、GMPO、Clip-Cov 與 GPPO（Su et al., 2508.07629）各自修改 clip，作者稱這些為經驗性修正；RIPO 依 KL 近似決定每個 token 的範圍。每張卡片連到對應的研究筆記。
+
+ trust region固定 clipclip 修正序列層級平台依機率的 clip
+
+ 2015trust regionTrust Region Policy Optimization
+Schulman et al.
+KL 約束的 trust region；本文推導幾何距離的起點
+arXiv ↗筆記
+2015trust regionHigh-Dimensional Continuous Control Using Generalized Advantage Estimation
+Schulman et al.
+GAE；本文 PPO 設定的優勢估計
+arXiv ↗筆記
+2017固定 clipProximal Policy Optimization Algorithms
+Schulman et al.
+PPO-Clip；本文批評的歐氏 clipping
+arXiv ↗筆記
+2024平台HybridFlow: A Flexible and Efficient RLHF Framework
+Sheng et al.
+VeRL 框架；本文實驗平台
+arXiv ↗筆記
+2024固定 clipDeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models
+Shao et al.
+GRPO；本文的基底目標
+arXiv ↗筆記
+2025固定 clipDeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning
+DeepSeek-AI et al.
+以 GRPO 訓練推理；本文的應用背景
+arXiv ↗筆記
+2025clip 修正DAPO: An Open-Source LLM Reinforcement Learning System at Scale
+Yu et al.
+Clip-Higher 與探索崩潰觀察；本文分析的對象
+arXiv ↗筆記
+2025clip 修正The Entropy Mechanism of Reinforcement Learning for Reasoning Language Models
+Cui et al.
+Clip-Cov；Table 3 對照
+arXiv ↗筆記
+2025序列層級Group Sequence Policy Optimization
+Zheng et al.
+序列層級 clip；實驗對照
+arXiv ↗筆記
+2025序列層級Geometric-Mean Policy Optimization
+Zhao et al.
+幾何平均比值 clip；實驗對照
+arXiv ↗筆記
+2025clip 修正Klear-Reasoner: Advancing Reasoning Capability via Gradient-Preserving Clipping Policy Optimization
+Su et al.
+GPPO，保留被 clip token 的梯度；Table 3 對照
+arXiv ↗筆記
+2025clip 修正DCPO: Dynamic Clipping Policy Optimization
+Yang et al.
+依機率動態調整 clip；最接近的實驗對照
+arXiv ↗筆記
+2026依機率的 clip · 本文Beyond Euclidean Clipping: Overcoming Exploration Collapse in LLM RL via Riemannian Isometric Policy Optimization
+Cai et al.
+本文：等距 clip ε=√(δ/π_old)
+arXiv ↗筆記
+
+ 12 · 限制與延伸
+
+ 限制與延伸閱讀
+
+ 作者在結論中只總結貢獻，沒有列出限制。以下是本頁的觀察 本頁推導：
+
+ Eq. 7 是二階近似，RIC 允許的低機率比值（例如 δ = 0.02、π_old = 0.001 時 5.47）已遠離 r≈1 $r\approx1$ 。
+
+ 單 token 約束不控制分布層級的總變化（第 4 節說明框）。
+
+ 預設 δ = 0.05 時 RIC 的上界處處比 ε = 0.2 大（第 5b 節），實驗中的增益不能只歸因於「限制高機率 token」。
+
+ 同質變異是低機率端的漸近性質，且只針對單一樣本（第 6 節）。
+
+ 論文沒有「固定 ε 調大」或「不 clip」的對照，無法從論文數據區分範圍形狀與整體放寬各自的貢獻；玩具模型中兩者無法區分（第 7 節）。
+
+ 研究筆記（依閱讀順序）
+
+ RIPO 的研究脈絡總覽：從 TRPO 到等距 clipping總覽
+
+ Policy gradient、baseline 與 score function背景
+
+ TRPO：trust region 與單調改進下界（GPPO 的理論起點）背景
+
+ PPO、GRPO、DAPO 與 LLM 的 RL 目標背景
+
+ PPO-Clip 作為 TV 散度的單樣本 Monte Carlo 代理另一種解讀
+
+ LLM RL 中的 clipping 變體：DAPO、DCPO、Clip-Cov、SAPO、CISPO既有修正
+
+ 序列層級的比值：GSPO 與 GMPO既有修正
+
+ KL 散度、Fisher 矩陣與重要性比值的二次式本文理論
+
+ PPO-Clip 的歐氏假設與探索崩潰本文理論
+
+ Riemannian Isometric Clip 與 RIPO 目標本文方法
+
+ 幾何等距與同質變異：RIC 的偏差—變異論證本文理論
+
+ RIPO 的實驗設定與結果實驗
+
+ RIPO 與 Score Centering：兩種處理 off-policy 比值的方式同批比較
+
+ LLM RL 中的 importance sampling 修正：TIS、MIS、TOPR、GSPO、DPPO相關修正
+
+ f-散度幾何與 proximal region：Vajda 不等式與 Theorem 3GPPO 觀點
+
+ 散度估計器拓撲：Single-Sample MC、Atomic 與 BinaryGPPO 觀點
+
+ GPPO 的設計空間：把 PPO、DAPO、DPPO、RIPO 對應到 (f, T)GPPO 觀點
+
+ Score Centering 互動教學同批教學
+
+ Generalized PPO 互動教學相關教學
+
+ Zhicheng Cai, Xinyuan Guo, Hanlin Wu, Wei-Ying Ma, Ya-Qin Zhang, Hao Zhou. Beyond Euclidean Clipping: Overcoming Exploration Collapse in LLM RL via Riemannian Isometric Policy Optimization. ICML 2026. arXiv:2607.10169.
+
+ 本頁的方程式與數字取自論文 v2；標示「本頁推導」「本頁說明」「本頁示意」「教學示意」的內容為本頁自行推導或設計，並非論文結論。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記
