@@ -301,6 +301,69 @@ tagSel.onchange = () => { state.tag = tagSel.value; update(); };
 const qEl = document.getElementById('q');
 const ft = document.getElementById('ftoggle');
 ft.onclick = () => { const o = document.getElementById('left').classList.toggle('open'); ft.setAttribute('aria-expanded', o); };
+// ---- matching: normalise case/punctuation, split the query into words; every word must match (any order).
+// Exact substring first; otherwise a typo-tolerant match (1 edit from 5 letters, 2 from 9, also as a word prefix)
+// against title/keyword/tag/author words. Abstracts count only exact word-start hits.
+const norm = s => String(s).normalize('NFKC').toLowerCase().replace(/[‐-―\-_/:;,.()[\]{}'"‘’“”!?+|]+/g, ' ').replace(/\s+/g, ' ').trim();
+const tokensOf = q => norm(q).split(' ').filter(Boolean);
+function edits(a, b, k){  // optimal-string-alignment distance, stops early once every cell exceeds k
+  if (Math.abs(a.length - b.length) > k) return k + 1;
+  let p2 = null, p = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const c = [i]; let lo = i;
+    for (let j = 1; j <= b.length; j++) {
+      let v = Math.min(p[j] + 1, c[j - 1] + 1, p[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (p2 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, p2[j - 2] + 1);
+      c.push(v); if (v < lo) lo = v;
+    }
+    if (lo > k) return k + 1;
+    p2 = p; p = c;
+  }
+  return p[b.length];
+}
+const budget = t => t.length >= 9 ? 2 : t.length >= 5 ? 1 : 0;
+function fuzzyHit(t, w){  // t within budget of w, or of a prefix of w (the reader may still be typing)
+  const k = budget(t); if (!k) return false;
+  if (edits(t, w, k) <= k) return true;
+  for (let L = Math.max(1, t.length - k); L <= t.length + k && L < w.length; L++) if (edits(t, w.slice(0, L), k) <= k) return true;
+  return false;
+}
+const atWordStart = (hay, t) => (' ' + hay).includes(' ' + t);
+// words of 1–3 letters ("rl", "vae") must start a word, so "rl" does not match "world"
+const has = (hay, t) => t.length <= 3 ? atWordStart(hay, t) : hay.includes(t);
+const IDX = new Map(DATA.map(d => [d.id, {
+  title: norm(d.title), kw: norm([...d.tags, ...d.keywords].join(' | ')), compact: norm([d.title, ...d.tags, ...d.keywords].join(' ')).replace(/ /g, ''), au: norm(d.authors.join(' | ')), sum: norm(d.summary || ''),
+  words: new Set(norm([d.title, ...d.tags, ...d.keywords, ...d.authors].join(' ')).split(' '))
+}]));
+const VOCAB = [...new Set([...IDX.values()].flatMap(x => [...x.words]))];
+const fuzzyCache = new Map();
+const fuzzyWords = t => { if (!fuzzyCache.has(t)) fuzzyCache.set(t, new Set(budget(t) ? VOCAB.filter(w => !w.includes(t) && fuzzyHit(t, w)) : [])); return fuzzyCache.get(t); };
+// paper score: title > keyword/tag > author > abstract > typo match; -1 when some query word matches nowhere
+function scorePaper(id, toks){
+  const x = IDX.get(id); let s = 0;
+  for (const t of toks) {
+    if (has(x.title, t)) s += atWordStart(x.title, t) ? 4 : 3;
+    else if (has(x.kw, t)) s += atWordStart(x.kw, t) ? 3 : 2.5;
+    else if (has(x.au, t)) s += 2;
+    else if (t.length >= 6 && x.compact.includes(t)) s += 2;  // words typed without spaces: "flowmatching"
+    else if (atWordStart(x.sum, t)) s += 1;
+    else { let hit = false; for (const w of fuzzyWords(t)) if (x.words.has(w)) { hit = true; break; } if (!hit) return -1; s += 1.5; }
+  }
+  if (toks.length > 1) { const ph = toks.join(' '); if (x.title.includes(ph)) s += 6; else if (x.kw.includes(ph)) s += 4; }  // the words as a phrase rank first
+  return s;
+}
+// short label (keyword, tag, author): 0 = starts with the query, 1 = every word found, 2 = some word only typo-matched; -1 = no
+function scoreLabel(label, toks, nq){
+  const L = norm(label); if (L.startsWith(nq)) return 0;
+  const words = L.split(' '); let r = 1;
+  for (const t of toks) { if (has(L, t) || (t.length >= 6 && L.replace(/ /g, '').includes(t))) continue; if (words.some(w => fuzzyHit(t, w))) r = 2; else return -1; }
+  return r;
+}
+function setQuery(v){
+  state.q = v.trim(); state.toks = tokensOf(state.q);
+  state.score = state.toks.length ? new Map(DATA.map(d => [d.id, scorePaper(d.id, state.toks)])) : null;
+}
+
 // search suggestions: keywords/tags (with paper counts), authors, paper titles
 const SG = (() => {
   const terms = new Map(), authors = new Map();
@@ -313,25 +376,22 @@ const SG = (() => {
 })();
 const sgEl = document.getElementById('sugg');
 let sgItems = [], sgActive = -1;
-// rank: 0 = whole string starts with q, 1 = a word starts with q, 2 = contains q
-const rank = (s, q) => { s = s.toLowerCase(); const i = s.indexOf(q); return i < 0 ? -1 : i === 0 ? 0 : /[\s\-:(/]/.test(s[i - 1]) ? 1 : 2; };
-const hiText = (s, q) => { const i = s.toLowerCase().indexOf(q); return i < 0 ? esc(s) : esc(s.slice(0, i)) + '<mark>' + esc(s.slice(i, i + q.length)) + '</mark>' + esc(s.slice(i + q.length)); };
-// papers: title match first, then papers whose keyword/tag starts with q (so "ripo" finds the RIPO paper)
-const paperRank = (d, q) => { const r = rank(d.title, q); return r >= 0 ? r : [...d.keywords, ...d.tags].some(t => t.toLowerCase().startsWith(q)) ? 3 : -1; };
-const pick = (list, key, q, k) => list.map(x => [x, rank(key(x), q)]).filter(([, r]) => r >= 0).sort((a, b) => a[1] - b[1]).slice(0, k).map(([x]) => x);
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const hiText = (s, toks) => { if (!toks.length) return esc(s); const re = new RegExp(toks.map(reEsc).sort((a, b) => b.length - a.length).join('|'), 'gi'); let out = '', last = 0; for (const m of s.matchAll(re)) { out += esc(s.slice(last, m.index)) + '<mark>' + esc(m[0]) + '</mark>'; last = m.index + m[0].length; } return out + esc(s.slice(last)); };
+const pickLabels = (list, toks, nq, k) => list.map(x => [x, scoreLabel(x.label, toks, nq)]).filter(([x, r]) => r >= 0 && norm(x.label) !== nq).sort((a, b) => a[1] - b[1]).slice(0, k).map(([x]) => x);
 function renderSugg(){
-  const q = qEl.value.trim().toLowerCase();
-  const groups = q
-    ? [['關鍵詞與 tag', pick(SG.terms, t => t.label, q, 6).filter(t => t.label.toLowerCase() !== q).map(t => ({ kind: 'term', label: t.label, n: t.n }))],
-       ['作者', pick(SG.authors, a => a.label, q, 3).map(a => ({ kind: 'term', label: a.label, n: a.n }))],
-       ['論文', DATA.map(d => [d, paperRank(d, q)]).filter(([, r]) => r >= 0).sort((a, b) => a[1] - b[1] || b[0].degree - a[0].degree).slice(0, 5).map(([d]) => ({ kind: 'paper', label: d.title, id: d.id }))]]
+  const toks = state.toks || [], nq = toks.join(' ');
+  const groups = toks.length
+    ? [['關鍵詞與 tag', pickLabels(SG.terms, toks, nq, 6).map(t => ({ kind: 'term', label: t.label, n: t.n }))],
+       ['作者', pickLabels(SG.authors, toks, nq, 3).map(a => ({ kind: 'term', label: a.label, n: a.n }))],
+       ['論文', DATA.filter(d => state.score.get(d.id) >= 0).sort((a, b) => state.score.get(b.id) - state.score.get(a.id) || b.degree - a.degree).slice(0, 5).map(d => ({ kind: 'paper', label: d.title, id: d.id }))]]
     : [['熱門關鍵詞', SG.terms.slice(0, 8).map(t => ({ kind: 'term', label: t.label, n: t.n }))]];
   sgItems = []; sgActive = -1; let html = '';
   groups.forEach(([h, items]) => {
     if (!items.length) return;
     html += `<li class="sg-h" role="presentation">${h}</li>`;
     items.forEach(it => { const i = sgItems.push(it) - 1;
-      html += `<li role="option" id="sg-${i}" data-i="${i}" aria-selected="false"><span>${hiText(it.label, q)}</span><span class="n">${it.kind === 'paper' ? no(it.id) : it.n + ' 篇'}</span></li>`; });
+      html += `<li role="option" id="sg-${i}" data-i="${i}" aria-selected="false"><span>${hiText(it.label, toks)}</span><span class="n">${it.kind === 'paper' ? no(it.id) : it.n + ' 篇'}</span></li>`; });
   });
   sgEl.innerHTML = html;
   toggleSugg(sgItems.length > 0);
@@ -348,10 +408,10 @@ function moveSugg(step){
 }
 function chooseSugg(i){
   const it = sgItems[i]; toggleSugg(false);
-  if (it.kind === 'paper') { qEl.value = ''; state.q = ''; update(); select(it.id, true); return; }
-  qEl.value = it.label; state.q = it.label.toLowerCase(); update();
+  if (it.kind === 'paper') { qEl.value = ''; setQuery(''); update(); select(it.id, true); return; }
+  qEl.value = it.label; setQuery(it.label); update();
 }
-qEl.oninput = e => { state.q = e.target.value.trim().toLowerCase(); update(); state.q ? renderSugg() : toggleSugg(false); };  // empty box (incl. native Esc clear) closes; popular hints only on focus/click
+qEl.oninput = e => { setQuery(e.target.value); update(); state.q ? renderSugg() : toggleSugg(false); };  // empty box (incl. native Esc clear) closes; popular hints only on focus/click
 qEl.addEventListener('focus', renderSugg);
 qEl.addEventListener('click', () => { if (sgEl.hidden) renderSugg(); });
 qEl.addEventListener('blur', () => toggleSugg(false));
@@ -510,7 +570,7 @@ function visible(d){
   if (!state.clusters.has(d.cluster)) return false;
   if (!d.branch.some(b => state.branches.has(b))) return false;
   if (state.tag && !d.tags.includes(state.tag)) return false;
-  if (state.q && !(d.title + ' ' + d.authors.join(' ') + ' ' + d.tags.join(' ') + ' ' + d.keywords.join(' ')).toLowerCase().includes(state.q)) return false;
+  if (state.score && state.score.get(d.id) < 0) return false;
   return true;
 }
 document.getElementById('stats').innerHTML = `<span><b>${DATA.length}</b> 篇論文</span><span><b>${clusters.length}</b> 個群集</span><span><b>${links.length}</b> 條關聯</span>`;
@@ -527,6 +587,7 @@ function update(){
   linkSel.classed('hl', d => state.sel && (d.source.id === state.sel || d.target.id === state.sel));
   draw();
   const list = DATA.filter(d => vis.has(d.id));
+  if (state.score) list.sort((a, b) => state.score.get(b.id) - state.score.get(a.id) || b.degree - a.degree);  // best match first while searching
   document.getElementById('rcount').textContent = `論文 ${list.length} 篇`;
   const ul = document.getElementById('results'); ul.innerHTML = '';
   list.slice(0, 150).forEach(d => {
