@@ -1,0 +1,733 @@
+Model-Dowser 重要性探測
+
+跳到內容
+
+ No. 586
+ Model-Dowser：微調前先找出不能動的權重
+
+00 摘要01 問題與評估02 線性層03 Jacobian04 Theorem 3.105 重要性分數06 與剪枝分數07 Hutchinson 估計08 L1 替代量09 無資料探測10 稀疏微調11 實驗結果12 未證明之處13 研究脈絡14 延伸閱讀
+
+00摘要
+01問題與評估
+02線性層
+03Jacobian
+04Theorem 3.1
+05重要性分數
+06與剪枝分數
+07Hutchinson 估計
+08L1 替代量
+09無資料探測
+10稀疏微調
+11實驗結果
+12未證明之處
+13研究脈絡
+14延伸閱讀
+
+ No. 586 · 互動教學 · arXiv 2602.04509 · ICML 2026
+
+ Model-Dowser：微調前先找出不能動的權重
+
+ 這篇論文在微調之前，估計每個權重被改動時模型輸出會變多少；變化大的權重固定不動，只更新變化最小的一小部分。估計不需要訓練資料。
+
+ Hyeontaek Hwang、Nguyen Dinh Son、Daeyoung Kim（KAIST，2026）〈Model-Dowser: Data-Free Importance Probing to Mitigate Catastrophic Forgetting in Multimodal Large Language Models〉
+
+ 01 · 問題作者觀察到：微調多模態模型時，更新的層越靠近輸入端，模型越容易忘記原本會的任務。
+
+ 02 · 估計方法在微調前估計：改動某個權重時，模型輸出會變多少。這個估計由三個量相乘：輸出對該處的反應大小、權重本身的大小、流進該權重的輸入大小。估計值大的權重在微調時固定不動。
+
+ 03 · 成本估計只用模型自己生成的文字，不需要訓練資料。實驗中每層只更新估計值最低的 10% 權重。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · 問題與評估
+
+ 作者觀察到：微調較早的解碼器層時，MLLM 遺忘得更多
+
+ 多模態大型語言模型（multimodal large language model，MLLM）由三個元件組成：把影像轉成特徵的視覺編碼器、把影像特徵投影到語言空間的連接模組，以及產生文字的語言解碼器（Transformer）。本論文實驗用的兩個模型是 LLaVA-1.5-7B 與 NVILA-Lite-2B。
+
+ 把預訓練好的 MLLM 拿到某個特定任務（下游任務，downstream）上微調，可以提高該任務的分數；但模型在原本會做、沒有拿來微調的任務（上游任務，upstream）上的 zero-shot 表現常常下降。這個現象稱為災難性遺忘（catastrophic forgetting，§2.1）。作者認為原因是下游資料量少、範圍窄，微調會覆寫預訓練的表徵（§1）。
+
+ 實驗只微調語言解碼器的最後 L $L$ 層，其餘元件凍結。L $L$ 從輸出端往輸入端數，稱為微調深度（fine-tune depth，Fig. 3 圖說）：LLaVA 的 L $L$ 取 4 到 32、NVILA 取 4 到 28，間隔 4；主表固定 L=20 $L=20$ （§4.1）。作者觀察到，L $L$ 越大（更新延伸到越早的層），遺忘越嚴重。既有的 post-merging 方法 Grafting、DARE、Model Tailor 在最後 4–16 層時表現穩定，微調延伸到早期層時就崩潰（§4.2、Fig. 3）。
+
+ 如何同時衡量「學會新任務」與「不忘舊任務」
+
+ 下游任務有四個：COCO-Caption 與 Flickr30k（影像描述，用 CIDEr 計分）、ImageNet-R 與 IconQA（用 Exact Match 準確率）。上游能力用六個基準的 zero-shot 準確率衡量：TextVQA、OKVQA、OCRVQA、MMBench、MMBench（CN）、GQA，取算術平均記為 Aup $A_{up}$ ​；下游分數記為 Adown $A_{down}$ ​。
+
+ 論文用兩種平均把兩者合成一個數字。調和平均（harmonic mean）是「兩數倒數的平均，再取倒數」，等於 2ab/(a+b) $2ab/(a+b)$ 。例如 90 與 10：算術平均是 50，調和平均是 2⋅90⋅10/100=18 $2\cdot90\cdot10/100=18$ ，較小的那一項主導結果。論文的定義是：
+
+ Avg=Aup+Adown2,H-score=2 AupAdownAup+Adown $\text{Avg}=\frac{A_{up}+A_{down}}{2},\qquad \text{H-score}=\frac{2\,A_{up}A_{down}}{A_{up}+A_{down}}$ Aup​+Adown​​,H-score=Aup​+Adown​2Aup​Adown​​
+Eq. 9
+
+ Avg =(Aup+Adown)/2 $=(A_{up}+A_{down})/2$ ​+Adown​)/2，H-score =2AupAdown/(Aup+Adown) $=2A_{up}A_{down}/(A_{up}+A_{down})$ ​Adown​/(Aup​+Adown​)。只要任一項接近 0，H 就接近 0，算術平均則不會。例：Table 1 NVILA 在 IconQA 的 zero-shot 結果，Adown=0.1 $A_{down}=0.1$ ​=0.1，Avg 為 31.2，H 只有 0.2。要注意，Adown $A_{down}$ ​ 在影像描述任務是 CIDEr，不是 0–100 的準確率，可以超過 100（Table 1 NVILA 在 COCO 的 Dowser 為 135.5），論文仍把它直接代入同一個式子。驗算一例：NVILA COCO 的 Dowser 列，六個上游分數平均為 Aup=62.65 $A_{up}=62.65$ ​=62.65本頁推導（表中未列），代入得 Avg 99.1、H 85.7，與 Table 1 相符。
+
+ 既有方法的兩個限制
+
+ Post-merging（Grafting、DARE、Model Tailor）先完整微調，再把預訓練權重與微調後權重融合。作者認為它們「本質上是事後補救」：微調已經破壞較早層的潛空間後，融合無法恢復（§4.2）。Grafting 還需要 2 倍記憶體（App. E.2）。
+
+ Sparse fine-tuning 只更新一部分參數。目前最好的 MLLM 方法 SPIDER 在訓練中累積每個參數的梯度歷史與軟遮罩。記憶體以可學習參數個數 ∣P∣ $|P|$ （被微調的參數總數）的倍數表示：一般微調是 O(|P|)，SPIDER 是 O(3|P|)，因此 LLaVA-1.5-7B 在 L>20 $L>20$ 時無法訓練（§4.1、Table 3）。
+
+ Model-Dowser 要同時解決這兩點：在微調之前一次算好每個權重的重要性，之後用固定的二元遮罩只更新不重要的權重，記憶體維持 O(|P|)。
+
+ 延伸閱讀：MLLM 微調中的 catastrophic forgetting、LLaVA 與 NVILA：被微調的模型與評估設定、Post-merging 方法、Sparse fine-tuning：HFT 與 SPIDER；站內另一條脈絡：On-policy 學習的遺忘與更新稀疏說法
+
+ 02 · 線性層
+
+ 一個線性層把輸入加權相加成預激活
+
+ Transformer 裡大部分參數屬於線性層。第 l $l$ 層的線性層有權重矩陣 W∈Rdout×din $W\in\mathbb R^{d_{out}\times d_{in}}$ ​×din​，輸入是前一層的輸出 h∈Rdin $h\in\mathbb R^{d_{in}}$ ​（稱為輸入激活），輸出是預激活（pre-activation）：
+
+ z=Wh,zi=∑jWij hj $z=W h,\qquad z_i=\sum_j W_{ij}\,h_j$ ​=j∑​Wij​hj​
+App. B
+
+ i $i$ 是輸出節點，對應 W $W$ 的第 i $i$ 列；j $j$ 是輸入分量，對應第 j $j$ 欄。權重 Wij $W_{ij}$ ​ 把輸入 hj $h_j$ ​ 接到輸出節點 i $i$ 。預激活再經過激活函數 a=ϕ(z) $a=\phi(z)$ 送往後面的層。本頁的互動元件使用一個很小的玩具網路：
+
+ f=V GELU(Wh+b) $f=V\,\mathrm{GELU}(Wh+b)$ 
+本頁玩具網路
+
+ 其中 b $b$ 是 bias，a=GELU(z) $a=\mathrm{GELU}(z)$ 是激活，V $V$ 把激活映到輸出 f $f$ 。論文的 z=Wh $z=Wh$ 不含 bias；本頁加上 b $b$ 只是為了在 C2 中移動某個節點的預激活，它不影響後面的定理（改動 Wij $W_{ij}$ ​ 時 Δz $\Delta z$ 不含 b $b$ ）。下圖是一個 2 個輸入、2 個隱藏節點、3 個輸出的網路，標出從 hj $h_j$ ​ 經 Wij $W_{ij}$ ​ 到 zi $z_i$ ​、再到輸出 f $f$ 的路徑。
+
+ 2-2-3 玩具網路。強調的邊是 W11 $W_{11}$ ​：它只影響 z1 $z_1$ ​，z1 $z_1$ ​ 的變化再經過 GELU 與 V $V$ 傳到全部輸出。
+
+ GELU 的定義是 GELU(z)=z Φ(z) $\mathrm{GELU}(z)=z\,\Phi(z)$ ，Φ $\Phi$ 是標準常態分布的累積分布函數，φ $\varphi$ 是它的密度。它的導數 GELU′(z)=Φ(z)+z φ(z) $\mathrm{GELU}'(z)=\Phi(z)+z\,\varphi(z)$ (z)=Φ(z)+zφ(z) 不是單調的：在 z≈−0.75 $z\approx-0.75$ 附近為 0，在 z≈−1.5 $z\approx-1.5$ 附近是負數，z $z$ 很大時接近 1，z $z$ 很負時接近 0。
+
+ GELU(z)GELU′(z)
+
+ 由本頁依 GELU(z)=zΦ(z) $\mathrm{GELU}(z)=z\Phi(z)$ 與其解析導數繪製。
+
+ 齊次（homogeneous）激活滿足 ϕ(αz)=α ϕ(z) $\phi(\alpha z)=\alpha\,\phi(z)$ （α>0 $\alpha>0$ ）。ReLU 是齊次的；GELU 不是：GELU(2)=1.9545 $\mathrm{GELU}(2)=1.9545$ ，但 2⋅GELU(1)=1.6827 $2\cdot\mathrm{GELU}(1)=1.6827$ 本頁推導。論文認為，在 GELU、SiLU、GLU 這類非齊次激活下，權重的大小不再對應它對輸出的影響（§3.1）。
+
+ 要量化「改動一個權重，輸出變多少」，需要鏈鎖律。先看純量的情形：若 y=g(wx) $y=g(wx)$ ，則 dydw=g′(wx)⋅x $\dfrac{dy}{dw}=g'(wx)\cdot x$ dy​=g′(wx)⋅x。這個乘積有兩個因子：輸出對預激活的反應 g′(wx) $g'(wx)$ (wx)，以及流進這個權重的輸入 x $x$ 。下一節把它推廣到輸出是向量的情形。
+
+ 延伸閱讀：參數重要性與剪枝分數：OBS、magnitude、SynFlow、Wanda
+
+ 03 · Jacobian
+
+ 輸出是向量時，敏感度是一個欄向量
+
+ MLLM 的輸出 f∈Rdfinal $f\in\mathbb R^{d_{final}}$ ​ 是一個向量（論文稱為 final representation，具體取哪個張量論文沒有寫明）。把第 l $l$ 層之後的所有運算合起來看成一個函數 F $F$ ，就有 f=F(z) $f=F(z)$ 。
+
+ 輸出對第 i $i$ 個預激活的敏感度是一個向量：
+
+ Ji=∂f∂zi=(∂f1∂zi, …, ∂fdfinal∂zi) ⁣⊤∈Rdfinal $J_i=\frac{\partial f}{\partial z_i}=\Big(\frac{\partial f_1}{\partial z_i},\ \dots,\ \frac{\partial f_{d_{final}}}{\partial z_i}\Big)^{\!\top}\in\mathbb R^{d_{final}}$ ​=∂zi​∂f​=(∂zi​∂f1​​, …, ∂zi​∂fdfinal​​​)⊤∈Rdfinal​
+Eq. 11
+
+ Ji $J_i$ ​ 由 dfinal $d_{final}$ ​ 個偏導數組成，是 Jacobian 矩陣 ∂F/∂z=[J1,J2,…,Jdout] $\partial F/\partial z=[J_1,J_2,\dots,J_{d_{out}}]$ ​,J2​,…,Jdout​​] 的第 i $i$ 個欄向量。它的長度 ∥Ji∥2 $\|J_i\|_2$ ​∥2​ 表示「zi $z_i$ ​ 動一點點，整個輸出向量動多少」，論文稱為輸出敏感度（output sensitivity）。同一列 i $i$ 的所有權重 Wi1,Wi2,… $W_{i1},W_{i2},\dots$ ​,Wi2​,… 都經過同一個 zi $z_i$ ​，因此共用同一個 ∥Ji∥ $\|J_i\|$ ​∥。在玩具網路中 Ji=V:,i⋅GELU′(zi) $J_i=V_{:,i}\cdot\mathrm{GELU}'(z_i)$ ​=V:,i​⋅GELU′(zi​)，是閉式。
+
+ 純量鏈鎖律的向量版本是：
+
+ ∂f∂Wij=∂f∂zi⋅∂zi∂Wij=Ji hj $\frac{\partial f}{\partial W_{ij}}=\frac{\partial f}{\partial z_i}\cdot\frac{\partial z_i}{\partial W_{ij}}=J_i\,h_j$ ​∂f​=∂zi​∂f​⋅∂Wij​∂zi​​=Ji​hj​
+Eq. 19
+
+ 一階 Taylor 展開：當 Δz $\Delta z$ 很小時，F(z+Δz)≈F(z)+∑kJk Δzk $F(z+\Delta z)\approx F(z)+\sum_k J_k\,\Delta z_k$ ​Jk​Δzk​，誤差是 Δz $\Delta z$ 的二次方等級 O(∥Δz∥2) $O(\|\Delta z\|^2)$ )。這是下一節定理唯一用到的近似。
+
+ 工作假說（未證明）。作者寫道「我們假設，把下游微調造成的輸出位移壓到最小，就能保住泛化能力」（§1、§3.3）。論文沒有任何式子把輸出位移 ∥Δf∥ $\|\Delta f\|$ 連到上游準確率 Aup $A_{up}$ ​；之後的理論全部在處理「輸出位移」這個可以計算的代理量。
+
+ 符號表
+
+ 符號意義
+
+ W∈Rdout×din $W\in\mathbb R^{d_{out}\times d_{in}}$ ​×din​第 l $l$ 層線性層權重；i $i$ 為輸出節點（列）、j $j$ 為輸入分量（欄）
+
+ h $h$ 、z=Wh $z=Wh$ 輸入激活、預激活
+
+ a $a$ 、b $b$ 、V $V$ 本頁玩具網路的激活、bias、輸出矩陣：f=V GELU(Wh+b) $f=V\,\mathrm{GELU}(Wh+b)$ 
+
+ GELU $\mathrm{GELU}$ 、Φ $\Phi$ 、φ $\varphi$ GELU(z)=zΦ(z) $\mathrm{GELU}(z)=z\Phi(z)$ ；標準常態的累積分布函數與密度
+
+ f∈Rdfinal $f\in\mathbb R^{d_{final}}$ ​、F $F$ 網路輸出；把 z $z$ 映到 f $f$ 的函數
+
+ Ji=∂f/∂zi $J_i=\partial f/\partial z_i$ ​=∂f/∂zi​Jacobian 的第 i $i$ 個欄向量；∥Ji∥2 $\|J_i\|_2$ ​∥2​ 為輸出敏感度
+
+ ΔWij $\Delta W_{ij}$ ​、Δf $\Delta f$ 權重擾動、輸出位移
+
+ Sij $S_{ij}$ ​、Sˉij $\bar S_{ij}$ ij​單一輸入的重要性分數（Eq. 3）、對 N $N$ 個探測輸入平均的分數（Eq. 5）
+
+ ξ $\xi$ 、R $R$ 、N $N$ Rademacher 向量（各分量獨立取 ±1）、每個輸入的 ξ $\xi$ 個數、探測輸入個數
+
+ ρ $\rho$ 、M $M$ 可更新比例、二元遮罩（Mij=1 $M_{ij}=1$ ​=1 表示更新）
+
+ λ $\lambda$ 、L $L$ 、θ $\theta$ 、∣P∣ $|P|$ 學習率、訓練目標、模型參數、可學習參數個數
+
+ Aup $A_{up}$ ​、Adown $A_{down}$ ​六個上游基準的平均準確率、下游分數
+
+ 延伸閱讀：功能重要性分數、Theorem 3.1 與合成探測
+
+ 04 · Theorem 3.1
+
+ 在一階近似下，單一權重的輸出位移等於三個量相乘
+
+ ∥Δf∥2≈∥Ji∥2⋅∣ΔWij∣⋅∣hj∣ $\|\Delta f\|_2\approx\|J_i\|_2\cdot|\Delta W_{ij}|\cdot|h_j|$ ​≈∥Ji​∥2​⋅∣ΔWij​∣⋅∣hj​∣
+Eq. 1（= Eq. 10）
+
+ Theorem 3.1 說：只把一個權重 Wij $W_{ij}$ ​ 改動 ΔWij $\Delta W_{ij}$ ​ 時，輸出位移 ∥Δf∥2≈∥Ji∥2∣ΔWij∣∣hj∣ $\|\Delta f\|_2\approx\|J_i\|_2|\Delta W_{ij}||h_j|$ ​≈∥Ji​∥2​∣ΔWij​∣∣hj​∣。App. B 的證明分四步，只有第二步是近似：
+
+ 精確。只動 Wij $W_{ij}$ ​，只有第 i $i$ 個預激活改變：zi′=∑k(Wik+δkjΔWij)hk=zi+ΔWijhj $z_i'=\sum_k(W_{ik}+\delta_{kj}\Delta W_{ij})h_k=z_i+\Delta W_{ij}h_j$ ′​=∑k​(Wik​+δkj​ΔWij​)hk​=zi​+ΔWij​hj​，其餘 Δzk=0 $\Delta z_k=0$ ​=0（Eq. 12）。
+
+ 近似。一階 Taylor 展開 F(z+Δz)=F(z)+∂F∂zΔz+O(∥Δz∥2) $F(z+\Delta z)=F(z)+\frac{\partial F}{\partial z}\Delta z+O(\|\Delta z\|^2)$ ∂F​Δz+O(∥Δz∥2)，丟掉 O(∥Δz∥2) $O(\|\Delta z\|^2)$ ) 得 Δf≈∑kJkΔzk $\Delta f\approx\sum_kJ_k\Delta z_k$ ​Jk​Δzk​（Eq. 13→14）。這是全證明唯一的近似。
+
+ 精確。和式只剩 k=i $k=i$ ：Δf≈Ji (ΔWijhj) $\Delta f\approx J_i\,(\Delta W_{ij}h_j)$ ​(ΔWij​hj​)（Eq. 15）。
+
+ 精確。ΔWijhj $\Delta W_{ij}h_j$ ​hj​ 是純量，可以提出範數：∥Δf∥2≈∥Ji∥2∣ΔWij∣∣hj∣ $\|\Delta f\|_2\approx\|J_i\|_2|\Delta W_{ij}||h_j|$ ​≈∥Ji​∥2​∣ΔWij​∣∣hj​∣（Eq. 16）。
+
+ 定理沒有用到激活函數的形式：GELU 的非線性全部藏在 Ji $J_i$ ​ 裡。作者以此主張它適用於非齊次激活（§3.1）。
+
+ 理想化條件
+
+ (a) 單一 token 位置：實際 Transformer 中同一個 Wij $W_{ij}$ ​ 作用在每個位置，第 1 步的「精確」只對單一位置成立；(b) F $F$ 在 z $z$ 可微（排除 ReLU 的折點）；(c) Ji $J_i$ ​、hj $h_j$ ​ 在預訓練權重與給定輸入下求值；(d) ∣ΔWijhj∣ $|\Delta W_{ij}h_j|$ ​hj​∣ 夠小。
+
+ C1一階近似與它失準的地方
+
+ 選一個權重並拖動 ΔW：實線是真實的輸出位移，虛線是 Theorem 3.1 的一階預測。
+
+ W11W12W21W22
+
+ 權重擾動 ΔW0.10
+
+ ΔW = −W（歸零）
+
+ 真實 ‖Δf‖一階預測
+
+ z1 = 0.00000　GELU′(z1) = 0.50000
+‖J1‖ = 1.11803　|h1| = 1.00000　S = 1.11803
+一階預測 = 0.11180　真實 = 0.12071
+相對誤差 = −7.4%
+
+ 四個權重的分數 S = ‖Ji‖·|Wij|·|hj|（下一節定義）j = 1j = 2
+i = 11.118031.11803
+i = 21.213333.63998
+
+ 網路：W=[1−20.53] $W=\begin{bmatrix}1&-2\\0.5&3\end{bmatrix}$ 0.5​−23​]、x=h=(1,0.5) $x=h=(1,0.5)$ 、V=[120−120] $V=\begin{bmatrix}1&2\\0&-1\\2&0\end{bmatrix}$ ​102​2−10​​、b=0 $b=0$ 。本頁自選數值（推定），非論文設定。讀數由本頁依 Eq. 1 與玩具網路的前向計算即時算出。相對誤差 = (預測 − 真實)/真實，正值表示一階預測偏大。
+
+ W11，ΔW 0.10：預測 0.11180，真實 0.12071，誤差 −7.4%
+
+ 在這個玩具網路裡，z=(0,2) $z=(0,2)$ ，GELU′(0)=0.5 $\mathrm{GELU}'(0)=0.5$ (0)=0.5、GELU′(2)=1.08523 $\mathrm{GELU}'(2)=1.08523$ (2)=1.08523，所以 ∥J1∥=1.11803 $\|J_1\|=1.11803$ ​∥=1.11803、∥J2∥=2.42665 $\|J_2\|=2.42665$ ​∥=2.42665。把 W11 $W_{11}$ ​ 歸零（ΔW11=−1 $\Delta W_{11}=-1$ ​=−1）時，一階預測是 1.118，真實位移只有 0.355；ΔW11=+0.5 $\Delta W_{11}=+0.5$ ​=+0.5 時已經差 27.7%。原因是 z1=0 $z_1=0$ ​=0 正好位於 GELU 彎曲最大的區域，二次以上的項不能忽略。反過來，z2=2 $z_2=2$ ​=2 位於接近線性的區段：把 W22 $W_{22}$ ​ 歸零（ΔW=−3 $\Delta W=-3$ ）時，預測 3.640、真實 3.597，相差只有 1.2%本頁推導。一階近似的誤差取決於預激活落在激活函數的哪一段，而不只取決於 ∣ΔW∣ $|\Delta W|$ 。
+
+ 05 · 重要性分數
+
+ 以權重大小代替擾動，得到重要性分數
+
+ Theorem 3.1 需要知道擾動 ΔWij $\Delta W_{ij}$ ​，但微調之前不知道它會多大。作者把未知的 ∣ΔWij∣ $|\Delta W_{ij}|$ ​∣ 代換成現有的權重大小 ∣Wij∣ $|W_{ij}|$ ​∣，定義重要性分數：
+
+ Sij=∥Ji∥2⋅∣Wij∣⋅∣hj∣ $S_{ij}=\|J_i\|_2\cdot|W_{ij}|\cdot|h_j|$ ​=∥Ji​∥2​⋅∣Wij​∣⋅∣hj​∣
+Eq. 3
+
+ ‖Ji‖₂輸出敏感度×|Wij|連接強度×|hj|輸入活動量
+
+ 這一步是定義上的選擇，不是推導。作者給的理由有兩句：它是「最大局部擾動的一階代理」（§3.1），以及「這個代換不是要預測真實位移，而是用來依相對敏感度排序的保守一階替代品」（App. B）。三個因子分別是：輸出敏感度 ∥Ji∥2 $\|J_i\|_2$ ​∥2​（zi $z_i$ ​ 的變化傳到輸出有多大）、連接強度 ∣Wij∣ $|W_{ij}|$ ​∣（被當作擾動可能的大小）、輸入活動量 ∣hj∣ $|h_j|$ ​∣（流進這個權重的訊號）。因為 i $i$ 是輸出節點，∥Ji∥ $\|J_i\|$ ​∥ 對 W $W$ 同一列的所有權重都相同；不同列之間才有差別。
+
+ 多個權重同時改動時，Corollary 3.2（證明在 App. C）給出：
+
+ ∥Δf∥2 ⪅ ∑l,i,j∥Ji(l)∥2 ∣ΔWij(l)∣ ∣hj(l−1)∣ $\|\Delta f\|_2\ \lessapprox\ \sum_{l,i,j}\|J_i^{(l)}\|_2\,|\Delta W_{ij}^{(l)}|\,|h_j^{(l-1)}|$ ​ ⪅ l,i,j∑​∥Ji(l)​∥2​∣ΔWij(l)​∣∣hj(l−1)​∣
+Eq. 2（= Eq. 17）
+
+ 證明是全微分 Δf≈∑∂f∂WijΔWij $\Delta f\approx\sum\frac{\partial f}{\partial W_{ij}}\Delta W_{ij}$ ​∂f​ΔWij​（Eq. 18），代入鏈鎖律 ∂f∂Wij=Jihj $\frac{\partial f}{\partial W_{ij}}=J_ih_j$ ​∂f​=Ji​hj​（Eq. 19–20），再用三角不等式（Eq. 21–22）。閱讀這個式子時有三點：
+
+ 「⪅」是先一階近似（≈）、再用三角不等式（≤）。它是一階位移的上界，不是真實位移的上界。
+
+ 三角不等式丟掉了各項方向互相抵消的部分，上界可能很鬆：n $n$ 個互相正交、大小相同的項，真實範數隨 n $\sqrt n$ ​ 成長，上界隨 n $n$ 成長本頁推導。
+
+ App. C 末段說「Sij $S_{ij}$ ​ 的總和是總位移的理論上界」。把 ∣ΔW∣ $|\Delta W|$ 換成 ∣W∣ $|W|$ 之後，這只在 ∣ΔWij∣≤∣Wij∣ $|\Delta W_{ij}|\le|W_{ij}|$ ​∣≤∣Wij​∣ 時成立本頁推導：剪枝（ΔW=−W $\Delta W=-W$ ）滿足，微調不保證。App. C 的標題就叫 "Multi-layer and Multi-weight Pruning"。
+
+ 為什麼不只看權重大小？論文的主張是：magnitude 準則假設齊次激活；GELU、SiLU、GLU 不是齊次的，所以權重大小不再對應輸出影響（§2.2、§3.1）。分數多乘了 ∥Ji∥ $\|J_i\|$ ​∥ 與 ∣hj∣ $|h_j|$ ​∣，把激活函數目前所在的區段與輸入大小也算進去。下一節用一個玩具層看三種排序的差別。
+
+ 06 · 與剪枝分數
+
+ 單一輸入時，Dowser 分數是 Wanda 分數乘上輸出敏感度
+
+ 為每個權重打一個分數的做法來自剪枝（pruning）文獻。論文 §2.2 討論的兩種常見準則與本文的關係如下：
+
+ 三種單一權重分數
+ 準則分數需要什麼
+
+ Magnitude（PackNet 等，§2.2）∣Wij∣ $|W_{ij}|$ ​∣只要權重
+
+ Wanda（§2.2、App. K）∣Wij∣⋅∣hj∣ $|W_{ij}|\cdot|h_j|$ ​∣⋅∣hj​∣權重與輸入激活
+
+ Model-Dowser（Eq. 3）∥Ji∥2⋅∣Wij∣⋅∣hj∣ $\|J_i\|_2\cdot|W_{ij}|\cdot|h_j|$ ​∥2​⋅∣Wij​∣⋅∣hj​∣權重、輸入激活與輸出 Jacobian（不需標籤）
+
+ Dowser 分數等於 Wanda 分數 ∣Wij∣∣hj∣ $|W_{ij}||h_j|$ ​∣∣hj​∣ 乘上 ∥Ji∥2 $\|J_i\|_2$ ​∥2​；App. K 的消融實驗就是把 ∥Ji∥2 $\|J_i\|_2$ ​∥2​ 拿掉。單一輸入時，同一輸出節點（同一列）的權重共用 ∥Ji∥ $\|J_i\|$ ​∥，所以兩種分數在同一列內的排序相同，差別只在不同列之間。這個關係在兩種情況下不再成立：第 09 節會介紹對 N $N$ 個探測輸入取平均的 Eq. 5，平均的是乘積 ∥Ji,n∥∣hj,n∣ $\|J_{i,n}\||h_{j,n}|$ ​∥∣hj,n​∣；第 10 節會介紹的 Eq. 7 是把同一層所有列放在一起排序。
+
+ 下面用一個 4×4 的玩具層比較三種排序。這個層的數值是本頁自選的（推定），不是論文設定：
+
+ 輸入 h(1.0, −0.2, 1.5, 0.6) $(1.0,\,-0.2,\,1.5,\,0.6)$ 
+
+ 權重 W[0.8−1.50.30.6−0.42.0−0.90.21.20.5−0.3−1.00.1−0.70.61.4] $\begin{bmatrix}0.8&-1.5&0.3&0.6\\-0.4&2.0&-0.9&0.2\\1.2&0.5&-0.3&-1.0\\0.1&-0.7&0.6&1.4\end{bmatrix}$ ​0.8−0.41.20.1​−1.52.00.5−0.7​0.3−0.9−0.30.6​0.60.2−1.01.4​​
+
+ 輸出矩陣 V[1.0−0.50.80.30.41.2−0.60.9−0.70.31.1−0.4] $\begin{bmatrix}1.0&-0.5&0.8&0.3\\0.4&1.2&-0.6&0.9\\-0.7&0.3&1.1&-0.4\end{bmatrix}$ ​1.00.4−0.7​−0.51.20.3​0.8−0.61.1​0.30.9−0.4​​
+
+ bias b(0, 0, b3, 0) $(0,\,0,\,b_3,\,0)$ ​,0)
+
+ 當 b3=0 $b_3=0$ ​=0 時，z=(1.91,−2.03,0.05,1.98) $z=(1.91,-2.03,0.05,1.98)$ 。W22=2.0 $W_{22}=2.0$ ​=2.0 是 16 個權重中最大的，magnitude 把它排在第 1。但 z2=−2.03 $z_2=-2.03$ ​=−2.03 時 GELU′(z2)=−0.082 $\mathrm{GELU}'(z_2)=-0.082$ (z2​)=−0.082，∥J2∥=0.109 $\|J_2\|=0.109$ ​∥=0.109，所以 S22=0.044 $S_{22}=0.044$ ​=0.044。依分數由小到大排列（同分時格子編號小者在前），格 8（W24 $W_{24}$ ​，0.013）最小，格 5（W21 $W_{21}$ ​）與格 6（W22 $W_{22}$ ​）精確同分（都是 0.4×0.1094 $0.4\times0.1094$ ），因此 W22 $W_{22}$ ​ 是由小到大第 3、由大到小第 14本頁推導。這個例子顯示的是 magnitude 忽略了 ∥Ji∥ $\|J_i\|$ ​∥ 與 ∣hj∣ $|h_j|$ ​∣；ReLU 的關閉單元（J=0 $J=0$ ）也會產生同樣的效果，所以它不是非齊次性的證據，非齊次性仍只是論文的主張。
+
+ C2三種分數、三種遮罩
+
+ 每種分數各自選出最低的 m 個權重作為「可更新」（斜線格），其餘凍結。拖動 b₃ 改變神經元 3 的預激活。
+
+ 神經元 3 的 bias b₃0.00
+
+ 可更新的權重數 m4（ρ = 0.250）
+
+ b₃ = 0
+ b₃ = −0.75（GELU′ ≈ 0）
+ b₃ = −4（神經元 3 幾乎不輸出）
+
+ Magnitude
+‖Ji‖未用×|Wij|用×|hj|未用
+可更新格子：3, 8, 11, 13
+0.8001
+1.5002
+0.3003
+0.6004
+
+0.4005
+2.0006
+0.9007
+0.2008
+
+1.2009
+0.50010
+0.30011
+1.00012
+
+0.10013
+0.70014
+0.60015
+1.40016
+
+Wanda
+‖Ji‖未用×|Wij|用×|hj|用
+可更新格子：8, 10, 13, 14
+0.8001
+0.3002
+0.4503
+0.3604
+
+0.4005
+0.4006
+1.3507
+0.1208
+
+1.2009
+0.10010
+0.45011
+0.60012
+
+0.10013
+0.14014
+0.90015
+0.84016
+
+Dowser
+‖Ji‖用×|Wij|用×|hj|用
+可更新格子：5, 6, 8, 10
+1.1251
+0.4222
+0.6333
+0.5064
+
+0.0445
+0.0446
+0.1487
+0.0138
+
+0.9639
+0.08010
+0.36111
+0.48212
+
+0.11213
+0.15714
+1.00815
+0.94016
+
+ 把各遮罩的可更新權重同時歸零時的輸出位移遮罩可更新格子真實位移Σ S（一階總和）
+Magnitude3, 8, 11, 130.93391.1191
+Wanda8, 10, 13, 140.31520.3621
+Dowser5, 6, 8, 100.15760.1809
+隨機（平均）所有 C(16, 4) 個子集1.3588—
+
+ z = (1.91, −2.03, 0.05, 1.98)　GELU′(z) = (1.0949, −0.0820, 0.5399, 1.0874)
+‖Ji‖ = (1.4064, 0.1094, 0.8026, 1.1195)
+Spearman(Dowser, Magnitude) = 0.296　Spearman(Dowser, Wanda) = 0.631
+
+ 這是單一輸入的自選玩具層，比較的是把可更新權重歸零時的輸出位移，不是論文的微調實驗。
+玩具沒有測試「輸出位移小 ⇒ 上游能力保留」這個假說（§1，論文也未證明）；位移較小不代表遮罩較好。
+格子編號 k = 4(i − 1) + j。排序：分數由小到大，捨入到 1e−9 後同分者編號小者在前。隨機列為全部 2¹⁶ 個子集中大小為 m 者的平均（Gray code 列舉、分段計算）。讀數由本頁依 Eq. 3 與玩具層前向計算即時算出。
+
+ b₃ 0.00，m 4：Dowser 遮罩歸零位移 0.1576，一階總和 0.1809
+
+ 把 b3 $b_3$ ​ 往 −4 拉，第 3 列的 Dowser 分數趨近 0（神經元 3 幾乎不輸出），magnitude 與 Wanda 的分數完全不變。在 b3=0 $b_3=0$ ​=0、m=4 $m=4$ 時，三種遮罩把可更新權重歸零造成的真實位移分別是 0.934（magnitude）、0.315（Wanda）、0.158（Dowser），隨機遮罩平均 1.359。
+
+ 一階排序也會失準。取 b3=−0.75 $b_3=-0.75$ ​=−0.75，此時 z3=−0.70 $z_3=-0.70$ ​=−0.70，GELU′(z3)=0.0234 $\mathrm{GELU}'(z_3)=0.0234$ (z3​)=0.0234，接近 0。Dowser 的 m=4 $m=4$ 遮罩選了第 3 列的三格與 W24 $W_{24}$ ​，一階總和 ∑S $\sum S$ 只有 0.053，但把它們同時歸零的真實位移是 0.698，大於 Wanda 遮罩的 0.268本頁推導。原因是 GELU′ 接近 0 時一階項幾乎為 0，二階以上的變化才是主項。這也是 Corollary 3.2 只是一階位移上界的具體例子：0.698 遠大於 0.053。
+
+ 與其他重要性準則的關係本頁推導
+
+ 論文沒有討論 SNIP 與 OBD；以下是本頁的整理，只比較公式形式。
+
+ SNIP 型（連接敏感度）：∣Wij ∂L/∂Wij∣ $|W_{ij}\,\partial L/\partial W_{ij}|$ ​∂L/∂Wij​∣，用純量損失 L $L$ ，需要標籤。由 Eq. 19，單一輸入、單一位置時 Sij=∥Wij ∂f/∂Wij∥2 $S_{ij}=\|W_{ij}\,\partial f/\partial W_{ij}\|_2$ ​=∥Wij​∂f/∂Wij​∥2​，也就是把 Wij $W_{ij}$ ​ 歸零時的一階輸出位移：同樣的 Taylor 剪枝想法，但用整個輸出向量 f $f$ 代替純量損失，因此不需要標籤。
+
+ OBD 型（二階）：在損失極小點用 Hessian 對角項 12Hij,ijWij2 $\tfrac12H_{ij,ij}W_{ij}^2$ 1​Hij,ij​Wij2​。Dowser 在輸出上用一階項，兩者不同。
+
+ OBS：論文 §2.2 只提到它是二階方法、對基礎模型成本過高。
+
+ MAS（Memory Aware Synapses）：以輸出對參數的敏感度累積重要性，用於持續學習；論文只在 App. A 引用，沒有比較。見 MLLM 微調中的 catastrophic forgetting。
+
+ 延伸閱讀：參數重要性與剪枝分數；站內 樂透票假說與冗餘
+
+ 07 · Hutchinson 估計
+
+ 一次反向傳播就能估計所有節點的輸出敏感度
+
+ 分數需要每個節點的 ∥Ji∥2 $\|J_i\|_2$ ​∥2​。直接建出完整 Jacobian 要做 dfinal $d_{final}$ ​ 次反向傳播（每個輸出分量一次，§3.2），對 MLLM 太貴。論文改用隨機投影：取 Rademacher 向量 ξ∈{±1}dfinal $\xi\in\{\pm1\}^{d_{final}}$ ​（每個分量獨立、各以 1/2 機率取 +1 或 −1），把輸出投影成一個純量 ξ⊤f $\xi^\top f$ f，再對它反向傳播：
+
+ Eξ[(∂(ξ⊤f)∂zi)2]=∥Ji∥22 $\mathbb E_\xi\Big[\Big(\frac{\partial(\xi^\top f)}{\partial z_i}\Big)^2\Big]=\|J_i\|_2^2$ ​[(∂zi​∂(ξ⊤f)​)2]=∥Ji​∥22​
+Eq. 4
+
+ 先看兩維的例子。令 a=Ji=(3,4) $a=J_i=(3,4)$ ​=(3,4)，X=ξ⊤a $X=\xi^\top a$ a。四個符號向量給出 X=7, 1, −1, −7 $X=7,\,1,\,-1,\,-7$ ，各占 1/4，所以 E[X2]=(49+1+1+49)/4=25=∥a∥2 $\mathbb E[X^2]=(49+1+1+49)/4=25=\|a\|^2$ ]=(49+1+1+49)/4=25=∥a∥2。一般情形本頁推導（論文只寫結論）：
+
+ E[X2]=∑kak2 E[ξk2]+∑k≠makam E[ξkξm]=∑kak2 $\mathbb E[X^2]=\sum_k a_k^2\,\mathbb E[\xi_k^2]+\sum_{k\ne m}a_ka_m\,\mathbb E[\xi_k\xi_m]=\sum_k a_k^2$ ]=k∑​ak2​E[ξk2​]+k=m∑​ak​am​E[ξk​ξm​]=k∑​ak2​
+本頁推導
+
+ 因為 ξk2=1 $\xi_k^2=1$ 2​=1，而不同分量獨立且均值為 0，交叉項 E[ξkξm]=0 $\mathbb E[\xi_k\xi_m]=0$ ​ξm​]=0。省成本的原因是：∂(ξ⊤f)/∂zi=ξ⊤Ji $\partial(\xi^\top f)/\partial z_i=\xi^\top J_i$ f)/∂zi​=ξ⊤Ji​，對純量 ξ⊤f $\xi^\top f$ f 做一次反向傳播，就同時得到所有層、所有節點的 ξ⊤Ji $\xi^\top J_i$ Ji​（向量–Jacobian 乘積）；顯式 Jacobian 則需要 dfinal $d_{final}$ ​ 次。
+
+ 三個細節。第一，論文稱它為 Hutchinson trace estimator，但這裡估的是 J⊤J $J^\top J$ J 的對角元素 ∥Ji∥2 $\|J_i\|^2$ ​∥2，不是 trace本頁推導。第二，論文只給 Eq. 4 的期望值與 Eq. 5 的平均，沒有說 R $R$ 個 ξ $\xi$ 樣本如何合成一個 ∥Ji,n∥ $\|J_{i,n}\|$ ​∥；本頁的 C3 採「平方平均再開根號」與「絕對值平均」兩種，屬於推定。前者對 ∥Ji∥ $\|J_i\|$ ​∥ 是偏低的有偏估計（Jensen 不等式），R=1 $R=1$ 時它就是 ∣X∣ $|X|$ 。第三，單次樣本的變異數是 Var[X2]=2(∥a∥4−∑kak4) $\mathrm{Var}[X^2]=2(\|a\|^4-\sum_ka_k^4)$ ]=2(∥a∥4−∑k​ak4​)本頁推導：a=(3,4) $a=(3,4)$ 時為 576；a $a$ 只有一個非零分量時為 0。
+
+ C3Hutchinson 估計與絕對值版估計量
+
+ 設定向量 a（代表某個節點的 Ji）。上圖是 X = ξᵀa 的精確分布，下圖比較兩個估計量與 Theorem D.1 的區間。
+
+ 維度 d
+
+ 12345678
+
+ (3, 4)
+ (1, 1)：下界
+ (3)：上界
+ 八個 1
+ 一大七小
+
+ 分量 a13.00
+分量 a24.00
+
+ 樣本數 R
+
+ 1248163264
+
+ 重新抽樣seed = 1
+
+ 精確：‖a‖² = 25.0000　E[X²] = 25.0000
+E|X| = 4.0000　‖a‖ = 5.0000　E|X|/‖a‖ = 0.8000
+Var[X²] = 576.0000
+本次（R = 8）：L2 = 5.5678　L1 = 4.7500
+200 次重複：L2 4.9809 ± 0.9247　L1 4.0825 ± 1.0681
+
+ 精確值由列舉全部 2d 個符號向量算出；樣本 ξ 由固定 seed 的 mulberry32 產生（ξk = −1 若 r() < 0.5）。「200 次重複」使用 seed 1–200。R 個樣本的合成方式為本頁推定。讀數由本頁依 Eq. 4 與 Thm D.1 即時計算。
+
+ E|X|/‖a‖ = 0.8000；L2 估計 5.5678；L1 估計 4.7500
+
+ 08 · L1 替代量
+
+ 絕對值版估計量與 ‖J‖ 只差常數倍
+
+ 12 ∥Ji∥2 ≤ Eξ[∣ξ⊤Ji∣] ≤ ∥Ji∥2 $\sqrt{\tfrac12}\,\|J_i\|_2\ \le\ \mathbb E_\xi\big[|\xi^\top J_i|\big]\ \le\ \|J_i\|_2$ 1​​∥Ji​∥2​ ≤ Eξ​[∣ξ⊤Ji​∣] ≤ ∥Ji​∥2​
+Eq. 26（Thm D.1）
+
+ App. D 的 Theorem D.1 說 1/2∥Ji∥≤E∣ξ⊤Ji∣≤∥Ji∥ $\sqrt{1/2}\|J_i\|\le\mathbb E|\xi^\top J_i|\le\|J_i\|$ ​∥Ji​∥≤E∣ξ⊤Ji​∣≤∥Ji​∥；兩邊乘上 ∣ΔWij∣∣hj∣ $|\Delta W_{ij}||h_j|$ ​∣∣hj​∣ 就是 Eq. 23/27。上界來自 Jensen 不等式（⋅ $\sqrt{\cdot}$ ​ 是凹函數，Eq. 25）；下界由論文引用的 Khintchine 型不等式得到（論文引 Khintchine 1923、Haagerup 1981，不自行證明；p=1 $p=1$ 時的最佳常數 1/2 $\sqrt{1/2}$ ​ 一般歸於 Szarek 1976）。
+
+ 兩個界都可以取到本頁推導（可在 C3 用預設組驗證）：a=(1,1) $a=(1,1)$ 時 E∣X∣=1=∥a∥/2 $\mathbb E|X|=1=\|a\|/\sqrt2$ ​，取下界；a $a$ 只有一個非零分量時 E∣X∣=∥a∥ $\mathbb E|X|=\|a\|$ ，取上界。a=(3,4) $a=(3,4)$ 的比值是 0.8，八個 1 是 0.7734。
+
+ 使用絕對值版的動機是數值上的（App. D "Numerical Stability near Zero"）：在 FP16 或 BF16 下，平方很小的梯度會下溢成 0，破壞相對排序；絕對值版保留原本的尺度。BF16 的指數範圍與 FP32 相同，下溢風險主要在 FP16本頁推導。這裡的 "L1" 指一階絕對動差 E∣ξ⊤Ji∣ $\mathbb E|\xi^\top J_i|$ Ji​∣，不是向量的 1-範數；App. D 中「∥Ji∥2≤∥Ji∥1 $\|J_i\|_2\le\|J_i\|_1$ ​∥2​≤∥Ji​∥1​」一句與證明無關。
+
+ 夾擠只保證兩者差一個常數倍。論文說可以「不失去相對排序」，但兩個節點的 ∥J∥ $\|J\|$ 相差不到 2 $\sqrt2$ ​ 倍時，排序可能相反本頁推導。例：a=(1,1) $a=(1,1)$ 的 ∥a∥=1.414 $\|a\|=1.414$ 、E∣X∣=1 $\mathbb E|X|=1$ ；b=(1.05) $b=(1.05)$ 的 ∥b∥=1.05 $\|b\|=1.05$ 、E∣X∣=1.05 $\mathbb E|X|=1.05$ 。用平方版會判 a $a$ 較重要，用絕對值版會判 b $b$ 較重要。
+
+ 論文對實際用哪一個估計量的寫法不一致：正文 Eq. 4 是平方（L2）；App. D 稱「Our L1-based estimator」；Fig. 2 寫成 Eξ[∂(ξ⊤f)/∂zi] $\mathbb E_\xi[\partial(\xi^\top f)/\partial z_i]$ ​[∂(ξ⊤f)/∂zi​]，既沒有平方也沒有絕對值。
+
+ 分數平方與 SNIP 型分數的關係本頁推導
+
+ 由 Eq. 4 與 Eq. 19，Sij2=Eξ[(Wij ∂(ξ⊤f)/∂Wij)2] $S_{ij}^2=\mathbb E_\xi\big[(W_{ij}\,\partial(\xi^\top f)/\partial W_{ij})^2\big]$ 2​=Eξ​[(Wij​∂(ξ⊤f)/∂Wij​)2]（單一輸入、單一位置）。也就是：以隨機符號的純量 ξ⊤f $\xi^\top f$ f 當作偽損失時，SNIP 型分數平方的期望值。
+
+ 09 · 無資料探測
+
+ 讓模型自己產生探測輸入
+
+ Ji $J_i$ ​ 與 hj $h_j$ ​ 都依賴輸入。預訓練資料通常拿不到（多為內部資料），所以作者讓模型自己產生探測輸入：從 tokenizer 詞表隨機抽 token 當作種子 ϵ $\epsilon$ ，讓預訓練模型生成 N $N$ 個 prompt（Eq. 6），再在這些 prompt 上做前向與反向傳播。最終分數是 N $N$ 次的 Monte Carlo 平均（Eq. 5）：
+
+ x^n=f(ϵ;θpre),Sˉij=1N∑n=1N∥Ji,n∥2⋅∣Wij∣⋅∣hj,n∣ $\hat x_n=f(\epsilon;\theta_{pre}),\qquad \bar S_{ij}=\frac1N\sum_{n=1}^N\|J_{i,n}\|_2\cdot|W_{ij}|\cdot|h_{j,n}|$ n​=f(ϵ;θpre​),Sˉij​=N1​n=1∑N​∥Ji,n​∥2​⋅∣Wij​∣⋅∣hj,n​∣
+Eq. 6、Eq. 5
+
+ 從詞表隨機抽 token 當種子，讓預訓練模型生成 N $N$ 個 prompt。作者認為這些合成輸入會「誘發反映模型功能結構的多樣激活」。主實驗只用文字探測，不含影像。實驗取 N=64 $N=64$ 、R=8 $R=8$ （§4.1），總成本是 O(N⋅R) $O(N\cdot R)$ 次前向＋反向傳播（§3.2）。
+
+ 驗證（Table 5、Table 10）：與 64 筆上游真實文字查詢算出的分數比較（5 次執行），R=8 $R=8$ 、N=64 $N=64$ 時 Spearman 等級相關為 0.891 ± 0.003，Hamming 距離為 0.050 ± 0.002；隨機基準分別是 0.000 與 0.226。N $N$ 的影響大於 R $R$ ：N=64 $N=64$ 時 R=2,4,8 $R=2,4,8$ 的 Spearman 為 0.886、0.885、0.891。
+
+ 純文字 vs 含影像（Table 11，App. J）：對照組的影像是以 ImageNet 通道均值 [0.485, 0.456, 0.406]、標準差 [0.229, 0.224, 0.225] 取樣的高斯雜訊，不是真實影像。R=8 $R=8$ 、N=64 $N=64$ 時 Hamming 0.081 ± 0.001、Spearman 0.882 ± 0.002，作者稱「almost identical」。這組數字與 Table 5 的參考對不同（純文字探測 vs 文字＋雜訊影像探測；Table 5 是合成探測 vs 真實資料），不能直接比大小。
+
+ Hamming 距離的尺度（條件式推算本頁推導）
+
+ 若 Hamming 距離是一般的「不一致比例」，兩個密度都是 p $p$ 的遮罩，距離 =2p(1−重疊率) $=2p(1-\text{重疊率})$ ，上限 2p $2p$ ；p=0.1 $p=0.1$ 時 0.050 對應 75% 重疊。但論文的隨機基準 0.226 超過這個上限 0.2（獨立隨機的期望應為 0.18），所以論文的正規化方式未知，75% 只能當條件式推算。另外 Table 10/11 比較的是分數最高 10% 的遮罩，而訓練時更新的是分數最低 10%（Eq. 7），驗證的對象不是訓練用的集合。
+
+ 論文未寫明的事項：f $f$ 是哪個張量（最後隱狀態或 logits、哪些位置）；序列位置如何彙總（同一個 W $W$ 作用在每個 token，真正的 ∂f/∂Wij=∑tJi,thj,t $\partial f/\partial W_{ij}=\sum_tJ_{i,t}h_{j,t}$ ​=∑t​Ji,t​hj,t​ 一般不等於範數相乘本頁推導）；R $R$ 個樣本如何合成一個 ∥Ji,n∥ $\|J_{i,n}\|$ ​∥；prompt 長度與取樣溫度；bias、LayerNorm、embedding 是否也評分；探測時為每個參數累積分數所需的記憶體。
+
+ 10 · 稀疏微調
+
+ 凍結高分權重，只更新每層分數最低的 ρ
+
+ 最常見的誤讀是把遮罩方向弄反。先看一個 3×3 的例子：9 個分數中最低的兩個（0.05、0.12）是 M=1 $M=1$ ，表示更新；其餘 7 格 M=0 $M=0$ ，表示凍結。
+
+ 0.90M = 0 · 凍結
+0.12M = 1 · 更新
+0.55M = 0 · 凍結
+0.30M = 0 · 凍結
+0.05M = 1 · 更新
+0.71M = 0 · 凍結
+0.48M = 0 · 凍結
+0.66M = 0 · 凍結
+0.20M = 0 · 凍結
+
+ M = 1 表示更新，不是凍結（Eq. 7）。論文 ρ = 0.1 時是每層 10% 更新、90% 凍結。
+
+ Mij={1,Sˉij 落在該層最低的 ρ 百分位0,其餘 $M_{ij}=\begin{cases}1,&\bar S_{ij}\ \text{落在該層最低的}\ \rho\ \text{百分位}\\0,&\text{其餘}\end{cases}$ ​={1,0,​Sˉij​ 落在該層最低的 ρ 百分位其餘​
+Eq. 7
+
+ θ∗=θ−λ⋅(M⊙∂L∂θ) $\theta^*=\theta-\lambda\cdot\Big(M\odot\frac{\partial L}{\partial\theta}\Big)$ =θ−λ⋅(M⊙∂θ∂L​)
+Eq. 8
+
+ 給定可更新比例 ρ $\rho$ ，每層內分數最低的 ρ $\rho$ 比例權重 M=1 $M=1$ （更新），其餘 M=0 $M=0$ （凍結），更新式為 θ∗=θ−λ(M⊙∂L/∂θ) $\theta^*=\theta-\lambda(M\odot\partial L/\partial\theta)$ =θ−λ(M⊙∂L/∂θ)。ρ = 0.1 時，每層分數最低的 10% 更新，其餘 90% 凍結（Fig. 2 圖說 "update the least important ρ%"）。遮罩在微調前算一次、之後固定，所以只需要存一個二元遮罩，不需要梯度歷史。作者的理由（§3.3）是：凍結高分權重，就是壓住一階模型中輸出位移的主要來源；這依賴第 03 節的工作假說。
+
+ 記憶體（Table 3）：Dowser 與一般微調同為 O(|P|)，SPIDER 為 O(3|P|)，Grafting 為 O(2|P|)。
+
+ Table 3：微調記憶體與參數量（最後 20 層；NVILA / LLaVA）
+ 方法記憶體ρ參數量
+
+ Full FTO(|P|)100%1.4B / 4.5B
+
+ GraftingO(2|P|)100%143M / 438M
+
+ DAREO(|P|)10%143M / 438M
+
+ TailorO(|P|)10%143M / 438M
+
+ SPIDERO(3|P|)50%714M / 2.3B
+
+ DowserO(|P|)10%143M / 438M
+
+ ρ 欄對各方法意義不同（Dowser 是可更新比例，post-merging 法是合併時的比例）；Grafting 寫 100% 卻列 143M / 438M，論文沒有說明。
+
+ 常見錯誤
+
+ 把 M=1 $M=1$ 讀成凍結：Eq. 7 中 M=1 $M=1$ 是更新。
+
+ 照抄 Fig. 2 的更新式：圖中寫 θ∗=θ+λ(M⊙∂L/∂θ) $\theta^*=\theta+\lambda(M\odot\partial L/\partial\theta)$ =θ+λ(M⊙∂L/∂θ)，與 Eq. 8 的減號相反；以 Eq. 8 為準。
+
+ 不確定逐層或全域排序：§3.3 寫「在每一層內」排序，App. C 末段寫 "global parameter selection"；「層」是指每個權重矩陣還是每個 Transformer block，論文沒有寫。
+
+ 把 ∑S $\sum S$ 當成真實位移的上界：只在一階、且 ∣ΔW∣≤∣W∣ $|\Delta W|\le|W|$ 時成立（第 06 節 C2 的 0.698 vs 0.053）。
+
+ 期待平方版與絕對值版估計量排序完全相同：只保證 2 $\sqrt2$ ​ 倍內的等價（第 08 節）。
+
+ 忽略探測階段的記憶體：Table 3 的 O(|P|) 只談微調階段，探測時要為每個參數累積一個分數，論文沒有討論。
+
+ 延伸閱讀：Sparse fine-tuning：HFT 與 SPIDER
+
+ 11 · 實驗結果
+
+ 在 LLaVA 與 NVILA 的 8 個主設定中，H-score 都最高
+
+ 設定（§4.1）：每個下游資料集隨機取 10k 筆，學習率 2×10−5 $2\times10^{-5}$ ，5 個 epoch，總 batch 128，8 張 A100（40 GB）；記憶體需求大的 Grafting 與 SPIDER 改用 H200（143 GB）。主表只微調最後 20 層，ρ = 0.1，探測取 N=64 $N=64$ 、R=8 $R=8$ 。
+
+ 主結果（Tables 1–2，最後 20 層）：NVILA-Lite-2B 的 H-score 在 COCO 為 85.7、ImageNet-R 為 71.2；LLaVA-1.5-7B 在 COCO 為 79.9、ImageNet-R 為 69.7。四個下游任務、兩個模型共 8 個設定，Dowser 的 H-score 都最高。
+
+ H-score：Dowser vs 次佳方法（Tables 1–2，最後 20 層，ρ = 0.1）
+ 模型COCOImageNet-RFlickr30kIconQA
+
+ NVILA-Lite-2B85.7 vs SPIDER 78.371.2 vs SPIDER 60.575.8 vs SPIDER 68.576.0 vs Tailor 71.5
+
+ LLaVA-1.5-7B79.9 vs Tailor 75.869.7 vs Grafting 63.869.6 vs Tailor 67.051.3 vs SPIDER 50.4
+
+ 兩點要和作者的敘述分開看。作者說「各方法的下游表現相近，差別在上游」（§4.2），但在影像描述任務不成立：NVILA COCO 的 CIDEr，Dowser 135.5、Full-FT 98.5；Flickr30k 96.0 vs 64.3；LLaVA COCO 123.6 vs 100.0。只更新 10% 權重的下游分數反而高於全微調，論文沒有解釋，H-score 的領先有一大部分來自這裡。另外，Dowser 贏的是兩者的平衡，不是每一欄：LLaVA ImageNet-R 的 OKVQA 從 zero-shot 58.0 降到 48.4、GQA 從 62.0 降到 56.5；同一格 Grafting 的上游保留得更好，但下游只有 67.3。
+
+ 微調深度（Fig. 1(c)(d)、Fig. 3、Fig. 5）：Grafting、DARE、Tailor 在最後 4–16 層穩定，延伸到早期層時崩潰；SPIDER 能撐更多層，作者說它「即使用全部 32 層仍不如 Model-Dowser」（§4.2），但 §4.1 又說 SPIDER 在 LLaVA-1.5-7B 上 L>20 $L>20$ 無法訓練，兩處矛盾。論文沒有給曲線數據，本頁不重繪。
+
+ 隨機遮罩對照
+
+ Tables 8/9 把同樣的 ρ 用在隨機遮罩上，而且是全層微調（NVILA 全 28 層、LLaVA 全 32 層），與主表的最後 20 層不同。例如 NVILA ImageNet-R 的 Dowser H-score 在最後 20 層是 71.2（Table 1），全 28 層、ρ = 0.1 是 69.7（Table 4）；後者與 LLaVA 主表的 69.7 相同純屬巧合。全 28 層的 NVILA ImageNet-R 上，ρ = 0.1 時隨機遮罩的 H 已達 68.0 ± 0.8，Dowser 為 69.7；ρ = 0.5 時差距變大，隨機 55.0 ± 0.8、Dowser 62.7。
+
+ C4隨機遮罩 vs 重要性遮罩，以及 H-score 計算器
+
+ 全層微調：NVILA 28 層、LLaVA 32 層；與主表的最後 20 層不同。選一欄 ρ 查看兩組數字與差距。
+
+ NVILA · ImageNet-RLLaVA · ImageNet-RNVILA · COCOLLaVA · COCO
+
+ H-scoreAup
+
+ 重要性遮罩（Dowser）隨機遮罩 ±1 sd全微調（ρ = 1）
+
+ ρ = 0.1　H-score
+重要性遮罩 69.7　隨機 68.0 ± 0.8
+差距 +1.7　差距 / sd = 2.1
+
+ H-score 計算器（Eq. 9）
+
+ Table 1 NVILA COCO Dowser
+ IconQA zero-shot
+ Table 1 Tailor ImageNet-R
+
+ Aup
+ Adown
+
+ Avg = 99.08　H-score = 85.68
+
+ 資料：Tables 8/9（論文數字，非本頁模擬）；隨機組為三個 seed 的平均 ± 標準差。表中只有 Random 附標準差；論文未說明本法的執行次數。計算器依 Eq. 9 即時計算。
+
+ ρ = 0.1　H-score重要性遮罩 69.7　隨機 68.0 ± 0.8差距 +1.7　差距 / sd = 2.1
+
+ NVILA ImageNet-R 上，Dowser 與隨機遮罩的 H 差距依 ρ = 0.1、0.25、0.5、0.75、0.9 為 1.7、3.4、7.7、11.2、5.8本頁推導（兩列相減）。§4.2 說差距在 ρ = 0.5 最大，但依表中數字最大在 0.75（隨機組 ±5.5）。LLaVA COCO 在 ρ = 0.1 只差 0.2（79.1 ± 0.2 vs 79.3）。p 值：正文寫 Avg p = 0.003、H p = 0.004（two-tailed t-test）；App. H 卻把 0.003 歸給 NVILA COCO、0.004 歸給 NVILA ImageNet-R，LLaVA 為 0.08 與 0.007，並稱 0.08「statistically significant」。附錄 H 自己也說低 ρ 時差距較小。
+
+ ρ 的穩健性（Fig. 4、Table 8）：§4.2 說上游到 ρ = 0.25 都穩定。LLaVA ImageNet-R 全層微調的 Aup $A_{up}$ ​：ρ = 0.1 為 55.8、0.25 為 48.2、0.5 為 27.9、0.9 為 10.2（Full FT 9.4；zero-shot 61.0，Table 6）。
+
+ Jacobian 消融（Table 12，LLaVA COCO，最後 20 層）：ρ = 0.1 時拿掉 ∥Ji∥2 $\|J_i\|_2$ ​∥2​（等於 Wanda 式分數），Aup $A_{up}$ ​ 58.4、CIDEr 116.0、H 77.7；完整分數為 59.1、123.6、79.9，H 多 2.2。ρ = 0.25、0.5 時 H 差 1.7、0.6。增益主要來自下游 CIDEr（116.0 → 123.6），上游只多 0.7；而 Wanda 式分數的 77.7 已經高於 Table 2 的 SPIDER 75.2 與 Tailor 75.8。
+
+ 學習率（Table 7，LLaVA 最後 20 層）：Dowser 的 ImageNet-R H 在 lr 10−4 $10^{-4}$ 、2×10−5 $2\times10^{-5}$ 、5×10−6 $5\times10^{-6}$ 為 61.4、69.7、71.1；lr 5×10−6 $5\times10^{-6}$ 時 SPIDER 為 69.6、Full-FT 為 66.2。所有方法都在最小的學習率最好，差距也縮小。這與站內 No.136 的結論（遺忘主要由學習率決定）一致。
+
+ 視覺編碼器（Table 6）：LLaVA 最後 32 層加上視覺編碼器一起微調，視覺端以 ImageNet 統計量的高斯輸入探測，H 在 COCO 為 79.9、ImageNet-R 為 68.9；Full-FT 為 13.3、18.1。
+
+ 持續學習（Table 13，App. L）：T $T$ 是依序學習的任務數（這裡為 5：遙測、醫療、自駕、科學、金融），At,i $A_{t,i}$ ​ 是學完第 t $t$ 個任務後在任務 i $i$ 的準確率。MFT（mean finetune accuracy）是每個任務剛學完時準確率的平均 1T∑iAi,i $\frac1T\sum_iA_{i,i}$ 1​∑i​Ai,i​；MFN（mean final accuracy）是全部學完後的平均 1T∑iAT,i $\frac1T\sum_iA_{T,i}$ 1​∑i​AT,i​；BWT（backward transfer）依 Eq. 31 定義為 1T−1∑i=1T−1(AT,i−Ai,i) $\frac1{T-1}\sum_{i=1}^{T-1}(A_{T,i}-A_{i,i})$ 1​∑i=1T−1​(AT,i​−Ai,i​)，負值表示遺忘。上游基準換成另一組九個（TextVQA、POPE、VQAv2、MM-VET、ScienceQA-Img、MMBench EN/CN、GQA、SEED-Bench），所以 zero-shot 的 Aup $A_{up}$ ​ 是 63.9，不是主表的 61.0。Table 13 的 BWT：Dowser −2.5、MoELoRA −7.8、Full-FT −15.6；MFN 為 66.6、60.0、54.7；H 為 63.8、60.6、46.3。表中的 BWT 等於 MFN − MFT，也就是同一個和除以 T $T$ ；依 Eq. 31 除以 T−1 $T-1$ 應為表值的 1.25 倍（Full-FT −19.4、Dowser −3.1）本頁推導，四個方法的排序不變。ρ、微調深度、遮罩是否每個任務重算，論文都沒有寫。
+
+ 延伸閱讀：Model-Dowser 實驗：微調深度與記憶體；站內 On-Policy or Off-Policy Learning?（學習率與遺忘）、深度非均勻 LoRA rank 分配
+
+ 12 · 未證明之處
+
+ 論文沒有證明的部分與內部不一致
+
+ 定理與目標之間的距離。Theorem 3.1 只說給定 ΔW 時一階輸出位移多大，沒有說微調時 ΔW 會多大（Eq. 3 用 |W| 代替），也沒有把 ‖Δf‖ 連到上游準確率（§1 的假說）。
+
+ 分數的作用範圍。主表使用的 ρ = 0.1 下，隨機遮罩已接近本法（Tables 8/9）；分數的作用在 ρ 大時才明顯。
+
+ Table 1 Tailor 一格。NVILA ImageNet-R 的 Tailor 列 Avg 印 66.9，由同列數字重算為 56.8本頁推導，同列 H 47.2 與 56.8 一致；不能用四捨五入解釋。其餘 Tables 8/9 的 Avg/H 與 Aup $A_{up}$ ​、Adown $A_{down}$ ​ 在四捨五入範圍內一致。
+
+ p 值歸屬：正文（Table 4，Avg 與 H）與 App. H（COCO 與 ImageNet-R 的 H）的說法不同；App. H 稱 p = 0.08「statistically significant」。
+
+ SPIDER 與 32 層：§4.1 說 L>20 $L>20$ 無法訓練，§4.2 說用全部 32 層仍不如本法。
+
+ 逐層或全域排序：§3.3 與 App. C 末段不同。
+
+ Fig. 2 的更新式是加號，Eq. 8 是減號。
+
+ 估計量：正文平方、App. D 絕對值、Fig. 2 兩者皆無。
+
+ 穩定性評估的遮罩：Table 10/11 用最高 10%，訓練更新的是最低 10%。
+
+ Hamming 0.226：超過兩個 10% 遮罩可能的最大距離 0.2，定義不明。
+
+ Table 3：Grafting 的 ρ 寫 100%，參數量卻與 10% 的方法相同。
+
+ BWT 分母：Eq. 31 除以 T−1 $T-1$ ，Table 13 的數值對應除以 T $T$ 。
+
+ App. L 的敘述：說 Dowser 的上游 61.2「超過」Zeroshot 與 MoELoRA，但 Table 13 中 Zeroshot 是 63.9、MoELoRA 也是 61.2。
+
+ 13 · 研究脈絡
+
+ 研究脈絡（由研究筆記的時間線提供）
+
+ 三格公式條可以對應到文獻的演進：只看 ∣W∣ $|W|$ 的 magnitude 準則（PackNet、SynFlow）→ 乘上輸入激活的 Wanda → 本文再乘上輸出敏感度 ∥Ji∥ $\|J_i\|$ ​∥。另外三條線是：以重要性保護參數的持續學習（EWC、MAS）、微調後融合權重的 post-merging（Grafting、DARE、Model Tailor），以及只更新部分參數的 sparse fine-tuning（HFT、SPIDER）。
+
+ 遺忘與持續學習重要性與剪枝Post-mergingSparse FT模型本文
+
+ ‹›
+
+ 2013遺忘與持續學習An Empirical Investigation of Catastrophic Forgetting in Gradient-Based Neural Networks
+Goodfellow et al.
+catastrophic forgetting 的早期實證研究
+arXiv ↗筆記
+2016遺忘與持續學習Overcoming catastrophic forgetting in neural networks
+Kirkpatrick et al.
+EWC；持續學習中以重要性保護參數
+arXiv ↗筆記
+2017重要性與剪枝PackNet: Adding Multiple Tasks to a Single Network by Iterative Pruning
+Mallya & Lazebnik
+magnitude 式剪枝用於多任務
+arXiv ↗筆記
+2017遺忘與持續學習Memory Aware Synapses: Learning what (not) to forget
+Aljundi et al.
+以輸出敏感度估計參數重要性（無監督、線上）
+arXiv ↗筆記
+2020重要性與剪枝Pruning neural networks without any data by iteratively conserving synaptic flow
+Tanaka et al.
+不看資料的剪枝分數（SynFlow）
+arXiv ↗筆記
+2023Post-mergingTask-Specific Skill Localization in Fine-tuned Language Models
+Panigrahi et al.
+Model Grafting；post-merging 基線
+arXiv ↗筆記
+2023重要性與剪枝A Simple and Effective Pruning Approach for Large Language Models
+Sun et al.
+Wanda；權重大小 × 輸入激活
+arXiv ↗筆記
+2023Post-mergingLanguage Models are Super Mario: Absorbing Abilities from Homologous Models as a Free Lunch
+Yu et al.
+DARE；post-merging 基線
+arXiv ↗筆記
+2024Post-mergingModel Tailor: Mitigating Catastrophic Forgetting in Multi-modal Large Language Models
+Zhu et al.
+針對 MLLM 的 post-merging 方法
+arXiv ↗筆記
+2024重要性與剪枝Massive Activations in Large Language Models
+Sun et al.
+論文用以說明激活準則可能不可靠
+arXiv ↗筆記
+2024Sparse FTHFT: Half Fine-Tuning for Large Language Models
+Hui et al.
+一半參數凍結的 sparse fine-tuning
+arXiv ↗筆記
+2024Sparse FTLearn from Downstream and Be Yourself in Multimodal Large Language Model Fine-Tuning
+Huang et al.
+SPIDER；既有最佳 MLLM sparse 方法
+arXiv ↗筆記
+2024模型NVILA: Efficient Frontier Visual Language Models
+Liu et al.
+實驗用模型之一
+arXiv ↗筆記
+2026本文Model-Dowser: Data-Free Importance Probing to Mitigate Catastrophic Forgetting in Multimodal Large Language Models
+Hwang et al.
+本論文
+arXiv ↗筆記
+
+ 14 · 延伸閱讀
+
+ 延伸閱讀
+
+ Model-Dowser 的研究脈絡總覽總覽
+
+ MLLM 微調中的 catastrophic forgetting問題定義、EWC、MAS
+
+ LLaVA 與 NVILA：被微調的模型與評估設定模型與指標
+
+ Post-merging 方法：Grafting、DARE、Model Tailor基線
+
+ 參數重要性與剪枝分數：OBS、magnitude、SynFlow、Wanda分數的前身
+
+ Sparse fine-tuning：HFT 與 SPIDER基線
+
+ 功能重要性分數、Theorem 3.1 與合成探測方法本體
+
+ Model-Dowser 實驗：微調深度與記憶體實驗
+
+ 站內相關論文與教學
+
+ Self-Distillation Enables Continual Learning（No. 247）
+
+ Local Support Learning（No. 141）：大型預訓練模型的災難性遺忘
+
+ Maximal Brain Damage Without Data or Optimization（No. 279）：不用資料找出關鍵參數的另一條路線
+
+ On-Policy or Off-Policy Learning?（No. 136）與教學 on-policy vs off-policy distillation
+
+ Context distillation 與自蒸餾、SFT 與 RL 的泛化比較、樂透票假說與冗餘
+
+ Hyeontaek Hwang, Nguyen Dinh Son, Daeyoung Kim. Model-Dowser: Data-Free Importance Probing to Mitigate Catastrophic Forgetting in Multimodal Large Language Models. ICML 2026. arXiv:2602.04509.
+
+ 本頁的方程式與數字取自論文 v7（2026-06-01）；標示「本頁推導」的內容為本頁自行推導，「推定」為本頁自選或配合論文的值，皆非論文結論。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記

@@ -1,0 +1,211 @@
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="pruning" data-toc="06" data-tt="與剪枝分數">
+  <div class="ch-num">06 · 與剪枝分數</div>
+  <h2>單一輸入時，Dowser 分數是 Wanda 分數乘上輸出敏感度</h2>
+  <div class="prose">
+    <p>為每個權重打一個分數的做法來自剪枝（pruning）文獻。論文 §2.2 討論的兩種常見準則與本文的關係如下：</p>
+  </div>
+  <div class="tscroll prose-w"><table>
+    <caption>三種單一權重分數</caption>
+    <thead><tr><th>準則</th><th>分數</th><th>需要什麼</th></tr></thead>
+    <tbody>
+      <tr><td>Magnitude（PackNet 等，§2.2）</td><td>$|W_{ij}|$</td><td>只要權重</td></tr>
+      <tr><td>Wanda（§2.2、App. K）</td><td>$|W_{ij}|\cdot|h_j|$</td><td>權重與輸入激活</td></tr>
+      <tr><td>Model-Dowser（Eq. 3）</td><td>$\|J_i\|_2\cdot|W_{ij}|\cdot|h_j|$</td><td>權重、輸入激活與輸出 Jacobian（不需標籤）</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>Dowser 分數等於 Wanda 分數 $|W_{ij}||h_j|$ 乘上 $\|J_i\|_2$；App. K 的消融實驗就是把 $\|J_i\|_2$ 拿掉。<b>單一輸入時</b>，同一輸出節點（同一列）的權重共用 $\|J_i\|$，所以兩種分數在同一列內的排序相同，差別只在不同列之間。這個關係在兩種情況下不再成立：第 09 節會介紹對 $N$ 個探測輸入取平均的 Eq. 5，平均的是乘積 $\|J_{i,n}\||h_{j,n}|$；第 10 節會介紹的 Eq. 7 是把同一層所有列放在一起排序。</p>
+    <p>下面用一個 4×4 的玩具層比較三種排序。這個層的數值是本頁自選的（推定），不是論文設定：</p>
+  </div>
+  <div class="mats">
+    <div><span class="mt">輸入 h</span><span>$(1.0,\,-0.2,\,1.5,\,0.6)$</span></div>
+    <div><span class="mt">權重 W</span><span>$\begin{bmatrix}0.8&amp;-1.5&amp;0.3&amp;0.6\\-0.4&amp;2.0&amp;-0.9&amp;0.2\\1.2&amp;0.5&amp;-0.3&amp;-1.0\\0.1&amp;-0.7&amp;0.6&amp;1.4\end{bmatrix}$</span></div>
+    <div><span class="mt">輸出矩陣 V</span><span>$\begin{bmatrix}1.0&amp;-0.5&amp;0.8&amp;0.3\\0.4&amp;1.2&amp;-0.6&amp;0.9\\-0.7&amp;0.3&amp;1.1&amp;-0.4\end{bmatrix}$</span></div>
+    <div><span class="mt">bias b</span><span>$(0,\,0,\,b_3,\,0)$</span></div>
+  </div>
+  <div class="prose">
+    <p>當 $b_3=0$ 時，$z=(1.91,-2.03,0.05,1.98)$。$W_{22}=2.0$ 是 16 個權重中最大的，magnitude 把它排在第 1。但 $z_2=-2.03$ 時 $\mathrm{GELU}'(z_2)=-0.082$，$\|J_2\|=0.109$，所以 $S_{22}=0.044$。依分數由小到大排列（同分時格子編號小者在前），格 8（$W_{24}$，0.013）最小，格 5（$W_{21}$）與格 6（$W_{22}$）精確同分（都是 $0.4\times0.1094$），因此 $W_{22}$ 是由小到大第 3、由大到小第 14〔本頁推導〕。這個例子顯示的是 magnitude 忽略了 $\|J_i\|$ 與 $|h_j|$；ReLU 的關閉單元（$J=0$）也會產生同樣的效果，所以它<b>不是</b>非齊次性的證據，非齊次性仍只是論文的主張。</p>
+  </div>
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>三種分數、三種遮罩</h3></div>
+    <p class="plate-lead">每種分數各自選出最低的 m 個權重作為「可更新」（斜線格），其餘凍結。拖動 b₃ 改變神經元 3 的預激活。</p>
+    <div class="ctl c2ctl">
+      <div class="rng"><label class="lbl" for="c2-b">神經元 3 的 bias b₃<output id="c2-bo">0.00</output></label><input id="c2-b" type="range" min="-4" max="2" step="0.05" value="0"></div>
+      <div class="rng"><label class="lbl" for="c2-m">可更新的權重數 m<output id="c2-mo">4（ρ = 0.250）</output></label><input id="c2-m" type="range" min="1" max="15" step="1" value="4"></div>
+      <div class="ctl-row" id="c2-pre" role="group" aria-label="預設 b₃">
+        <button class="chip" type="button" data-b="0" aria-pressed="true">b₃ = 0</button>
+        <button class="chip" type="button" data-b="-0.75" aria-pressed="false">b₃ = −0.75（GELU′ ≈ 0）</button>
+        <button class="chip" type="button" data-b="-4" aria-pressed="false">b₃ = −4（神經元 3 幾乎不輸出）</button>
+      </div>
+    </div>
+    <div class="hms" id="c2-maps"></div>
+    <div class="tscroll"><table id="c2-tab"><caption>把各遮罩的可更新權重同時歸零時的輸出位移</caption><thead><tr><th>遮罩</th><th>可更新格子</th><th class="num">真實位移</th><th class="num">Σ S（一階總和）</th></tr></thead><tbody></tbody></table></div>
+    <p class="readout" id="c2-ro"></p>
+    <p class="plate-f">這是單一輸入的自選玩具層，比較的是把可更新權重歸零時的輸出位移，不是論文的微調實驗。<br>玩具沒有測試「輸出位移小 ⇒ 上游能力保留」這個假說（§1，論文也未證明）；位移較小不代表遮罩較好。<br>格子編號 k = 4(i − 1) + j。排序：分數由小到大，捨入到 1e−9 後同分者編號小者在前。隨機列為全部 2¹⁶ 個子集中大小為 m 者的平均（Gray code 列舉、分段計算）。讀數由本頁依 Eq. 3 與玩具層前向計算即時算出。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <div class="prose">
+    <p>把 $b_3$ 往 −4 拉，第 3 列的 Dowser 分數趨近 0（神經元 3 幾乎不輸出），magnitude 與 Wanda 的分數完全不變。在 $b_3=0$、$m=4$ 時，三種遮罩把可更新權重歸零造成的真實位移分別是 0.934（magnitude）、0.315（Wanda）、0.158（Dowser），隨機遮罩平均 1.359。</p>
+    <p>一階排序也會失準。取 $b_3=-0.75$，此時 $z_3=-0.70$，$\mathrm{GELU}'(z_3)=0.0234$，接近 0。Dowser 的 $m=4$ 遮罩選了第 3 列的三格與 $W_{24}$，一階總和 $\sum S$ 只有 0.053，但把它們同時歸零的真實位移是 0.698，大於 Wanda 遮罩的 0.268〔本頁推導〕。原因是 GELU′ 接近 0 時一階項幾乎為 0，二階以上的變化才是主項。這也是 Corollary 3.2 只是一階位移上界的具體例子：0.698 遠大於 0.053。</p>
+  </div>
+  <details class="aside">
+    <summary>與其他重要性準則的關係〔本頁推導〕</summary>
+    <div class="qa">
+      <p>論文沒有討論 SNIP 與 OBD；以下是本頁的整理，只比較公式形式。</p>
+      <ul>
+        <li><b>SNIP 型</b>（連接敏感度）：$|W_{ij}\,\partial L/\partial W_{ij}|$，用純量損失 $L$，需要標籤。由 Eq. 19，單一輸入、單一位置時 $S_{ij}=\|W_{ij}\,\partial f/\partial W_{ij}\|_2$，也就是把 $W_{ij}$ 歸零時的一階輸出位移：同樣的 Taylor 剪枝想法，但用整個輸出向量 $f$ 代替純量損失，因此不需要標籤。</li>
+        <li><b>OBD 型</b>（二階）：在損失極小點用 Hessian 對角項 $\tfrac12H_{ij,ij}W_{ij}^2$。Dowser 在輸出上用一階項，兩者不同。</li>
+        <li><b>OBS</b>：論文 §2.2 只提到它是二階方法、對基礎模型成本過高。</li>
+        <li><b>MAS</b>（Memory Aware Synapses）：以輸出對參數的敏感度累積重要性，用於持續學習；論文只在 App. A 引用，沒有比較。見 <a href="dowser-catastrophic-forgetting-mllm-fine-tuning.html">MLLM 微調中的 catastrophic forgetting</a>。</li>
+      </ul>
+    </div>
+  </details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">論文為什麼認為 magnitude 準則不可靠？C2 中 $W_{22}=2.0$ 為什麼分數很低？</p>
+    <p class="a">論文主張：magnitude 假設齊次激活（ReLU 滿足 $\phi(\alpha z)=\alpha\phi(z)$，α &gt; 0），GELU/SiLU 不滿足（§2.2、§3.1）；玩具中 $z_2=-2.03$、$\mathrm{GELU}'=-0.082$、$\|J_2\|=0.109$，$S_{22}=0.044$（magnitude 第 1、S 第 14）——它顯示 magnitude 忽略了 $\|J_i\|$，不是非齊次性的證明〔本頁推導〕。</p>
+    <p class="q">Dowser 分數與 Wanda 分數差在哪個因子？什麼情況下兩者在同一列內排序相同？</p>
+    <p class="a">$S=$ Wanda 分數 $|W||h|$ × $\|J_i\|_2$；單一輸入時同一輸出節點（同一列）共用 $\|J_i\|$，列內排序相同；對 $N$ 個輸入平均（Eq. 5）或跨列排序（Eq. 7）時不同；App. K 的消融就是拿掉 $\|J_i\|$。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="dowser-parameter-importance-pruning-scores.html">參數重要性與剪枝分數</a>；站內 <a href="lottery-ticket-redundancy-scaffold.html">樂透票假說與冗餘</a></p>
+</section>
+
+<!-- S6a ============================================================ -->
+<section class="ch" id="hutchinson" data-toc="07" data-tt="Hutchinson 估計">
+  <div class="ch-num">07 · Hutchinson 估計</div>
+  <h2>一次反向傳播就能估計所有節點的輸出敏感度</h2>
+  <div class="prose">
+    <p>分數需要每個節點的 $\|J_i\|_2$。直接建出完整 Jacobian 要做 $d_{final}$ 次反向傳播（每個輸出分量一次，§3.2），對 MLLM 太貴。論文改用隨機投影：取 Rademacher 向量 $\xi\in\{\pm1\}^{d_{final}}$（每個分量獨立、各以 1/2 機率取 +1 或 −1），把輸出投影成一個純量 $\xi^\top f$，再對它反向傳播：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbb E_\xi\Big[\Big(\frac{\partial(\xi^\top f)}{\partial z_i}\Big)^2\Big]=\|J_i\|_2^2$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="prose">
+    <p>先看兩維的例子。令 $a=J_i=(3,4)$，$X=\xi^\top a$。四個符號向量給出 $X=7,\,1,\,-1,\,-7$，各占 1/4，所以 $\mathbb E[X^2]=(49+1+1+49)/4=25=\|a\|^2$。一般情形〔本頁推導，論文只寫結論〕：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathbb E[X^2]=\sum_k a_k^2\,\mathbb E[\xi_k^2]+\sum_{k\ne m}a_ka_m\,\mathbb E[\xi_k\xi_m]=\sum_k a_k^2$$</div><span class="eq-n">本頁推導</span></div>
+  <div class="prose">
+    <p>因為 $\xi_k^2=1$，而不同分量獨立且均值為 0，交叉項 $\mathbb E[\xi_k\xi_m]=0$。省成本的原因是：$\partial(\xi^\top f)/\partial z_i=\xi^\top J_i$，對純量 $\xi^\top f$ 做<b>一次</b>反向傳播，就同時得到所有層、所有節點的 $\xi^\top J_i$（向量–Jacobian 乘積）；顯式 Jacobian 則需要 $d_{final}$ 次。</p>
+    <p>三個細節。第一，論文稱它為 Hutchinson trace estimator，但這裡估的是 $J^\top J$ 的對角元素 $\|J_i\|^2$，不是 trace〔本頁推導〕。第二，論文只給 Eq. 4 的期望值與 Eq. 5 的平均，沒有說 $R$ 個 $\xi$ 樣本如何合成一個 $\|J_{i,n}\|$；本頁的 C3 採「平方平均再開根號」與「絕對值平均」兩種，屬於推定。前者對 $\|J_i\|$ 是偏低的有偏估計（Jensen 不等式），$R=1$ 時它就是 $|X|$。第三，單次樣本的變異數是 $\mathrm{Var}[X^2]=2(\|a\|^4-\sum_ka_k^4)$〔本頁推導〕：$a=(3,4)$ 時為 576；$a$ 只有一個非零分量時為 0。</p>
+  </div>
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>Hutchinson 估計與絕對值版估計量</h3></div>
+    <p class="plate-lead">設定向量 a（代表某個節點的 J<sub>i</sub>）。上圖是 X = ξᵀa 的精確分布，下圖比較兩個估計量與 Theorem D.1 的區間。</p>
+    <div class="pg two">
+      <div class="fig"><div id="c3-hist"><svg role="img" aria-label="X 的精確分布"></svg></div><div id="c3-line"><svg role="img" aria-label="估計量數線"></svg></div></div>
+      <div class="ctl">
+        <div class="ctl-row"><span class="lbl">維度 d</span></div>
+        <div class="seg" id="c3-d" role="group" aria-label="維度 d"></div>
+        <div class="ctl-row" id="c3-pre" role="group" aria-label="預設向量">
+          <button class="chip" type="button" data-p="34">(3, 4)</button>
+          <button class="chip" type="button" data-p="11">(1, 1)：下界</button>
+          <button class="chip" type="button" data-p="3">(3)：上界</button>
+          <button class="chip" type="button" data-p="1x8">八個 1</button>
+          <button class="chip" type="button" data-p="big">一大七小</button>
+        </div>
+        <div id="c3-comps" class="comps"></div>
+        <div class="ctl-row"><span class="lbl">樣本數 R</span></div>
+        <div class="seg" id="c3-R" role="group" aria-label="樣本數 R"></div>
+        <div class="ctl-row"><button class="small-btn" type="button" id="c3-re">重新抽樣</button><span class="note mono" id="c3-seed"></span></div>
+        <p class="readout" id="c3-ro"></p>
+      </div>
+    </div>
+    <p class="plate-f">精確值由列舉全部 2<sup>d</sup> 個符號向量算出；樣本 ξ 由固定 seed 的 mulberry32 產生（ξ<sub>k</sub> = −1 若 r() &lt; 0.5）。「200 次重複」使用 seed 1–200。R 個樣本的合成方式為本頁推定。讀數由本頁依 Eq. 4 與 Thm D.1 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼 $\mathbb E[(\xi^\top a)^2]=\|a\|^2$？一次反向傳播得到什麼？</p>
+    <p class="a">交叉項 $\mathbb E[\xi_k\xi_m]=0$、$\xi_k^2=1$；對純量 $\xi^\top f$ 反向傳播一次就得到所有層所有節點的 $\xi^\top J_i$，顯式 Jacobian 需要 $d_{final}$ 次（Eq. 4、§3.2）。</p>
+  </div></details>
+</section>
+
+<!-- S6b ============================================================ -->
+<section class="ch" id="l1" data-toc="08" data-tt="L1 替代量">
+  <div class="ch-num">08 · L1 替代量</div>
+  <h2>絕對值版估計量與 ‖J‖ 只差常數倍</h2>
+  <div class="eq"><div class="eq-m">$$\sqrt{\tfrac12}\,\|J_i\|_2\ \le\ \mathbb E_\xi\big[|\xi^\top J_i|\big]\ \le\ \|J_i\|_2$$</div><span class="eq-n">Eq. 26（Thm D.1）</span></div>
+  <div class="prose">
+    <p>App. D 的 Theorem D.1 說 $\sqrt{1/2}\|J_i\|\le\mathbb E|\xi^\top J_i|\le\|J_i\|$；兩邊乘上 $|\Delta W_{ij}||h_j|$ 就是 Eq. 23/27。上界來自 Jensen 不等式（$\sqrt{\cdot}$ 是凹函數，Eq. 25）；下界由論文引用的 Khintchine 型不等式得到（論文引 Khintchine 1923、Haagerup 1981，不自行證明；$p=1$ 時的最佳常數 $\sqrt{1/2}$ 一般歸於 Szarek 1976）。</p>
+    <p>兩個界都可以取到〔本頁推導，可在 C3 用預設組驗證〕：$a=(1,1)$ 時 $\mathbb E|X|=1=\|a\|/\sqrt2$，取下界；$a$ 只有一個非零分量時 $\mathbb E|X|=\|a\|$，取上界。$a=(3,4)$ 的比值是 0.8，八個 1 是 0.7734。</p>
+    <p>使用絕對值版的動機是數值上的（App. D "Numerical Stability near Zero"）：在 FP16 或 BF16 下，平方很小的梯度會下溢成 0，破壞相對排序；絕對值版保留原本的尺度。BF16 的指數範圍與 FP32 相同，下溢風險主要在 FP16〔本頁推導〕。這裡的 "L1" 指一階絕對動差 $\mathbb E|\xi^\top J_i|$，不是向量的 1-範數；App. D 中「$\|J_i\|_2\le\|J_i\|_1$」一句與證明無關。</p>
+    <p>夾擠只保證兩者差一個常數倍。論文說可以「不失去相對排序」，但兩個節點的 $\|J\|$ 相差不到 $\sqrt2$ 倍時，排序可能相反〔本頁推導〕。例：$a=(1,1)$ 的 $\|a\|=1.414$、$\mathbb E|X|=1$；$b=(1.05)$ 的 $\|b\|=1.05$、$\mathbb E|X|=1.05$。用平方版會判 $a$ 較重要，用絕對值版會判 $b$ 較重要。</p>
+    <p>論文對實際用哪一個估計量的寫法不一致：正文 Eq. 4 是平方（L2）；App. D 稱「Our L1-based estimator」；Fig. 2 寫成 $\mathbb E_\xi[\partial(\xi^\top f)/\partial z_i]$，既沒有平方也沒有絕對值。</p>
+  </div>
+  <details class="aside">
+    <summary>分數平方與 SNIP 型分數的關係〔本頁推導〕</summary>
+    <div class="qa"><p>由 Eq. 4 與 Eq. 19，$S_{ij}^2=\mathbb E_\xi\big[(W_{ij}\,\partial(\xi^\top f)/\partial W_{ij})^2\big]$（單一輸入、單一位置）。也就是：以隨機符號的純量 $\xi^\top f$ 當作偽損失時，SNIP 型分數平方的期望值。</p></div>
+  </details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Theorem D.1 的不等式？何時取等？為什麼要用它？</p>
+    <p class="a">$\sqrt{1/2}\|J_i\|\le\mathbb E|\xi^\top J_i|\le\|J_i\|$；$a=(1,1)$ 取下界、單一非零分量取上界；避免 FP16/BF16 平方下溢（App. D）；只保證常數倍等價，$\|J\|$ 相差不到 $\sqrt2$ 倍時排序可能相反〔本頁推導〕。</p>
+  </div></details>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="probe" data-toc="09" data-tt="無資料探測">
+  <div class="ch-num">09 · 無資料探測</div>
+  <h2>讓模型自己產生探測輸入</h2>
+  <div class="prose">
+    <p>$J_i$ 與 $h_j$ 都依賴輸入。預訓練資料通常拿不到（多為內部資料），所以作者讓模型自己產生探測輸入：從 tokenizer 詞表隨機抽 token 當作種子 $\epsilon$，讓預訓練模型生成 $N$ 個 prompt（Eq. 6），再在這些 prompt 上做前向與反向傳播。最終分數是 $N$ 次的 Monte Carlo 平均（Eq. 5）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\hat x_n=f(\epsilon;\theta_{pre}),\qquad \bar S_{ij}=\frac1N\sum_{n=1}^N\|J_{i,n}\|_2\cdot|W_{ij}|\cdot|h_{j,n}|$$</div><span class="eq-n">Eq. 6、Eq. 5</span></div>
+  <div class="prose">
+    <p>從詞表隨機抽 token 當種子，讓預訓練模型生成 $N$ 個 prompt。作者認為這些合成輸入會「誘發反映模型功能結構的多樣激活」。主實驗只用文字探測，不含影像。實驗取 $N=64$、$R=8$（§4.1），總成本是 $O(N\cdot R)$ 次前向＋反向傳播（§3.2）。</p>
+    <p><b>驗證</b>（Table 5、Table 10）：與 64 筆上游真實文字查詢算出的分數比較（5 次執行），$R=8$、$N=64$ 時 Spearman 等級相關為 0.891 ± 0.003，Hamming 距離為 0.050 ± 0.002；隨機基準分別是 0.000 與 0.226。$N$ 的影響大於 $R$：$N=64$ 時 $R=2,4,8$ 的 Spearman 為 0.886、0.885、0.891。</p>
+    <p><b>純文字 vs 含影像</b>（Table 11，App. J）：對照組的影像是以 ImageNet 通道均值 [0.485, 0.456, 0.406]、標準差 [0.229, 0.224, 0.225] 取樣的高斯雜訊，不是真實影像。$R=8$、$N=64$ 時 Hamming 0.081 ± 0.001、Spearman 0.882 ± 0.002，作者稱「almost identical」。這組數字與 Table 5 的參考對不同（純文字探測 vs 文字＋雜訊影像探測；Table 5 是合成探測 vs 真實資料），不能直接比大小。</p>
+  </div>
+  <details class="aside">
+    <summary>Hamming 距離的尺度（條件式推算〔本頁推導〕）</summary>
+    <div class="qa"><p>若 Hamming 距離是一般的「不一致比例」，兩個密度都是 $p$ 的遮罩，距離 $=2p(1-\text{重疊率})$，上限 $2p$；$p=0.1$ 時 0.050 對應 75% 重疊。但論文的隨機基準 0.226 超過這個上限 0.2（獨立隨機的期望應為 0.18），所以論文的正規化方式未知，75% 只能當條件式推算。另外 Table 10/11 比較的是分數<b>最高</b> 10% 的遮罩，而訓練時更新的是分數<b>最低</b> 10%（Eq. 7），驗證的對象不是訓練用的集合。</p></div>
+  </details>
+  <div class="prose">
+    <p><b>論文未寫明的事項</b>：$f$ 是哪個張量（最後隱狀態或 logits、哪些位置）；序列位置如何彙總（同一個 $W$ 作用在每個 token，真正的 $\partial f/\partial W_{ij}=\sum_tJ_{i,t}h_{j,t}$ 一般不等於範數相乘〔本頁推導〕）；$R$ 個樣本如何合成一個 $\|J_{i,n}\|$；prompt 長度與取樣溫度；bias、LayerNorm、embedding 是否也評分；探測時為每個參數累積分數所需的記憶體。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">合成探測輸入怎麼來？$N,R$ 與成本？和真實資料分數一致到什麼程度？</p>
+    <p class="a">從詞表隨機抽 token 當種子，讓預訓練模型生成 $N$ 個 prompt（Eq. 6）；$N=64,R=8$，成本 $O(N\cdot R)$ 次前向＋反向；Spearman 0.891 ± 0.003、Hamming 0.050 ± 0.002（Table 5；隨機基準 0.000、0.226）。</p>
+  </div></details>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="sparse" data-toc="10" data-tt="稀疏微調">
+  <div class="ch-num">10 · 稀疏微調</div>
+  <h2>凍結高分權重，只更新每層分數最低的 ρ</h2>
+  <div class="prose">
+    <p>最常見的誤讀是把遮罩方向弄反。先看一個 3×3 的例子：9 個分數中最低的兩個（0.05、0.12）是 $M=1$，表示<b>更新</b>；其餘 7 格 $M=0$，表示<b>凍結</b>。</p>
+  </div>
+  <div class="mask3" role="img" aria-label="3 乘 3 遮罩例：分數 0.05 與 0.12 兩格更新，其餘七格凍結" id="mask3"></div>
+  <p class="cap">M = 1 表示更新，不是凍結（Eq. 7）。論文 ρ = 0.1 時是每層 10% 更新、90% 凍結。</p>
+  <div class="eq"><div class="eq-m">$$M_{ij}=\begin{cases}1,&amp;\bar S_{ij}\ \text{落在該層最低的}\ \rho\ \text{百分位}\\0,&amp;\text{其餘}\end{cases}$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="eq"><div class="eq-m">$$\theta^*=\theta-\lambda\cdot\Big(M\odot\frac{\partial L}{\partial\theta}\Big)$$</div><span class="eq-n">Eq. 8</span></div>
+  <div class="prose">
+    <p>給定可更新比例 $\rho$，每層內分數最低的 $\rho$ 比例權重 $M=1$（更新），其餘 $M=0$（凍結），更新式為 $\theta^*=\theta-\lambda(M\odot\partial L/\partial\theta)$。ρ = 0.1 時，每層分數最低的 10% 更新，其餘 90% 凍結（Fig. 2 圖說 "update the least important ρ%"）。遮罩在微調前算一次、之後固定，所以只需要存一個二元遮罩，不需要梯度歷史。作者的理由（§3.3）是：凍結高分權重，就是壓住一階模型中輸出位移的主要來源；這依賴第 03 節的工作假說。</p>
+    <p>記憶體（Table 3）：Dowser 與一般微調同為 O(|P|)，SPIDER 為 O(3|P|)，Grafting 為 O(2|P|)。</p>
+  </div>
+  <div class="tscroll prose-w"><table class="sticky1">
+    <caption>Table 3：微調記憶體與參數量（最後 20 層；NVILA / LLaVA）</caption>
+    <thead><tr><th>方法</th><th>記憶體</th><th class="num">ρ</th><th class="num">參數量</th></tr></thead>
+    <tbody>
+      <tr><td>Full FT</td><td>O(|P|)</td><td class="num">100%</td><td class="num">1.4B / 4.5B</td></tr>
+      <tr><td>Grafting</td><td>O(2|P|)</td><td class="num">100%</td><td class="num">143M / 438M</td></tr>
+      <tr><td>DARE</td><td>O(|P|)</td><td class="num">10%</td><td class="num">143M / 438M</td></tr>
+      <tr><td>Tailor</td><td>O(|P|)</td><td class="num">10%</td><td class="num">143M / 438M</td></tr>
+      <tr><td>SPIDER</td><td>O(3|P|)</td><td class="num">50%</td><td class="num">714M / 2.3B</td></tr>
+      <tr class="hl"><td>Dowser</td><td>O(|P|)</td><td class="num">10%</td><td class="num">143M / 438M</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>ρ 欄對各方法意義不同（Dowser 是可更新比例，post-merging 法是合併時的比例）；Grafting 寫 100% 卻列 143M / 438M，論文沒有說明。</p>
+    <h3>常見錯誤</h3>
+    <ol>
+      <li>把 $M=1$ 讀成凍結：Eq. 7 中 $M=1$ 是更新。</li>
+      <li>照抄 Fig. 2 的更新式：圖中寫 $\theta^*=\theta+\lambda(M\odot\partial L/\partial\theta)$，與 Eq. 8 的減號相反；以 Eq. 8 為準。</li>
+      <li>不確定逐層或全域排序：§3.3 寫「在每一層內」排序，App. C 末段寫 "global parameter selection"；「層」是指每個權重矩陣還是每個 Transformer block，論文沒有寫。</li>
+      <li>把 $\sum S$ 當成真實位移的上界：只在一階、且 $|\Delta W|\le|W|$ 時成立（第 06 節 C2 的 0.698 vs 0.053）。</li>
+      <li>期待平方版與絕對值版估計量排序完全相同：只保證 $\sqrt2$ 倍內的等價（第 08 節）。</li>
+      <li>忽略探測階段的記憶體：Table 3 的 O(|P|) 只談微調階段，探測時要為每個參數累積一個分數，論文沒有討論。</li>
+    </ol>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">ρ = 0.1 時哪些參數被更新？更新式？記憶體與 SPIDER、Grafting 比較？</p>
+    <p class="a">每層內分數最低的 10% 更新（$M=1$），其餘 90% 凍結；$\theta^*=\theta-\lambda(M\odot\partial L/\partial\theta)$（Eq. 7–8）；Dowser O(|P|)，SPIDER O(3|P|)，Grafting O(2|P|)（Table 3）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="dowser-sparse-finetuning-hft-spider.html">Sparse fine-tuning：HFT 與 SPIDER</a></p>
+</section>
