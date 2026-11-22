@@ -34,6 +34,8 @@
    - [Reinforcement Learning via Self-Distillation](https://arxiv.org/abs/2601.20802)
    - [How to Steal Reasoning Without Reasoning Traces](https://arxiv.org/abs/2603.07267)
    - [AgentOPSD: Recursive Self-Distillation for Agentic Reinforcement Learning](https://arxiv.org/abs/2608.05987)
+   - [Beyond Euclidean Clipping: Overcoming Exploration Collapse in LLM RL via Riemannian Isometric Policy Optimization](https://arxiv.org/abs/2607.10169)（RIPO，ICML 2026）
+   - [Score Centering Stabilizes Off-policy Reinforcement Learning](https://arxiv.org/abs/2609.20807)
    - [Latent On-Policy Self-Distillation](https://arxiv.org/abs/2608.13040)
 
 3. Diffusion、Flow Matching 與生成模型
