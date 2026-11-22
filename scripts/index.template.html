@@ -73,6 +73,14 @@ aside{overflow:auto;background:var(--bg)}
 input[type=search],select{width:100%;height:42px;padding:0 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:15px var(--f-body)}
 input[type=search]{padding-left:38px;padding-right:40px}
 input[type=search]:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
+#sugg{position:absolute;z-index:20;left:0;right:0;top:calc(100% + 6px);margin:0;padding:6px;list-style:none;max-height:min(420px,60vh);overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
+#sugg[hidden]{display:none}
+#sugg .sg-h{padding:8px 10px 4px;font:600 11px/1 var(--f-body);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+#sugg [role=option]{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:baseline;padding:7px 10px;border-radius:8px;font-size:14px;line-height:1.35;color:var(--ink);cursor:pointer}
+#sugg [role=option][aria-selected=true]{background:var(--accent-soft)}
+#sugg [role=option]:hover{background:var(--surface-2)}
+#sugg .n{font:12px var(--f-mono);color:var(--ink-3);white-space:nowrap}
+#sugg mark{background:none;color:var(--accent);font-weight:600}
 .seg{display:grid;grid-template-columns:1fr 1fr;padding:3px;border-radius:10px;background:var(--surface-2)}
 .seg button{all:unset;cursor:pointer;text-align:center;min-height:34px;line-height:1.25;padding:6px 4px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;border-radius:8px;font:500 13px var(--f-mono);color:var(--ink-2);transition:background .16s var(--ease),color .16s var(--ease)}
 .seg button[aria-pressed=true]{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
@@ -174,7 +182,7 @@ svg#graph:active{cursor:grabbing}
   .srch-row .sec-h{grid-column:1/-1}
   .ftoggle{display:inline-flex!important;height:42px}
   #left:not(.open)>div:not(.srch-row){display:none}
-  #left{gap:16px}
+  #left{gap:16px;overflow:visible;position:relative;z-index:4}  /* let the search suggestions overlay the graph */
   header{position:sticky;top:0;z-index:5;height:56px;padding:0 16px;gap:12px}
   .brand span{display:none}
   header{order:0}
@@ -207,7 +215,8 @@ svg#graph:active{cursor:grabbing}
     <label class="sec-h" for="q">搜尋</label>
     <div class="search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      <input type="search" id="q" placeholder="標題、作者或關鍵詞" autocomplete="off">
+      <input type="search" id="q" placeholder="標題、作者或關鍵詞" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="sugg">
+      <ul id="sugg" role="listbox" aria-label="搜尋建議" hidden></ul>
       <kbd aria-hidden="true">/</kbd>
     </div>
     <button type="button" class="btn ftoggle" id="ftoggle" aria-expanded="false" aria-controls="left">篩選與清單</button>
@@ -292,7 +301,67 @@ tagSel.onchange = () => { state.tag = tagSel.value; update(); };
 const qEl = document.getElementById('q');
 const ft = document.getElementById('ftoggle');
 ft.onclick = () => { const o = document.getElementById('left').classList.toggle('open'); ft.setAttribute('aria-expanded', o); };
-qEl.oninput = e => { state.q = e.target.value.trim().toLowerCase(); update(); };
+// search suggestions: keywords/tags (with paper counts), authors, paper titles
+const SG = (() => {
+  const terms = new Map(), authors = new Map();
+  DATA.forEach(d => {
+    new Set([...d.keywords, ...d.tags].map(t => t.toLowerCase())).forEach(k => { const e = terms.get(k) || { label: k, n: 0 }; e.n++; terms.set(k, e); });
+    d.tags.forEach(t => { const e = terms.get(t.toLowerCase()); if (e && t !== t.toLowerCase()) e.label = t; });  // show tag/abbreviation casing
+    d.authors.forEach(a => authors.set(a, (authors.get(a) || 0) + 1));
+  });
+  return { terms: [...terms.values()].sort((a, b) => b.n - a.n), authors: [...authors].map(([label, n]) => ({ label, n })).sort((a, b) => b.n - a.n) };
+})();
+const sgEl = document.getElementById('sugg');
+let sgItems = [], sgActive = -1;
+// rank: 0 = whole string starts with q, 1 = a word starts with q, 2 = contains q
+const rank = (s, q) => { s = s.toLowerCase(); const i = s.indexOf(q); return i < 0 ? -1 : i === 0 ? 0 : /[\s\-:(/]/.test(s[i - 1]) ? 1 : 2; };
+const hiText = (s, q) => { const i = s.toLowerCase().indexOf(q); return i < 0 ? esc(s) : esc(s.slice(0, i)) + '<mark>' + esc(s.slice(i, i + q.length)) + '</mark>' + esc(s.slice(i + q.length)); };
+// papers: title match first, then papers whose keyword/tag starts with q (so "ripo" finds the RIPO paper)
+const paperRank = (d, q) => { const r = rank(d.title, q); return r >= 0 ? r : [...d.keywords, ...d.tags].some(t => t.toLowerCase().startsWith(q)) ? 3 : -1; };
+const pick = (list, key, q, k) => list.map(x => [x, rank(key(x), q)]).filter(([, r]) => r >= 0).sort((a, b) => a[1] - b[1]).slice(0, k).map(([x]) => x);
+function renderSugg(){
+  const q = qEl.value.trim().toLowerCase();
+  const groups = q
+    ? [['關鍵詞與 tag', pick(SG.terms, t => t.label, q, 6).filter(t => t.label.toLowerCase() !== q).map(t => ({ kind: 'term', label: t.label, n: t.n }))],
+       ['作者', pick(SG.authors, a => a.label, q, 3).map(a => ({ kind: 'term', label: a.label, n: a.n }))],
+       ['論文', DATA.map(d => [d, paperRank(d, q)]).filter(([, r]) => r >= 0).sort((a, b) => a[1] - b[1] || b[0].degree - a[0].degree).slice(0, 5).map(([d]) => ({ kind: 'paper', label: d.title, id: d.id }))]]
+    : [['熱門關鍵詞', SG.terms.slice(0, 8).map(t => ({ kind: 'term', label: t.label, n: t.n }))]];
+  sgItems = []; sgActive = -1; let html = '';
+  groups.forEach(([h, items]) => {
+    if (!items.length) return;
+    html += `<li class="sg-h" role="presentation">${h}</li>`;
+    items.forEach(it => { const i = sgItems.push(it) - 1;
+      html += `<li role="option" id="sg-${i}" data-i="${i}" aria-selected="false"><span>${hiText(it.label, q)}</span><span class="n">${it.kind === 'paper' ? no(it.id) : it.n + ' 篇'}</span></li>`; });
+  });
+  sgEl.innerHTML = html;
+  toggleSugg(sgItems.length > 0);
+}
+function toggleSugg(open){ sgEl.hidden = !open; qEl.setAttribute('aria-expanded', open); if (!open) { sgActive = -1; qEl.removeAttribute('aria-activedescendant'); } }
+function moveSugg(step){
+  if (sgEl.hidden || !sgItems.length) return renderSugg();
+  sgEl.querySelector(`#sg-${sgActive}`)?.setAttribute('aria-selected', 'false');
+  const n = sgItems.length + 1;  // positions: -1 (back in the input) .. last option
+  sgActive = (sgActive + 1 + step + n) % n - 1;
+  if (sgActive < 0) { qEl.removeAttribute('aria-activedescendant'); return; }
+  const el = sgEl.querySelector(`#sg-${sgActive}`); el.setAttribute('aria-selected', 'true'); el.scrollIntoView({ block: 'nearest' });
+  qEl.setAttribute('aria-activedescendant', el.id);
+}
+function chooseSugg(i){
+  const it = sgItems[i]; toggleSugg(false);
+  if (it.kind === 'paper') { qEl.value = ''; state.q = ''; update(); select(it.id, true); return; }
+  qEl.value = it.label; state.q = it.label.toLowerCase(); update();
+}
+qEl.oninput = e => { state.q = e.target.value.trim().toLowerCase(); update(); state.q ? renderSugg() : toggleSugg(false); };  // empty box (incl. native Esc clear) closes; popular hints only on focus/click
+qEl.addEventListener('focus', renderSugg);
+qEl.addEventListener('click', () => { if (sgEl.hidden) renderSugg(); });
+qEl.addEventListener('blur', () => toggleSugg(false));
+qEl.addEventListener('keydown', e => {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); moveSugg(e.key === 'ArrowDown' ? 1 : -1); }
+  else if (e.key === 'Enter' && !sgEl.hidden && sgActive >= 0) { e.preventDefault(); chooseSugg(sgActive); }
+  else if (e.key === 'Escape' && !sgEl.hidden) { e.stopPropagation(); e.preventDefault(); toggleSugg(false); }
+});
+sgEl.addEventListener('mousedown', e => e.preventDefault());  // keep focus in the input so blur doesn't close before the click lands
+sgEl.addEventListener('click', e => { const o = e.target.closest('[role=option]'); if (o) chooseSugg(+o.dataset.i); });
 addEventListener('keydown', e => {
   if (e.key === '/' && document.activeElement !== qEl) { e.preventDefault(); qEl.focus(); }
   if (e.key === 'Escape' && state.sel) deselect();
