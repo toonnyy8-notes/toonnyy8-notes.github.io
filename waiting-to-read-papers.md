@@ -23,6 +23,7 @@
    - [Memory Decoder at Scale: A Pretrained, Parametric Long-Term Memory](https://arxiv.org/abs/2607.27919)
    - [Memory Caching: RNNs with Growing Memory](https://arxiv.org/abs/2602.24281)
    - [Model-Dowser: Data-Free Importance Probing to Mitigate Catastrophic Forgetting in Multimodal Large Language Models](https://arxiv.org/abs/2602.04509)（ICML 2026）
+   - [Language Models Can Rewrite Their Own Weights](https://arxiv.org/abs/2611.21885)
 
 2. 自蒸餾、強化學習與推理
    - [Less is More: Recursive Reasoning with Tiny Networks](https://arxiv.org/abs/2510.04871)
