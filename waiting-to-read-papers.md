@@ -122,6 +122,7 @@
    - [Reducing Doom Loops with Final Token Preference Optimization](https://www.liquid.ai/blog/antidoom)（Liquid AI）
    - [A Few Gaussians Is All You Need: SSOG-Attention That Steers Instead of Scores](https://pisoni.ai/posts/ssog/)
    - [Attention Sink Forges Native MoE in Attention Layers: Sink-Aware Training to Address Head Collapse](https://arxiv.org/abs/2602.01203)（ICML 2026；attention sink 讓 attention 層形成原生 MoE，head collapse 的成因，並以 head 負載平衡輔助損失訓練）
+   - [DeepCrossAttention: Supercharging Transformer Residual Connections](https://arxiv.org/abs/2502.06785)（ICML 2025；[Google Research 部落格](https://research.google/blog/supercharging-transformer-residual-connections/)；以跨層動態路由與 depth-wise cross-attention 取代殘差連接的等權相加）
 
 10. Agent、Context Engineering 與 LLM 應用
     - [A Systematic Survey of Prompt Engineering in Large Language Models: Techniques and Applications](https://arxiv.org/abs/2402.07927)
