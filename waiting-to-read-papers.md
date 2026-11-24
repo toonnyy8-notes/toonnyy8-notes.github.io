@@ -76,8 +76,8 @@
    - [Better Together: Leveraging Unpaired Multimodal Data for Stronger Unimodal Models](https://arxiv.org/abs/2510.08492)
    - [INTACT-JEPA](https://zju3dv.github.io/INTACT-JEPA/)
    - [SIGReg tutorial](https://rezabyt.github.io/blogposts/sigreg-tutorial.html)
-   - [bispectrum: Selective G-Bispectra Made Practical](https://arxiv.org/abs/2605.07270)（NeurIPS 2026；[專案頁](https://johmathe.github.io/bispectrum/)；選擇性 G-bispectrum 的對稱不變特徵 PyTorch 函式庫）
    - [SADL: On the Demand-Supply Geometry of Representation Collapse](https://arxiv.org/abs/2611.21596)（JEPA 的表徵崩塌；實驗含 LeWorldModel 與 INTACT；[X 討論串](https://x.com/DavidSunok47/status/2123394363124523226)）
+   - [bispectrum: Selective G-Bispectra Made Practical](https://arxiv.org/abs/2605.07270)（NeurIPS 2026；[專案頁](https://johmathe.github.io/bispectrum/)；選擇性 G-bispectrum 的對稱不變特徵 PyTorch 函式庫）
 
 7. 資料篩選、合成資料與資料效率
    - [Achieving 10,000x training data reduction with high-fidelity labels](https://research.google/blog/achieving-10000x-training-data-reduction-with-high-fidelity-labels/)（Google Research）
