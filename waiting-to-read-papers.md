@@ -123,6 +123,7 @@
    - [A Few Gaussians Is All You Need: SSOG-Attention That Steers Instead of Scores](https://pisoni.ai/posts/ssog/)
    - [Attention Sink Forges Native MoE in Attention Layers: Sink-Aware Training to Address Head Collapse](https://arxiv.org/abs/2602.01203)（ICML 2026；attention sink 讓 attention 層形成原生 MoE，head collapse 的成因，並以 head 負載平衡輔助損失訓練）
    - [DeepCrossAttention: Supercharging Transformer Residual Connections](https://arxiv.org/abs/2502.06785)（ICML 2025；[Google Research 部落格](https://research.google/blog/supercharging-transformer-residual-connections/)；以跨層動態路由與 depth-wise cross-attention 取代殘差連接的等權相加）
+   - [Unlocking the Power of Loops in Pretrained LLMs with Loop Residuals（LoopRes）](https://arxiv.org/abs/2611.31094)（NUS；[code](https://github.com/NUS-HPC-AI-Lab/LoopRes)；把預訓練 LLM 微調成 looped Transformer，以 Attention Residuals＋loop-aware key＋殘差窗口讓各 loop 直接讀取先前 loop 輸出）
 
 10. Agent、Context Engineering 與 LLM 應用
     - [A Systematic Survey of Prompt Engineering in Large Language Models: Techniques and Applications](https://arxiv.org/abs/2402.07927)
