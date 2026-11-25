@@ -60,6 +60,7 @@
 4. Diffusion Language Models（dLLM）
    - [DiffCoT: Diffusion-styled Chain-of-Thought Reasoning in LLMs](https://arxiv.org/abs/2601.03559)
    - [LLaDA2.0: Scaling Up Diffusion Language Models to 100B](https://arxiv.org/abs/2512.15745)
+   - [One Token Is Enough: Improving Diffusion Language Models with a Sink Token](https://arxiv.org/abs/2601.19657)（dLLM 的 moving sink 現象；加一個只看自己、全域可見的額外 sink token 穩定注意力）
 
 5. 可解釋性與學習理論
    - [Scaling Laws for Neural Language Models](https://arxiv.org/abs/2001.08361)
