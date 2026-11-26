@@ -72,6 +72,8 @@
    - [Proving and Improving the Platonic Representation Hypothesis with JEPAs](https://arxiv.org/abs/2610.39302)
    - [Interpretable Weight-Space Programming](https://www.alphaxiv.org/abs/2611.interpretable-weight-space-programming)
    - [What drives the emergence of symbolic mechanisms in large language models?](https://arxiv.org/abs/2611.13270)（Li & Webb，NeurIPS 2026；符號機制的湧現主要來自資料多樣性，而非架構歸納偏置）
+   - [Returning to the Neuron Basis for Interpretability, Part 1: Answering Three Objections](https://alignment.anthropic.com/2026/neuron-basis-theory/)（Anthropic；神經元輸出向量＋J-lens，回應多義性、跨層座標、事實分散三個反對理由）
+   - [Returning to the Neuron Basis for Interpretability, Part 2: Using Neurons For Safety Applications](https://alignment.anthropic.com/2026/neuron-basis-applications/)（Anthropic；零樣本偵測、steering、微調稽核、後門 trigger 搜尋、unlearning 稽核）
 
 6. JEPA 與表徵學習
    - [LLM-JEPA: Large Language Models Meet Joint Embedding Predictive Architectures](https://arxiv.org/abs/2509.14252)
