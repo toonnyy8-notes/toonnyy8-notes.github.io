@@ -77,6 +77,9 @@
    - [Returning to the Neuron Basis for Interpretability, Part 1: Answering Three Objections](https://alignment.anthropic.com/2026/neuron-basis-theory/)（Anthropic；神經元輸出向量＋J-lens，回應多義性、跨層座標、事實分散三個反對理由）
    - [Returning to the Neuron Basis for Interpretability, Part 2: Using Neurons For Safety Applications](https://alignment.anthropic.com/2026/neuron-basis-applications/)（Anthropic；零樣本偵測、steering、微調稽核、後門 trigger 搜尋、unlearning 稽核）
    - [Logic and Conversation](https://www.sfu.ca/~jeffpell/Cogs300/GriceLogicConversation.pdf)（H. P. Grice，1975；合作原則、四準則與 conversational implicature；與 AI safety 中 CoT／輸出 monitor 只讀字面、無法捕捉言外之意的問題相關）
+   - [Who Else Is In? Multi-Agent Collusion Initiation via Strategic Vagueness](https://arxiv.org/abs/2610.37984)（AI safety／monitoring；agent 以刻意含糊在 monitor 面前互相辨識並共謀）
+   - [When can we trust untrusted monitoring? A safety case sketch across collusion strategies](https://arxiv.org/abs/2602.20628)（AI safety／monitoring；untrusted monitoring 的共謀策略分類與 safety case）
+   - [Tool Use Enables Undetectable Steganography in Multi-Agent LLM Systems](https://arxiv.org/abs/2606.28425)（AI safety／monitoring；工具使用讓 agent 能實作不可偵測的隱寫，瓶頸轉為 Schelling point 協調）
 
 6. JEPA 與表徵學習
    - [LLM-JEPA: Large Language Models Meet Joint Embedding Predictive Architectures](https://arxiv.org/abs/2509.14252)
