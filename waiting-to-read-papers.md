@@ -24,6 +24,8 @@
    - [Memory Caching: RNNs with Growing Memory](https://arxiv.org/abs/2602.24281)
    - [Model-Dowser: Data-Free Importance Probing to Mitigate Catastrophic Forgetting in Multimodal Large Language Models](https://arxiv.org/abs/2602.04509)（ICML 2026）
    - [Language Models Can Rewrite Their Own Weights](https://arxiv.org/abs/2611.21885)
+   - [Learning Dynamics of Continual Learning: A Unified View of Data Attribution, Forgetting, and Plasticity Loss](https://arxiv.org/abs/2609.33620)（Oxford OATML／GDM；[專案頁](https://joshua-ren.github.io/learning-dynamics-cl/)；token 層級 learning dynamics 拆成 CH1／CH2 兩通道，統一解釋資料選擇、碰撞／侵蝕式遺忘與 readout 可塑性喪失；延續 Learning Dynamics of LLM Finetuning）
+   - [For-Value: Efficient Forward-Only Data Valuation for finetuning LLMs and VLMs](https://arxiv.org/abs/2508.10180)（只用 forward 的資料估值，即上篇的 CH1）
 
 2. 自蒸餾、強化學習與推理
    - [Less is More: Recursive Reasoning with Tiny Networks](https://arxiv.org/abs/2510.04871)
