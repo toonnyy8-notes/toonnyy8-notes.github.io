@@ -82,6 +82,7 @@
    - [Who Else Is In? Multi-Agent Collusion Initiation via Strategic Vagueness](https://arxiv.org/abs/2610.37984)（AI safety／monitoring；agent 以刻意含糊在 monitor 面前互相辨識並共謀）
    - [When can we trust untrusted monitoring? A safety case sketch across collusion strategies](https://arxiv.org/abs/2602.20628)（AI safety／monitoring；untrusted monitoring 的共謀策略分類與 safety case）
    - [Tool Use Enables Undetectable Steganography in Multi-Agent LLM Systems](https://arxiv.org/abs/2606.28425)（AI safety／monitoring；工具使用讓 agent 能實作不可偵測的隱寫，瓶頸轉為 Schelling point 協調）
+   - [Plato's Key](https://hazyresearch.stanford.edu/blog/2026-11-25-platos-key)（Hazy Research blog；用旋轉加縮放的 closed-form 映射在 LLM 間互換事實 key 的 hidden state，保留 self-swap 中位數 73%，作為 PRH 的功能性證據）
 
 6. JEPA 與表徵學習
    - [LLM-JEPA: Large Language Models Meet Joint Embedding Predictive Architectures](https://arxiv.org/abs/2509.14252)
