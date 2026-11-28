@@ -60,6 +60,7 @@
    - [Scalable Beckmann Maps Improve One-step Generation（SBM）](https://arxiv.org/abs/2611.28286)（[project](https://tullebulle.github.io/projects/sbm/)；為 Beckmann Transport Models 加上 CFG 與可擴展訓練配方，ImageNet 256 一步 FID 1.61）
    - [Efficient Image Synthesis with Sphere Latent Encoder](https://arxiv.org/abs/2605.15592)（NeurIPS 2026；固定 RAE 當 tokenizer，在超球面 latent 內做少步去噪，ImageNet 256 6×2 NFE FID 2.11；[project](https://sphere-latent-encoder.github.io/)、[code](https://github.com/ItsThanhTung/SphereLatent)）
    - [Guidance as Variance Matching](https://arxiv.org/abs/2611.34801)（Sitzmann、Jaakkola 等；guidance 讓 posterior mean 預測變差卻補回變異數，用變異數匹配的 closed-form 規則挑 scale，還原 11 個模型手調的值）
+   - [Generation as Reverse Encoding（RevFlow）](https://arxiv.org/abs/2611.34782)（以凍結 encoder 的中間表徵為逐級生成目標：先生成深層語意、再生成淺層表徵、最後解碼成像素；ImageNet 256 訓練 5 epoch 達 FID 1.74（1.55B）；[code](https://github.com/ChengShiest/RevFlow)）
 
 4. Diffusion Language Models（dLLM）
    - [DiffCoT: Diffusion-styled Chain-of-Thought Reasoning in LLMs](https://arxiv.org/abs/2601.03559)
