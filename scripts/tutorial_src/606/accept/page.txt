@@ -1,0 +1,681 @@
+生成即反向編碼 RevFlow
+
+跳到內容
+
+ No. 606
+ 生成即反向編碼：RevFlow
+
+00 摘要01 編碼路徑02 Flow matching03 反向路徑04a 平均與殘差04b Dirac 目標05 層統計06 HyC-DiT07 權重共享08 原生匹配09 實驗結果10 實作11 研究脈絡12 結論與延伸
+
+00摘要
+01編碼路徑
+02Flow matching
+03反向路徑
+04a平均與殘差
+04bDirac 目標
+05層統計
+06HyC-DiT
+07權重共享
+08原生匹配
+09實驗結果
+10實作
+11研究脈絡
+12結論與延伸
+
+ No. 606 · 互動教學 · arXiv 2611.34782 · 2026
+
+ 生成即反向編碼：沿凍結編碼器由深到淺生成影像
+
+ RevFlow 先生成編碼器的深層表徵，再生成淺層表徵，最後用小解碼器回到像素。
+
+ Cheng Shi、Sibei Yang、Hanzhong Guo、Yipeng Qin、Pietro Lio、Yizhou Yu（2026）〈Generation as Reverse Encoding〉
+
+ 編碼 →
+
+ 像素影像
+
+ 第 7 層淺層：外觀與空間細節
+
+ 第 23 層深層：語意
+
+ 類別例如「熊貓」
+
+ ← 解碼← Stage 2← Stage 1
+
+ 01 · 反向走編碼路徑影像生成被寫成編碼的反向：先生成凍結編碼器第 23 層的表徵，再生成第 7 層，最後解碼成像素。
+
+ 02 · 一個共用的網路兩個階段共用一個 Transformer；網路直接預測去除噪聲後的乾淨表徵（而不是預測速度），讓共用權重不降低品質。
+
+ 03 · 少量訓練RevFlow-XL（690M 參數）在 ImageNet 256 上訓練 5 個 epoch 達到 FID 1.96（Fréchet Inception Distance，越低表示生成影像的分佈越接近真實影像）；由第 7 層解碼的 89M 解碼器重建 30.25 dB，同一解碼器由第 23 層解碼只有 19.87 dB。
+
+ 閱讀原文 arXiv ↗
+ 在關聯圖中查看
+ 研究筆記總覽
+
+ 01 · 編碼路徑
+
+ 預訓練編碼器把影像逐層變成抽象表徵
+
+ 本頁用 x $x$ 表示一張影像、y $y$ 表示它的類別標籤。視覺編碼器由許多層 Transformer block 組成；第 ℓ $\ell$ 層的輸出記為 hℓ=Eℓ(x) $h_\ell=E_\ell(x)$ ​=Eℓ​(x)，其中 Eℓ $E_\ell$ ​ 是「從輸入到第 ℓ $\ell$ 層」的運算，層編號 ℓ $\ell$ 從 0 起算。本論文的「編碼器」指 DINO、CLIP 這類為視覺理解而預訓練、訓練生成模型時保持凍結（不更新權重）的編碼器，不是 VAE 的編碼器（Sec. 1 註 1）。主模型使用 DINOv3-L，共 24 層。
+
+ 淺層的表徵 hℓ $h_\ell$ ​（ℓ $\ell$ 小）保留較多外觀與空間細節，深層（ℓ $\ell$ 大）強調語意：在論文的 ImageNet 檢索例子中，淺層特徵找到顏色與紋理相近的影像，深層特徵較常找到同類別的影像（Sec. 2）。作者把影像沿著各層變成越來越抽象的表徵這個過程稱為語意編碼路徑（semantic encoding path）。
+
+ 生成比重建難。重建時，每個表徵都配有產生它的那一張影像；抽象化之後，不同的影像會有相近的表徵，所以「由表徵回到影像」是欠定（underdetermined）的問題：一個表徵對應許多張可能的影像（Sec. 1）。
+
+ RAE [66] 直接在凍結編碼器最後一層的表徵上做生成，再用獨立訓練的解碼器回到像素。表徵越抽象，解碼器要補的細節越多：RAE 的解碼器約為傳統 latent diffusion 解碼器的 10 倍大。Fig. 2 中，RAE 以 DINOv2-B 最後一層 latent 與 415M 參數的解碼器重建，PSNR 只有 18.09 dB，並把一頂灰色聖誕帽重建成紅色；SD-VAE 的 49M 解碼器為 23.40 dB。作者的說法是：抽象化把難度轉移到解碼器，而不是消除它。
+
+ 作者因此提問：既然編碼器已經提供一條由像素到語意的路徑，為什麼還要另外學一條由表徵回到像素的路徑？本論文的答案是把這條路徑本身倒過來，當成生成的骨架。
+
+ 延伸閱讀：生成目標空間：像素空間與重建式 latent、以預訓練表示輔助生成：VA-VAE、REPA、REPA-E、RAE 與解碼器負擔
+
+ 02 · Flow matching
+
+ Flow matching 用乾淨目標預測訓練
+
+ 符號表（S03 起使用）
+
+ 本頁符號
+ 符號意義
+
+ x $x$ 、y $y$ 影像、類別標籤
+
+ Eℓ $E_\ell$ ​、hℓ=Eℓ(x) $h_\ell=E_\ell(x)$ ​=Eℓ​(x)凍結編碼器第 ℓ $\ell$ 層的輸出（層編號從 0 起算）
+
+ L $L$ 、M $M$ 深層、淺層的層編號；主模型 L=23 $L=23$ 、M=7 $M=7$ （DINOv3-L），M<L $M<L$ 
+
+ zL=hL $z^L=h_L$ =hL​、zM=Ptarget(hM) $z^M=P_{\text{target}}(h_M)$ =Ptarget​(hM​)Stage 1、Stage 2 的生成目標；Ptarget $P_{\text{target}}$ ​ 把 1024 通道壓到 128 通道並保留 16×16 空間格
+
+ t∈[0,1] $t\in[0,1]$ 、ϵ $\epsilon$ 時間（t=0 $t=0$ 乾淨、t=1 $t=1$ 純噪聲）、標準高斯噪聲
+
+ ztℓ $z^\ell_t$ ℓ​、z^ℓ $\hat z^\ell$ ℓ加噪的目標（Eq. 2）、網路預測的乾淨目標（Eq. 3）
+
+ fθ $f_\theta$ ​、cℓ $c^\ell$ 兩階段共用的網路、第 ℓ $\ell$ 階段的條件（cL=y $c^L=y$ =y、cM=z~L $c^M=\tilde z^L$ =z~L）
+
+ z~L $\tilde z^L$ L、σ $\sigma$ 加了條件噪聲的深層條件（Eq. 4）、條件噪聲強度
+
+ NFE取樣時的網路評估次數（不含解碼器）
+
+ RevFlow 的每個階段都是一個 flow matching 生成模型。對第 ℓ $\ell$ 階段的目標 zℓ $z^\ell$ ，訓練時抽一個時間 t $t$ 與一份標準高斯噪聲 ϵℓ∼N(0,I) $\epsilon^\ell\sim\mathcal N(0,I)$ ∼N(0,I)，把兩者線性混合（Sec. 3.2）：
+
+ ztℓ=(1−t) zℓ+t ϵℓ $z^\ell_t=(1-t)\,z^\ell+t\,\epsilon^\ell$ ℓ​=(1−t)zℓ+tϵℓ
+Eq. 2
+
+ 時間方向：本論文 t=0 $t=0$ 是乾淨目標，t=1 $t=1$ 是純噪聲
+
+ 由 Eq. 2，t=0 $t=0$ 時 zt=z $z_t=z$ ​=z，t=1 $t=1$ 時 zt=ϵ $z_t=\epsilon$ ​=ϵ。站內另一篇教學〈擴散模型的預測目標 k〉採相反的慣例（t=1 $t=1$ 為資料），閱讀時要先確認方向。
+
+ 網路 fθ $f_\theta$ ​ 看到加噪的目標、時間與條件，直接輸出乾淨目標的預測，稱為乾淨目標預測（clean-target prediction，或 x-prediction）：
+
+ z^ℓ=fθ(ztℓ, t, cℓ),cL=y,cM=z~L $\hat z^\ell=f_\theta(z^\ell_t,\,t,\,c^\ell),\qquad c^L=y,\quad c^M=\tilde z^L$ ℓ=fθ​(ztℓ​,t,cℓ),cL=y,cM=z~L
+Eq. 3
+
+ 訓練損失是 LFMℓ=E ∥t−1(z^ℓ−zℓ)∥22 $\mathcal L^\ell_{FM}=\mathbb E\,\|t^{-1}(\hat z^\ell-z^\ell)\|_2^2$ ℓ​=E∥t−1(z^ℓ−zℓ)∥22​（Sec. 3.3）。本頁推導 這個損失等於速度空間的均方誤差：Eq. 2 的路徑速度是 v=dzt/dt=ϵ−z $v=dz_t/dt=\epsilon-z$ ​/dt=ϵ−z；由網路輸出換算的速度是 v^=(zt−z^)/t $\hat v=(z_t-\hat z)/t$ =(zt​−z^)/t，相減得 v^−v=(z−z^)/t $\hat v-v=(z-\hat z)/t$ −v=(z−z^)/t，所以 LFM=E∥v^−v∥2 $\mathcal L_{FM}=\mathbb E\|\hat v-v\|^2$ ​=E∥v^−v∥2。網路輸出乾淨目標，損失卻在速度空間計算，權重是 t−2 $t^{-2}$ 。
+
+ 生成時從 t=1 $t=1$ 的純噪聲出發，每一步用網路的預測換算 v^ $\hat v$ ，以 Euler 步 zt−Δ=zt−Δ v^ $z_{t-\Delta}=z_t-\Delta\,\hat v$ ​=zt​−Δv^ 往 t=0 $t=0$ 前進。ImageNet 的多步生成每個階段用 25 個 Euler 步（Sec. 3.3）。兩個階段一起訓練：L=wcLFML+LFMM $\mathcal L=w_c\mathcal L^L_{FM}+\mathcal L^M_{FM}$ ​LFML​+LFMM​（Eq. 6），wc $w_c$ ​ 平衡兩階段，論文未給數值。
+
+ 延伸閱讀：Flow matching 與 DiT／SiT：RevFlow 的訓練目標與骨幹、Flow matching 的速度目標
+
+ 03 · 反向路徑
+
+ 反向編碼路徑是 y → zL → zM → x
+
+ RevFlow 依下列順序生成一張影像（Sec. 3.1）：
+
+ y  →  zL  →  zM  →  x $y\;\to\;z^L\;\to\;z^M\;\to\;x$ →zM→x
+Eq. 1
+
+ Stage 1 由類別 y $y$ 生成深層目標 zL $z^L$ ，Stage 2 以 zL $z^L$ 為條件生成淺層目標 zM $z^M$ ，最後由凍結的解碼器把 zM $z^M$ 解成像素。每張訓練影像由編碼器與 Ptarget $P_{\text{target}}$ ​ 提供一對配對目標 (zL,zM) $(z^L,z^M)$ ,zM)。
+
+ 選哪幾層。一個 ViT 編碼器有很多層，但走過每一層會大幅增加取樣成本，並累積上游的平均導引漂移（S05 說明），所以作者只選少數代表層。Fig. 3 把同一張影像在兩層之間的 CLS 表徵 cosine 相似度畫成矩陣：相鄰的層形成高相似的區段（regime），區段之間有明顯的轉折。作者檢查的編碼器都以「較早」與「較晚」兩個區段為主，因此取兩個生成階段（K=2 $K=2$ ），每個區段取一個代表。
+
+ 主模型的兩層。對 DINOv3-L，淺層 hM $h_M$ ​ 取第 7 層（早期區段的末端），深層 hL $h_L$ ​ 取第 23 層（晚期區段的末端，也就是最後一個 Transformer block 的輸出，取在編碼器最終 normalization 之前）；層編號從 0 起算。深層目標直接用 zL=h23 $z^L=h_{23}$ =h23​；淺層目標 zM=Ptarget(h7) $z^M=P_{\text{target}}(h_7)$ =Ptarget​(h7​)，在 16×16 的空間格上把通道數由 1024 壓到 128。
+
+ 解碼器。一個 decompressor 把通道數還原，再由 12 個 block 的 Transformer 解碼器把格點映射到像素，共 89M 參數。依 RAE 的做法，Ptarget $P_{\text{target}}$ ​ 與解碼器在編碼器凍結下先一起為重建訓練，之後在生成訓練時固定不動。
+
+ 加更多階段沒有幫助：在晚期區段內的第 16 層加一個第三階段，FID 由 1.96 變成 2.51（Table 4a）。
+
+ 凍結編碼器 DINOv3-L（24 層，0–23）
+
+ 第 7 層 → Ptarget $P_{\text{target}}$ ​：16×16×1024 → 16×16×128 = zM $z^M$ 第 23 層（最終 norm 前）= zL $z^L$ 
+
+ 類別 y $y$ 
+
+ 共用骨幹Stage 1fθ(⋅,t,y) $f_\theta(\cdot,t,y)$ ​(⋅,t,y) → zL $z^L$ 
+
+ 共用骨幹Stage 2fθ(⋅,t,z~L) $f_\theta(\cdot,t,\tilde z^L)$ ​(⋅,t,z~L) → zM $z^M$ 
+
+ 解碼器 89MzM $z^M$ → 像素 x $x$ 
+
+ RevFlow 的路徑。上：編碼器提供兩層配對目標。下：生成依序經過兩個共用骨幹的階段與一個凍結解碼器（Fig. 4a）。
+
+ 04a · 平均與殘差
+
+ 最佳預測器等於條件平均加上殘差的後驗平均
+
+ 為什麼先生成深層表徵比較好？論文在 App. A 用一個命題回答。先定義會用到的詞：
+
+ 條件平均 E[a∣u] $\mathbb E[a\mid u]$ ：已知條件 u $u$ 時，隨機量 a $a$ 的平均值。
+
+ 條件共變異數 Cov(r∣⋅)=E[rr⊤∣⋅]−E[r∣⋅] E[r∣⋅]⊤ $\mathrm{Cov}(r\mid\cdot)=\mathbb E[rr^\top\mid\cdot]-\mathbb E[r\mid\cdot]\,\mathbb E[r\mid\cdot]^\top$ ∣⋅]−E[r∣⋅]E[r∣⋅]⊤：已知條件後，r $r$ 還剩下多少不確定性。
+
+ score st=∇log⁡pt $s_t=\nabla\log p_t$ ​=∇logpt​：加噪資料的對數機率密度對輸入的梯度。
+
+ Jacobian ∇ata∗ $\nabla_{a_t}a^*$ ​​a∗：輸出對輸入的偏導數矩陣，(∇ata∗)ij=∂ai∗/∂at,j $(\nabla_{a_t}a^*)_{ij}=\partial a^*_i/\partial a_{t,j}$ ​​a∗)ij​=∂ai∗​/∂at,j​；它的最大值（operator norm）是輸入的小擾動被放大的最大倍數。
+
+ Dirac 點：機率全部集中在一點的分佈。訓練資料是有限張影像，所以乾淨目標的分佈由一個個 Dirac 點組成。
+
+ Def. 1。令某一階段的乾淨目標為 a∈Rd $a\in\mathbb R^d$ 、條件為 u $u$ 。條件平均 μ(u)=E[a∣u] $\mu(u)=\mathbb E[a\mid u]$ ，殘差 r=a−μ(u) $r=a-\mu(u)$ （零平均），所以 a=μ(u)+r $a=\mu(u)+r$ 。定義 V(a)=E∥a−Ea∥2 $V(a)=\mathbb E\|a-\mathbb Ea\|^2$ 與 V(a∣u)=E∥a−E[a∣u]∥2=E∥r∥2 $V(a\mid u)=\mathbb E\|a-\mathbb E[a\mid u]\|^2=\mathbb E\|r\|^2$ =E∥r∥2。加噪 at=(1−t)a+tϵ $a_t=(1-t)a+t\epsilon$ ​=(1−t)a+tϵ 減去 (1−t)μ(u) $(1-t)\mu(u)$ ，得到殘差的插值 rt=(1−t)r+tϵ $r_t=(1-t)r+t\epsilon$ ​=(1−t)r+tϵ。假設 E∥a∥2<∞ $\mathbb E\|a\|^2<\infty$ <∞、ϵ∼N(0,Id) $\epsilon\sim\mathcal N(0,I_d)$ ​) 與 (a,u) $(a,u)$ 獨立、t∈(0,1) $t\in(0,1)$ 。
+
+ 對任一個固定的預測器 g $g$ ，V(a∣u)≤(1−R2)V(a) $V(a\mid u)\le(1-R^2)V(a)$ )V(a)，其中 R2=1−E∥a−g(u)∥2/V(a) $R^2=1-\mathbb E\|a-g(u)\|^2/V(a)$ =1−E∥a−g(u)∥2/V(a) 是 g $g$ 解釋的變異比例。所以量到線性預測的 R2 $R^2$ ，就得到 V(a∣u) $V(a\mid u)$ 的上界；非線性預測器只會讓界更緊。
+
+ Prop. 1。對每個 t∈(0,1) $t\in(0,1)$ ，最佳的乾淨目標預測器 a∗(at,t,u)=E[a∣at,u] $a^*(a_t,t,u)=\mathbb E[a\mid a_t,u]$ (at​,t,u)=E[a∣at​,u] 滿足
+
+ a∗=μ(u)+E[r∣at,u]=μ(u)+rt+t2st(at∣u)1−t $a^*=\mu(u)+\mathbb E[r\mid a_t,u]=\mu(u)+\frac{r_t+t^2s_t(a_t\mid u)}{1-t}$ =μ(u)+E[r∣at​,u]=μ(u)+1−trt​+t2st​(at​∣u)​
+Eq. 9
+
+ ∇ata∗=1−tt2 Cov(r∣at,u),E tr ∇ata∗=1−tt2 V(a∣at,u) $\nabla_{a_t}a^*=\frac{1-t}{t^2}\,\mathrm{Cov}(r\mid a_t,u),\qquad \mathbb E\,\mathrm{tr}\,\nabla_{a_t}a^*=\frac{1-t}{t^2}\,V(a\mid a_t,u)$ ​​a∗=t21−t​Cov(r∣at​,u),Etr∇at​​a∗=t21−t​V(a∣at​,u)
+Eq. 10
+
+ Eq. 9 說：最佳預測器等於條件平均 μ(u) $\mu(u)$ 加上殘差的後驗平均 E[r∣at,u] $\mathbb E[r\mid a_t,u]$ ​,u]。作者把 μ(u) $\mu(u)$ 這部分稱為平均導引（mean guidance）：它只依賴條件，不需要從噪聲中推斷。Eq. 10 說：預測器的 Jacobian 等於 1−tt2 $\frac{1-t}{t^2}$ 1−t​ 乘上殘差的後驗共變異數，期望跡等於 1−tt2 $\frac{1-t}{t^2}$ 1−t​ 乘上剩餘變異 V(a∣at,u)=E∥a−a∗∥2 $V(a\mid a_t,u)=\mathbb E\|a-a^*\|^2$ ​,u)=E∥a−a∗∥2。因此，殘差在加噪後還剩多少不確定性，直接決定預測器對輸入有多敏感。
+
+ 證明概要（App. A）
+
+ 代入 a=μ(u)+r $a=\mu(u)+r$ ，因 E[μ(u)∣at,u]=μ(u) $\mathbb E[\mu(u)\mid a_t,u]=\mu(u)$ ​,u]=μ(u)，線性得 Eq. 9 第一式。對 rt=(1−t)r+tϵ $r_t=(1-t)r+t\epsilon$ ​=(1−t)r+tϵ 取條件期望，寫 ϵ∗=E[ϵ∣at,u] $\epsilon^*=\mathbb E[\epsilon\mid a_t,u]$ =E[ϵ∣at​,u]，得 E[r∣at,u]=(rt−tϵ∗)/(1−t) $\mathbb E[r\mid a_t,u]=(r_t-t\epsilon^*)/(1-t)$ ​,u]=(rt​−tϵ∗)/(1−t)；score–noise 恆等式 st=−ϵ∗/t $s_t=-\epsilon^*/t$ ​=−ϵ∗/t 給 −tϵ∗=t2st $-t\epsilon^*=t^2s_t$ =t2st​，得第二式。Eq. 10：用 Bayes 公式把 E[r∣at,u] $\mathbb E[r\mid a_t,u]$ ​,u] 寫成兩個積分的比，對 at $a_t$ ​ 微分；商法則中兩個 −1t2E[r∣⋅]rt⊤ $-\tfrac1{t^2}\mathbb E[r\mid\cdot]r_t^\top$ 1​E[r∣⋅]rt⊤​ 項相消，剩下 1−tt2Cov(r∣at,u) $\frac{1-t}{t^2}\mathrm{Cov}(r\mid a_t,u)$ 1−t​Cov(r∣at​,u)；取跡與期望得第二式。
+
+ 04b · Dirac 目標
+
+ Dirac 目標讓最大 Jacobian 隨 t⁻² 增加
+
+ 作者用 Prop. 1 比較兩種情形（App. A）。
+
+ 情形 1：直接由類別生成淺層特徵（y→hM $y\to h_M$ ​）。條件平均幾乎沒有資訊，殘差變異 V(a∣y) $V(a\mid y)$ 很大，而且乾淨目標是尖銳的 Dirac 點。t $t$ 大時各個點的加噪分佈互相重疊，E[r∣at,y]≈0 $\mathbb E[r\mid a_t,y]\approx0$ ​,y]≈0，細節被平均掉。t→0 $t\to0$ 時，在兩個相鄰 Dirac 點的分界處，Cov $\mathrm{Cov}$ 不隨 t $t$ 縮小，論文寫成維持 Θ(V(a∣y)) $\Theta(V(a\mid y))$ ，於是 ∥∇a∗∥op∝1−tt2V(a∣y)→∞ $\|\nabla a^*\|_{op}\propto\frac{1-t}{t^2}V(a\mid y)\to\infty$ ∥op​∝t21−t​V(a∣y)→∞。論文稱之為 stiff Dirac jumps：最大 Jacobian 隨 t−2 $t^{-2}$ 增加，預測在 Dirac 點之間急遽跳動，而不是平滑地修正。
+
+ 本頁推導 更精確地說，最大 Jacobian 由Dirac 點的間距決定。K $K$ 個等距、間距 Δ $\Delta$ 的點，相鄰兩點中點處 Cov=Δ2/4 $\mathrm{Cov}=\Delta^2/4$ /4，所以最大 Jacobian ≈1−tt2⋅Δ24→∞ $\approx\frac{1-t}{t^2}\cdot\frac{\Delta^2}{4}\to\infty$ 1−t​⋅4Δ2​→∞。點數固定時 Δ2∝V(a∣u) $\Delta^2\propto V(a\mid u)$ ∝V(a∣u)，這就是論文的 Θ(V) $\Theta(V)$ ；同樣的變異、點數不同時差很多（下方元件：v=0.958 $v=0.958$ 、t=0.05 $t=0.05$ 時 K=4,8,16 $K=4,8,16$ 為 72.8、17.3、4.28）。論文的 Θ(V(a∣y)) $\Theta(V(a\mid y))$ 是點彼此分離時的漸近敘述。
+
+ 本頁推導 Eq. 10 第二行的期望跡在 Dirac 目標、t→0 $t\to0$ 時反而趨近 0：後驗幾乎處處確定，只在分界附近不確定。在 Dirac 點之間的大部分區域，預測幾乎不隨輸入改變；在兩個點的分界處，預測從一個點跳到另一個點。這比論文寫的更強；論文關於 stiff Dirac jumps 的論證依靠的是最大值，不是 Eq. 10 第二行。
+
+ 情形 2：以深層特徵為條件（hL→hM $h_L\to h_M$ ​→hM​）。條件平均 μ(hL) $\mu(h_L)$ ​) 提供了大部分空間結構，殘差窄。論文假設此時殘差是局部擾動 σr2Id $\sigma_r^2I_d$ 2​Id​（這是建模假設，不是 Prop. 1 證出的結果，也不是對 h23→h7 $h_{23}\to h_7$ ​→h7​ 量到的分佈形狀）。在這個假設下 Cov(r∣at,u)=O(t2) $\mathrm{Cov}(r\mid a_t,u)=O(t^2)$ ​,u)=O(t2)，抵消 t−2 $t^{-2}$ ，論文寫 ∥∇a∗∥op<1 $\|\nabla a^*\|_{op}<1$ ∥op​<1，映射在 μ(u) $\mu(u)$ 附近平滑。本頁推導 一維高斯殘差 r∼N(0,v) $r\sim\mathcal N(0,v)$ 的閉式為 ∇a∗=(1−t)v(1−t)2v+t2 $\nabla a^*=\frac{(1-t)v}{(1-t)^2v+t^2}$ =(1−t)2v+t2(1−t)v​，與輸入無關，t→0 $t\to0$ 時趨近 1；本頁計算它在 t∈[0.01,0.99] $t\in[0.01,0.99]$ 的最大值為 1.20（v=0.958 $v=0.958$ ）與 1.10（v=0.426 $v=0.426$ ）：論文寫 <1，嚴格說是有界、約為 1。
+
+ 總結：直接由類別生成淺層特徵時，乾淨目標是 Dirac 點，最大 Jacobian 隨 t−2 $t^{-2}$ 發散；以深層特徵為條件時，論文假設殘差是局部擾動，Jacobian 有界。下面的元件可以比較兩種情形。
+
+ C1Prop. 1：最佳預測器的最大 Jacobian
+
+ 選一個設定，再把 t 往 0 拖：Dirac 目標的預測變成「大部分平坦、分界處陡升」，最大 Jacobian 急遽增加；局部擾動的預測維持直線。
+
+ 直接 y → h₇：Dirac，v = 0.958
+ h₂₃ → h₇：論文假設的局部擾動，v = 0.426
+ h₂₃ → h₇ 若仍是 Dirac：v = 0.426
+
+ 0.958 是類別平均預測 h7 $h_7$ ​ 剩下的變異比例（類別平均是由 y $y$ 預測的最佳值，所以是實際值）；0.426 是由 h23 $h_{23}$ ​ 線性預測 h7 $h_7$ ​ 剩下的比例，只是上界。兩者都在 1024 維的 h7 $h_7$ ​ 上量，不是 128 維的 zM $z^M$ （Fig. 7b）。把它們當成一維殘差變異是本頁的玩具對應；局部擾動是論文的建模假設，這個選項不是「h23→h7 $h_{23}\to h_7$ ​→h7​ 的殘差真的不是 Dirac」的證據。
+
+ t 時的最佳預測 E[r | rt]
+
+ Jacobian 對 t（對數座標）計算中
+
+ 殘差模型Dirac 點局部高斯
+
+ 點數 K4816
+
+ 殘差變異 v0.958
+
+ 時間 t0.10
+
+ 最大 Jacobian期望跡局部擾動（假設），同 v左圖：rt/(1−t)
+
+ t = 0.10　最大 Jacobian = 4.106　期望跡 = 0.5897
+V(a|a_t,u)/V(a|u) = 0.0068
+閉式近似 (1−t)/t²·Δ²/4 = 4.106（Δ = 0.4272）
+
+ 讀數由本頁依 Eq. 9–10 即時計算。局部擾動是論文的建模假設；高斯閉式、最大與期望之分為本頁推導。玩具設定：一維、μ(u) = 0；Dirac 模型為 K 個等距點，零平均、變異數 v（真實資料每類有上千個點）。
+
+ 已更新 Jacobian 曲線
+
+ 元件中的三點觀察：「直接 y → h₇」把 t $t$ 由 0.5 降到 0.02 時，最大 Jacobian 由 1.307 升到 111.8，期望跡降到 0；局部擾動在任何 t $t$ 都不超過 1.1；Dirac 且 v=0.426 $v=0.426$ 仍會發散，t→0 $t\to0$ 時最大 Jacobian 約為 v=0.958 $v=0.958$ 的 0.445 倍（=0.426/0.958 $=0.426/0.958$ ，t=0.10 $t=0.10$ 時為 0.45），這是兩個界的比值，不是實測的比值。
+
+ 05 · 層統計
+
+ DINOv3-L 的層統計支持先生成深層
+
+ S04 的論證需要兩個可以量測的性質。作者對 DINOv3-L 的全部 24 層、ImageNet 驗證集 50K 張影像（256×256）量測，每張取 64 個 patch token；對每一對層，在同一個空間位置擬合一個線性映射並回報 R2 $R^2$ 。由類別預測時，最佳預測器是各類別的平均（App. A.1）。
+
+ (E1) 強的跨層平均導引。取 a=h7 $a=h_7$ ​、c=h23 $c=h_{23}$ ​：由 h23 $h_{23}$ ​ 線性預測 h7 $h_7$ ​ 的 R2 $R^2$ 為 57.4%，類別只解釋 4.2%（Fig. 7b）。因此 V(h7∣h23)≤0.426 V(h7) $V(h_7\mid h_{23})\le0.426\,V(h_7)$ ​∣h23​)≤0.426V(h7​)，而 V(h7∣y)=0.958 V(h7) $V(h_7\mid y)=0.958\,V(h_7)$ ​∣y)=0.958V(h7​)。Stage 2 要生成的變異不到直接由類別生成的一半。R2 $R^2$ 從 c=h8 $c=h_8$ ​ 的 96.2% 單調降到 h23 $h_{23}$ ​ 的 57.4%；每個 block 損失的變異由第一個 block 的 0.6% 增加到最後幾個的 15–22%（Fig. 7a）。兩層相隔越遠，(E1) 越弱。
+
+ (E2) 低變異、依類別組織的深層目標。類別解釋 h23 $h_{23}$ ​ token 變異的 18.6%，只解釋 h7 $h_7$ ​ 的 4.2%；對 mean-pooled 特徵，類別解釋的變異為 44.4% 對 23.6%；線性探針（LDA，每類 40 張訓練、10 張測試）的準確率為 77.7% 對 23.2%（Fig. 7c）。所以先預測深層時，相對殘差變異較小；而且類別大致可以由 h23 $h_{23}$ ​ 還原，V(a∣c,y)≈V(a∣c) $V(a\mid c,y)\approx V(a\mid c)$ ，Stage 2 只以 c $c$ 為條件即可。
+
+ DINOv3-L 的層統計（Fig. 7b、7c）。實心為第一個數，空心為第二個數。
+ h7 $h_7$ ​ 的變異被解釋的比例
+
+ 由 h23 $h_{23}$ ​57.4%
+
+ 由類別4.2%
+
+ 類別解釋的 token 變異
+
+ h23 $h_{23}$ ​18.6%
+
+ h7 $h_7$ ​4.2%
+
+ 類別解釋的 mean-pooled 變異
+
+ h23 $h_{23}$ ​44.4%
+
+ h7 $h_7$ ​23.6%
+
+ 線性探針準確率
+
+ h23 $h_{23}$ ​77.7%
+
+ h7 $h_7$ ​23.2%
+
+ 量測與消融一致：去掉深層、直接由類別生成同一個淺層目標，單一階段要承擔全部 V(a∣y) $V(a\mid y)$ （R2=4.2% $R^2=4.2\%$ =4.2%），FID 由 1.96 變成 15.94，目標與解碼器都沒變（Table 4a）。
+
+ 為什麼最後一層要淺。像素對表徵的剩餘變異 V(x∣hℓ) $V(x\mid h_\ell)$ ​) 隨深度增加，而且是任何確定性解碼器 D $D$ 的下界：E∥x−D(hℓ)∥2≥V(x∣hℓ) $\mathbb E\|x-D(h_\ell)\|^2\ge V(x\mid h_\ell)$ ​)∥2≥V(x∣hℓ​)。從深層解碼時，解碼器必須用學到的先驗補細節，結果可能被平均，或偏向模型偏好的樣式。但淺層越淺，與深層的距離越遠，(E1) 越弱。所以淺層的位置是重建與生成的權衡：在 DINOv3-S（深層固定 L12、解碼器 87.12M）上，把淺層由 L1 移到 L3、L5，FID 由 4.36 改善到 3.14、2.69，重建 PSNR 由 30.19 降到 28.32、25.48 dB（Sec. 4.3）。
+
+ 為什麼不加更多層。每多一個階段，上游預測 c^ $\hat c$ 不完美，就多一份平均導引漂移 E∥μ(c)−μ(c^)∥2 $\mathbb E\|\mu(c)-\mu(\hat c)\|^2$ )∥2；作者以條件噪聲（S06）緩和它，並指出在同一個相似區段內加層沒有好處。
+
+ 延伸閱讀：特徵反演與多階段、表示條件式生成
+
+ 06 · HyC-DiT
+
+ HyC-DiT 以同一骨幹處理全域與空間條件
+
+ 兩個階段由同一個標準 DiT 骨幹實作，稱為 HyC-DiT（Sec. 3.2，Fig. 4b）。兩階段共用 attention、FFN 與 AdaLN 調變 MLP；階段專屬的是目標的輸入／輸出投影（兩個目標的維度不同）與條件映射（類別與空間表徵各一）。Stage 1 的條件是一個全域的類別嵌入；Stage 2 的條件是與淺層目標空間對齊的一格格 token。若把 Stage 2 的條件壓成單一向量，就會失去深層 token 與淺層 token 的對應。
+
+ DiT 的每個 block 用 adaLN-Zero 調變：一個條件向量經投影得到 shift β $\beta$ 、scale γ $\gamma$ 與殘差 gate α $\alpha$ ，作用在 normalization 之後。兩個階段的條件向量為
+
+ mL=T(t)+Ey(y)+Es(1),miM=Pcond(ciM)+T(t+1)+Eσ(σ)+Es(2) $m^L=T(t)+E_y(y)+E_s(1),\qquad m^M_i=P_{\text{cond}}(c^M_i)+T(t+1)+E_\sigma(\sigma)+E_s(2)$ =T(t)+Ey​(y)+Es​(1),miM​=Pcond​(ciM​)+T(t+1)+Eσ​(σ)+Es​(2)
+Eq. 5
+
+ T $T$ 是時間嵌入，Ey $E_y$ ​ 是類別嵌入，Es $E_s$ ​ 是可學的階段嵌入，Eσ $E_\sigma$ ​ 是條件噪聲嵌入，Pcond $P_{\text{cond}}$ ​ 把深層條件線性投影到 Transformer 的寬度，i $i$ 是空間 token 的索引，ciM $c^M_i$ M​ 是 z~L $\tilde z^L$ L 的第 i $i$ 個 token。Stage 1 的 mL $m^L$ 對所有 token 都一樣，所以所有 token 共用同一組調變；Stage 2 的 miM $m^M_i$ M​ 逐 token 不同，讓每個深層 token 直接控制對應的淺層 token。論文寫 T(t+1) $T(t+1)$ 讓兩個階段落在時間嵌入的不相交範圍（T $T$ 的形式未給）。
+
+ 條件噪聲。Stage 2 訓練時拿到的是真實影像的深層表徵，取樣時拿到的卻是 Stage 1 生成的表徵。為了縮小這個差距，訓練時把條件加噪：
+
+ z~L=1−σ zL+σ ϵc,ϵc∼N(0,I),σ∼Uniform[σmin⁡,σmax⁡] $\tilde z^L=\sqrt{1-\sigma}\,z^L+\sqrt{\sigma}\,\epsilon_c,\quad\epsilon_c\sim\mathcal N(0,I),\quad\sigma\sim\mathrm{Uniform}[\sigma_{\min},\sigma_{\max}]$ L=1−σ​zL+σ​ϵc​,ϵc​∼N(0,I),σ∼Uniform[σmin​,σmax​]
+Eq. 4
+
+ σ $\sigma$ 也輸入模型（即 Eq. 5 的 Eσ(σ) $E_\sigma(\sigma)$ ​(σ)），仿照 cascaded diffusion 的 noise-conditioning augmentation。σmin⁡ $\sigma_{\min}$ ​、σmax⁡ $\sigma_{\max}$ ​ 論文未給；論文只說擾動訓練時的條件，沒有說取樣時是否加噪。本頁推導 若 zL $z^L$ 每個座標的變異數為 1，z~L $\tilde z^L$ L 的變異數仍為 (1−σ)+σ=1 $(1-\sigma)+\sigma=1$ 。
+
+ 條件噪聲有代價也有好處。代價是條件與輸出的對應變弱（下方元件 C2 顯示）；好處是 Stage 2 不過度依賴真實深層表徵的細節，緩和 Stage 1 誤差造成的平均導引漂移。拿掉條件噪聲（σ=0 $\sigma=0$ ）時，FID 由 1.96 變成 2.10（Table 4c）。注入位置的消融（Table 4b）：額外加入 pooled context tokens 為 2.02，沒有改善；只在 block 1/7/14/21 注入空間條件為 1.96，與預設相同；只在第一層注入為 2.03。
+
+ C2條件路徑：全域與逐 token 調變
+
+ 切換階段：Stage 1 的 γ 全格相同；Stage 2 的 γ 依深層 token 而不同。增加 σ，γ 與物體遮罩的對應變弱。
+
+ 條件 c̃i1（遮罩通道）
+
+ scale γi（每格一個 token）
++
++
++
++
++
++
++
++
+
++
++
++
++
+−
+−
+−
++
+
++
++
++
+−
+−
+−
+−
+−
+
++
++
++
++
+−
+−
+−
+−
+
++
++
++
++
+−
+−
+−
++
+
++
++
++
++
+0
+−
++
++
+
++
++
++
++
++
++
++
++
+
++
++
++
++
++
++
++
++
+
+-2.692.69
+
+ 時間嵌入第一對座標 推定
+
+ 階段Stage 1Stage 2
+
+ 類別 y012
+
+ 時間 t0.50
+
+ 條件噪聲 σ（論文未給 σmin、σmax，此處開放 [0, 1]）0.20
+
+ 重新抽 εc在格中顯示數值
+
+ γ 平均 = 0.7631　token 間標準差 = 0.9029
+γ 與遮罩的相關係數 = -0.7463
+
+ token (r, c) = (3, 3) · 遮罩內
+ci = (1.73, -0.22)　c̃i = (2.20, -0.56)
+γi = 0.1930
+
+ 條件噪聲的好處無法在玩具中顯示；論文：σ = 0 時 FID 2.10，預設 1.96（Table 4c）。
+
+ 玩具設定：8×8 token（真實為 16×16）、寬度 8；權重為固定 seed 的隨機值，數值與相關係數都來自隨機權重，不代表訓練後的模型。只畫 γ（β、α 算法相同）；略過 adaLN-Zero 的零初始化；Eσ(σ) = σ·eσ。T(t) = [cos ωjt, sin ωjt]，ωj = (π/2)·2j，j = 0..3，為本頁推定：j = 0、1 能分開兩階段，j = 2、3 不能。σ 滑桿代表訓練時的一個取樣值。讀數由本頁依 Eq. 4–5 即時計算。
+
+ 階段 2，t = 0.50，σ = 0.20：γ 標準差 0.903，與遮罩的相關係數 -0.746。
+
+ 07 · 權重共享
+
+ 乾淨目標預測讓兩階段共享權重
+
+ 網路可以輸出乾淨目標，也可以輸出速度；兩種參數化描述同一個流，但在共享骨幹時最佳化行為不同（Sec. 3.3）。作者的解釋：乾淨目標預測的輸出落在各階段的條件平均 E[zℓ∣cℓ] $\mathbb E[z^\ell\mid c^\ell]$ ∣cℓ] 附近；速度預測把階段專屬的殘差與高維噪聲 ϵℓ $\epsilon^\ell$ 耦合在一起，在共享骨幹中互相干擾。
+
+ Fig. 5 的結果：乾淨目標預測（x-pred）用兩個分開的網路為 1.92 FID（1.361B 參數），共享一個骨幹為 1.96（690M）；速度預測（v-pred）分開為 2.07，共享為 4.25。乾淨目標預測讓參數減少約一半（690/1361 = 0.507），品質相當；速度預測在共享下明顯退化。
+
+ Fig. 5：預測目標與參數共享（FID，越低越好）。實心為分開，空心為共享。
+
+ x-pred 分開 1.361B1.92
+
+ x-pred 共享 690M1.96
+
+ v-pred 分開2.07
+
+ v-pred 共享4.25
+
+ 輔助頭與 REPA guidance。依 RAEv2 的做法，骨幹中間的某個 block 接一個輔助頭，預測與最終頭相同的乾淨目標。訓練時它多提供一份監督；取樣時提供 REPA guidance：由輔助頭的預測往最終頭的預測外插。兩個預測來自同一次骨幹評估，不增加 NFE（Sec. 3.3）。
+
+ 取樣流程。每個階段從獨立的高斯噪聲開始：先以 y $y$ 為條件生成 zL $z^L$ ，再以生成的深層表徵為條件生成 zM $z^M$ ，最後解碼。ImageNet 多步生成每階段 25 個 Euler 步，共 50 NFE；使用 AutoGuidance 時，每一步另外評估一個較弱的模型。
+
+ 延伸閱讀：Flow matching 與 DiT／SiT：RevFlow 的訓練目標與骨幹
+
+ 08 · 原生匹配
+
+ 原生匹配讓每個階段一步生成
+
+ 多步取樣需要 50 NFE。若每個階段只評估一次，從 t=1 $t=1$ 的獨立噪聲出發，一步的串接為（Sec. 3.4）
+
+ z^L=fθ(ϵL,1,y),z^M=fθ(ϵM,1,z^L) $\hat z^L=f_\theta(\epsilon^L,1,y),\qquad \hat z^M=f_\theta(\epsilon^M,1,\hat z^L)$ L=fθ​(ϵL,1,y),z^M=fθ​(ϵM,1,z^L)
+Eq. 7
+
+ 本頁推導 只用 flow matching 訓練的網路，一步輸出會失敗。MSE 最佳的乾淨目標預測是後驗平均 E[z∣zt,c] $\mathbb E[z\mid z_t,c]$ ​,c]。t=1 $t=1$ 時輸入 z1=ϵ $z_1=\epsilon$ ​=ϵ 與 (z,c) $(z,c)$ 獨立，所以 E[z∣z1,c]=E[z∣c] $\mathbb E[z\mid z_1,c]=\mathbb E[z\mid c]$ ​,c]=E[z∣c]：對所有 ϵ $\epsilon$ 都輸出同一個條件平均。這只在 t=1 $t=1$ 精確成立；Eq. 9 的第二式在 t=1 $t=1$ 是 0/0，不用它推。Stage 2 收到的也是這個平均，所以所有一步樣本都輸出相同的條件平均表徵。這與 Table 3 中適應前 FID 約 280 一致，但論文沒有給出原因。
+
+ 在表徵空間直接匹配分佈。以預訓練表徵比較生成分佈與真實分佈的方法（FD-loss、representation distribution matching、drifting），用在 VAE 生成器時，要先把生成的 latent 解碼成影像、再用編碼器擷取特徵。RevFlow 生成的本來就是編碼器表徵，可以直接在目標表徵空間比較，不需要解碼再編碼。作者稱為原生匹配（native matching，NM）。
+
+ MMD 與 IMQ 核。最大平均差異（maximum mean discrepancy，MMD）用一個核函數 k $k$ 比較兩組樣本：MMD2=E[k(x,x′)]+E[k(r,r′)]−2 E[k(x,r)] $\mathrm{MMD}^2=\mathbb E[k(x,x')]+\mathbb E[k(r,r')]-2\,\mathbb E[k(x,r)]$ =E[k(x,x′)]+E[k(r,r′)]−2E[k(x,r)]，其中 x,x′ $x,x'$ 來自生成分佈，r,r′ $r,r'$ 來自參考分佈。兩個分佈相同時 MMD2=0 $\mathrm{MMD}^2=0$ =0，而且不需要把生成樣本與參考樣本一一配對。IMQ（inverse multiquadric）核的常見形式是 k(x,y)=(1+∥x−y∥2/h2)−1/2 $k(x,y)=(1+\|x-y\|^2/h^2)^{-1/2}$ /h2)−1/2，h $h$ 為尺度推定：論文只寫 IMQ-MMD，未給形式與尺度。
+
+ NM 的損失。參考表徵由 EMA 生成器以加噪的真實表徵產生，視為 stop-gradient 目標。在每個類別 y $y$ 內，drifting loss Lstaty $\mathcal L^y_{\text{stat}}$ y​ 匹配多尺度、逐通道的視窗統計量，IMQ-MMD LIMQℓ,y $\mathcal L^{\ell,y}_{\text{IMQ}}$ ℓ,y​ 對齊每一層 ℓ∈{L,M} $\ell\in\{L,M\}$ 的邊際分佈；兩者都直接作用在生成的表徵上，不需要樣本配對或另外學的特徵網路。乾淨目標 flow matching 保留作為正則：
+
+ LNM=Ey[λsLstaty+∑ℓλℓ LIMQℓ,y]+λFM L $\mathcal L_{NM}=\mathbb E_y\Big[\lambda_s\mathcal L^y_{\text{stat}}+\sum_\ell\lambda_\ell\,\mathcal L^{\ell,y}_{\text{IMQ}}\Big]+\lambda_{FM}\,\mathcal L$ ​=Ey​[λs​Lstaty​+ℓ∑​λℓ​LIMQℓ,y​]+λFM​L
+Eq. 8
+
+ L $\mathcal L$ 是 Eq. 6 的 flow matching 損失；λ 的數值論文未給。適應後，每個階段只需一次網路評估，加上凍結的解碼器。下方元件用二維的點示意 IMQ-MMD 如何把「輸出相同條件平均」的樣本推開。
+
+ C3一步輸出的條件平均與 IMQ-MMD 原生匹配
+
+ 按「執行」：生成點從參考集的平均出發，沿 MMD² 的梯度移動，分散到三群參考點。
+
+ 核尺度 H0.10.31.0多尺度
+
+ 步長 η0.10.250.5
+
+ 執行重設為一步輸出
+
+ ▲ 生成點○ □ ◇ 參考群 A／B／C
+
+ 步數 0 / 200　MMD² = 1.8612
+最近中心 A / B / C：2 / 1 / 117
+距最近中心 < 0.5：0 點
+
+ 論文 Table 3：RevFlow 適應前 281.78，NM 後 2.85（2 NFE）。
+
+ 玩具設定：二維「表徵」、單一類別；直接最佳化 120 個生成點本身（論文最佳化的是一步生成器的參數）；只用 IMQ-MMD，省略 drifting 統計項與 flow matching 正則；參考集固定。初始點是平均加上 0.05 倍的擾動，這個擾動讓點之間有互斥的梯度；若生成器對所有 ε 輸出完全相同的點，∑∇k = 0，點不會被推開，真實的生成器必須學會把不同的 ε 對到不同的輸出。參考集三群各 80 點是人為設定，所以終點三群各約 40 點。k(x,y) = ∑h∈H(1 + ‖x−y‖²/h²)−1/2，多尺度 H = {0.1, 0.3, 1.0}；更新 xi ← xi − η·Ng·∂MMD²/∂xi（解析梯度，每點步長上限 0.2），共 200 步。
+
+ 第 0 步，MMD² = 1.8612，群 A / B / C 各 2 / 1 / 117 點。
+
+ Table 3 比較每個生成器在固定 NFE 下適應前後的 FID（NFE 不含解碼器）。CFG（classifier-free guidance，無分類器引導）是取樣時把有條件與無條件的預測相減後放大外插、以加強條件影響的技巧；適應後的模型都不用 CFG。NM 讓單階段的 RAE 在 1 NFE 由 284.19 改善到 3.46，讓兩階段的 RevFlow 在 2 NFE（每階段 1 次）由 281.78 改善到 2.85。NM 用的 RevFlow-XL 變體在深層階段有 DDT 頭（852M 生成器參數），由 80 epoch 的 checkpoint 初始化，適應 1,000 次更新。用同一配方直接匹配 800 epoch LightningDiT 的 VAE latent，1 NFE 的 FID 由 264.56 變成 291.68；作者認為這個對比支持語意表徵同時作為生成目標與匹配空間，所測的 VAE 對照沒有受益（一個 checkpoint、一種配方）。
+
+ Table 3：ImageNet 256×256 上的原生匹配（NFE 不含解碼器；適應後無 CFG）
+ 方法空間NFEFID
+
+ MeanFlow（外部參考）VAE13.43
+
+ LightningDiT（800ep）VAE1264.56
+
+ 　+ NMVAE1291.68
+
+ RAE編碼器1284.19
+
+ 　+ NM編碼器13.46
+
+ RevFlow編碼器2281.78
+
+ 　+ NM編碼器22.85
+
+ 延伸閱讀：少步生成與表示空間的分佈匹配：RevFlow 的原生匹配、RAE latent 的蒸餾困難與 Drifting Models
+
+ 09 · 實驗結果
+
+ 五個 epoch 達到 FID 1.96，重建 30.25 dB
+
+ 5 epoch 的 ImageNet 執行用 Muon 與 AdamW、global batch 256（80 epoch 的設定論文未寫）。FID 以 50,000 張生成影像（每類 50 張）與 ImageNet 訓練集的參考統計量計算（Sec. 4.1）。
+
+ 訓練 5 個 epoch 後，RevFlow-XL（690M 參數）達到 FID 1.96，RevFlow-H（1.55B）達到 1.74；兩者都使用 89M 的解碼器，這一欄沒有 CFG、但有 REPA guidance（Table 1）。RAE 訓練 80 epoch 為 2.16，訓練 20 epoch 為 3.71。每個訓練樣本的前向計算，RevFlow-XL 為 1,652.92 GFLOPs、RAE 為 1,134.59；5 對 80 個 epoch 下，RevFlow-XL 約為 RAE 累積前向 FLOPs 的 1/11，FID 更低（1.96 對 2.16；前者有 REPA guidance，後者沒有引導）。訓練 80 epoch 的 RevFlow-H 為 1.17（無 CFG）與 1.09（AutoGuidance），優於 RAE 800 epoch 的 1.51／1.13，epoch 少 10 倍。
+
+ 重建。由 DINOv3-L 第 7 層解碼的 89M 解碼器，在 ImageNet 驗證集上重建 PSNR 30.25 dB；RAE 以 DINOv2-B 最後一層 latent、415M 解碼器為 18.09 dB。兩者的編碼器與層不同；同一編碼器、同一個 89M 解碼器的對照見 Table 4a：只生成深層並直接解碼（z23L→x $z^L_{23}\to x$ L​→x）PSNR 19.87 dB、FID 2.65；只生成淺層（z7M→x $z^M_7\to x$ M​→x）PSNR 30.25 dB、FID 15.94；RevFlow 的深到淺路徑同時得到 30.25 dB 與 FID 1.96。
+
+ Table 1 摘錄：類別條件 ImageNet 256×256。「無 CFG」欄中 RevFlow 列仍使用 REPA guidance，RAE 列沒有引導；右欄 RevFlow 另加 AutoGuidance。
+ 方法Epochs解碼器參數FID（無 CFG）FID（CFG 或 AutoGuidance）
+
+ RAE800415M839M1.511.13
+
+ RAE80415M839M2.161.74
+
+ RAE20415M839M3.71–
+
+ HyC-DiT-XL + RevFlow589M690M1.96–
+
+ HyC-DiT-H + RevFlow589M1.55B1.74–
+
+ HyC-DiT-XL + RevFlow8089M690M1.361.33
+
+ HyC-DiT-H + RevFlow8089M1.55B1.171.09
+
+ 多個表徵空間的評估。FID 只看 Inception 的特徵空間。Table 2 另外回報六個表徵空間的正規化 Fréchet 距離與其平均 FDr6：RevFlow-XL 由 5 epoch 的 4.52 改善到 80 epoch 的 3.05；RevFlow-H（80 epoch）為 2.40，是表中最低，REPA-E 與 RAE-XL（800 epoch）分別為 3.04 與 3.26；RevFlow-H 在六項中有四項優於 REPA-E。像素空間的 JiT-L 訓練 200 epoch、無 CFG 為 16.21。
+
+ Table 4：消融（DINOv3-L、DiT-XL、5 epoch、50 NFE、windowed REPA guidance；PSNR 為驗證集重建）
+ 變體解碼器PSNRFID
+
+ RevFlow：zL23 → zM7 → x89M30.251.96
+
+ (a) 只有深層 zL23 → x89M19.872.65
+
+ (a) 只有淺層 zM7 → x89M30.2515.94
+
+ (a) VAE 目標 zL23 → SD-VAE49M23.402.94
+
+ (a) 三階段 + z1689M30.252.51
+
+ (b) + pooled context tokens89M30.252.02
+
+ (b) 空間注入只在 block 1/7/14/2189M30.251.96
+
+ (b) 空間注入只在第一層89M30.252.03
+
+ (c) σ = 089M30.252.10
+
+ (d) v-prediction89M30.254.25
+
+ App. A.1 對消融的解讀：去掉深層，單一階段承擔全部 V(a∣y) $V(a\mid y)$ ，1.96 → 15.94；解碼深層，PSNR 30.25 → 19.87、FID 2.65；第三階段（第 16 層，在晚期區段內）2.51，累積的漂移大於縮短層距的好處；σ=0 $\sigma=0$ 為 2.10；把淺層換成 SD-VAE latent 為 2.94，因為 VAE latent 不在產生 h23 $h_{23}$ ​ 的編碼路徑上。
+
+ 文字到影像。在 512×512 的文字到影像生成中，凍結 Flan-T5 的嵌入取代 Stage 1 的類別條件，Stage 2 仍以生成的深層表徵為條件。作者在相同設定下重現 RAE，並從 5k 到 35k 次迭代比較（Sec. 4.4）。Table 5 的總分：RAE（重現）GenEval 0.74、DPG-Bench 77.6；RevFlow 0.78、81.6。Sec. 4.4 正文寫：35k 次迭代時 RevFlow 的 GenEval 為 77.54%、DPG-Bench 為 81.55，比 RAE 高 3.65 與 4.04。正文的差值換算出 RAE 為 73.89% 與 77.51，與 Table 5 的 0.74、77.6 分別相差 0.11 與 0.09 個百分點／分；DPG 的差異無法以四捨五入解釋，本頁照錄兩處原文。兩個分數從 30k 到 35k 仍在上升（76.25%、80.09）；RevFlow 達到 RAE 最佳紀錄的速度在 GenEval 上快 1.6 倍、在 DPG-Bench 上快 3.1 倍（Fig. 6）。作者也指出最佳化配方對速度有貢獻。
+
+ 延伸閱讀：Latent Diffusion 兩大主線總覽、RAE：以凍結表徵編碼器取代 VAE
+
+ 10 · 實作
+
+ 實作設定與常見錯誤
+
+ 時間方向。t=0 $t=0$ 為乾淨、t=1 $t=1$ 為噪聲；損失權重 t−2 $t^{-2}$ ，取樣由 t=1 $t=1$ 走到 0。
+
+ 層編號。從 0 起算；第 23 層取在編碼器最終 normalization 之前。
+
+ 解碼器與 Ptarget $P_{\text{target}}$ ​。先在編碼器凍結下為重建一起訓練，生成訓練時固定。
+
+ Stage 2 條件注入。必須逐 token 注入 AdaLN（空間對齊）。pooled context tokens 沒有幫助（2.02）；只在第一層注入較差（2.03）；在 block 1/7/14/21 注入與預設相同（1.96）。
+
+ 時間與階段嵌入。Stage 2 的時間嵌入用 T(t+1) $T(t+1)$ ；兩階段各有階段嵌入 Es $E_s$ ​。
+
+ 條件噪聲。σ $\sigma$ 要同時輸入模型；拿掉（σ=0 $\sigma=0$ ）FID 1.96 → 2.10。
+
+ 預測目標。共享骨幹時用乾淨目標預測；v-prediction 共享為 4.25。
+
+ 計數慣例。NFE 不含解碼器；NM 後不用 CFG；Table 4 用 50 NFE（每階段 25 個 Euler 步）。
+
+ 論文未給的設定。σmin⁡ $\sigma_{\min}$ ​、σmax⁡ $\sigma_{\max}$ ​、wc $w_c$ ​、λs $\lambda_s$ ​、λℓ $\lambda_\ell$ ​、λFM $\lambda_{FM}$ ​、IMQ 核尺度、drifting 統計的視窗設定、REPA guidance 的尺度與視窗、輔助頭的 block 位置、Muon／AdamW 的超參數。
+
+ 11 · 研究脈絡
+
+ 研究脈絡
+
+ RevFlow 承接幾條脈絡：DDPM、flow matching 與 DiT 提供訓練目標與骨幹；latent diffusion、VA-VAE 與 REPA 處理「在哪個空間生成」以及如何把預訓練語意帶進生成；RAE 與 RAEv2 直接生成凍結編碼器的表徵；Latent Forcing 在像素前先對特徵去噪，屬於多階段生成；FD-loss 與 MeanFlow 屬於少步生成與表徵空間的分佈匹配。本論文把這些放到同一條層軸上：沿編碼器層級反向分階段生成，並在表徵空間原生匹配。每張卡片連到對應的研究筆記。
+
+ 骨幹與訓練目標空間表徵對齊編碼器生成表徵（RAE）多階段少步與匹配本文
+
+ 2020骨幹與訓練Denoising Diffusion Probabilistic Models
+Ho et al.
+逐步去噪的擴散生成基礎
+arXiv ↗筆記
+2021目標空間High-Resolution Image Synthesis with Latent Diffusion Models
+Rombach et al.
+在 VAE latent 中做擴散，確立 latent 目標空間
+arXiv ↗筆記
+2022骨幹與訓練Flow Matching for Generative Modeling
+Lipman et al.
+RevFlow 使用的 flow matching 訓練形式
+arXiv ↗筆記
+2022骨幹與訓練Scalable Diffusion Models with Transformers (DiT)
+Peebles & Xie
+RevFlow 共用的 DiT 骨幹
+arXiv ↗筆記
+2023編碼器DINOv2
+Oquab et al.
+自監督視覺編碼器，常作為表示對齊與 RAE 的特徵來源
+arXiv ↗筆記
+2024表徵對齊REPA: Representation Alignment for Generation
+Yu et al.
+將擴散模型隱藏狀態對齊到凍結編碼器特徵
+arXiv ↗筆記
+2025表徵對齊Reconstruction vs. Generation (VA-VAE)
+Yao et al.
+指出 latent 擴散的重建與生成最佳化兩難
+arXiv ↗筆記
+2025少步與匹配MeanFlow
+Geng et al.
+平均速度建模的少步生成
+arXiv ↗筆記
+2025編碼器DINOv3
+Siméoni et al.
+RevFlow 主模型的凍結編碼器（DINOv3-L）
+arXiv ↗筆記
+2025生成表徵（RAE）Diffusion Transformers with Representation Autoencoders (RAE)
+Zheng et al.
+直接生成凍結編碼器的最後層表示，由獨立解碼器還原像素
+arXiv ↗筆記
+2026多階段Latent Forcing
+Baade et al.
+在像素前先對特徵去噪的多階段生成
+arXiv ↗筆記
+2026少步與匹配Representation Fréchet Loss for Visual Generation (FD-loss)
+Yang et al.
+以預訓練表示空間做分佈匹配的少步方法
+arXiv ↗筆記
+2026生成表徵（RAE）Improved Baselines with Representation Autoencoders (RAEv2)
+Singh et al.
+融合多層特徵為單一 latent
+arXiv ↗筆記
+2026本文Generation as Reverse Encoding (RevFlow)
+Shi et al.
+沿編碼器層級反向分階段生成，並提出原生匹配
+arXiv ↗筆記
+
+ 12 · 結論與延伸
+
+ 結論與延伸閱讀
+
+ 論文的結論（Sec. 5）：把凍結編碼器層級的反向寫成一連串生成轉移，配合跨階段共享的 Transformer 骨幹與輕量解碼器，改善收斂與重建；乾淨目標預測讓參數共享有效；原生表徵匹配支援每階段一步生成，適應過程不需像素解碼與再編碼；編碼器層級是組織影像生成的有用結構。
+
+ 論文沒有限制章節。以下是本頁依論文自身資料整理的權衡（本頁整理，非論文結論）：淺層位置在重建與生成之間取捨（L1/L3/L5 的 FID 與 PSNR 反向變化）；加層會累積平均導引漂移（第三階段 2.51）；多個超參數未給（S10 第 9 條）；文字到影像只與自行重現的 RAE 比較。
+
+ 研究筆記（依閱讀順序）
+
+ RevFlow（Generation as Reverse Encoding）的研究脈絡總覽總覽
+
+ Flow matching 與 DiT／SiT：RevFlow 的訓練目標與骨幹訓練目標與骨幹
+
+ 生成目標空間：像素空間與重建式 latent在哪個空間生成
+
+ 以預訓練表示輔助生成：VA-VAE、REPA、REPA-E表徵對齊
+
+ RAE 與解碼器負擔：RevFlow 要解決的問題直接生成表徵
+
+ 特徵反演與多階段、表示條件式生成多階段生成
+
+ 少步生成與表示空間的分佈匹配：RevFlow 的原生匹配少步與匹配
+
+ Latent Diffusion 兩大主線總覽：Diffusability 與 RAE站內既有筆記
+
+ RAE：以凍結表徵編碼器（Representation Autoencoder）取代 VAE站內既有筆記
+
+ RAE 後續改進與延伸：RAEv2、Scale-RAE、影片 RAE 與其他表徵編碼器路線站內既有筆記
+
+ RAE latent 的蒸餾困難與 Drifting Models站內既有筆記
+
+ Flow matching 的速度目標與 rectified flow 的大規模使用站內既有筆記
+
+ 原文：arXiv:2611.34782　程式碼：github.com/ChengShiest/RevFlow
+
+ Cheng Shi, Sibei Yang, Hanzhong Guo, Yipeng Qin, Pietro Lio, Yizhou Yu. Generation as Reverse Encoding. 2026. arXiv:2611.34782.
+
+ 本頁的方程式與數字取自論文 v1；標示「本頁推導」「推定」的內容為本頁自行推導或選定，並非論文結論。互動元件的數值在瀏覽器中即時計算。
+
+ ← Paper Master
+ 教學與筆記

@@ -1,0 +1,1230 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>生成即反向編碼 RevFlow</title>
+<meta name="description" content="圖解 RevFlow（arXiv 2611.34782）：沿凍結編碼器由深到淺生成表徵，再以小解碼器回到像素；含 Prop. 1、HyC-DiT 條件路徑與原生匹配的互動元件。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Noto+Serif+TC:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+/* Layout: editorial reading column (≤700px) beside a sticky contents rail; each
+   interactive figure sits on a wider "plate". One accent colour; two figure-only
+   series colours (parallel / perpendicular mode). */
+:root{
+  --bg:#F6F4EE;--surface:#FFFFFF;--surface-2:#EEEBE3;--ink:#1D1C19;--ink-2:#57534B;--ink-3:#67635A;
+  --line:#DCD7CB;--accent:#B4532A;--accent-soft:#F3E2D8;--c-par:#3F6E8C;--c-perp:#6B7A3A;
+  --shadow:0 4px 16px rgba(0,0,0,.15);
+  --f-display:"Newsreader","Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-cjk:"Noto Serif TC","Songti TC","PMingLiU",Georgia,serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.2,0,0,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+    --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+    --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513;--surface:#1F1E1B;--surface-2:#2A2925;--ink:#EEEBE4;--ink-2:#B5B0A5;--ink-3:#9C978C;
+  --line:#36342F;--accent:#E58C66;--accent-soft:#3B2820;--c-par:#8DB4D3;--c-perp:#A9BC7C;
+  --shadow:0 4px 16px rgba(0,0,0,.5);color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.8 var(--f-body);padding-bottom:72px}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:50;height:64px;background:color-mix(in oklab,var(--bg) 86%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:box-shadow 160ms var(--ease)}
+.appbar.raised{box-shadow:0 1px 0 var(--line)}
+.appbar-in{max-width:1240px;margin:0 auto;height:64px;padding:0 24px;display:flex;align-items:center;gap:16px}
+.appbar .no{font:500 13px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.appbar .ttl{font:600 15px/1.3 var(--f-cjk);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{width:44px;height:44px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:background 160ms var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
+.icon-btn svg{width:20px;height:20px}
+
+/* shell */
+.shell{max-width:1240px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:48px}
+@media (min-width:1024px){.shell{grid-template-columns:200px minmax(0,1fr)}}
+.toc{display:none}
+@media (min-width:1024px){
+  .toc{display:block;position:sticky;top:88px;align-self:start;max-height:calc(100vh - 110px);overflow:auto;padding:8px 0}
+  .toc ol{list-style:none;margin:0;padding:0}
+  .toc a{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 10px;border-radius:10px;color:var(--ink-2);text-decoration:none;font-size:13px;line-height:1.45;transition:background 160ms var(--ease),color 160ms var(--ease)}
+  .toc a:hover{background:var(--surface-2);color:var(--ink)}
+  .toc a .n{font:500 12px/1.6 var(--f-mono);color:var(--ink-3)}
+  .toc a.on{background:var(--accent-soft);color:var(--ink)}
+  .toc a.on .n{color:var(--accent)}
+}
+.tocbar{position:sticky;top:64px;z-index:40;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tocbar::-webkit-scrollbar{display:none}
+.tocbar a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font:500 13px/1 var(--f-body);color:var(--ink-2);text-decoration:none}
+.tocbar a.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+@media (min-width:1024px){.tocbar{display:none}}
+main{min-width:0}
+
+/* prose */
+.prose{max-width:700px}
+.prose p{margin:0 0 1.1em}
+.prose ul,.prose ol{margin:0 0 1.2em;padding-left:1.3em}
+.prose li{margin:.3em 0}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:-.005em;margin:0}
+h2{font-family:var(--f-cjk);font-size:32px;line-height:1.3;margin:0 0 20px;max-width:700px}
+h3{font-family:var(--f-cjk);font-size:20px;line-height:1.45;margin:40px 0 12px}
+section.ch{padding:96px 0 24px;border-top:1px solid var(--line);scroll-margin-top:72px}
+section.ch:first-of-type{border-top:0}
+.ch-num{font:500 13px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em;margin-bottom:14px}
+.tag{display:inline-block;font:500 12px/1 var(--f-body);color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:0 4px;vertical-align:2px;white-space:nowrap}
+.note{font-size:15px;color:var(--ink-2)}
+.eq{display:flex;align-items:center;gap:12px;margin:8px 0 22px;max-width:700px}
+.eq-m{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+.eq-n{font:500 12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+.katex-display{margin:.4em 0;overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+.read{font-size:15px;color:var(--ink-2);margin:20px 0 0}
+.read a{font-weight:500}
+.callout{max-width:760px;margin:24px 0 28px;padding:22px 24px;border:1px solid color-mix(in oklab,var(--accent) 55%,var(--line));border-radius:16px;background:var(--accent-soft)}
+.callout .ct{margin:0 0 14px;font:600 17px/1.45 var(--f-cjk)}
+.callout .cv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 14px}
+.callout .cv>div{background:var(--surface);border-radius:10px;padding:12px 14px}
+.callout .num{display:block;font:500 28px/1.1 var(--f-mono);color:var(--accent);margin-bottom:6px}
+.callout .cl{font-size:13px;line-height:1.5;color:var(--ink-2)}
+.callout>p:last-child{margin:0;font-size:15px;line-height:1.75}
+.pair{display:grid;grid-template-columns:1fr;gap:16px;max-width:700px;margin:8px 0 24px}
+@media (min-width:640px){.pair{grid-template-columns:1fr 1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+.card h3{margin:0 0 6px;font:600 16px/1.4 var(--f-cjk)}
+.card p{margin:0;font-size:15px;color:var(--ink-2)}
+.card .k{font:500 12px/1 var(--f-mono);color:var(--ink-3);margin-bottom:10px;display:block}
+.card .k{display:flex;align-items:center;gap:8px}.card .k::before{content:"";width:22px;border-top:2px solid var(--c-par)}.card.perp .k::before{border-top:2px dashed var(--c-perp)}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;margin:8px 0 24px;padding:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  background-image:linear-gradient(to right,var(--surface),var(--surface)),linear-gradient(to left,var(--surface),var(--surface)),linear-gradient(to right,rgba(0,0,0,.08),transparent),linear-gradient(to left,rgba(0,0,0,.08),transparent);
+  background-position:left,right,left,right;background-repeat:no-repeat;background-size:24px 100%,24px 100%,12px 100%,12px 100%;background-attachment:local,local,scroll,scroll}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.5}
+caption{caption-side:top;text-align:left;padding:14px 16px 4px;font:500 13px/1.4 var(--f-body);color:var(--ink-3)}
+th,td{padding:10px 16px;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-weight:600;color:var(--ink-2);font-size:13px}
+td.num,th.num{font-family:var(--f-mono);font-size:14px;text-align:right;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.prose .tscroll{max-width:700px}
+@media (max-width:479px){
+  table.stack thead{display:none}
+  table.stack tr{display:block;border-top:1px solid var(--line);padding:10px 16px}
+  table.stack td{display:grid;grid-template-columns:7.5em 1fr;gap:8px;border:0;padding:3px 0}
+  table.stack td::before{content:attr(data-h);color:var(--ink-3);font-size:13px}
+  table.stack td:first-child{font-weight:600;display:block}
+  table.stack td:first-child::before{content:none}
+}
+
+/* checks */
+details.check{max-width:700px;margin:28px 0 0;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.check>summary{cursor:pointer;list-style:none;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body);display:flex;align-items:center;gap:10px}
+details.check>summary::-webkit-details-marker{display:none}
+details.check>summary::before{content:"";width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform 160ms var(--ease)}
+details.check[open]>summary::before{transform:rotate(45deg)}
+details.check .qa{padding:0 20px 18px;font-size:15px}
+details.check .q{font-weight:600;margin:12px 0 4px}
+details.check .a{color:var(--ink-2);margin:0;padding-left:12px;border-left:2px solid var(--accent-soft)}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.eyebrow{font:500 13px/1.6 var(--f-mono);color:var(--ink-3);letter-spacing:.04em;margin-bottom:24px}
+.eyebrow b{color:var(--accent);font-weight:500}
+.hero h1{font-family:var(--f-cjk);font-weight:700;font-size:clamp(32px,6.2vw,64px);line-height:1.18;letter-spacing:-.01em;max-width:15em}
+.hero h1 .lat{font-family:var(--f-display);font-weight:600}
+.dek{font-size:20px;line-height:1.65;color:var(--ink-2);max-width:640px;margin:24px 0 8px}
+.byline{font-size:15px;color:var(--ink-3);margin:0 0 40px}
+.facts{display:grid;grid-template-columns:1fr;gap:16px;margin:40px 0 28px}
+@media (min-width:768px){.facts{grid-template-columns:repeat(3,1fr)}}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 24px}
+.fact .n{font:500 12px/1 var(--f-mono);color:var(--accent);display:block;margin-bottom:12px}
+.fact p{margin:0;font-size:15px;line-height:1.75}
+.links{display:flex;flex-wrap:wrap;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 15px/1 var(--f-body);text-decoration:none;cursor:pointer;transition:background 160ms var(--ease),border-color 160ms var(--ease)}
+.btn:hover{background:var(--surface-2)}
+.btn.fill{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .btn.fill{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.fill{color:#1C0F0A}}
+.btn.fill:hover{background:color-mix(in oklab,var(--accent) 88%,#000)}
+
+/* k axis (HTML so labels keep their size) */
+.kaxis{position:relative;margin:8px 0 0;padding:0 8px}
+.kx-track{position:relative;height:56px}
+.kx-line{position:absolute;left:0;right:0;bottom:30px;height:2px;background:var(--ink)}
+.kx-tick{position:absolute;bottom:0;transform:translateX(-50%);text-align:center;font:500 13px/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.kx-tick::before{content:"";position:absolute;left:50%;bottom:24px;width:2px;height:12px;background:var(--ink);transform:translateX(-50%)}
+.kx-tick b{font-family:var(--f-display);font-style:italic;font-size:17px;color:var(--ink);font-weight:600}
+.kx-tick.l{transform:none;text-align:left}.kx-tick.l::before{left:0;transform:none}
+.kx-tick.r{transform:translateX(-100%);text-align:right}.kx-tick.r::before{left:auto;right:0;transform:none}
+.kx-mark{position:absolute;bottom:31px;width:0}
+.kx-dot{position:absolute;left:-6px;bottom:-6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-2)}
+.kx-mark.acc .kx-dot{background:var(--accent);border-color:var(--accent)}
+.kx-stem{position:absolute;left:-.5px;bottom:6px;width:1px;background:var(--ink-3)}
+.kx-lab{position:absolute;z-index:2;white-space:nowrap;font:500 13px/1.3 var(--f-body);color:var(--ink);background:var(--bg);padding:2px 6px;border-radius:6px}
+.plate .kx-lab{background:var(--surface)}
+.kx-lab .v{font-family:var(--f-mono);color:var(--accent)}
+.kx-lab.c{transform:translateX(-50%)}.kx-lab.r{transform:translateX(calc(-100% + 8px))}.kx-lab.l{transform:translateX(-8px)}
+
+/* plates */
+.plate{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;margin:32px 0 8px;max-width:960px;transition:border-color 240ms var(--ease),box-shadow 240ms var(--ease)}
+.plate:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,var(--line));box-shadow:0 0 0 4px var(--accent-soft)}
+.plate-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:6px}
+.plate-h .id{font:500 12px/1 var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.plate-h h3{margin:0;font:600 18px/1.4 var(--f-cjk)}
+.plate-lead{font-size:15px;color:var(--ink-2);margin:0 0 18px;max-width:720px}
+.pg{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:768px){.pg.two{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}.pg.side{grid-template-columns:minmax(0,1fr) 260px}}
+.fig{min-width:0;width:100%}
+.fig svg{display:block;max-width:100%;height:auto;overflow:visible}
+.plate-f{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.ctl{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:500 13px/1.4 var(--f-body);color:var(--ink-2)}
+.lbl output{font:500 14px/1 var(--f-mono);color:var(--ink)}
+.rng{display:flex;flex-direction:column;gap:2px;min-height:44px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-moz-range-track{height:4px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--accent);margin-top:-8px;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent);transition:transform 160ms var(--ease)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 5px var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.seg button{min-height:38px;min-width:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease),color 160ms var(--ease)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--ink)}
+.chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.chip:hover{background:var(--surface-2)}
+.chip[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.small-btn{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px/1 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.small-btn:hover{background:var(--surface-2)}
+.small-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .small-btn.pri{color:#1C0F0A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .small-btn.pri{color:#1C0F0A}}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.readout{font:400 13px/1.7 var(--f-mono);color:var(--ink-2);background:var(--surface-2);border-radius:10px;padding:10px 14px;margin:0}
+.readout b{color:var(--ink);font-weight:500}
+.readout .acc{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:10px 0 0}
+.lg{display:inline-flex;align-items:center;gap:8px}
+.lg::before{content:"";width:22px;height:0;border-top:2px solid var(--ink)}
+.lg.par::before{border-top:2px solid var(--c-par)}
+.lg.perp::before{border-top:2px dashed var(--c-perp)}
+.lg.acc::before{border-top:3px solid var(--accent)}
+.lg.tot::before{border-top:3px solid var(--ink)}
+.lg.ref::before{border-top:2px dashed var(--ink-3)}
+.lg.npar::before{border-top:2px dashed var(--c-par);border-top-style:dashed}
+.lg.dot::before{border-top:2px dotted var(--c-perp)}
+.lg.pt::before{width:10px;height:10px;border:2px solid var(--ink);border-radius:50%}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.steps button{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font:500 13px/1.2 var(--f-body);cursor:pointer;transition:background 160ms var(--ease)}
+.steps button .s{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font:500 12px/1 var(--f-mono)}
+.steps button[aria-pressed=true]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.steps button[aria-pressed=true] .s{background:var(--accent);color:var(--surface)}
+.cap{font-size:14px;color:var(--ink-2);margin:12px 0 0;line-height:1.65}
+.hide{display:none!important}
+
+/* svg */
+svg text{font-family:var(--f-body)}
+svg .tk{font:400 12px var(--f-mono);fill:var(--ink-3)}
+svg .al{font:500 13px var(--f-body);fill:var(--ink-2)}
+svg .lab{font:500 13px var(--f-body);fill:var(--ink)}
+svg .labm{font:500 13px var(--f-mono);fill:var(--ink)}
+svg .grid{stroke:var(--line);stroke-width:1}
+svg .axl{stroke:var(--ink-3);stroke-width:1}
+svg .manifold{stroke:var(--ink);stroke-width:2.5}
+svg .faint{stroke:var(--line);stroke-width:1}
+svg .pt{fill:var(--ink-3);opacity:.45}
+svg .par{stroke:var(--c-par);stroke-width:2.5;fill:none}
+svg .par-f{fill:var(--c-par)}
+svg .perp{stroke:var(--c-perp);stroke-width:2.5;fill:none}
+svg .perp-f{fill:var(--c-perp)}
+svg .acc{stroke:var(--accent);stroke-width:3;fill:none}
+svg .acc-f{fill:var(--accent)}
+svg .ink{stroke:var(--ink);stroke-width:2;fill:none}
+svg .ink-f{fill:var(--ink)}
+svg .tot{stroke:var(--ink);stroke-width:3;fill:none}
+svg .ref{stroke:var(--ink-3);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .dash{stroke-dasharray:6 5}
+svg .dot{stroke-dasharray:1.5 4;stroke-linecap:round}
+svg .proj{stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:3 3;fill:none}
+svg .fillp{fill:var(--c-perp);opacity:.16}
+svg .filla{fill:var(--accent);opacity:.18}
+svg .cur{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 3}
+svg .hollow{fill:var(--surface);stroke:var(--ink);stroke-width:2}
+svg .kdot{fill:var(--accent)}
+
+/* algorithm grid */
+.algo{padding:4px;max-width:860px;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden;margin:16px 0 24px}
+.algo .row{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.algo .row:first-child{border-top:0}
+.algo .row.hd{background:var(--surface-2);font:500 12px/1 var(--f-mono);color:var(--ink-3)}
+.algo .row.hd>div{padding:10px 16px}
+.algo .row>code{display:block;padding:10px 16px 2px;font:400 13px/1.6 var(--f-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.algo .ex{padding:0 16px 10px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.algo .row.hd .ex-h{display:none}
+@media (min-width:768px){
+  .algo .row{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+  .algo .row>code{padding:10px 16px;border-right:1px solid var(--line)}
+  .algo .ex{padding:10px 16px}
+  .algo .row.hd .ex-h{display:block}
+}
+
+/* timeline */
+.tl-ctl{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 16px}
+.tl-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tl-nav{display:flex;gap:8px}
+.rail{overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 16px;scrollbar-width:thin}
+.rail-track{display:flex;gap:14px;width:max-content}
+.ev{scroll-snap-align:start;width:260px;flex:none;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:8px;transition:opacity 240ms var(--ease)}
+.ev.me{border:2px solid var(--accent)}
+.ev.dim{opacity:.35}
+.ev .yr{font:500 13px/1 var(--f-mono);color:var(--ink-3)}
+.ev .grp{align-self:flex-start;font:500 12px/1 var(--f-body);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+.ev.me .grp{background:var(--accent);color:var(--surface)}
+.ev h3{margin:0;font:600 15px/1.45 var(--f-body)}
+.ev .who{font-size:13px;color:var(--ink-3)}
+.ev p{margin:0;font-size:14px;line-height:1.6;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lk{margin-top:auto;display:flex;gap:14px;font-size:13px;font-weight:500}
+.ev .lk a{min-height:32px;display:inline-flex;align-items:center}
+
+/* reading list, footer */
+.rl{list-style:none;padding:0;margin:0;max-width:700px;counter-reset:rl}
+.rl li{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:12px 0;border-top:1px solid var(--line);counter-increment:rl}
+.rl li::before{content:counter(rl,decimal-leading-zero);font:500 13px/1.9 var(--f-mono);color:var(--ink-3)}
+.rl a{font-weight:500}
+.rl span{display:block;font-size:14px;color:var(--ink-3)}
+footer{max-width:1240px;margin:80px auto 0;padding:32px 24px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+footer p{max-width:700px;margin:0 0 8px}
+#pm-bar{position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;gap:8px;font:500 13px/1 'IBM Plex Sans','Noto Sans TC',system-ui,sans-serif}
+#pm-bar a{padding:10px 14px;border-radius:999px;min-height:20px;display:inline-flex;align-items:center;text-decoration:none;box-shadow:var(--shadow)}
+#pm-bar a:first-child{background:var(--ink);color:var(--bg)}
+#pm-bar a:last-child{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+
+@media (max-width:599px){
+  .eq{flex-direction:column;align-items:stretch;gap:0}
+  .eq-n{align-self:flex-end;order:-1}
+  .eq .katex-display>.katex{font-size:.9em}
+}
+@media (max-width:767px){
+  body{font-size:16px}
+  .shell{padding:0 16px}
+  .appbar-in{padding:0 16px}
+  section.ch{padding:64px 0 16px}
+  h2{font-size:26px}
+  .plate{padding:18px 16px;margin-left:-4px;margin-right:-4px}
+  .dek{font-size:18px}
+  footer{padding:32px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+
+/* ---- 606: page-specific additions (layout shell unchanged) ---- */
+:root{--div-neg:#3F6E8C;--div-pos:#C0652F}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--div-neg:#8DB4D3;--div-pos:#E58C66}}
+:root[data-theme="dark"]{--div-neg:#8DB4D3;--div-pos:#E58C66}
+
+/* hero layer axis */
+.laxis{margin:8px 0 0;max-width:860px}
+.la-enc,.la-gen{display:flex;font:500 13px/1.4 var(--f-mono)}
+.la-enc{color:var(--ink-3);border-bottom:1px solid var(--ink-3);padding:0 0 6px;margin-bottom:10px}
+.la-enc span{margin-left:auto}
+.la-nodes{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.la-nodes li{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:2px}
+.la-nodes b{font:600 15px/1.4 var(--f-cjk)}
+.la-nodes span{font-size:13px;color:var(--ink-2);line-height:1.5}
+.la-gen{display:grid;grid-template-columns:repeat(3,1fr);margin:10px 0 0 calc(12.5% - 5px);width:calc(75% + 10px);background:linear-gradient(var(--accent),var(--accent)) top/100% 3px no-repeat;padding-top:9px;color:var(--accent)}
+.la-gen span{text-align:center}
+@media (max-width:479px){
+  .la-enc{display:none}
+  .la-nodes{grid-template-columns:1fr;gap:28px;position:relative}
+  .la-nodes{display:flex;flex-direction:column-reverse}
+  .la-gen{display:none}
+  .la-nodes li{position:relative}
+  .la-nodes li:not(:first-child)::after{content:"↓ 生成";position:absolute;left:12px;bottom:-24px;font:500 13px/1.4 var(--f-mono);color:var(--accent)}
+}
+
+/* collapsibles that are not answer boxes */
+details.sym,details.proof{max-width:700px;margin:8px 0 24px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+details.sym>summary,details.proof>summary{cursor:pointer;padding:14px 20px;min-height:44px;font:500 15px/1.4 var(--f-body)}
+details.sym .tscroll{margin:0 12px 12px}
+details.proof .qa{padding:0 20px 16px;font-size:15px;color:var(--ink-2)}
+details.proof .qa p{margin:0}
+
+/* pipeline figure */
+.pipe{margin:28px 0 8px;max-width:960px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px}
+.pipe-k{font:500 12px/1.4 var(--f-mono);color:var(--ink-3)}
+.pipe-layers{height:18px;margin:8px 0;display:grid;grid-template-columns:repeat(24,1fr);gap:2px;position:relative}
+.pipe-layers i{background:var(--line);border-radius:2px}
+.pipe-layers i:nth-child(8),.pipe-layers i:nth-child(24){background:var(--ink);margin:-3px 0}
+.pipe-taps{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:14px;color:var(--ink-2)}
+.pipe-gen{list-style:none;margin:18px 0 0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:22px}
+.pipe-gen li{position:relative;border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;font-size:14px;color:var(--ink-2);min-width:0}
+.pipe-gen li b{font:600 15px/1.4 var(--f-cjk);color:var(--ink)}
+.pipe-gen .pg-s{background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent) 45%,var(--line))}
+.pipe-gen li:not(:last-child)::after{content:"→";position:absolute;right:-18px;top:50%;transform:translateY(-50%);color:var(--accent);font:600 16px/1 var(--f-mono)}
+.pipe figcaption{margin-top:14px;font-size:13px;color:var(--ink-3)}
+@media (max-width:767px){
+  .pipe-gen{grid-template-columns:1fr;gap:26px}
+  .pipe-gen li:not(:last-child)::after{content:"↓";right:auto;left:16px;top:auto;bottom:-22px;transform:none}
+}
+
+/* bar figures */
+.bars{margin:24px 0 24px;max-width:760px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 20px}
+.bars figcaption{font-size:13px;color:var(--ink-3);margin-bottom:10px}
+.bg{padding:8px 0;border-top:1px solid var(--line)}
+.bg:first-of-type{border-top:0}
+.bt{font:500 14px/1.5 var(--f-body);margin-bottom:4px}
+.br{display:grid;grid-template-columns:9.5em minmax(0,1fr) 3.6em;align-items:center;gap:10px;min-height:28px;font-size:13px;color:var(--ink-2)}
+.bb{height:14px;background:var(--surface-2);border-radius:4px;overflow:hidden}
+.bb i{display:block;height:100%;background:var(--c-par)}
+.br.hat .bb i{background:transparent;box-shadow:inset 0 0 0 2px var(--c-par);border-radius:4px}
+.bv{font:500 13px/1 var(--f-mono);color:var(--ink);text-align:right}
+.bg.fid .br{grid-template-columns:11em minmax(0,1fr) 3em}
+@media (max-width:479px){.br,.bg.fid .br{grid-template-columns:7.5em minmax(0,1fr) 3.2em}}
+
+/* widgets */
+.fig-t{font:500 13px/1.4 var(--f-body);color:var(--ink-2);margin:0 0 6px}
+.fig-t .tag,.fig-t .busy{margin-left:6px}
+.busy{font:500 12px/1 var(--f-mono);color:var(--accent)}
+.fig.stale svg .curve{opacity:.35}
+.c1-ctl{margin-top:16px}
+.c1-sl{display:grid;grid-template-columns:1fr;gap:8px}
+@media (min-width:768px){.c1-sl{grid-template-columns:1fr 1fr;gap:24px}}
+.lg.mk::before{content:none}
+.c2-figs{display:grid;grid-template-columns:1fr;gap:20px}
+@media (min-width:768px){.c2-figs{grid-template-columns:1fr 1fr 220px}}
+.hm{display:grid;grid-template-rows:repeat(8,1fr);gap:2px;max-width:320px;aspect-ratio:1}
+.hm .row{display:grid;grid-template-columns:repeat(8,1fr);gap:2px}
+.hm .cell{display:grid;place-items:center;border-radius:3px;font:500 12px/1 var(--f-mono);color:var(--ink);min-width:0;overflow:hidden;background:var(--surface-2)}
+.hm .cell.m{box-shadow:inset 0 0 0 2px var(--ink)}
+.hm[role=grid] .cell{cursor:pointer}
+.hm .cell:focus-visible{outline:2px solid var(--accent);outline-offset:1px;position:relative;z-index:1}
+.hm .cell.sel{outline:2px solid var(--accent);outline-offset:1px}
+.hm-leg{display:flex;align-items:center;gap:8px;margin-top:8px;font:400 12px/1 var(--f-mono);color:var(--ink-3);max-width:320px}
+.hm-leg i{flex:1;height:10px;border-radius:3px;background:linear-gradient(90deg,color-mix(in oklab,var(--div-neg) 55%,var(--surface)),var(--surface),color-mix(in oklab,var(--div-pos) 55%,var(--surface)));box-shadow:inset 0 0 0 1px var(--line)}
+svg .gpt{fill:var(--accent)}
+svg .rpt{fill:none;stroke:var(--ink-3);stroke-width:1.2}
+svg .ctr{stroke:var(--ink);stroke-width:1.5}
+svg .lab.halo{paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round}
+</style>
+</head>
+<body>
+<a class="sr" href="#main">跳到內容</a>
+<header class="appbar" id="appbar"><div class="appbar-in">
+  <span class="no">No. 606</span>
+  <span class="ttl">生成即反向編碼：RevFlow</span>
+  <button class="icon-btn" id="theme" type="button" aria-label="切換深色／淺色模式"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8A9 9 0 0 0 12 3z"/></svg></button>
+</div></header>
+<nav class="tocbar" id="tocbar" aria-label="章節"></nav>
+
+<div class="shell">
+<nav class="toc" aria-label="章節目錄"><ol id="toc"></ol></nav>
+<main id="main">
+
+<!-- S0 ============================================================ -->
+<section class="hero" id="top" data-toc="00" data-tt="摘要">
+  <div class="eyebrow"><b>No. 606</b> · 互動教學 · arXiv 2611.34782 · 2026</div>
+  <h1>生成即反向編碼：沿凍結編碼器由深到淺生成影像</h1>
+  <p class="dek">RevFlow 先生成編碼器的深層表徵，再生成淺層表徵，最後用小解碼器回到像素。</p>
+  <p class="byline">Cheng Shi、Sibei Yang、Hanzhong Guo、Yipeng Qin、Pietro Lio、Yizhou Yu（2026）〈Generation as Reverse Encoding〉</p>
+  <div class="laxis" role="img" aria-label="層軸：編碼由像素經第 7 層、第 23 層到類別；生成方向相反，由類別經 Stage 1 到第 23 層，經 Stage 2 到第 7 層，再解碼成像素">
+    <div class="la-row la-enc"><span>編碼 →</span></div>
+    <ol class="la-nodes">
+      <li><b>像素</b><span>影像</span></li>
+      <li><b>第 7 層</b><span>淺層：外觀與空間細節</span></li>
+      <li><b>第 23 層</b><span>深層：語意</span></li>
+      <li><b>類別</b><span>例如「熊貓」</span></li>
+    </ol>
+    <div class="la-gen"><span>← 解碼</span><span>← Stage 2</span><span>← Stage 1</span></div>
+  </div>
+  <div class="facts">
+    <div class="fact"><span class="n">01 · 反向走編碼路徑</span><p>影像生成被寫成編碼的反向：先生成凍結編碼器第 23 層的表徵，再生成第 7 層，最後解碼成像素。</p></div>
+    <div class="fact"><span class="n">02 · 一個共用的網路</span><p>兩個階段共用一個 Transformer；網路直接預測去除噪聲後的乾淨表徵（而不是預測速度），讓共用權重不降低品質。</p></div>
+    <div class="fact"><span class="n">03 · 少量訓練</span><p>RevFlow-XL（690M 參數）在 ImageNet 256 上訓練 5 個 epoch 達到 FID 1.96（Fréchet Inception Distance，越低表示生成影像的分佈越接近真實影像）；由第 7 層解碼的 89M 解碼器重建 30.25 dB，同一解碼器由第 23 層解碼只有 19.87 dB。</p></div>
+  </div>
+  <div class="links">
+    <a class="btn fill" href="https://arxiv.org/abs/2611.34782">閱讀原文 arXiv ↗</a>
+    <a class="btn" href="../index.html#paper-606">在關聯圖中查看</a>
+    <a class="btn" href="revflow-lineage-overview.html">研究筆記總覽</a>
+  </div>
+</section>
+
+<!-- S1 ============================================================ -->
+<section class="ch" id="background" data-toc="01" data-tt="編碼路徑">
+  <div class="ch-num">01 · 編碼路徑</div>
+  <h2>預訓練編碼器把影像逐層變成抽象表徵</h2>
+  <div class="prose">
+    <p>本頁用 $x$ 表示一張影像、$y$ 表示它的類別標籤。視覺編碼器由許多層 Transformer block 組成；第 $\ell$ 層的輸出記為 $h_\ell=E_\ell(x)$，其中 $E_\ell$ 是「從輸入到第 $\ell$ 層」的運算，層編號 $\ell$ 從 0 起算。本論文的「編碼器」指 DINO、CLIP 這類為視覺理解而預訓練、訓練生成模型時保持凍結（不更新權重）的編碼器，不是 VAE 的編碼器（Sec. 1 註 1）。主模型使用 DINOv3-L，共 24 層。</p>
+    <p>淺層的表徵 $h_\ell$（$\ell$ 小）保留較多外觀與空間細節，深層（$\ell$ 大）強調語意：在論文的 ImageNet 檢索例子中，淺層特徵找到顏色與紋理相近的影像，深層特徵較常找到同類別的影像（Sec. 2）。作者把影像沿著各層變成越來越抽象的表徵這個過程稱為<b>語意編碼路徑</b>（semantic encoding path）。</p>
+    <p>生成比重建難。重建時，每個表徵都配有產生它的那一張影像；抽象化之後，不同的影像會有相近的表徵，所以「由表徵回到影像」是欠定（underdetermined）的問題：一個表徵對應許多張可能的影像（Sec. 1）。</p>
+    <p>RAE [66] 直接在凍結編碼器最後一層的表徵上做生成，再用獨立訓練的解碼器回到像素。表徵越抽象，解碼器要補的細節越多：RAE 的解碼器約為傳統 latent diffusion 解碼器的 10 倍大。Fig. 2 中，RAE 以 DINOv2-B 最後一層 latent 與 415M 參數的解碼器重建，PSNR 只有 18.09 dB，並把一頂灰色聖誕帽重建成紅色；SD-VAE 的 49M 解碼器為 23.40 dB。作者的說法是：抽象化把難度<b>轉移</b>到解碼器，而不是消除它。</p>
+    <p>作者因此提問：既然編碼器已經提供一條由像素到語意的路徑，為什麼還要另外學一條由表徵回到像素的路徑？本論文的答案是把這條路徑本身倒過來，當成生成的骨架。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">為什麼「由抽象表徵回到影像」是欠定的問題？</p>
+    <p class="a">抽象化讓不同的影像有相近的表徵，一個表徵對應多張可能的影像，而不是一個固定目標（Sec. 1）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="revflow-generation-target-space.html">生成目標空間：像素空間與重建式 latent</a>、<a href="revflow-representation-alignment-lineage.html">以預訓練表示輔助生成：VA-VAE、REPA、REPA-E</a>、<a href="revflow-rae-decoder-burden.html">RAE 與解碼器負擔</a></p>
+</section>
+
+<!-- S2 ============================================================ -->
+<section class="ch" id="flow" data-toc="02" data-tt="Flow matching">
+  <div class="ch-num">02 · Flow matching</div>
+  <h2>Flow matching 用乾淨目標預測訓練</h2>
+  <details class="sym" open>
+    <summary>符號表（S03 起使用）</summary>
+    <div class="tscroll"><table>
+      <caption>本頁符號</caption>
+      <thead><tr><th>符號</th><th>意義</th></tr></thead><tbody>
+      <tr><td>$x$、$y$</td><td>影像、類別標籤</td></tr>
+      <tr><td>$E_\ell$、$h_\ell=E_\ell(x)$</td><td>凍結編碼器第 $\ell$ 層的輸出（層編號從 0 起算）</td></tr>
+      <tr><td>$L$、$M$</td><td>深層、淺層的層編號；主模型 $L=23$、$M=7$（DINOv3-L），$M&lt;L$</td></tr>
+      <tr><td>$z^L=h_L$、$z^M=P_{\text{target}}(h_M)$</td><td>Stage 1、Stage 2 的生成目標；$P_{\text{target}}$ 把 1024 通道壓到 128 通道並保留 16×16 空間格</td></tr>
+      <tr><td>$t\in[0,1]$、$\epsilon$</td><td>時間（$t=0$ 乾淨、$t=1$ 純噪聲）、標準高斯噪聲</td></tr>
+      <tr><td>$z^\ell_t$、$\hat z^\ell$</td><td>加噪的目標（Eq. 2）、網路預測的乾淨目標（Eq. 3）</td></tr>
+      <tr><td>$f_\theta$、$c^\ell$</td><td>兩階段共用的網路、第 $\ell$ 階段的條件（$c^L=y$、$c^M=\tilde z^L$）</td></tr>
+      <tr><td>$\tilde z^L$、$\sigma$</td><td>加了條件噪聲的深層條件（Eq. 4）、條件噪聲強度</td></tr>
+      <tr><td>NFE</td><td>取樣時的網路評估次數（不含解碼器）</td></tr>
+      </tbody></table></div>
+  </details>
+  <div class="prose">
+    <p>RevFlow 的每個階段都是一個 flow matching 生成模型。對第 $\ell$ 階段的目標 $z^\ell$，訓練時抽一個時間 $t$ 與一份標準高斯噪聲 $\epsilon^\ell\sim\mathcal N(0,I)$，把兩者線性混合（Sec. 3.2）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$z^\ell_t=(1-t)\,z^\ell+t\,\epsilon^\ell$$</div><span class="eq-n">Eq. 2</span></div>
+  <div class="callout">
+    <p class="ct">時間方向：本論文 $t=0$ 是乾淨目標，$t=1$ 是純噪聲</p>
+    <p>由 Eq. 2，$t=0$ 時 $z_t=z$，$t=1$ 時 $z_t=\epsilon$。站內另一篇教學〈擴散模型的預測目標 k〉採相反的慣例（$t=1$ 為資料），閱讀時要先確認方向。</p>
+  </div>
+  <div class="prose">
+    <p>網路 $f_\theta$ 看到加噪的目標、時間與條件，直接輸出乾淨目標的預測，稱為乾淨目標預測（clean-target prediction，或 x-prediction）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\hat z^\ell=f_\theta(z^\ell_t,\,t,\,c^\ell),\qquad c^L=y,\quad c^M=\tilde z^L$$</div><span class="eq-n">Eq. 3</span></div>
+  <div class="prose">
+    <p>訓練損失是 $\mathcal L^\ell_{FM}=\mathbb E\,\|t^{-1}(\hat z^\ell-z^\ell)\|_2^2$（Sec. 3.3）。<span class="tag">本頁推導</span> 這個損失等於速度空間的均方誤差：Eq. 2 的路徑速度是 $v=dz_t/dt=\epsilon-z$；由網路輸出換算的速度是 $\hat v=(z_t-\hat z)/t$，相減得 $\hat v-v=(z-\hat z)/t$，所以 $\mathcal L_{FM}=\mathbb E\|\hat v-v\|^2$。網路輸出乾淨目標，損失卻在速度空間計算，權重是 $t^{-2}$。</p>
+    <p>生成時從 $t=1$ 的純噪聲出發，每一步用網路的預測換算 $\hat v$，以 Euler 步 $z_{t-\Delta}=z_t-\Delta\,\hat v$ 往 $t=0$ 前進。ImageNet 的多步生成每個階段用 25 個 Euler 步（Sec. 3.3）。兩個階段一起訓練：$\mathcal L=w_c\mathcal L^L_{FM}+\mathcal L^M_{FM}$（Eq. 6），$w_c$ 平衡兩階段，論文未給數值。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Eq. 2 怎麼寫？$t=0$、$t=1$ 各是什麼？乾淨目標預測的損失是什麼？</p>
+    <p class="a">$z_t=(1-t)z+t\epsilon$；$t=0$ 乾淨、$t=1$ 純噪聲；$\mathcal L_{FM}=\mathbb E\|t^{-1}(\hat z-z)\|^2$，等於速度 MSE（本頁推導）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="revflow-flow-matching-dit-backbone.html">Flow matching 與 DiT／SiT：RevFlow 的訓練目標與骨幹</a>、<a href="flow-matching-velocity-target.html">Flow matching 的速度目標</a></p>
+</section>
+
+<!-- S3 ============================================================ -->
+<section class="ch" id="path" data-toc="03" data-tt="反向路徑">
+  <div class="ch-num">03 · 反向路徑</div>
+  <h2>反向編碼路徑是 y → z<sup>L</sup> → z<sup>M</sup> → x</h2>
+  <div class="prose">
+    <p>RevFlow 依下列順序生成一張影像（Sec. 3.1）：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$y\;\to\;z^L\;\to\;z^M\;\to\;x$$</div><span class="eq-n">Eq. 1</span></div>
+  <div class="prose">
+    <p>Stage 1 由類別 $y$ 生成深層目標 $z^L$，Stage 2 以 $z^L$ 為條件生成淺層目標 $z^M$，最後由凍結的解碼器把 $z^M$ 解成像素。每張訓練影像由編碼器與 $P_{\text{target}}$ 提供一對配對目標 $(z^L,z^M)$。</p>
+    <p><b>選哪幾層。</b>一個 ViT 編碼器有很多層，但走過每一層會大幅增加取樣成本，並累積上游的平均導引漂移（S05 說明），所以作者只選少數代表層。Fig. 3 把同一張影像在兩層之間的 CLS 表徵 cosine 相似度畫成矩陣：相鄰的層形成高相似的區段（regime），區段之間有明顯的轉折。作者檢查的編碼器都以「較早」與「較晚」兩個區段為主，因此取兩個生成階段（$K=2$），每個區段取一個代表。</p>
+    <p><b>主模型的兩層。</b>對 DINOv3-L，淺層 $h_M$ 取第 7 層（早期區段的末端），深層 $h_L$ 取第 23 層（晚期區段的末端，也就是最後一個 Transformer block 的輸出，取在編碼器最終 normalization 之前）；層編號從 0 起算。深層目標直接用 $z^L=h_{23}$；淺層目標 $z^M=P_{\text{target}}(h_7)$，在 16×16 的空間格上把通道數由 1024 壓到 128。</p>
+    <p><b>解碼器。</b>一個 decompressor 把通道數還原，再由 12 個 block 的 Transformer 解碼器把格點映射到像素，共 89M 參數。依 RAE 的做法，$P_{\text{target}}$ 與解碼器在編碼器凍結下先一起為重建訓練，之後在生成訓練時固定不動。</p>
+    <p>加更多階段沒有幫助：在晚期區段內的第 16 層加一個第三階段，FID 由 1.96 變成 2.51（Table 4a）。</p>
+  </div>
+  <figure class="pipe" aria-label="RevFlow 管線圖">
+    <div class="pipe-enc">
+      <div class="pipe-k">凍結編碼器 DINOv3-L（24 層，0–23）</div>
+      <div class="pipe-layers" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="pipe-taps"><span>第 7 層 → $P_{\text{target}}$：16×16×1024 → 16×16×128 = $z^M$</span><span>第 23 層（最終 norm 前）= $z^L$</span></div>
+    </div>
+    <ol class="pipe-gen">
+      <li class="pg-y"><b>類別 $y$</b></li>
+      <li class="pg-s"><span class="pipe-k">共用骨幹</span><b>Stage 1</b><span>$f_\theta(\cdot,t,y)$ → $z^L$</span></li>
+      <li class="pg-s"><span class="pipe-k">共用骨幹</span><b>Stage 2</b><span>$f_\theta(\cdot,t,\tilde z^L)$ → $z^M$</span></li>
+      <li class="pg-d"><b>解碼器 89M</b><span>$z^M$ → 像素 $x$</span></li>
+    </ol>
+    <figcaption>RevFlow 的路徑。上：編碼器提供兩層配對目標。下：生成依序經過兩個共用骨幹的階段與一個凍結解碼器（Fig. 4a）。</figcaption>
+  </figure>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">RevFlow 的生成順序是什麼？主模型的 $z^L$、$z^M$ 各取自哪一層、是什麼形狀？</p>
+    <p class="a">$y\to z^L\to z^M\to x$（Eq. 1）；$z^L=h_{23}$（DINOv3-L 最後一個 block 輸出、最終 norm 前），$z^M=P_{\text{target}}(h_7)$，16×16 格、1024 → 128 通道；層號從 0 起算。</p>
+    <p class="q">為什麼不走過編碼器的每一層？為什麼 $K=2$？加第三階段的結果？</p>
+    <p class="a">每層都走會大幅增加取樣成本並累積平均導引漂移；Fig. 3 相似度以較早與較晚兩個區段為主，每區段取一個代表；加第 16 層的第三階段 FID 1.96 → 2.51。</p>
+  </div></details>
+</section>
+
+<!-- S4a =========================================================== -->
+<section class="ch" id="theory" data-toc="04a" data-tt="平均與殘差">
+  <div class="ch-num">04a · 平均與殘差</div>
+  <h2>最佳預測器等於條件平均加上殘差的後驗平均</h2>
+  <div class="prose">
+    <p>為什麼先生成深層表徵比較好？論文在 App. A 用一個命題回答。先定義會用到的詞：</p>
+    <ul>
+      <li><b>條件平均</b> $\mathbb E[a\mid u]$：已知條件 $u$ 時，隨機量 $a$ 的平均值。</li>
+      <li><b>條件共變異數</b> $\mathrm{Cov}(r\mid\cdot)=\mathbb E[rr^\top\mid\cdot]-\mathbb E[r\mid\cdot]\,\mathbb E[r\mid\cdot]^\top$：已知條件後，$r$ 還剩下多少不確定性。</li>
+      <li><b>score</b> $s_t=\nabla\log p_t$：加噪資料的對數機率密度對輸入的梯度。</li>
+      <li><b>Jacobian</b> $\nabla_{a_t}a^*$：輸出對輸入的偏導數矩陣，$(\nabla_{a_t}a^*)_{ij}=\partial a^*_i/\partial a_{t,j}$；它的<b>最大值</b>（operator norm）是輸入的小擾動被放大的最大倍數。</li>
+      <li><b>Dirac 點</b>：機率全部集中在一點的分佈。訓練資料是有限張影像，所以乾淨目標的分佈由一個個 Dirac 點組成。</li>
+    </ul>
+    <p><b>Def. 1。</b>令某一階段的乾淨目標為 $a\in\mathbb R^d$、條件為 $u$。條件平均 $\mu(u)=\mathbb E[a\mid u]$，殘差 $r=a-\mu(u)$（零平均），所以 $a=\mu(u)+r$。定義 $V(a)=\mathbb E\|a-\mathbb Ea\|^2$ 與 $V(a\mid u)=\mathbb E\|a-\mathbb E[a\mid u]\|^2=\mathbb E\|r\|^2$。加噪 $a_t=(1-t)a+t\epsilon$ 減去 $(1-t)\mu(u)$，得到殘差的插值 $r_t=(1-t)r+t\epsilon$。假設 $\mathbb E\|a\|^2&lt;\infty$、$\epsilon\sim\mathcal N(0,I_d)$ 與 $(a,u)$ 獨立、$t\in(0,1)$。</p>
+    <p>對任一個固定的預測器 $g$，$V(a\mid u)\le(1-R^2)V(a)$，其中 $R^2=1-\mathbb E\|a-g(u)\|^2/V(a)$ 是 $g$ 解釋的變異比例。所以量到線性預測的 $R^2$，就得到 $V(a\mid u)$ 的上界；非線性預測器只會讓界更緊。</p>
+    <p><b>Prop. 1。</b>對每個 $t\in(0,1)$，最佳的乾淨目標預測器 $a^*(a_t,t,u)=\mathbb E[a\mid a_t,u]$ 滿足</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$a^*=\mu(u)+\mathbb E[r\mid a_t,u]=\mu(u)+\frac{r_t+t^2s_t(a_t\mid u)}{1-t}$$</div><span class="eq-n">Eq. 9</span></div>
+  <div class="eq"><div class="eq-m">$$\nabla_{a_t}a^*=\frac{1-t}{t^2}\,\mathrm{Cov}(r\mid a_t,u),\qquad \mathbb E\,\mathrm{tr}\,\nabla_{a_t}a^*=\frac{1-t}{t^2}\,V(a\mid a_t,u)$$</div><span class="eq-n">Eq. 10</span></div>
+  <div class="prose">
+    <p>Eq. 9 說：最佳預測器等於條件平均 $\mu(u)$ 加上殘差的後驗平均 $\mathbb E[r\mid a_t,u]$。作者把 $\mu(u)$ 這部分稱為<b>平均導引</b>（mean guidance）：它只依賴條件，不需要從噪聲中推斷。Eq. 10 說：預測器的 Jacobian 等於 $\frac{1-t}{t^2}$ 乘上殘差的後驗共變異數，期望跡等於 $\frac{1-t}{t^2}$ 乘上剩餘變異 $V(a\mid a_t,u)=\mathbb E\|a-a^*\|^2$。因此，殘差在加噪後還剩多少不確定性，直接決定預測器對輸入有多敏感。</p>
+  </div>
+  <details class="proof"><summary>證明概要（App. A）</summary><div class="qa">
+    <p>代入 $a=\mu(u)+r$，因 $\mathbb E[\mu(u)\mid a_t,u]=\mu(u)$，線性得 Eq. 9 第一式。對 $r_t=(1-t)r+t\epsilon$ 取條件期望，寫 $\epsilon^*=\mathbb E[\epsilon\mid a_t,u]$，得 $\mathbb E[r\mid a_t,u]=(r_t-t\epsilon^*)/(1-t)$；score–noise 恆等式 $s_t=-\epsilon^*/t$ 給 $-t\epsilon^*=t^2s_t$，得第二式。Eq. 10：用 Bayes 公式把 $\mathbb E[r\mid a_t,u]$ 寫成兩個積分的比，對 $a_t$ 微分；商法則中兩個 $-\tfrac1{t^2}\mathbb E[r\mid\cdot]r_t^\top$ 項相消，剩下 $\frac{1-t}{t^2}\mathrm{Cov}(r\mid a_t,u)$；取跡與期望得第二式。</p>
+  </div></details>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">最佳乾淨目標預測器與其 Jacobian 是什麼？</p>
+    <p class="a">$a^*=\mu(u)+\mathbb E[r\mid a_t,u]=\mu(u)+\frac{r_t+t^2s_t}{1-t}$；$\nabla a^*=\frac{1-t}{t^2}\mathrm{Cov}(r\mid a_t,u)$，期望跡 $\frac{1-t}{t^2}V(a\mid a_t,u)$（Eq. 9–10）。</p>
+  </div></details>
+</section>
+
+<!-- S4b =========================================================== -->
+<section class="ch" id="stiff" data-toc="04b" data-tt="Dirac 目標">
+  <div class="ch-num">04b · Dirac 目標</div>
+  <h2>Dirac 目標讓最大 Jacobian 隨 t⁻² 增加</h2>
+  <div class="prose">
+    <p>作者用 Prop. 1 比較兩種情形（App. A）。</p>
+    <p><b>情形 1：直接由類別生成淺層特徵（$y\to h_M$）。</b>條件平均幾乎沒有資訊，殘差變異 $V(a\mid y)$ 很大，而且乾淨目標是尖銳的 Dirac 點。$t$ 大時各個點的加噪分佈互相重疊，$\mathbb E[r\mid a_t,y]\approx0$，細節被平均掉。$t\to0$ 時，在兩個相鄰 Dirac 點的分界處，$\mathrm{Cov}$ 不隨 $t$ 縮小，論文寫成維持 $\Theta(V(a\mid y))$，於是 $\|\nabla a^*\|_{op}\propto\frac{1-t}{t^2}V(a\mid y)\to\infty$。論文稱之為 stiff Dirac jumps：最大 Jacobian 隨 $t^{-2}$ 增加，預測在 Dirac 點之間急遽跳動，而不是平滑地修正。</p>
+    <p><span class="tag">本頁推導</span> 更精確地說，最大 Jacobian 由<b>Dirac 點的間距</b>決定。$K$ 個等距、間距 $\Delta$ 的點，相鄰兩點中點處 $\mathrm{Cov}=\Delta^2/4$，所以最大 Jacobian $\approx\frac{1-t}{t^2}\cdot\frac{\Delta^2}{4}\to\infty$。點數固定時 $\Delta^2\propto V(a\mid u)$，這就是論文的 $\Theta(V)$；同樣的變異、點數不同時差很多（下方元件：$v=0.958$、$t=0.05$ 時 $K=4,8,16$ 為 72.8、17.3、4.28）。論文的 $\Theta(V(a\mid y))$ 是點彼此分離時的漸近敘述。</p>
+    <p><span class="tag">本頁推導</span> Eq. 10 第二行的<b>期望</b>跡在 Dirac 目標、$t\to0$ 時反而趨近 0：後驗幾乎處處確定，只在分界附近不確定。在 Dirac 點之間的大部分區域，預測幾乎不隨輸入改變；在兩個點的分界處，預測從一個點跳到另一個點。這比論文寫的更強；論文關於 stiff Dirac jumps 的論證依靠的是最大值，不是 Eq. 10 第二行。</p>
+    <p><b>情形 2：以深層特徵為條件（$h_L\to h_M$）。</b>條件平均 $\mu(h_L)$ 提供了大部分空間結構，殘差窄。論文<b>假設</b>此時殘差是局部擾動 $\sigma_r^2I_d$（這是建模假設，不是 Prop. 1 證出的結果，也不是對 $h_{23}\to h_7$ 量到的分佈形狀）。在這個假設下 $\mathrm{Cov}(r\mid a_t,u)=O(t^2)$，抵消 $t^{-2}$，論文寫 $\|\nabla a^*\|_{op}&lt;1$，映射在 $\mu(u)$ 附近平滑。<span class="tag">本頁推導</span> 一維高斯殘差 $r\sim\mathcal N(0,v)$ 的閉式為 $\nabla a^*=\frac{(1-t)v}{(1-t)^2v+t^2}$，與輸入無關，$t\to0$ 時趨近 1；本頁計算它在 $t\in[0.01,0.99]$ 的最大值為 1.20（$v=0.958$）與 1.10（$v=0.426$）：論文寫 &lt;1，嚴格說是有界、約為 1。</p>
+    <p>總結：直接由類別生成淺層特徵時，乾淨目標是 Dirac 點，最大 Jacobian 隨 $t^{-2}$ 發散；以深層特徵為條件時，論文假設殘差是局部擾動，Jacobian 有界。下面的元件可以比較兩種情形。</p>
+  </div>
+
+  <div class="plate" id="c1">
+    <div class="plate-h"><span class="id">C1</span><h3>Prop. 1：最佳預測器的最大 Jacobian</h3></div>
+    <p class="plate-lead">選一個設定，再把 t 往 0 拖：Dirac 目標的預測變成「大部分平坦、分界處陡升」，最大 Jacobian 急遽增加；局部擾動的預測維持直線。</p>
+    <div class="ctl-row" role="group" aria-label="預設設定">
+      <button class="chip" type="button" data-p="0" aria-pressed="true">直接 y → h₇：Dirac，v = 0.958</button>
+      <button class="chip" type="button" data-p="1" aria-pressed="false">h₂₃ → h₇：論文假設的局部擾動，v = 0.426</button>
+      <button class="chip" type="button" data-p="2" aria-pressed="false">h₂₃ → h₇ 若仍是 Dirac：v = 0.426</button>
+    </div>
+    <p class="cap">0.958 是類別平均預測 $h_7$ 剩下的變異比例（類別平均是由 $y$ 預測的最佳值，所以是實際值）；0.426 是由 $h_{23}$ <b>線性</b>預測 $h_7$ 剩下的比例，只是上界。兩者都在 1024 維的 $h_7$ 上量，不是 128 維的 $z^M$（Fig. 7b）。把它們當成一維殘差變異是本頁的玩具對應；局部擾動是論文的建模假設，這個選項不是「$h_{23}\to h_7$ 的殘差真的不是 Dirac」的證據。</p>
+    <div class="pg two" style="margin-top:16px">
+      <div class="fig"><div class="fig-t">t 時的最佳預測 E[r | r<sub>t</sub>]</div><div id="c1-l"><svg role="img" aria-label="最佳預測曲線"></svg></div></div>
+      <div class="fig"><div class="fig-t">Jacobian 對 t（對數座標）<span id="c1-busy" class="busy hide">計算中</span></div><div id="c1-r"><svg role="img" aria-label="Jacobian 對 t 的曲線"></svg></div></div>
+    </div>
+    <div class="ctl c1-ctl">
+      <div class="ctl-row"><span class="lbl">殘差模型</span><div class="seg" id="c1-model" role="group" aria-label="殘差模型"><button type="button" data-v="dirac" aria-pressed="true">Dirac 點</button><button type="button" data-v="gauss" aria-pressed="false">局部高斯</button></div>
+      <span class="lbl" id="c1-kl">點數 K</span><div class="seg" id="c1-K" role="group" aria-label="Dirac 點數 K"><button type="button" data-v="4" aria-pressed="false">4</button><button type="button" data-v="8" aria-pressed="true">8</button><button type="button" data-v="16" aria-pressed="false">16</button></div></div>
+      <div class="c1-sl">
+        <div class="rng"><label class="lbl" for="c1-v">殘差變異 v<output id="c1-vo">0.958</output></label><input id="c1-v" type="range" min="0.01" max="1" step="0.001" value="0.958"></div>
+        <div class="rng"><label class="lbl" for="c1-t">時間 t<output id="c1-to">0.10</output></label><input id="c1-t" type="range" min="0.01" max="0.99" step="0.01" value="0.10"></div>
+      </div>
+      <div class="legend"><span class="lg acc">最大 Jacobian</span><span class="lg npar">期望跡</span><span class="lg dot">局部擾動（假設），同 v</span><span class="lg ref">左圖：r<sub>t</sub>/(1−t)</span></div>
+      <p class="readout" id="c1-ro"></p>
+    </div>
+    <p class="plate-f">讀數由本頁依 Eq. 9–10 即時計算。局部擾動是論文的建模假設；高斯閉式、最大與期望之分為本頁推導。玩具設定：一維、μ(u) = 0；Dirac 模型為 K 個等距點，零平均、變異數 v（真實資料每類有上千個點）。</p>
+    <p class="sr" aria-live="polite" id="c1-live"></p>
+  </div>
+  <div class="prose" style="margin-top:24px">
+    <p>元件中的三點觀察：「直接 y → h₇」把 $t$ 由 0.5 降到 0.02 時，最大 Jacobian 由 1.307 升到 111.8，期望跡降到 0；局部擾動在任何 $t$ 都不超過 1.1；Dirac 且 $v=0.426$ 仍會發散，$t\to0$ 時最大 Jacobian 約為 $v=0.958$ 的 0.445 倍（$=0.426/0.958$，$t=0.10$ 時為 0.45），這是兩個界的比值，不是實測的比值。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">直接由類別生成淺層特徵時，$t\to0$ 發生什麼？以深層特徵為條件時呢？</p>
+    <p class="a">乾淨目標是 Dirac 點，相鄰點分界處 $\mathrm{Cov}$ 不隨 $t$ 縮小，最大 Jacobian $\approx\frac{1-t}{t^2}\cdot\frac{\Delta^2}4\to\infty$，$\Delta$ 為點的間距（論文寫成 $\propto\frac{1-t}{t^2}V(a\mid y)$，為點分離時的漸近敘述）；以深層特徵為條件時，論文假設殘差是局部擾動，$\mathrm{Cov}=O(t^2)$，Jacobian 有界（論文寫 &lt;1，本頁算出最大約 1.2）。</p>
+  </div></details>
+</section>
+
+<!-- S5 ============================================================ -->
+<section class="ch" id="evidence" data-toc="05" data-tt="層統計">
+  <div class="ch-num">05 · 層統計</div>
+  <h2>DINOv3-L 的層統計支持先生成深層</h2>
+  <div class="prose">
+    <p>S04 的論證需要兩個可以量測的性質。作者對 DINOv3-L 的全部 24 層、ImageNet 驗證集 50K 張影像（256×256）量測，每張取 64 個 patch token；對每一對層，在同一個空間位置擬合一個線性映射並回報 $R^2$。由類別預測時，最佳預測器是各類別的平均（App. A.1）。</p>
+    <p><b>(E1) 強的跨層平均導引。</b>取 $a=h_7$、$c=h_{23}$：由 $h_{23}$ 線性預測 $h_7$ 的 $R^2$ 為 57.4%，類別只解釋 4.2%（Fig. 7b）。因此 $V(h_7\mid h_{23})\le0.426\,V(h_7)$，而 $V(h_7\mid y)=0.958\,V(h_7)$。Stage 2 要生成的變異不到直接由類別生成的一半。$R^2$ 從 $c=h_8$ 的 96.2% 單調降到 $h_{23}$ 的 57.4%；每個 block 損失的變異由第一個 block 的 0.6% 增加到最後幾個的 15–22%（Fig. 7a）。兩層相隔越遠，(E1) 越弱。</p>
+    <p><b>(E2) 低變異、依類別組織的深層目標。</b>類別解釋 $h_{23}$ token 變異的 18.6%，只解釋 $h_7$ 的 4.2%；對 mean-pooled 特徵，類別解釋的變異為 44.4% 對 23.6%；線性探針（LDA，每類 40 張訓練、10 張測試）的準確率為 77.7% 對 23.2%（Fig. 7c）。所以先預測深層時，相對殘差變異較小；而且類別大致可以由 $h_{23}$ 還原，$V(a\mid c,y)\approx V(a\mid c)$，Stage 2 只以 $c$ 為條件即可。</p>
+  </div>
+  <figure class="bars" aria-label="DINOv3-L 層統計長條圖">
+    <figcaption>DINOv3-L 的層統計（Fig. 7b、7c）。實心為第一個數，空心為第二個數。</figcaption>
+    <div class="bg"><div class="bt">$h_7$ 的變異被解釋的比例</div>
+      <div class="br"><span class="bn">由 $h_{23}$</span><span class="bb"><i style="width:57.4%"></i></span><span class="bv">57.4%</span></div>
+      <div class="br hat"><span class="bn">由類別</span><span class="bb"><i style="width:4.2%"></i></span><span class="bv">4.2%</span></div></div>
+    <div class="bg"><div class="bt">類別解釋的 token 變異</div>
+      <div class="br"><span class="bn">$h_{23}$</span><span class="bb"><i style="width:18.6%"></i></span><span class="bv">18.6%</span></div>
+      <div class="br hat"><span class="bn">$h_7$</span><span class="bb"><i style="width:4.2%"></i></span><span class="bv">4.2%</span></div></div>
+    <div class="bg"><div class="bt">類別解釋的 mean-pooled 變異</div>
+      <div class="br"><span class="bn">$h_{23}$</span><span class="bb"><i style="width:44.4%"></i></span><span class="bv">44.4%</span></div>
+      <div class="br hat"><span class="bn">$h_7$</span><span class="bb"><i style="width:23.6%"></i></span><span class="bv">23.6%</span></div></div>
+    <div class="bg"><div class="bt">線性探針準確率</div>
+      <div class="br"><span class="bn">$h_{23}$</span><span class="bb"><i style="width:77.7%"></i></span><span class="bv">77.7%</span></div>
+      <div class="br hat"><span class="bn">$h_7$</span><span class="bb"><i style="width:23.2%"></i></span><span class="bv">23.2%</span></div></div>
+  </figure>
+  <div class="prose">
+    <p>量測與消融一致：去掉深層、直接由類別生成同一個淺層目標，單一階段要承擔全部 $V(a\mid y)$（$R^2=4.2\%$），FID 由 1.96 變成 15.94，目標與解碼器都沒變（Table 4a）。</p>
+    <p><b>為什麼最後一層要淺。</b>像素對表徵的剩餘變異 $V(x\mid h_\ell)$ 隨深度增加，而且是任何確定性解碼器 $D$ 的下界：$\mathbb E\|x-D(h_\ell)\|^2\ge V(x\mid h_\ell)$。從深層解碼時，解碼器必須用學到的先驗補細節，結果可能被平均，或偏向模型偏好的樣式。但淺層越淺，與深層的距離越遠，(E1) 越弱。所以淺層的位置是重建與生成的權衡：在 DINOv3-S（深層固定 L12、解碼器 87.12M）上，把淺層由 L1 移到 L3、L5，FID 由 4.36 改善到 3.14、2.69，重建 PSNR 由 30.19 降到 28.32、25.48 dB（Sec. 4.3）。</p>
+    <p><b>為什麼不加更多層。</b>每多一個階段，上游預測 $\hat c$ 不完美，就多一份平均導引漂移 $\mathbb E\|\mu(c)-\mu(\hat c)\|^2$；作者以條件噪聲（S06）緩和它，並指出在同一個相似區段內加層沒有好處。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">$h_7$ 由 $h_{23}$ 與由類別預測時的 $R^2$？由此得到的變異界？</p>
+    <p class="a">57.4% 對 4.2%；$V(h_7\mid h_{23})\le0.426\,V$，$V(h_7\mid y)=0.958\,V$（Fig. 7b）。</p>
+    <p class="q">類別解釋 $h_{23}$ 與 $h_7$ 的變異比例？淺層往深移動時 FID 與 PSNR 怎麼變？</p>
+    <p class="a">token 變異 18.6% 對 4.2%；mean-pooled 44.4% 對 23.6%；探針 77.7% 對 23.2%。DINOv3-S 淺層 L1→L3→L5：FID 4.36→3.14→2.69，PSNR 30.19→28.32→25.48 dB。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="revflow-feature-inversion-multistage.html">特徵反演與多階段、表示條件式生成</a></p>
+</section>
+
+<!-- S6 ============================================================ -->
+<section class="ch" id="hyc" data-toc="06" data-tt="HyC-DiT">
+  <div class="ch-num">06 · HyC-DiT</div>
+  <h2>HyC-DiT 以同一骨幹處理全域與空間條件</h2>
+  <div class="prose">
+    <p>兩個階段由同一個標準 DiT 骨幹實作，稱為 HyC-DiT（Sec. 3.2，Fig. 4b）。兩階段<b>共用</b> attention、FFN 與 AdaLN 調變 MLP；<b>階段專屬</b>的是目標的輸入／輸出投影（兩個目標的維度不同）與條件映射（類別與空間表徵各一）。Stage 1 的條件是一個全域的類別嵌入；Stage 2 的條件是與淺層目標空間對齊的一格格 token。若把 Stage 2 的條件壓成單一向量，就會失去深層 token 與淺層 token 的對應。</p>
+    <p>DiT 的每個 block 用 adaLN-Zero 調變：一個條件向量經投影得到 shift $\beta$、scale $\gamma$ 與殘差 gate $\alpha$，作用在 normalization 之後。兩個階段的條件向量為</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$m^L=T(t)+E_y(y)+E_s(1),\qquad m^M_i=P_{\text{cond}}(c^M_i)+T(t+1)+E_\sigma(\sigma)+E_s(2)$$</div><span class="eq-n">Eq. 5</span></div>
+  <div class="prose">
+    <p>$T$ 是時間嵌入，$E_y$ 是類別嵌入，$E_s$ 是可學的階段嵌入，$E_\sigma$ 是條件噪聲嵌入，$P_{\text{cond}}$ 把深層條件線性投影到 Transformer 的寬度，$i$ 是空間 token 的索引，$c^M_i$ 是 $\tilde z^L$ 的第 $i$ 個 token。Stage 1 的 $m^L$ 對所有 token 都一樣，所以所有 token 共用同一組調變；Stage 2 的 $m^M_i$ 逐 token 不同，讓每個深層 token 直接控制對應的淺層 token。論文寫 $T(t+1)$ 讓兩個階段落在時間嵌入的不相交範圍（$T$ 的形式未給）。</p>
+    <p><b>條件噪聲。</b>Stage 2 訓練時拿到的是真實影像的深層表徵，取樣時拿到的卻是 Stage 1 生成的表徵。為了縮小這個差距，訓練時把條件加噪：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\tilde z^L=\sqrt{1-\sigma}\,z^L+\sqrt{\sigma}\,\epsilon_c,\quad\epsilon_c\sim\mathcal N(0,I),\quad\sigma\sim\mathrm{Uniform}[\sigma_{\min},\sigma_{\max}]$$</div><span class="eq-n">Eq. 4</span></div>
+  <div class="prose">
+    <p>$\sigma$ 也輸入模型（即 Eq. 5 的 $E_\sigma(\sigma)$），仿照 cascaded diffusion 的 noise-conditioning augmentation。$\sigma_{\min}$、$\sigma_{\max}$ 論文未給；論文只說擾動訓練時的條件，沒有說取樣時是否加噪。<span class="tag">本頁推導</span> 若 $z^L$ 每個座標的變異數為 1，$\tilde z^L$ 的變異數仍為 $(1-\sigma)+\sigma=1$。</p>
+    <p>條件噪聲有代價也有好處。代價是條件與輸出的對應變弱（下方元件 C2 顯示）；好處是 Stage 2 不過度依賴真實深層表徵的細節，緩和 Stage 1 誤差造成的平均導引漂移。拿掉條件噪聲（$\sigma=0$）時，FID 由 1.96 變成 2.10（Table 4c）。注入位置的消融（Table 4b）：額外加入 pooled context tokens 為 2.02，沒有改善；只在 block 1/7/14/21 注入空間條件為 1.96，與預設相同；只在第一層注入為 2.03。</p>
+  </div>
+
+  <div class="plate" id="c2">
+    <div class="plate-h"><span class="id">C2</span><h3>條件路徑：全域與逐 token 調變</h3></div>
+    <p class="plate-lead">切換階段：Stage 1 的 γ 全格相同；Stage 2 的 γ 依深層 token 而不同。增加 σ，γ 與物體遮罩的對應變弱。</p>
+    <div class="c2-figs">
+      <div class="fig"><div class="fig-t" id="c2-int">條件 c̃<sub>i1</sub>（遮罩通道）</div><div id="c2-in" class="hm" role="img" aria-label="輸入條件格"></div></div>
+      <div class="fig"><div class="fig-t">scale γ<sub>i</sub>（每格一個 token）</div><div id="c2-g" class="hm" role="grid" aria-label="γ 熱圖，方向鍵移動"></div><div class="hm-leg" id="c2-leg"></div></div>
+      <div class="fig"><div class="fig-t">時間嵌入第一對座標 <span class="tag">推定</span></div><div id="c2-t"><svg role="img" aria-label="時間嵌入第一對座標"></svg></div></div>
+    </div>
+    <div class="pg two" style="margin-top:16px">
+      <div class="ctl">
+        <div class="ctl-row"><span class="lbl">階段</span><div class="seg" id="c2-stage" role="group" aria-label="階段"><button type="button" data-v="1" aria-pressed="false">Stage 1</button><button type="button" data-v="2" aria-pressed="true">Stage 2</button></div>
+        <span class="lbl" id="c2-yl">類別 y</span><div class="seg" id="c2-y" role="group" aria-label="類別 y"><button type="button" data-v="0" aria-pressed="true">0</button><button type="button" data-v="1" aria-pressed="false">1</button><button type="button" data-v="2" aria-pressed="false">2</button></div></div>
+        <div class="rng"><label class="lbl" for="c2-t">時間 t<output id="c2-to">0.50</output></label><input id="c2-t" type="range" min="0" max="1" step="0.01" value="0.5"></div>
+        <div class="rng" id="c2-sw"><label class="lbl" for="c2-s"><span>條件噪聲 σ（論文未給 σ<sub>min</sub>、σ<sub>max</sub>，此處開放 [0, 1]）</span><output id="c2-so">0.20</output></label><input id="c2-s" type="range" min="0" max="1" step="0.01" value="0.2"></div>
+        <div class="ctl-row"><button class="small-btn" type="button" id="c2-re">重新抽 ε<sub>c</sub></button><label class="chk"><input type="checkbox" id="c2-num">在格中顯示數值</label></div>
+      </div>
+      <div class="ctl">
+        <p class="readout" id="c2-ro"></p>
+        <p class="readout" id="c2-cell">點選或用方向鍵選一格，查看該 token 的數值。</p>
+        <p class="cap">條件噪聲的好處無法在玩具中顯示；論文：σ = 0 時 FID 2.10，預設 1.96（Table 4c）。</p>
+      </div>
+    </div>
+    <p class="plate-f">玩具設定：8×8 token（真實為 16×16）、寬度 8；權重為固定 seed 的隨機值，數值與相關係數都來自隨機權重，不代表訓練後的模型。只畫 γ（β、α 算法相同）；略過 adaLN-Zero 的零初始化；E<sub>σ</sub>(σ) = σ·e<sub>σ</sub>。T(t) = [cos ω<sub>j</sub>t, sin ω<sub>j</sub>t]，ω<sub>j</sub> = (π/2)·2<sup>j</sup>，j = 0..3，為本頁推定：j = 0、1 能分開兩階段，j = 2、3 不能。σ 滑桿代表訓練時的一個取樣值。讀數由本頁依 Eq. 4–5 即時計算。</p>
+    <p class="sr" aria-live="polite" id="c2-live"></p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">兩階段的 AdaLN 條件向量各怎麼組成？哪些部分共享？</p>
+    <p class="a">$m^L=T(t)+E_y(y)+E_s(1)$，所有 token 同一組；$m^M_i=P_{\text{cond}}(c^M_i)+T(t+1)+E_\sigma(\sigma)+E_s(2)$，逐 token；$T(t+1)$ 使兩階段落在時間嵌入的不相交範圍；共享 attention、FFN、AdaLN 調變 MLP，輸入／輸出投影與條件映射為階段專屬（Eq. 5）。</p>
+    <p class="q">為什麼要對 Stage 2 的條件加噪？怎麼加？代價與好處各是什麼？</p>
+    <p class="a">訓練用真實影像的深層表徵、取樣用 Stage 1 生成的；訓練時 $\tilde z^L=\sqrt{1-\sigma}z^L+\sqrt\sigma\epsilon_c$，$\sigma\sim U[\sigma_{\min},\sigma_{\max}]$ 並輸入模型（Eq. 4；取樣時是否加噪論文未說）；代價是條件與輸出的對應變弱，好處是緩和平均導引漂移：$\sigma=0$ 時 FID 1.96 → 2.10（Table 4c）。</p>
+  </div></details>
+</section>
+
+<!-- S7 ============================================================ -->
+<section class="ch" id="train" data-toc="07" data-tt="權重共享">
+  <div class="ch-num">07 · 權重共享</div>
+  <h2>乾淨目標預測讓兩階段共享權重</h2>
+  <div class="prose">
+    <p>網路可以輸出乾淨目標，也可以輸出速度；兩種參數化描述同一個流，但在共享骨幹時最佳化行為不同（Sec. 3.3）。作者的解釋：乾淨目標預測的輸出落在各階段的條件平均 $\mathbb E[z^\ell\mid c^\ell]$ 附近；速度預測把階段專屬的殘差與高維噪聲 $\epsilon^\ell$ 耦合在一起，在共享骨幹中互相干擾。</p>
+    <p>Fig. 5 的結果：乾淨目標預測（x-pred）用兩個分開的網路為 1.92 FID（1.361B 參數），共享一個骨幹為 1.96（690M）；速度預測（v-pred）分開為 2.07，共享為 4.25。乾淨目標預測讓參數減少約一半（690/1361 = 0.507），品質相當；速度預測在共享下明顯退化。</p>
+  </div>
+  <figure class="bars" aria-label="Fig. 5 長條圖">
+    <figcaption>Fig. 5：預測目標與參數共享（FID，越低越好）。實心為分開，空心為共享。</figcaption>
+    <div class="bg fid">
+      <div class="br"><span class="bn">x-pred 分開 1.361B</span><span class="bb"><i style="width:38.4%"></i></span><span class="bv">1.92</span></div>
+      <div class="br hat"><span class="bn">x-pred 共享 690M</span><span class="bb"><i style="width:39.2%"></i></span><span class="bv">1.96</span></div>
+      <div class="br"><span class="bn">v-pred 分開</span><span class="bb"><i style="width:41.4%"></i></span><span class="bv">2.07</span></div>
+      <div class="br hat"><span class="bn">v-pred 共享</span><span class="bb"><i style="width:85%"></i></span><span class="bv">4.25</span></div>
+    </div>
+  </figure>
+  <div class="prose">
+    <p><b>輔助頭與 REPA guidance。</b>依 RAEv2 的做法，骨幹中間的某個 block 接一個輔助頭，預測與最終頭相同的乾淨目標。訓練時它多提供一份監督；取樣時提供 REPA guidance：由輔助頭的預測往最終頭的預測外插。兩個預測來自同一次骨幹評估，不增加 NFE（Sec. 3.3）。</p>
+    <p><b>取樣流程。</b>每個階段從獨立的高斯噪聲開始：先以 $y$ 為條件生成 $z^L$，再以生成的深層表徵為條件生成 $z^M$，最後解碼。ImageNet 多步生成每階段 25 個 Euler 步，共 50 NFE；使用 AutoGuidance 時，每一步另外評估一個較弱的模型。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">Fig. 5 中兩種預測目標在分開與共享時的 FID？作者的解釋？</p>
+    <p class="a">x-pred 1.92（分開，1.361B）→ 1.96（共享，690M）；v-pred 2.07 → 4.25。乾淨目標輸出落在條件平均附近，速度把階段專屬殘差與高維噪聲耦合，在共享骨幹中干擾。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="revflow-flow-matching-dit-backbone.html">Flow matching 與 DiT／SiT：RevFlow 的訓練目標與骨幹</a></p>
+</section>
+
+<!-- S8 ============================================================ -->
+<section class="ch" id="nm" data-toc="08" data-tt="原生匹配">
+  <div class="ch-num">08 · 原生匹配</div>
+  <h2>原生匹配讓每個階段一步生成</h2>
+  <div class="prose">
+    <p>多步取樣需要 50 NFE。若每個階段只評估一次，從 $t=1$ 的獨立噪聲出發，一步的串接為（Sec. 3.4）</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\hat z^L=f_\theta(\epsilon^L,1,y),\qquad \hat z^M=f_\theta(\epsilon^M,1,\hat z^L)$$</div><span class="eq-n">Eq. 7</span></div>
+  <div class="prose">
+    <p><span class="tag">本頁推導</span> 只用 flow matching 訓練的網路，一步輸出會失敗。MSE 最佳的乾淨目標預測是後驗平均 $\mathbb E[z\mid z_t,c]$。$t=1$ 時輸入 $z_1=\epsilon$ 與 $(z,c)$ 獨立，所以 $\mathbb E[z\mid z_1,c]=\mathbb E[z\mid c]$：對所有 $\epsilon$ 都輸出同一個條件平均。這只在 $t=1$ 精確成立；Eq. 9 的第二式在 $t=1$ 是 0/0，不用它推。Stage 2 收到的也是這個平均，所以所有一步樣本都輸出相同的條件平均表徵。這與 Table 3 中適應前 FID 約 280 一致，但論文沒有給出原因。</p>
+    <p><b>在表徵空間直接匹配分佈。</b>以預訓練表徵比較生成分佈與真實分佈的方法（FD-loss、representation distribution matching、drifting），用在 VAE 生成器時，要先把生成的 latent 解碼成影像、再用編碼器擷取特徵。RevFlow 生成的本來就是編碼器表徵，可以直接在目標表徵空間比較，不需要解碼再編碼。作者稱為原生匹配（native matching，NM）。</p>
+    <p><b>MMD 與 IMQ 核。</b>最大平均差異（maximum mean discrepancy，MMD）用一個核函數 $k$ 比較兩組樣本：$\mathrm{MMD}^2=\mathbb E[k(x,x')]+\mathbb E[k(r,r')]-2\,\mathbb E[k(x,r)]$，其中 $x,x'$ 來自生成分佈，$r,r'$ 來自參考分佈。兩個分佈相同時 $\mathrm{MMD}^2=0$，而且不需要把生成樣本與參考樣本一一配對。IMQ（inverse multiquadric）核的常見形式是 $k(x,y)=(1+\|x-y\|^2/h^2)^{-1/2}$，$h$ 為尺度<span class="tag">推定：論文只寫 IMQ-MMD，未給形式與尺度</span>。</p>
+    <p><b>NM 的損失。</b>參考表徵由 EMA 生成器以加噪的真實表徵產生，視為 stop-gradient 目標。在每個類別 $y$ 內，drifting loss $\mathcal L^y_{\text{stat}}$ 匹配多尺度、逐通道的視窗統計量，IMQ-MMD $\mathcal L^{\ell,y}_{\text{IMQ}}$ 對齊每一層 $\ell\in\{L,M\}$ 的邊際分佈；兩者都直接作用在生成的表徵上，不需要樣本配對或另外學的特徵網路。乾淨目標 flow matching 保留作為正則：</p>
+  </div>
+  <div class="eq"><div class="eq-m">$$\mathcal L_{NM}=\mathbb E_y\Big[\lambda_s\mathcal L^y_{\text{stat}}+\sum_\ell\lambda_\ell\,\mathcal L^{\ell,y}_{\text{IMQ}}\Big]+\lambda_{FM}\,\mathcal L$$</div><span class="eq-n">Eq. 8</span></div>
+  <div class="prose">
+    <p>$\mathcal L$ 是 Eq. 6 的 flow matching 損失；λ 的數值論文未給。適應後，每個階段只需一次網路評估，加上凍結的解碼器。下方元件用二維的點示意 IMQ-MMD 如何把「輸出相同條件平均」的樣本推開。</p>
+  </div>
+
+  <div class="plate" id="c3">
+    <div class="plate-h"><span class="id">C3</span><h3>一步輸出的條件平均與 IMQ-MMD 原生匹配</h3></div>
+    <p class="plate-lead">按「執行」：生成點從參考集的平均出發，沿 MMD² 的梯度移動，分散到三群參考點。</p>
+    <div class="pg side">
+      <div class="fig" id="c3-fig"><svg role="img" aria-label="生成點與參考點散佈圖"></svg></div>
+      <div class="ctl">
+        <div><span class="lbl">核尺度 H</span><div class="seg" id="c3-h" role="group" aria-label="核尺度 H"><button type="button" data-v="0.1" aria-pressed="false">0.1</button><button type="button" data-v="0.3" aria-pressed="false">0.3</button><button type="button" data-v="1.0" aria-pressed="false">1.0</button><button type="button" data-v="multi" aria-pressed="true">多尺度</button></div></div>
+        <div><span class="lbl">步長 η</span><div class="seg" id="c3-eta" role="group" aria-label="步長 η"><button type="button" data-v="0.1" aria-pressed="false">0.1</button><button type="button" data-v="0.25" aria-pressed="true">0.25</button><button type="button" data-v="0.5" aria-pressed="false">0.5</button></div></div>
+        <div class="ctl-row"><button class="small-btn pri" type="button" id="c3-run">執行</button><button class="small-btn" type="button" id="c3-reset">重設為一步輸出</button></div>
+        <div class="legend"><span class="lg mk">▲ 生成點</span><span class="lg mk">○ □ ◇ 參考群 A／B／C</span></div>
+        <p class="readout" id="c3-ro"></p>
+      </div>
+    </div>
+    <p class="cap">論文 Table 3：RevFlow 適應前 281.78，NM 後 2.85（2 NFE）。</p>
+    <p class="plate-f">玩具設定：二維「表徵」、單一類別；直接最佳化 120 個生成點本身（論文最佳化的是一步生成器的參數）；只用 IMQ-MMD，省略 drifting 統計項與 flow matching 正則；參考集固定。初始點是平均加上 0.05 倍的擾動，這個擾動讓點之間有互斥的梯度；若生成器對所有 ε 輸出完全相同的點，∑∇k = 0，點不會被推開，真實的生成器必須學會把不同的 ε 對到不同的輸出。參考集三群各 80 點是人為設定，所以終點三群各約 40 點。k(x,y) = ∑<sub>h∈H</sub>(1 + ‖x−y‖²/h²)<sup>−1/2</sup>，多尺度 H = {0.1, 0.3, 1.0}；更新 x<sub>i</sub> ← x<sub>i</sub> − η·N<sub>g</sub>·∂MMD²/∂x<sub>i</sub>（解析梯度，每點步長上限 0.2），共 200 步。</p>
+    <p class="sr" aria-live="polite" id="c3-live"></p>
+  </div>
+
+  <div class="prose" style="margin-top:28px">
+    <p>Table 3 比較每個生成器在固定 NFE 下適應前後的 FID（NFE 不含解碼器）。CFG（classifier-free guidance，無分類器引導）是取樣時把有條件與無條件的預測相減後放大外插、以加強條件影響的技巧；適應後的模型都不用 CFG。NM 讓單階段的 RAE 在 1 NFE 由 284.19 改善到 3.46，讓兩階段的 RevFlow 在 2 NFE（每階段 1 次）由 281.78 改善到 2.85。NM 用的 RevFlow-XL 變體在深層階段有 DDT 頭（852M 生成器參數），由 80 epoch 的 checkpoint 初始化，適應 1,000 次更新。用同一配方直接匹配 800 epoch LightningDiT 的 VAE latent，1 NFE 的 FID 由 264.56 變成 291.68；作者認為這個對比支持語意表徵同時作為生成目標與匹配空間，所測的 VAE 對照沒有受益（一個 checkpoint、一種配方）。</p>
+  </div>
+  <div class="tscroll"><table>
+    <caption>Table 3：ImageNet 256×256 上的原生匹配（NFE 不含解碼器；適應後無 CFG）</caption>
+    <thead><tr><th>方法</th><th>空間</th><th class="num">NFE</th><th class="num">FID</th></tr></thead><tbody>
+    <tr><td>MeanFlow（外部參考）</td><td>VAE</td><td class="num">1</td><td class="num">3.43</td></tr>
+    <tr><td>LightningDiT（800ep）</td><td>VAE</td><td class="num">1</td><td class="num">264.56</td></tr>
+    <tr><td>　+ NM</td><td>VAE</td><td class="num">1</td><td class="num">291.68</td></tr>
+    <tr><td>RAE</td><td>編碼器</td><td class="num">1</td><td class="num">284.19</td></tr>
+    <tr><td>　+ NM</td><td>編碼器</td><td class="num">1</td><td class="num">3.46</td></tr>
+    <tr><td>RevFlow</td><td>編碼器</td><td class="num">2</td><td class="num">281.78</td></tr>
+    <tr class="hl"><td>　+ NM</td><td>編碼器</td><td class="num">2</td><td class="num">2.85</td></tr>
+    </tbody></table></div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">不做 NM 的一步輸出為何失敗？NM 匹配什麼、結果如何？</p>
+    <p class="a">$t=1$ 時輸入 $\epsilon$ 與目標獨立，MSE 最佳預測 $\mathbb E[z\mid c]$ 對所有 $\epsilon$ 相同，所有樣本輸出同一個條件平均（本頁推導，與 FID 約 280 一致，論文未給原因）；NM 在生成的表徵上直接以 drifting 統計與 IMQ-MMD 匹配真實表徵分佈，不需解碼再編碼（Eq. 8）；RAE 284.19 → 3.46（1 NFE），RevFlow 281.78 → 2.85（2 NFE），所測的 VAE latent 對照 264.56 → 291.68（沒有受益）。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="revflow-few-step-native-matching.html">少步生成與表示空間的分佈匹配：RevFlow 的原生匹配</a>、<a href="rae-distillation-drifting.html">RAE latent 的蒸餾困難與 Drifting Models</a></p>
+</section>
+
+<!-- S9 ============================================================ -->
+<section class="ch" id="results" data-toc="09" data-tt="實驗結果">
+  <div class="ch-num">09 · 實驗結果</div>
+  <h2>五個 epoch 達到 FID 1.96，重建 30.25 dB</h2>
+  <div class="prose">
+    <p>5 epoch 的 ImageNet 執行用 Muon 與 AdamW、global batch 256（80 epoch 的設定論文未寫）。FID 以 50,000 張生成影像（每類 50 張）與 ImageNet 訓練集的參考統計量計算（Sec. 4.1）。</p>
+    <p>訓練 5 個 epoch 後，RevFlow-XL（690M 參數）達到 FID 1.96，RevFlow-H（1.55B）達到 1.74；兩者都使用 89M 的解碼器，這一欄沒有 CFG、但有 REPA guidance（Table 1）。RAE 訓練 80 epoch 為 2.16，訓練 20 epoch 為 3.71。每個訓練樣本的前向計算，RevFlow-XL 為 1,652.92 GFLOPs、RAE 為 1,134.59；5 對 80 個 epoch 下，RevFlow-XL 約為 RAE 累積前向 FLOPs 的 1/11，FID 更低（1.96 對 2.16；前者有 REPA guidance，後者沒有引導）。訓練 80 epoch 的 RevFlow-H 為 1.17（無 CFG）與 1.09（AutoGuidance），優於 RAE 800 epoch 的 1.51／1.13，epoch 少 10 倍。</p>
+    <p><b>重建。</b>由 DINOv3-L 第 7 層解碼的 89M 解碼器，在 ImageNet 驗證集上重建 PSNR 30.25 dB；RAE 以 DINOv2-B 最後一層 latent、415M 解碼器為 18.09 dB。兩者的編碼器與層不同；同一編碼器、同一個 89M 解碼器的對照見 Table 4a：只生成深層並直接解碼（$z^L_{23}\to x$）PSNR 19.87 dB、FID 2.65；只生成淺層（$z^M_7\to x$）PSNR 30.25 dB、FID 15.94；RevFlow 的深到淺路徑同時得到 30.25 dB 與 FID 1.96。</p>
+  </div>
+  <div class="tscroll"><table>
+    <caption>Table 1 摘錄：類別條件 ImageNet 256×256。「無 CFG」欄中 RevFlow 列仍使用 REPA guidance，RAE 列沒有引導；右欄 RevFlow 另加 AutoGuidance。</caption>
+    <thead><tr><th>方法</th><th class="num">Epochs</th><th class="num">解碼器</th><th class="num">參數</th><th class="num">FID（無 CFG）</th><th class="num">FID（CFG 或 AutoGuidance）</th></tr></thead><tbody>
+    <tr><td>RAE</td><td class="num">800</td><td class="num">415M</td><td class="num">839M</td><td class="num">1.51</td><td class="num">1.13</td></tr>
+    <tr><td>RAE</td><td class="num">80</td><td class="num">415M</td><td class="num">839M</td><td class="num">2.16</td><td class="num">1.74</td></tr>
+    <tr><td>RAE</td><td class="num">20</td><td class="num">415M</td><td class="num">839M</td><td class="num">3.71</td><td class="num">–</td></tr>
+    <tr class="hl"><td>HyC-DiT-XL + RevFlow</td><td class="num">5</td><td class="num">89M</td><td class="num">690M</td><td class="num">1.96</td><td class="num">–</td></tr>
+    <tr class="hl"><td>HyC-DiT-H + RevFlow</td><td class="num">5</td><td class="num">89M</td><td class="num">1.55B</td><td class="num">1.74</td><td class="num">–</td></tr>
+    <tr><td>HyC-DiT-XL + RevFlow</td><td class="num">80</td><td class="num">89M</td><td class="num">690M</td><td class="num">1.36</td><td class="num">1.33</td></tr>
+    <tr><td>HyC-DiT-H + RevFlow</td><td class="num">80</td><td class="num">89M</td><td class="num">1.55B</td><td class="num">1.17</td><td class="num">1.09</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p><b>多個表徵空間的評估。</b>FID 只看 Inception 的特徵空間。Table 2 另外回報六個表徵空間的正規化 Fréchet 距離與其平均 FDr6：RevFlow-XL 由 5 epoch 的 4.52 改善到 80 epoch 的 3.05；RevFlow-H（80 epoch）為 2.40，是表中最低，REPA-E 與 RAE-XL（800 epoch）分別為 3.04 與 3.26；RevFlow-H 在六項中有四項優於 REPA-E。像素空間的 JiT-L 訓練 200 epoch、無 CFG 為 16.21。</p>
+  </div>
+  <div class="tscroll"><table>
+    <caption>Table 4：消融（DINOv3-L、DiT-XL、5 epoch、50 NFE、windowed REPA guidance；PSNR 為驗證集重建）</caption>
+    <thead><tr><th>變體</th><th class="num">解碼器</th><th class="num">PSNR</th><th class="num">FID</th></tr></thead><tbody>
+    <tr class="hl"><td>RevFlow：z<sup>L</sup><sub>23</sub> → z<sup>M</sup><sub>7</sub> → x</td><td class="num">89M</td><td class="num">30.25</td><td class="num">1.96</td></tr>
+    <tr><td>(a) 只有深層 z<sup>L</sup><sub>23</sub> → x</td><td class="num">89M</td><td class="num">19.87</td><td class="num">2.65</td></tr>
+    <tr><td>(a) 只有淺層 z<sup>M</sup><sub>7</sub> → x</td><td class="num">89M</td><td class="num">30.25</td><td class="num">15.94</td></tr>
+    <tr><td>(a) VAE 目標 z<sup>L</sup><sub>23</sub> → SD-VAE</td><td class="num">49M</td><td class="num">23.40</td><td class="num">2.94</td></tr>
+    <tr><td>(a) 三階段 + z<sub>16</sub></td><td class="num">89M</td><td class="num">30.25</td><td class="num">2.51</td></tr>
+    <tr><td>(b) + pooled context tokens</td><td class="num">89M</td><td class="num">30.25</td><td class="num">2.02</td></tr>
+    <tr><td>(b) 空間注入只在 block 1/7/14/21</td><td class="num">89M</td><td class="num">30.25</td><td class="num">1.96</td></tr>
+    <tr><td>(b) 空間注入只在第一層</td><td class="num">89M</td><td class="num">30.25</td><td class="num">2.03</td></tr>
+    <tr><td>(c) σ = 0</td><td class="num">89M</td><td class="num">30.25</td><td class="num">2.10</td></tr>
+    <tr><td>(d) v-prediction</td><td class="num">89M</td><td class="num">30.25</td><td class="num">4.25</td></tr>
+    </tbody></table></div>
+  <div class="prose">
+    <p>App. A.1 對消融的解讀：去掉深層，單一階段承擔全部 $V(a\mid y)$，1.96 → 15.94；解碼深層，PSNR 30.25 → 19.87、FID 2.65；第三階段（第 16 層，在晚期區段內）2.51，累積的漂移大於縮短層距的好處；$\sigma=0$ 為 2.10；把淺層換成 SD-VAE latent 為 2.94，因為 VAE latent 不在產生 $h_{23}$ 的編碼路徑上。</p>
+    <p><b>文字到影像。</b>在 512×512 的文字到影像生成中，凍結 Flan-T5 的嵌入取代 Stage 1 的類別條件，Stage 2 仍以生成的深層表徵為條件。作者在相同設定下重現 RAE，並從 5k 到 35k 次迭代比較（Sec. 4.4）。Table 5 的總分：RAE（重現）GenEval 0.74、DPG-Bench 77.6；RevFlow 0.78、81.6。Sec. 4.4 正文寫：35k 次迭代時 RevFlow 的 GenEval 為 77.54%、DPG-Bench 為 81.55，比 RAE 高 3.65 與 4.04。正文的差值換算出 RAE 為 73.89% 與 77.51，與 Table 5 的 0.74、77.6 分別相差 0.11 與 0.09 個百分點／分；DPG 的差異無法以四捨五入解釋，本頁照錄兩處原文。兩個分數從 30k 到 35k 仍在上升（76.25%、80.09）；RevFlow 達到 RAE 最佳紀錄的速度在 GenEval 上快 1.6 倍、在 DPG-Bench 上快 3.1 倍（Fig. 6）。作者也指出最佳化配方對速度有貢獻。</p>
+  </div>
+  <details class="check"><summary>檢查理解</summary><div class="qa">
+    <p class="q">5 epoch 的 FID？重建 PSNR 與解碼器大小？只有深層、只有淺層的消融？</p>
+    <p class="a">XL（690M）1.96、H（1.55B）1.74（無 CFG、有 REPA guidance）；DINOv3-L 第 7 層、89M 解碼器 30.25 dB，RAE（DINOv2-B 最後一層）415M 解碼器 18.09 dB；同一 89M 解碼器只有深層 2.65／19.87 dB，只有淺層 15.94／30.25 dB。</p>
+  </div></details>
+  <p class="read">延伸閱讀：<a href="latent-diffusion-rae-overview.html">Latent Diffusion 兩大主線總覽</a>、<a href="representation-autoencoder-rae.html">RAE：以凍結表徵編碼器取代 VAE</a></p>
+</section>
+
+<!-- S10 =========================================================== -->
+<section class="ch" id="impl" data-toc="10" data-tt="實作">
+  <div class="ch-num">10 · 實作</div>
+  <h2>實作設定與常見錯誤</h2>
+  <div class="prose">
+    <ol>
+      <li><b>時間方向。</b>$t=0$ 為乾淨、$t=1$ 為噪聲；損失權重 $t^{-2}$，取樣由 $t=1$ 走到 0。</li>
+      <li><b>層編號。</b>從 0 起算；第 23 層取在編碼器最終 normalization 之前。</li>
+      <li><b>解碼器與 $P_{\text{target}}$。</b>先在編碼器凍結下為重建一起訓練，生成訓練時固定。</li>
+      <li><b>Stage 2 條件注入。</b>必須逐 token 注入 AdaLN（空間對齊）。pooled context tokens 沒有幫助（2.02）；只在第一層注入較差（2.03）；在 block 1/7/14/21 注入與預設相同（1.96）。</li>
+      <li><b>時間與階段嵌入。</b>Stage 2 的時間嵌入用 $T(t+1)$；兩階段各有階段嵌入 $E_s$。</li>
+      <li><b>條件噪聲。</b>$\sigma$ 要同時輸入模型；拿掉（$\sigma=0$）FID 1.96 → 2.10。</li>
+      <li><b>預測目標。</b>共享骨幹時用乾淨目標預測；v-prediction 共享為 4.25。</li>
+      <li><b>計數慣例。</b>NFE 不含解碼器；NM 後不用 CFG；Table 4 用 50 NFE（每階段 25 個 Euler 步）。</li>
+      <li><b>論文未給的設定。</b>$\sigma_{\min}$、$\sigma_{\max}$、$w_c$、$\lambda_s$、$\lambda_\ell$、$\lambda_{FM}$、IMQ 核尺度、drifting 統計的視窗設定、REPA guidance 的尺度與視窗、輔助頭的 block 位置、Muon／AdamW 的超參數。</li>
+    </ol>
+  </div>
+</section>
+
+<!-- S11 =========================================================== -->
+<section class="ch" id="history" data-toc="11" data-tt="研究脈絡">
+  <div class="ch-num">11 · 研究脈絡</div>
+  <h2>研究脈絡</h2>
+  <div class="prose">
+    <p>RevFlow 承接幾條脈絡：DDPM、flow matching 與 DiT 提供訓練目標與骨幹；latent diffusion、VA-VAE 與 REPA 處理「在哪個空間生成」以及如何把預訓練語意帶進生成；RAE 與 RAEv2 直接生成凍結編碼器的表徵；Latent Forcing 在像素前先對特徵去噪，屬於多階段生成；FD-loss 與 MeanFlow 屬於少步生成與表徵空間的分佈匹配。本論文把這些放到同一條層軸上：沿編碼器層級反向分階段生成，並在表徵空間原生匹配。每張卡片連到對應的研究筆記。</p>
+  </div>
+  <div class="tl-ctl">
+    <div class="tl-chips" id="tl-chips" role="group" aria-label="依類別篩選"></div>
+    <div class="tl-nav"><button class="icon-btn" type="button" id="tl-prev" aria-label="往前捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button><button class="icon-btn" type="button" id="tl-next" aria-label="往後捲動"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+  </div>
+  <div class="rail" id="rail" tabindex="0" aria-label="研究發展時間線，可左右捲動"><div class="rail-track" id="rail-track"></div></div>
+</section>
+
+<!-- S12 =========================================================== -->
+<section class="ch" id="next" data-toc="12" data-tt="結論與延伸">
+  <div class="ch-num">12 · 結論與延伸</div>
+  <h2>結論與延伸閱讀</h2>
+  <div class="prose">
+    <p>論文的結論（Sec. 5）：把凍結編碼器層級的反向寫成一連串生成轉移，配合跨階段共享的 Transformer 骨幹與輕量解碼器，改善收斂與重建；乾淨目標預測讓參數共享有效；原生表徵匹配支援每階段一步生成，適應過程不需像素解碼與再編碼；編碼器層級是組織影像生成的有用結構。</p>
+    <p>論文沒有限制章節。以下是本頁依論文自身資料整理的權衡（本頁整理，非論文結論）：淺層位置在重建與生成之間取捨（L1/L3/L5 的 FID 與 PSNR 反向變化）；加層會累積平均導引漂移（第三階段 2.51）；多個超參數未給（S10 第 9 條）；文字到影像只與自行重現的 RAE 比較。</p>
+    <h3>研究筆記（依閱讀順序）</h3>
+  </div>
+  <ol class="rl">
+    <li><div><a href="revflow-lineage-overview.html">RevFlow（Generation as Reverse Encoding）的研究脈絡總覽</a><span>總覽</span></div></li>
+    <li><div><a href="revflow-flow-matching-dit-backbone.html">Flow matching 與 DiT／SiT：RevFlow 的訓練目標與骨幹</a><span>訓練目標與骨幹</span></div></li>
+    <li><div><a href="revflow-generation-target-space.html">生成目標空間：像素空間與重建式 latent</a><span>在哪個空間生成</span></div></li>
+    <li><div><a href="revflow-representation-alignment-lineage.html">以預訓練表示輔助生成：VA-VAE、REPA、REPA-E</a><span>表徵對齊</span></div></li>
+    <li><div><a href="revflow-rae-decoder-burden.html">RAE 與解碼器負擔：RevFlow 要解決的問題</a><span>直接生成表徵</span></div></li>
+    <li><div><a href="revflow-feature-inversion-multistage.html">特徵反演與多階段、表示條件式生成</a><span>多階段生成</span></div></li>
+    <li><div><a href="revflow-few-step-native-matching.html">少步生成與表示空間的分佈匹配：RevFlow 的原生匹配</a><span>少步與匹配</span></div></li>
+    <li><div><a href="latent-diffusion-rae-overview.html">Latent Diffusion 兩大主線總覽：Diffusability 與 RAE</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="representation-autoencoder-rae.html">RAE：以凍結表徵編碼器（Representation Autoencoder）取代 VAE</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="rae-followups.html">RAE 後續改進與延伸：RAEv2、Scale-RAE、影片 RAE 與其他表徵編碼器路線</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="rae-distillation-drifting.html">RAE latent 的蒸餾困難與 Drifting Models</a><span>站內既有筆記</span></div></li>
+    <li><div><a href="flow-matching-velocity-target.html">Flow matching 的速度目標與 rectified flow 的大規模使用</a><span>站內既有筆記</span></div></li>
+  </ol>
+  <p class="read">原文：<a href="https://arxiv.org/abs/2611.34782">arXiv:2611.34782</a>　程式碼：<a href="https://github.com/ChengShiest/RevFlow">github.com/ChengShiest/RevFlow</a></p>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <p>Cheng Shi, Sibei Yang, Hanzhong Guo, Yipeng Qin, Pietro Lio, Yizhou Yu. Generation as Reverse Encoding. 2026. <a href="https://arxiv.org/abs/2611.34782">arXiv:2611.34782</a>.</p>
+  <p>本頁的方程式與數字取自論文 v1；標示「本頁推導」「推定」的內容為本頁自行推導或選定，並非論文結論。互動元件的數值在瀏覽器中即時計算。</p>
+  <p id="selftest" class="mono"></p>
+</footer>
+
+<nav id="pm-bar" aria-label="Paper Master">
+  <a href="../index.html">← Paper Master</a>
+  <a href="index.html">教學與筆記</a>
+</nav>
+
+<script type="application/json" id="timeline-data">[{"year": 2020, "title": "Denoising Diffusion Probabilistic Models", "authors_short": "Ho et al.", "arxiv": "2006.11239", "role": "逐步去噪的擴散生成基礎", "source": "abstract"}, {"year": 2021, "title": "High-Resolution Image Synthesis with Latent Diffusion Models", "authors_short": "Rombach et al.", "arxiv": "2112.10752", "role": "在 VAE latent 中做擴散，確立 latent 目標空間", "source": "abstract"}, {"year": 2022, "title": "Flow Matching for Generative Modeling", "authors_short": "Lipman et al.", "arxiv": "2210.02747", "role": "RevFlow 使用的 flow matching 訓練形式", "source": "abstract"}, {"year": 2022, "title": "Scalable Diffusion Models with Transformers (DiT)", "authors_short": "Peebles & Xie", "arxiv": "2212.09748", "role": "RevFlow 共用的 DiT 骨幹", "source": "abstract"}, {"year": 2023, "title": "DINOv2", "authors_short": "Oquab et al.", "arxiv": "2304.07193", "role": "自監督視覺編碼器，常作為表示對齊與 RAE 的特徵來源", "source": "abstract"}, {"year": 2024, "title": "REPA: Representation Alignment for Generation", "authors_short": "Yu et al.", "arxiv": "2410.06940", "role": "將擴散模型隱藏狀態對齊到凍結編碼器特徵", "source": "abstract"}, {"year": 2025, "title": "Reconstruction vs. Generation (VA-VAE)", "authors_short": "Yao et al.", "arxiv": "2501.01423", "role": "指出 latent 擴散的重建與生成最佳化兩難", "source": "abstract"}, {"year": 2025, "title": "MeanFlow", "authors_short": "Geng et al.", "arxiv": "2505.13447", "role": "平均速度建模的少步生成", "source": "paper-description"}, {"year": 2025, "title": "DINOv3", "authors_short": "Siméoni et al.", "arxiv": "2508.10104", "role": "RevFlow 主模型的凍結編碼器（DINOv3-L）", "source": "paper-description"}, {"year": 2025, "title": "Diffusion Transformers with Representation Autoencoders (RAE)", "authors_short": "Zheng et al.", "arxiv": "2510.11690", "role": "直接生成凍結編碼器的最後層表示，由獨立解碼器還原像素", "source": "paper-description"}, {"year": 2026, "title": "Latent Forcing", "authors_short": "Baade et al.", "arxiv": "2602.11401", "role": "在像素前先對特徵去噪的多階段生成", "source": "paper-description"}, {"year": 2026, "title": "Representation Fréchet Loss for Visual Generation (FD-loss)", "authors_short": "Yang et al.", "arxiv": "2604.28190", "role": "以預訓練表示空間做分佈匹配的少步方法", "source": "paper-description"}, {"year": 2026, "title": "Improved Baselines with Representation Autoencoders (RAEv2)", "authors_short": "Singh et al.", "arxiv": "2605.18324", "role": "融合多層特徵為單一 latent", "source": "paper-description"}, {"year": 2026, "title": "Generation as Reverse Encoding (RevFlow)", "authors_short": "Shi et al.", "arxiv": "2611.34782", "role": "沿編碼器層級反向分階段生成，並提出原生匹配", "source": "paper"}]</script>
+<script>
+(()=>{
+'use strict';
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const NS='http://www.w3.org/2000/svg';
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function tx(p,x,y,s,a){const t=el('text',Object.assign({x,y},a||{}),p);t.textContent=s;return t}
+const lin=(d0,d1,r0,r1)=>v=>r0+(v-d0)/(d1-d0)*(r1-r0);
+const lgs=(d0,d1,r0,r1)=>{const a=Math.log(d0),b=Math.log(d1);return v=>r0+(Math.log(v)-a)/(b-a)*(r1-r0)};
+function lp(pts){let s='';for(let i=0;i<pts.length;i++)s+=(i?'L':'M')+pts[i][0].toFixed(1)+' '+pts[i][1].toFixed(1);return s}
+const f2=v=>(Math.abs(v)<0.005?0:v).toFixed(2),f3=v=>(Math.abs(v)<0.0005?0:v).toFixed(3);
+const fmtNum=x=>x.toLocaleString('zh-TW',{minimumFractionDigits:3,maximumFractionDigits:3});
+function fmtK(k){if(k<=0.999)return k.toFixed(3);const s=k.toFixed(8);let i=s.indexOf('.')+1;while(i<s.length&&s[i]==='9')i++;return s.slice(0,Math.min(i+1,s.indexOf('.')+7))}
+function widthOf(box,min,max){return Math.max(min,Math.min(max,Math.floor(box.clientWidth||max)))}
+function frame(svg,o){
+  svg.textContent='';svg.setAttribute('viewBox',`0 0 ${o.W} ${o.H}`);svg.setAttribute('width',o.W);svg.setAttribute('height',o.H);
+  const m=o.m,x0=m.l,x1=o.W-m.r,y0=o.H-m.b,y1=m.t;
+  const X=(o.xlog?lgs:lin)(o.x[0],o.x[1],x0,x1),Y=lin(o.y[0],o.y[1],y0,y1);
+  const g=el('g',null,svg);
+  (o.yt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.yf?o.yf(v):String(v)),yy=Y(val);el('line',{x1:x0,x2:x1,y1:yy,y2:yy,class:'grid'},g);tx(g,x0-8,yy+4,lab,{class:'tk','text-anchor':'end'})});
+  (o.xt||[]).forEach(v=>{const val=Array.isArray(v)?v[0]:v,lab=Array.isArray(v)?v[1]:(o.xf?o.xf(v):String(v)),xx=X(val);el('line',{x1:xx,x2:xx,y1:y0,y2:y0+4,class:'axl'},g);tx(g,xx,y0+18,lab,{class:'tk','text-anchor':'middle'})});
+  el('line',{x1:x0,x2:x1,y1:y0,y2:y0,class:'axl'},g);
+  if(o.xl)tx(g,(x0+x1)/2,o.H-4,o.xl,{class:'al','text-anchor':'middle'});
+  if(o.yl)tx(g,4,12,o.yl,{class:'al'});
+  return {X,Y,g,x0,x1,y0,y1};
+}
+function arrow(g,x0,y0,x1,y1,cls,dash){const dx=x1-x0,dy=y1-y0,L=Math.hypot(dx,dy);if(L<2)return;const ux=dx/L,uy=dy/L,h=Math.min(10,L*.6);
+  el('line',{x1:x0,y1:y0,x2:x1-ux*h*.7,y2:y1-uy*h*.7,class:cls+(dash?' dash':'')},g);
+  el('path',{d:`M${x1} ${y1}L${x1-ux*h-uy*h*.45} ${y1-uy*h+ux*h*.45}L${x1-ux*h+uy*h*.45} ${y1-uy*h-ux*h*.45}Z`,class:cls+'-f'},g)}
+const live={};function announce(id,s){const n=$('#'+id+'-live');if(!n)return;clearTimeout(live[id]);live[id]=setTimeout(()=>{n.textContent=s},500)}
+
+function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function gauss(r){const u1=r(),u2=r();return Math.sqrt(-2*Math.log(1-u1))*Math.cos(2*Math.PI*u2)}
+/* ---------- shared scheduling ---------- */
+const jobs={};
+function slice(name,unit,done,redraw){const id=(jobs[name]=(jobs[name]||0)+1);
+  const tick=()=>{if(jobs[name]!==id)return;const t0=performance.now();let more=true;while(more&&performance.now()-t0<12)more=unit();
+    if(more){if(redraw&&!RM)redraw();requestAnimationFrame(tick)}else done()};
+  requestAnimationFrame(tick)}
+function cancelJob(name){jobs[name]=(jobs[name]||0)+1}
+const sig=(v,n=4)=>{if(!isFinite(v))return '—';if(Math.abs(v)<1e-3)return '< 0.001';return Number(v.toPrecision(n)).toString()};
+
+/* ---------- C1: Prop. 1 ---------- */
+const XI=new Float64Array(801),PHI=new Float64Array(801);let ZPHI=0;
+for(let i=0;i<801;i++){XI[i]=-8+16*i/800;PHI[i]=Math.exp(-XI[i]*XI[i]/2);ZPHI+=PHI[i]}
+function diracPts(K,v){const q=[];for(let k=0;k<K;k++)q.push(k-(K-1)/2);let s2=0;for(const x of q)s2+=x*x;const sd=Math.sqrt(s2/K),s=Math.sqrt(v);return q.map(x=>s*x/sd)}
+function post(rt,t,R){const n=R.length,lw=new Array(n);let m=-Infinity;
+  for(let k=0;k<n;k++){const d=rt-(1-t)*R[k];lw[k]=-d*d/(2*t*t);if(lw[k]>m)m=lw[k]}
+  let Z=0,e1=0,e2=0;for(let k=0;k<n;k++){const w=Math.exp(lw[k]-m);Z+=w;e1+=w*R[k];e2+=w*R[k]*R[k]}
+  e1/=Z;e2/=Z;return [e1,Math.max(0,e2-e1*e1)]}
+function covMax(t,R){const lo=(1-t)*R[0]-4*t,hi=(1-t)*R[R.length-1]+4*t;let best=0;
+  for(let i=0;i<=800;i++){const c=post(lo+(hi-lo)*i/800,t,R)[1];if(c>best)best=c}
+  for(let k=0;k<R.length-1;k++){const c=post((1-t)*(R[k]+R[k+1])/2,t,R)[1];if(c>best)best=c}
+  return best}
+function covExp(t,R){let tot=0;for(const ri of R){let acc=0;for(let n=0;n<801;n++)acc+=PHI[n]*post((1-t)*ri+t*XI[n],t,R)[1];tot+=acc/ZPHI}return tot/R.length}
+const gaussJ=(t,v)=>(1-t)*v/((1-t)*(1-t)*v+t*t);
+function c1point(model,v,K,t){if(model==='gauss'){const J=gaussJ(t,v);return {Jmax:J,Jbar:J,frac:J*t*t/((1-t)*v)}}
+  const R=diracPts(K,v),f=(1-t)/(t*t),mc=covMax(t,R),ec=covExp(t,R);return {Jmax:f*mc,Jbar:f*ec,frac:ec/v}}
+const C1T=Array.from({length:60},(_,i)=>Math.exp(Math.log(.01)+(Math.log(.99)-Math.log(.01))*i/59));
+const C1P=[{model:'dirac',v:.958},{model:'gauss',v:.426},{model:'dirac',v:.426}];
+const c1={model:'dirac',v:.958,K:8,t:.10,preset:0,curve:null,key:'',cache:new Map()};
+function c1key(){return `${c1.model}|${c1.v}|${c1.K}`}
+function sweepC1(){const key=c1key();if(c1.cache.has(key)){c1.curve=c1.cache.get(key);c1.key=key;$('#c1-busy').classList.add('hide');$('#c1-r').parentNode.classList.remove('stale');renderC1R();return}
+  if(c1.model==='gauss'){const cur=C1T.map(t=>({t,Jmax:gaussJ(t,c1.v),Jbar:gaussJ(t,c1.v)}));c1.cache.set(key,cur);c1.curve=cur;c1.key=key;renderC1R();return}
+  $('#c1-busy').classList.remove('hide');$('#c1-r').parentNode.classList.add('stale');
+  const R=diracPts(c1.K,c1.v),out=[];let i=0;const {model,v,K}=c1;
+  slice('c1',()=>{const t=C1T[i],f=(1-t)/(t*t);out.push({t,Jmax:f*covMax(t,R),Jbar:f*covExp(t,R)});i++;return i<C1T.length},
+    ()=>{c1.cache.set(`${model}|${v}|${K}`,out);if(c1key()===`${model}|${v}|${K}`){c1.curve=out;c1.key=c1key();$('#c1-busy').classList.add('hide');$('#c1-r').parentNode.classList.remove('stale');renderC1R();announce('c1','已更新 Jacobian 曲線')}})}
+function renderC1L(){const box=$('#c1-l'),W=widthOf(box,260,520);
+  const F=frame($('svg',box),{W,H:250,m:{l:40,r:14,t:12,b:36},x:[-3.2,3.2],y:[-1.8,1.8],xt:[-3,-2,-1,0,1,2,3],yt:[-1.5,-1,-.5,0,.5,1,1.5],xl:'r_t'});
+  const t=c1.t;el('line',{x1:F.X(0),x2:F.X(0),y1:F.y0,y2:F.y1,class:'axl'},F.g);
+  const ref=[];for(const x of [-3.2,3.2]){const y=Math.max(-1.8,Math.min(1.8,x/(1-t)));ref.push([F.X(Math.max(-3.2,Math.min(3.2,y*(1-t)))),F.Y(y)])}
+  el('path',{d:lp(ref),class:'ref dot',style:'stroke-dasharray:1.5 4'},F.g);
+  const pts=[];if(c1.model==='gauss'){const s=(1-t)*c1.v/((1-t)*(1-t)*c1.v+t*t);for(const x of [-3.2,3.2])pts.push([F.X(x),F.Y(Math.max(-1.8,Math.min(1.8,s*x)))])}
+  else{const R=diracPts(c1.K,c1.v),xs=[];for(let i=0;i<=1200;i++)xs.push(-3.2+6.4*i/1200);for(let k=0;k<R.length-1;k++){const c=(1-t)*(R[k]+R[k+1])/2;for(const d of [-1e-4,0,1e-4])xs.push(c+d)}
+    xs.sort((a,b)=>a-b);for(const x of xs)if(x>=-3.2&&x<=3.2)pts.push([F.X(x),F.Y(post(x,t,R)[0])]);
+    R.forEach(r=>{const y=F.Y(r),x=F.x0;el('path',{d:`M${x} ${y-5}L${x+5} ${y}L${x} ${y+5}L${x-5} ${y}Z`,class:'ink-f'},F.g)})}
+  el('path',{d:lp(pts),class:'acc curve'},F.g);
+  $('svg',box).setAttribute('aria-label',`t = ${t.toFixed(2)} 時的最佳預測曲線，${c1.model==='gauss'?'局部高斯：直線':'Dirac '+c1.K+' 點'}`)}
+function renderC1R(){const box=$('#c1-r'),W=widthOf(box,260,520),lg=v=>Math.log10(Math.max(1e-3,Math.min(1e4,v)));
+  const F=frame($('svg',box),{W,H:250,m:{l:46,r:14,t:12,b:36},x:[.01,.99],xlog:true,y:[-3,4],xt:[[.01,'0.01'],[.03,'0.03'],[.1,'0.1'],[.3,'0.3'],[.99,'0.99']],yt:[[-3,'0.001'],[-2,'0.01'],[-1,'0.1'],[0,'1'],[1,'10'],[2,'100'],[3,'1000'],[4,'10⁴']],xl:'t'});
+  if(c1.curve){el('path',{d:lp(c1.curve.map(p=>[F.X(p.t),F.Y(lg(p.Jmax))])),class:'acc curve'},F.g);
+    if(c1.model==='dirac')el('path',{d:lp(c1.curve.map(p=>[F.X(p.t),F.Y(lg(p.Jbar))])),class:'par dash curve'},F.g)}
+  el('path',{d:lp(C1T.map(t=>[F.X(t),F.Y(lg(gaussJ(t,c1.v)))])),class:'perp dot'},F.g);
+  el('line',{x1:F.X(c1.t),x2:F.X(c1.t),y1:F.y0,y2:F.y1,class:'cur'},F.g)}
+function renderC1(){renderC1L();renderC1R();const p=c1point(c1.model,c1.v,c1.K,c1.t);
+  let extra='';if(c1.model==='dirac'){const D=Math.sqrt(c1.v)*Math.sqrt(12/(c1.K*c1.K-1));extra=`<br>閉式近似 (1−t)/t²·Δ²/4 = <b>${sig((1-c1.t)/(c1.t*c1.t)*D*D/4)}</b>（Δ = ${D.toFixed(4)}）`}
+  $('#c1-ro').innerHTML=`t = <b>${c1.t.toFixed(2)}</b>　最大 Jacobian = <b class="acc">${sig(p.Jmax)}</b>　期望跡 = <b>${sig(p.Jbar)}</b><br>V(a|a_t,u)/V(a|u) = <b>${p.frac<1e-4?'0.0000':p.frac.toFixed(4)}</b>${extra}`;
+  announce('c1',`${c1.model==='gauss'?'局部高斯':'Dirac '+c1.K+' 點'}，v = ${c1.v}，t = ${c1.t.toFixed(2)}：最大 Jacobian ${sig(p.Jmax)}，期望跡 ${sig(p.Jbar)}。`)}
+let c1deb=0;
+function c1changed(){$('#c1-vo').textContent=c1.v.toFixed(3);$('#c1-v').setAttribute('aria-valuetext','v = '+c1.v.toFixed(3));
+  $$('#c1-model button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.v===c1.model)));
+  $$('#c1-K button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.v===c1.K)));
+  $('#c1-K').classList.toggle('hide',c1.model!=='dirac');$('#c1-kl').classList.toggle('hide',c1.model!=='dirac');
+  $$('#c1 .chip').forEach((b,i)=>{const p=C1P[i];b.setAttribute('aria-pressed',String(p.model===c1.model&&p.v===c1.v&&(p.model==='gauss'||c1.K===8)))});
+  renderC1();clearTimeout(c1deb);c1deb=setTimeout(sweepC1,150)}
+function initC1(){$$('#c1 .chip').forEach((b,i)=>b.addEventListener('click',()=>{c1.model=C1P[i].model;c1.v=C1P[i].v;c1.K=8;$('#c1-v').value=c1.v;c1changed()}));
+  $$('#c1-model button').forEach(b=>b.addEventListener('click',()=>{c1.model=b.dataset.v;c1changed()}));
+  $$('#c1-K button').forEach(b=>b.addEventListener('click',()=>{c1.K=+b.dataset.v;c1changed()}));
+  $('#c1-v').addEventListener('input',e=>{c1.v=+(+e.target.value).toFixed(3);c1changed()});
+  $('#c1-t').addEventListener('input',e=>{c1.t=+e.target.value;$('#c1-to').textContent=c1.t.toFixed(2);e.target.setAttribute('aria-valuetext','t = '+c1.t.toFixed(2));renderC1()});
+  c1changed()}
+
+/* ---------- C2: HyC-DiT conditioning toy ---------- */
+const G8=8,DM=8,OMEGA=[0,1,2,3].map(j=>Math.PI/2*2**j);
+function stdz(v){const n=v.length;let m=0;for(const x of v)m+=x;m/=n;let s=0;for(const x of v)s+=(x-m)**2;s=Math.sqrt(s/n);return v.map(x=>(x-m)/s)}
+const MASK=[],COLS=[];for(let r=0;r<G8;r++)for(let c=0;c<G8;c++){MASK.push((c-4.5)**2+(r-3)**2<=2.2**2?1:0);COLS.push(c)}
+const CH1=stdz(MASK),CH2=stdz(COLS);
+const C2W=(()=>{const r=mulberry32(11),gg=()=>gauss(r);
+  const P=[];for(let k=0;k<DM;k++)P.push([.8*gg(),.8*gg()]);
+  const EY=[];for(let y=0;y<3;y++){const a=[];for(let k=0;k<DM;k++)a.push(.5*gg());EY.push(a)}
+  const ES=[];for(let s=0;s<2;s++){const a=[];for(let k=0;k<DM;k++)a.push(.5*gg());ES.push(a)}
+  const ESIG=[];for(let k=0;k<DM;k++)ESIG.push(.5*gg());
+  const WG=[];for(let k=0;k<DM;k++)WG.push(gg()/Math.sqrt(DM));return {P,EY,ES,ESIG,WG}})();
+function temb(t){const o=[];for(const w of OMEGA)o.push(Math.cos(w*t),Math.sin(w*t));return o}
+const silu=x=>x/(1+Math.exp(-x));
+function epsC2(seed){const r=mulberry32(seed),o=[];for(let i=0;i<G8*G8;i++){const a=gauss(r),b=gauss(r);o.push([a,b])}return o}
+function gammasC2(stage,t,y,sigma,seed,info){const W=C2W;
+  if(stage===1){const T=temb(t);let g=0;for(let k=0;k<DM;k++)g+=W.WG[k]*silu(T[k]+W.EY[y][k]+W.ES[0][k]);return {g:new Array(G8*G8).fill(g),zt:null,maxm:0}}
+  const E=epsC2(seed),a=Math.sqrt(1-sigma),b=Math.sqrt(sigma),T=temb(t+1),g=[],zt=[];let maxm=0;
+  for(let i=0;i<G8*G8;i++){const z1=a*CH1[i]+b*E[i][0],z2=a*CH2[i]+b*E[i][1];zt.push([z1,z2]);let s=0;
+    for(let k=0;k<DM;k++){const m=W.P[k][0]*z1+W.P[k][1]*z2+T[k]+sigma*W.ESIG[k]+W.ES[1][k];if(Math.abs(m)>maxm)maxm=Math.abs(m);s+=W.WG[k]*silu(m)}g.push(s)}
+  return {g,zt,maxm}}
+function statsC2(g){const n=g.length;let m=0;for(const x of g)m+=x;m/=n;let v=0;for(const x of g)v+=(x-m)**2;const sd=Math.sqrt(v/n);
+  if(sd<1e-12)return {m,sd:0,corr:null};let mm=0;for(const x of MASK)mm+=x;mm/=n;let vm=0;for(const x of MASK)vm+=(x-mm)**2;const smk=Math.sqrt(vm/n);
+  let cv=0;for(let i=0;i<n;i++)cv+=(g[i]-m)*(MASK[i]-mm);return {m,sd,corr:cv/n/(sd*smk)}}
+const c2={stage:2,y:0,t:.5,sigma:.2,seed:12,num:false,sel:27,res:null};
+function cellBg(v,mx){const p=Math.round(Math.min(1,Math.abs(v)/mx)*55);return `color-mix(in oklab,var(${v<0?'--div-neg':'--div-pos'}) ${p}%,var(--surface))`}
+function buildGrid(node,isGrid){node.textContent='';for(let r=0;r<G8;r++){const row=document.createElement('div');row.className='row';if(isGrid)row.setAttribute('role','row');
+  for(let c=0;c<G8;c++){const d=document.createElement('div');d.className='cell'+(MASK[r*G8+c]?' m':'');d.dataset.i=r*G8+c;if(isGrid){d.setAttribute('role','gridcell');d.tabIndex=-1}row.appendChild(d)}node.appendChild(row)}}
+function renderC2(){const R=gammasC2(c2.stage,c2.t,c2.y,c2.sigma,c2.seed);c2.res=R;const st=statsC2(R.g);
+  const mx=Math.max(1e-9,...R.g.map(Math.abs));
+  $$('#c2-g .cell').forEach(d=>{const i=+d.dataset.i,v=R.g[i];d.style.background=cellBg(v,mx);d.textContent=c2.num?v.toFixed(2):(Math.abs(v)<.05?'0':v>0?'+':'−');
+    d.setAttribute('aria-label',`第 ${Math.floor(i/8)} 列第 ${i%8} 行，γ = ${v.toFixed(3)}，遮罩${MASK[i]?'內':'外'}`);d.tabIndex=i===c2.sel?0:-1;d.classList.toggle('sel',i===c2.sel)});
+  $('#c2-leg').innerHTML=`<span>${(-mx).toFixed(2)}</span><i></i><span>${mx.toFixed(2)}</span>`;
+  const inp=$('#c2-in');
+  if(c2.stage===1){inp.innerHTML=`<div class="c2-cls" style="grid-row:1/-1;display:grid;place-items:center;border:1px dashed var(--line);border-radius:10px;font-size:14px;color:var(--ink-2);text-align:center;padding:12px">類別 y = ${c2.y}<br>沒有空間條件</div>`;$('#c2-int').textContent='條件：類別 y'}
+  else{if(!$('.row',inp))buildGrid(inp,false);$('#c2-int').innerHTML='條件 c̃<sub>i1</sub>（遮罩通道）';const zm=Math.max(1e-9,...R.zt.map(z=>Math.abs(z[0])));
+    $$('.cell',inp).forEach(d=>{const v=R.zt[+d.dataset.i][0];d.style.background=cellBg(v,zm);d.textContent=c2.num?v.toFixed(1):''})}
+  $('#c2-ro').innerHTML=`γ 平均 = <b>${st.m.toFixed(4)}</b>　token 間標準差 = <b class="acc">${st.sd.toFixed(4)}</b><br>γ 與遮罩的相關係數 = <b>${st.corr===null?'—（所有 token 相同）':st.corr.toFixed(4)}</b>`;
+  showCell();renderC2T();
+  announce('c2',`階段 ${c2.stage}，t = ${c2.t.toFixed(2)}${c2.stage===2?'，σ = '+c2.sigma.toFixed(2):''}：γ 標準差 ${st.sd.toFixed(3)}，與遮罩的相關係數 ${st.corr===null?'無':st.corr.toFixed(3)}。`)}
+function showCell(){const i=c2.sel,R=c2.res;if(!R)return;const r=Math.floor(i/8),c=i%8;
+  $('#c2-cell').innerHTML=`token (r, c) = (<b>${r}</b>, <b>${c}</b>)${MASK[i]?' · 遮罩內':''}<br>`+(c2.stage===2?`c<sub>i</sub> = (${CH1[i].toFixed(2)}, ${CH2[i].toFixed(2)})　c̃<sub>i</sub> = (${R.zt[i][0].toFixed(2)}, ${R.zt[i][1].toFixed(2)})<br>`:'類別條件，無 c<sub>i</sub><br>')+`γ<sub>i</sub> = <b class="acc">${R.g[i].toFixed(4)}</b>`}
+function renderC2T(){const box=$('#c2-t'),W=widthOf(box,200,240),H=Math.round(W*.72),svg=$('svg',box);svg.textContent='';svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  const cx=W/2,cy=H-28,R=Math.min(W/2-30,H-50),P=a=>[cx+R*Math.cos(a),cy-R*Math.sin(a)];
+  el('line',{x1:cx-R-10,x2:cx+R+10,y1:cy,y2:cy,class:'axl'},svg);el('line',{x1:cx,x2:cx,y1:cy,y2:cy-R-10,class:'axl'},svg);
+  const arc=(a0,a1)=>{const p=[];for(let i=0;i<=40;i++)p.push(P(a0+(a1-a0)*i/40));return lp(p)};
+  el('path',{d:arc(0,Math.PI/2),class:'par'},svg);el('path',{d:arc(Math.PI/2,Math.PI),class:'perp dash'},svg);
+  const tt=c2.stage===1?c2.t:c2.t+1,[x,y]=P(OMEGA[0]*tt);el('circle',{cx:x,cy:y,r:6,class:'acc-f'},svg);
+  tx(svg,cx+R*.75,cy-R*.75-6,'Stage 1',{class:'lab','text-anchor':'start'});tx(svg,cx-R*.75,cy-R*.75-6,'Stage 2',{class:'lab','text-anchor':'end'});
+  tx(svg,cx+R+6,cy+18,'cos ω₀t',{class:'tk','text-anchor':'end'});tx(svg,cx-R-6,cy+18,'t+1 = 2',{class:'tk','text-anchor':'start'});
+  svg.setAttribute('aria-label',`時間嵌入第一對座標：Stage 1 在第一象限，Stage 2 在第二象限；目前位置為 ${c2.stage===1?'t':'t+1'} = ${tt.toFixed(2)}`)}
+function c2sync(){$$('#c2-stage button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.v===c2.stage)));$$('#c2-y button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.v===c2.y)));
+  $('#c2-y').classList.toggle('hide',c2.stage!==1);$('#c2-yl').classList.toggle('hide',c2.stage!==1);$('#c2-sw').classList.toggle('hide',c2.stage!==2);$('#c2-re').classList.toggle('hide',c2.stage!==2);
+  if(c2.stage===2)$('#c2-in').textContent='';renderC2()}
+function initC2(){buildGrid($('#c2-g'),true);
+  $$('#c2-stage button').forEach(b=>b.addEventListener('click',()=>{c2.stage=+b.dataset.v;c2sync()}));
+  $$('#c2-y button').forEach(b=>b.addEventListener('click',()=>{c2.y=+b.dataset.v;c2sync()}));
+  $('#c2-t').addEventListener('input',e=>{c2.t=+e.target.value;$('#c2-to').textContent=c2.t.toFixed(2);e.target.setAttribute('aria-valuetext','t = '+c2.t.toFixed(2));renderC2()});
+  $('#c2-s').addEventListener('input',e=>{c2.sigma=+e.target.value;$('#c2-so').textContent=c2.sigma.toFixed(2);e.target.setAttribute('aria-valuetext','σ = '+c2.sigma.toFixed(2));renderC2()});
+  $('#c2-re').addEventListener('click',()=>{c2.seed++;renderC2()});
+  $('#c2-num').addEventListener('change',e=>{c2.num=e.target.checked;renderC2()});
+  const grid=$('#c2-g');
+  grid.addEventListener('click',e=>{const d=e.target.closest('.cell');if(!d)return;c2.sel=+d.dataset.i;renderC2();d.focus()});
+  grid.addEventListener('keydown',e=>{let r=Math.floor(c2.sel/8),c=c2.sel%8;const k=e.key;
+    if(k==='ArrowRight')c=Math.min(7,c+1);else if(k==='ArrowLeft')c=Math.max(0,c-1);else if(k==='ArrowDown')r=Math.min(7,r+1);else if(k==='ArrowUp')r=Math.max(0,r-1);
+    else if(k==='Home'){c=0;if(e.ctrlKey)r=0}else if(k==='End'){c=7;if(e.ctrlKey)r=7}else return;
+    e.preventDefault();c2.sel=r*8+c;renderC2();$(`#c2-g .cell[data-i="${c2.sel}"]`).focus()});
+  c2sync()}
+
+/* ---------- C3: one-step output + IMQ-MMD ---------- */
+const C3C=[[-1.2,-.6],[1.2,-.6],[0,1.1]],C3NR=240,C3NG=120,C3SD=.25,C3STEPS=200;
+const C3H={'0.1':[.1],'0.3':[.3],'1.0':[1],multi:[.1,.3,1]};
+function refC3(){const r=mulberry32(21),R=[];for(let p=0;p<C3NR;p++){const c=C3C[p%3];const x=c[0]+C3SD*gauss(r),y=c[1]+C3SD*gauss(r);R.push([x,y])}return R}
+function genC3(R){let mx=0,my=0;for(const p of R){mx+=p[0];my+=p[1]}mx/=C3NR;my/=C3NR;const r=mulberry32(22),X=[];for(let i=0;i<C3NG;i++){const a=mx+.05*gauss(r),b=my+.05*gauss(r);X.push([a,b])}return X}
+function kern(dx,dy,hs){const d2=dx*dx+dy*dy;let k=0,gx=0,gy=0;for(const h of hs){const q=1+d2/(h*h);k+=Math.pow(q,-.5);const c=-Math.pow(q,-1.5)/(h*h);gx+=c*dx;gy+=c*dy}return [k,gx,gy]}
+function rrTerm(R,hs){let s=0;for(const a of R)for(const b of R)s+=kern(a[0]-b[0],a[1]-b[1],hs)[0];return s/(R.length*R.length)}
+function mmdGrad(X,R,hs){const ng=X.length,nr=R.length;let sxx=0,sxr=0;const G=X.map(()=>[0,0]);
+  for(let i=0;i<ng;i++){const xi=X[i][0],yi=X[i][1];
+    for(let j=0;j<ng;j++){const o=kern(xi-X[j][0],yi-X[j][1],hs);sxx+=o[0];if(i!==j){G[i][0]+=2*o[1]/(ng*ng);G[i][1]+=2*o[2]/(ng*ng)}}
+    for(let p=0;p<nr;p++){const o=kern(xi-R[p][0],yi-R[p][1],hs);sxr+=o[0];G[i][0]-=2*o[1]/(ng*nr);G[i][1]-=2*o[2]/(ng*nr)}}
+  return {m:sxx/(ng*ng)-2*sxr/(ng*nr),G}}
+function coverC3(X){const cnt=[0,0,0];let near=0;for(const [x,y] of X){const d=C3C.map(c=>Math.hypot(x-c[0],y-c[1]));let k=0;for(let j=1;j<3;j++)if(d[j]<d[k])k=j;cnt[k]++;if(d[k]<2*C3SD)near++}return {cnt,near}}
+function c3new(h,eta){const R=refC3(),hs=C3H[h];return {h,eta,R,X:genC3(R),hs,rr:rrTerm(R,hs),step:0,mmd:NaN,running:false,err:false}}
+function stepC3(s){const {m,G}=mmdGrad(s.X,s.R,s.hs);s.mmd=m+s.rr;
+  for(let i=0;i<C3NG;i++){let sx=s.eta*C3NG*G[i][0],sy=s.eta*C3NG*G[i][1];const L=Math.hypot(sx,sy);if(L>.2){sx=sx*.2/L;sy=sy*.2/L}s.X[i][0]-=sx;s.X[i][1]-=sy;
+    if(!isFinite(s.X[i][0])||Math.abs(s.X[i][0])>10||Math.abs(s.X[i][1])>10)s.err=true}
+  s.step++}
+function mmdNow(s){return mmdGrad(s.X,s.R,s.hs).m+s.rr}
+let c3=null;
+function renderC3(){const box=$('#c3-fig'),W=widthOf(box,280,620),H=Math.round(W*.9);
+  const F=frame($('svg',box),{W,H,m:{l:36,r:10,t:10,b:30},x:[-2.2,2.2],y:[-1.8,2.2],xt:[-2,-1,0,1,2],yt:[-1,0,1,2]});
+  const shp=[(g,x,y)=>el('circle',{cx:x,cy:y,r:3,class:'rpt'},g),(g,x,y)=>el('rect',{x:x-2.6,y:y-2.6,width:5.2,height:5.2,class:'rpt'},g),(g,x,y)=>el('path',{d:`M${x} ${y-3.6}L${x+3.6} ${y}L${x} ${y+3.6}L${x-3.6} ${y}Z`,class:'rpt'},g)];
+  c3.R.forEach((p,i)=>shp[i%3](F.g,F.X(p[0]),F.Y(p[1])));
+  C3C.forEach((c,k)=>{const x=F.X(c[0]),y=F.Y(c[1]);el('path',{d:`M${x-6} ${y}H${x+6}M${x} ${y-6}V${y+6}`,class:'ctr'},F.g);tx(F.g,x+8,y-8,'ABC'[k],{class:'lab halo'})});
+  c3.X.forEach(p=>{const x=F.X(p[0]),y=F.Y(p[1]);el('path',{d:`M${x} ${y-4}L${x+3.6} ${y+2.6}L${x-3.6} ${y+2.6}Z`,class:'gpt'},F.g)});
+  const cv=coverC3(c3.X),m=mmdNow(c3);
+  $('#c3-ro').innerHTML=`步數 <b>${c3.step}</b> / ${C3STEPS}　MMD² = <b class="acc">${m.toFixed(4)}</b><br>最近中心 A / B / C：<b>${cv.cnt.join(' / ')}</b><br>距最近中心 &lt; 0.5：<b>${cv.near}</b> 點`;
+  const run=$('#c3-run');run.textContent=c3.running?'暫停':(c3.step>=C3STEPS?'已完成（重設後可再執行）':'執行');run.disabled=c3.step>=C3STEPS;
+  $('svg',box).setAttribute('aria-label',`散佈圖：第 ${c3.step} 步，生成點最近中心 A ${cv.cnt[0]}、B ${cv.cnt[1]}、C ${cv.cnt[2]}`);return {m,cv}}
+function c3say(){const {m,cv}=renderC3();announce('c3',`第 ${c3.step} 步，MMD² = ${m.toFixed(4)}，群 A / B / C 各 ${cv.cnt.join(' / ')} 點。`)}
+function resetC3(){cancelJob('c3');const h=$('#c3-h [aria-pressed=true]').dataset.v,eta=+$('#c3-eta [aria-pressed=true]').dataset.v;c3=c3new(h,eta);c3say()}
+function runC3(){if(c3.running){c3.running=false;cancelJob('c3');c3say();return}if(c3.step>=C3STEPS)return;c3.running=true;renderC3();
+  slice('c3',()=>{stepC3(c3);if(c3.err){c3.running=false;resetC3();$('#c3-ro').insertAdjacentHTML('afterbegin','數值發散，已重設<br>');return false}return c3.step<C3STEPS&&c3.running},
+    ()=>{c3.running=false;c3say()},()=>renderC3())}
+function initC3(){['#c3-h','#c3-eta'].forEach(s=>$$(s+' button').forEach(b=>b.addEventListener('click',()=>{$$(s+' button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));resetC3()})));
+  $('#c3-run').addEventListener('click',runC3);$('#c3-reset').addEventListener('click',resetC3);resetC3()}
+
+/* ---------- timeline ---------- */
+const TL_GROUP={'2006.11239':['bb','revflow-flow-matching-dit-backbone'],'2210.02747':['bb','revflow-flow-matching-dit-backbone'],'2212.09748':['bb','revflow-flow-matching-dit-backbone'],
+ '2112.10752':['ts','revflow-generation-target-space'],'2410.06940':['al','revflow-representation-alignment-lineage'],'2501.01423':['al','revflow-representation-alignment-lineage'],
+ '2304.07193':['enc','revflow-lineage-overview'],'2508.10104':['enc','revflow-lineage-overview'],'2510.11690':['rae','revflow-rae-decoder-burden'],'2605.18324':['rae','revflow-rae-decoder-burden'],
+ '2602.11401':['ms','revflow-feature-inversion-multistage'],'2505.13447':['fs','revflow-few-step-native-matching'],'2604.28190':['fs','revflow-few-step-native-matching'],'2611.34782':['me','revflow-lineage-overview']};
+const TL_NAME={bb:'骨幹與訓練',ts:'目標空間',al:'表徵對齊',enc:'編碼器',rae:'生成表徵（RAE）',ms:'多階段',fs:'少步與匹配',me:'本文',other:'其他'};
+function renderTimeline(){const track=$('#rail-track'),chips=$('#tl-chips');let data;
+  try{data=JSON.parse($('#timeline-data').textContent);if(!Array.isArray(data))throw 0}catch(e){track.innerHTML='<p class="note">時間線資料尚未提供</p>';$('.tl-ctl').classList.add('hide');return}
+  if(!data.some(e=>e.arxiv==='2611.34782'))data.push({year:2026,title:'Generation as Reverse Encoding (RevFlow)',authors_short:'本論文',arxiv:'2611.34782',role:'沿編碼器層級反向分階段生成，並提出原生匹配'});
+  data=data.map((e,i)=>({e,i})).sort((a,b)=>(+a.e.year||0)-(+b.e.year||0)||a.i-b.i).map(o=>o.e);
+  const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));const used=new Set();
+  data.forEach(e=>{const g=TL_GROUP[e.arxiv]||['other',null];used.add(g[0]);const a=document.createElement('article');a.className='ev'+(g[0]==='me'?' me':'');a.dataset.g=g[0];
+    a.innerHTML=`<span class="yr">${esc(e.year)}</span><span class="grp">${TL_NAME[g[0]]}</span><h3>${esc(e.title)}</h3><div class="who">${esc(e.authors_short)}</div>${e.role?`<p title="${esc(e.role)}">${esc(e.role)}</p>`:''}<div class="lk">${e.arxiv?`<a href="https://arxiv.org/abs/${esc(e.arxiv)}">arXiv ↗</a>`:''}${g[1]?`<a href="${g[1]}.html">筆記</a>`:''}</div>`;track.appendChild(a)});
+  const on=new Set(used);
+  Object.keys(TL_NAME).filter(k=>used.has(k)).forEach(k=>{const b=document.createElement('button');b.type='button';b.className='chip';b.setAttribute('aria-pressed','true');b.textContent=TL_NAME[k];b.dataset.g=k;
+    b.addEventListener('click',()=>{if(on.has(k)&&on.size===used.size){on.clear();on.add(k)}else if(on.has(k)){on.delete(k);if(!on.size)used.forEach(x=>on.add(x))}else on.add(k);
+      $$('.chip',chips).forEach(c=>c.setAttribute('aria-pressed',String(on.has(c.dataset.g))));$$('.ev',track).forEach(ev=>ev.classList.toggle('dim',!on.has(ev.dataset.g)))});chips.appendChild(b)});
+  const rail=$('#rail'),by=dir=>rail.scrollBy({left:dir*Math.min(rail.clientWidth*.8,560),behavior:RM?'auto':'smooth'});
+  $('#tl-prev').addEventListener('click',()=>by(-1));$('#tl-next').addEventListener('click',()=>by(1));
+  rail.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){by(1);e.preventDefault()}if(e.key==='ArrowLeft'){by(-1);e.preventDefault()}})}
+
+/* ---------- self test (acceptance tables, design §5) ---------- */
+function selfTest(){let pass=0,fail=0;const msgs=[];const ok=(c,m)=>{console.assert(c,m);if(c)pass++;else{fail++;msgs.push(m)}};
+  const rel=(a,b,r,ab)=>Math.abs(a-b)<=Math.max(r*Math.abs(b),ab)+1e-12;
+  // Eq. 9 identity with analytic score
+  {const R=diracPts(8,.958);[[.1,-1.3],[.5,.2],[.9,.77]].forEach(([t,rt])=>{const lw=R.map(r=>-((rt-(1-t)*r)**2)/(2*t*t)),m=Math.max(...lw),w=lw.map(x=>Math.exp(x-m)),Z=w.reduce((a,b)=>a+b,0);
+    const sc=w.reduce((a,wi,k)=>a+wi*((1-t)*R[k]-rt)/(t*t),0)/Z;ok(Math.abs((rt+t*t*sc)/(1-t)-post(rt,t,R)[0])<1e-12,`Eq.9 t=${t}`)})}
+  // C1 table (§5.1)
+  [['dirac',.958,8,.02,111.8,0,0],['dirac',.958,8,.05,17.34,.002328,0],['dirac',.958,8,.10,4.106,.5897,.0068],['dirac',.958,8,.20,1.289,1.061,.0554],['dirac',.958,8,.50,1.307,.9543,.4981],['dirac',.958,8,.90,.1177,.1169,.9883],
+   ['dirac',.426,8,.02,49.70,0,0],['dirac',.426,8,.10,1.846,.9414,.0246],['dirac',.958,4,.05,72.81,0,0],['dirac',.958,16,.05,4.283,.5292,.0015],
+   ['gauss',.958,0,.10,1.097,1.097,.0127],['gauss',.426,0,.02,1.019,1.019,.0010],['gauss',.426,0,.10,1.080,1.080,.0282],['gauss',.426,0,.50,.5975,.5975,.7013]].forEach(([md,v,K,t,a,b,f])=>{
+    const p=c1point(md,v,K,t);ok(rel(p.Jmax,a,.005,.001)&&rel(p.Jbar,b,.005,.001)&&Math.abs(p.frac-f)<=.001,`C1 ${md} v=${v} K=${K} t=${t}: ${p.Jmax.toFixed(4)} ${p.Jbar.toFixed(4)} ${p.frac.toFixed(4)}`)});
+  // C2 table (§5.2)
+  [[1,0,.5,0,.3684,0,null],[1,1,.5,0,.3408,0,null],[1,2,1,0,-.2721,0,null],[2,0,.5,0,.8661,.9450,-.8921],[2,0,.5,.2,.7631,.9029,-.7463],[2,0,.5,.5,.6245,.8689,-.5521],[2,0,.5,1,.4723,.8364,.0777],[2,0,1,0,.7102,.8421,-.9649]].forEach(([s,y,t,sg,m,sd,c])=>{
+    const st=statsC2(gammasC2(s,t,y,sg,12).g);ok(Math.abs(st.m-m)<=5e-4&&Math.abs(st.sd-sd)<=5e-4&&(c===null?st.corr===null:Math.abs(st.corr-c)<=5e-4),`C2 stage=${s} y=${y} t=${t} σ=${sg}: ${st.m.toFixed(4)} ${st.sd.toFixed(4)} ${st.corr}`)});
+  {const g=gammasC2(2,.5,0,.2,12).g;ok(Math.abs(g[0]-1.0747)<=5e-4&&Math.abs(g[27]-.193)<=5e-4&&Math.abs(g[63]-1.2654)<=5e-4,'C2 γ0,27,63');}
+  ok(MASK.reduce((a,b)=>a+b,0)===16,'C2 mask tokens = 16');
+  {let mx=0;for(const t of [0,.5,1])for(const sg of [0,.5,1])mx=Math.max(mx,gammasC2(2,t,0,sg,12).maxm);ok(mx<10,'C2 max|m| = '+mx.toFixed(3))}
+  // C3 table (§5.3, η = 0.25)
+  const tab={multi:[[1.8612,.0150,.0030,.0017,.0009,.0007],[39,41,40],107],'0.1':[[.7486,.0388,.0096,.0040,.0018,.0010],[38,39,43],105],'0.3':[[.7791,.0236,.0041,.0013,.0005,.0002],[39,40,41],107],'1.0':[[.3334,.0842,.0074,.0013,.0002,.0001],[39,41,40],105]};
+  const CK=[0,10,25,50,100,200];
+  for(const h in tab){const s=c3new(h,.25),got=[];let near10=null,cv0=null;
+    for(let k=0;k<=200;k++){if(CK.includes(k))got.push(mmdNow(s));if(k===0)cv0=coverC3(s.X);if(k===10)near10=coverC3(s.X).near;if(k<200)stepC3(s)}
+    const [mm,cnt,near]=tab[h],cv=coverC3(s.X);
+    got.forEach((g,i)=>ok(i===0?Math.abs(g-mm[0])<=1e-4:rel(g,mm[i],.05,2e-4),`C3 H=${h} step ${CK[i]}: ${g.toFixed(5)} vs ${mm[i]}`));
+    ok(cv.cnt.every((c,i)=>Math.abs(c-cnt[i])<=2)&&Math.abs(cv.near-near)<=2,`C3 H=${h} @200 counts ${cv.cnt} near ${cv.near}`);
+    if(h==='multi')ok(cv0.cnt.join()==='2,1,117'&&cv0.near===0,'C3 step0 counts '+cv0.cnt);
+    if(h==='1.0')ok(Math.abs(near10-31)<=2,'C3 H=1.0 step10 near '+near10)}
+  {const s=c3new('multi',.25);ok(Math.abs(mmdNow(s)-1.8612)<=1e-4,'C3 reset reproduces step 0')}
+  ok(document.documentElement.scrollWidth<=innerWidth,'no horizontal overflow: scrollWidth='+document.documentElement.scrollWidth+' innerWidth='+innerWidth);
+  ok(!!document.querySelector('.katex'),'KaTeX rendered');
+  const line=`selfTest: ${pass} passed, ${fail} failed`;console.log(line,msgs);document.title=line;$('#selftest').textContent=line+(msgs.length?' · '+msgs.join(' | '):'');}
+
+/* ---------- toc, theme, appbar ---------- */
+function initToc(){const secs=$$('[data-toc]'),ol=$('#toc'),bar=$('#tocbar');
+  secs.forEach(s=>{ol.insertAdjacentHTML('beforeend',`<li><a href="#${s.id}"><span class="n">${s.dataset.toc}</span><span>${s.dataset.tt}</span></a></li>`);bar.insertAdjacentHTML('beforeend',`<a href="#${s.id}">${s.dataset.toc} ${s.dataset.tt}</a>`)});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){const id=e.target.id;$$('.toc a,.tocbar a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+id));const ab=$(`.tocbar a[href="#${id}"]`);if(ab&&bar.offsetParent)bar.scrollTo({left:ab.offsetLeft-16,behavior:RM?'auto':'smooth'})}})},{rootMargin:'-40% 0px -55% 0px'});
+  secs.forEach(s=>io.observe(s));
+  addEventListener('scroll',()=>$('#appbar').classList.toggle('raised',scrollY>8),{passive:true})}
+function initTheme(){let saved=null;try{saved=localStorage.getItem('pm-theme')}catch(e){}if(saved)document.documentElement.dataset.theme=saved;
+  $('#theme').addEventListener('click',()=>{const cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const nx=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=nx;try{localStorage.setItem('pm-theme',nx)}catch(e){}})}
+
+/* ---------- boot ---------- */
+initTheme();initToc();initC1();initC2();initC3();renderTimeline();
+let lastW=innerWidth,rz=0;
+addEventListener('resize',()=>{if(innerWidth===lastW)return;lastW=innerWidth;cancelAnimationFrame(rz);rz=requestAnimationFrame(()=>{renderC1L();renderC1R();renderC2T();renderC3()})});
+function renderMath(node){if(typeof renderMathInElement!=='function')return;renderMathInElement(node||document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code','svg'],throwOnError:false})}
+if(document.readyState==='loading')addEventListener('DOMContentLoaded',()=>renderMath());else renderMath();
+addEventListener('load',()=>{if(!document.querySelector('.katex'))renderMath();if(/[?&]test\b/.test(location.search))setTimeout(selfTest,50)});
+})();
+</script>
+</body>
+</html>
